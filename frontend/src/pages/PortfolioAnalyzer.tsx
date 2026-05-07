@@ -1282,7 +1282,6 @@ export function PortfolioAnalyzer() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <FactorCard
                 title="Momentum"
-                subtitle="What's working"
                 total={
                   scenario.metric_scores.price_momentum +
                   scenario.metric_scores.revenue +
@@ -1297,7 +1296,6 @@ export function PortfolioAnalyzer() {
 
               <FactorCard
                 title="Value"
-                subtitle="What we're paying"
                 total={
                   scenario.metric_scores.price_earnings +
                   scenario.metric_scores.price_fcf +
@@ -1324,7 +1322,6 @@ export function PortfolioAnalyzer() {
 
               <FactorCard
                 title="Quality"
-                subtitle="What we own"
                 total={
                   scenario.metric_scores.quality +
                   scenario.metric_scores.business_quality_qualitative +
