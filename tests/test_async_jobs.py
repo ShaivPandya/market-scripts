@@ -60,7 +60,7 @@ def test_p0_async_job_completed_ttl_policy_defaults():
     from api.job_registry import completed_ttl_for_request, get_job_spec
     from api.routers.ontology import OntologyQueryJobRequest
 
-    assert get_job_spec("analyzer").completed_ttl_s == 300
+    assert get_job_spec("analyzer").completed_ttl_s == 24 * 60 * 60
     assert get_job_spec("sizer").completed_ttl_s == 300
     assert get_job_spec("hedging").completed_ttl_s == 300
 
