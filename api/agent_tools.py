@@ -317,16 +317,6 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
-        "name": "get_breakout",
-        "description": (
-            "Fetch macro breakout signals across asset classes. Returns recent breakouts "
-            "with direction (up/down), date, market, and close price. Use this to identify "
-            "which major markets are making significant technical moves."
-        ),
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "type": "function",
         "name": "query_ontology",
         "description": (
             "Run a cross-module ontology query that joins portfolio positions with macro/market "
@@ -837,7 +827,6 @@ _BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "get_sentiment": ("macro", "read", ("sentiment", "put call", "aaii", "naaim")),
     "get_central_banks": ("macro", "read", ("central banks", "fed", "ecb", "boe", "boj")),
     "get_industry_monitor": ("macro", "read", ("industry monitor", "transcripts", "management commentary")),
-    "get_breakout": ("technical", "read", ("breakout", "technical breakouts")),
     "query_ontology": ("ontology", "read", ("ontology", "risk exposure", "portfolio risk")),
     "get_thesis": ("thesis", "read", ("thesis", "investment thesis")),
     "get_thesis_evaluations": ("thesis", "read", ("thesis evaluations", "monitoring history")),
@@ -2989,17 +2978,6 @@ def _dispatch(
             return serialize_value(get_data(refresh=False))
 
         data, meta = fetch(long_cache, key, _load)
-        return data, meta
-
-    if name == "get_breakout":
-        key = "breakout"
-
-        def _load():
-            from macro.breakout.breakout import get_data
-
-            return serialize_value(get_data())
-
-        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "query_ontology":

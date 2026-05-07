@@ -1254,9 +1254,6 @@ export const analyzeLiquidity = (body: {
 export const fetchCountryDashboard = (metric: string) =>
   client.get(`/country-dashboard?metric=${encodeURIComponent(metric)}`).then(r => r.data)
 
-export const fetchBreakout = () =>
-  client.get("/breakout").then(r => r.data)
-
 export const fetchCentralBanks = (refresh = false) =>
   client.get(`/central-banks?refresh=${refresh}`).then(r => r.data)
 

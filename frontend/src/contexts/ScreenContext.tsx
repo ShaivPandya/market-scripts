@@ -55,7 +55,6 @@ const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   "/ontology": { pageName: "Ontology Workbench", tools: ["query_ontology"] },
   "/market-technicals": { pageName: "Market Technicals", tools: ["get_market_breadth", "get_vix_term_structure"] },
   "/portfolio-news": { pageName: "News Digests", tools: ["get_portfolio_news", "search_knowledge_base"] },
-  "/breakout": { pageName: "Breakout", tools: ["get_breakout"] },
   "/sentiment": { pageName: "Sentiment", tools: ["get_sentiment"] },
   "/positioning": { pageName: "Positioning", tools: ["get_positioning"] },
   "/central-banks": { pageName: "Central Bank Monitor", tools: ["get_central_banks"] },

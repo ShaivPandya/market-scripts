@@ -42,7 +42,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Ontology Workbench", path: "/ontology" },
       { label: "Market Technicals", path: "/market-technicals" },
       { label: "News Digests", path: "/portfolio-news" },
-      { label: "Breakout", path: "/breakout" },
       { label: "Sentiment", path: "/sentiment" },
       { label: "Positioning", path: "/positioning" },
       { label: "Central Bank Monitor", path: "/central-banks" },

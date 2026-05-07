@@ -529,7 +529,7 @@ def test_action_item_and_watch_trigger_actions_cover_lifecycle():
     )
     fired = _approve_action(
         "fire_watch_trigger",
-        {"trigger_id": trigger["id"], "result": {"price": 151}, "evidence": "Breakout"},
+        {"trigger_id": trigger["id"], "result": {"price": 151}, "evidence": "Price crossed trigger"},
     )
     cancel_source = _approve_action("create_watch_trigger", {"condition": "Cancel me", "trigger_type": "custom"})
     cancelled = _approve_action(

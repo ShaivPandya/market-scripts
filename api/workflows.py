@@ -239,7 +239,7 @@ Given the data below, provide a concise, actionable morning brief covering:
 1. **Regime & Risk Posture** – Signal aggregator composite, regime classification, whether posture should be risk-on/off/neutral
 2. **Key Signals** – The 2-3 most important factor scores or signal changes from the aggregator
 3. **Portfolio Snapshot** – Total P&L, notable movers (biggest winners/losers), any position-level alerts
-4. **Technical Alerts** – Any breakout or breakdown signals
+4. **Technical Alerts** – Any notable market technical signals
 5. **Central Bank / Macro** – Overnight CB actions or notable macro developments
 
 End with 2-3 specific **action items** (e.g., "Review CRWD position — thesis under pressure from sector rotation").
@@ -259,7 +259,6 @@ def run_morning_brief(
     calls: list[tuple[str, dict[str, Any]]] = [
         ("get_signal_aggregator", {}),
         ("get_portfolio", {}),
-        ("get_breakout", {}),
         ("get_central_banks", {}),
     ]
 

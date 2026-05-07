@@ -108,7 +108,6 @@ const CommodityDashboard = lazyPage(() => import("@/pages/CommodityDashboard"), 
 const MarketTechnicals = lazyPage(() => import("@/pages/MarketTechnicals"), "MarketTechnicals")
 const SectorMetrics = lazyPage(() => import("@/pages/SectorMetrics"), "SectorMetrics")
 const Positioning = lazyPage(() => import("@/pages/Positioning"), "Positioning")
-const Breakout = lazyPage(() => import("@/pages/Breakout"), "Breakout")
 const FXModel = lazyPage(() => import("@/pages/FXModel"), "FXModel")
 const EconomicGrowth = lazyPage(() => import("@/pages/EconomicGrowth"), "EconomicGrowth")
 const LaborMarket = lazyPage(() => import("@/pages/LaborMarket"), "LaborMarket")
@@ -204,7 +203,6 @@ function AppRoutes() {
               <Route path="/sector-metrics" element={<SectorMetrics />} />
               <Route path="/positioning" element={<Positioning />} />
               <Route path="/sentiment" element={<Sentiment />} />
-              <Route path="/breakout" element={<Breakout />} />
               <Route path="/fx-model" element={<FXModel />} />
               <Route path="/economic-growth" element={<EconomicGrowth />} />
               <Route path="/labor-market" element={<LaborMarket />} />
