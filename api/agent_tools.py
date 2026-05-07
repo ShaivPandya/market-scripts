@@ -1173,7 +1173,14 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
     _cap(
         "run_portfolio_sizer",
         "Start or reuse the portfolio sizer.",
-        _schema({"book": _NUMBER, "target_leverage": _NUMBER, "positions": _ARRAY_OBJECTS}),
+        _schema(
+            {
+                "book": _NUMBER,
+                "target_leverage": _NUMBER,
+                "beta_hedge_mode": {"type": "string", "enum": ["spy_iwm", "spy"]},
+                "positions": _ARRAY_OBJECTS,
+            }
+        ),
         category="portfolio",
         access_mode="compute",
         aliases=("portfolio sizer", "sizing"),
@@ -3404,10 +3411,16 @@ def _dispatch(
         return run_fx_model(req), {"cache": "n/a"}
 
     if name == "run_quality_screen":
-        from api.routers.quality import QualityRequest, run_quality_screen
+        from api.routers.quality import QualityRequest
+        from api.routers.quality import _cache_key as quality_screen_cache_key
 
         req = _model_validate(QualityRequest, args)
-        return run_quality_screen(req), {"cache": "n/a"}
+        return _run_registered_job_for_agent(
+            "quality_screen",
+            req.model_dump(),
+            cache_key=quality_screen_cache_key(req),
+            poll_path="/api/v1/quality-screen/async/{job_id}",
+        ), {"cache": "n/a"}
 
     if name == "run_short_screen":
         from api.routers.short_screen import ShortScreenRequest

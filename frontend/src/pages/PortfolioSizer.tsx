@@ -7,7 +7,7 @@ import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner
 import { MetricCard } from "@/components/shared/MetricCard"
 import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 import { colorPositiveNegative } from "@/lib/colors"
-import { fetchPortfolioPositions, fetchSizerJob, fetchSizerPrefill, startSizerJob } from "@/lib/api"
+import { fetchPortfolioPositions, fetchSizerJob, fetchSizerPrefill, startSizerJob, type BetaHedgeMode } from "@/lib/api"
 
 type SizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
@@ -48,6 +48,7 @@ interface SizerResponse {
   vol_daily?: number
   gross_leverage?: number
   equity_net?: number
+  beta_hedge_mode?: BetaHedgeMode
   net_beta_spy?: number
   net_beta_iwm?: number
   post_hedge_beta_spy?: number
@@ -76,6 +77,7 @@ interface SizerRow {
 
 const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v2"] as const
 const DEFAULT_BOOK_SIZE = 100_000
+const DEFAULT_BETA_HEDGE_MODE: BetaHedgeMode = "spy_iwm"
 const MIN_BOOK_SIZE = 10_000
 const MAX_BOOK_SIZE = 10_000_000
 const SIZER_POLL_INTERVAL_MS = 2_000
@@ -277,6 +279,7 @@ export function PortfolioSizer() {
     bookSize: number
     bookSizeInput: string
     targetLeverage: number
+    betaHedgeMode?: BetaHedgeMode
     rows: SizerRow[]
     result: SizerResponse | null
     activeJobId: string | null
@@ -289,6 +292,7 @@ export function PortfolioSizer() {
   const [bookSize, setBookSize] = useState(initialBookSize)
   const [bookSizeInput, setBookSizeInput] = useState(cachedState?.bookSizeInput ?? String(initialBookSize))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
+  const [betaHedgeMode, setBetaHedgeMode] = useState<BetaHedgeMode>(cachedState?.betaHedgeMode ?? DEFAULT_BETA_HEDGE_MODE)
   const [rows, setRows] = useState<SizerRow[]>(cachedState?.rows && cachedState.rows.length > 0 ? cachedState.rows : [])
   const [cachedResult, setCachedResult] = useState<SizerResponse | null>(cachedState?.result ?? null)
   const [activeJobId, setActiveJobId] = useState<string | null>(cachedState?.activeJobId ?? null)
@@ -399,12 +403,13 @@ export function PortfolioSizer() {
       bookSize,
       bookSizeInput,
       targetLeverage,
+      betaHedgeMode,
       rows,
       result: cachedResult,
       activeJobId,
       errorMessage,
     })
-  }, [bookSize, bookSizeInput, targetLeverage, rows, cachedResult, activeJobId, errorMessage, queryClient])
+  }, [bookSize, bookSizeInput, targetLeverage, betaHedgeMode, rows, cachedResult, activeJobId, errorMessage, queryClient])
 
   useEffect(() => {
     setBookSizeInput(String(bookSize))
@@ -432,7 +437,12 @@ export function PortfolioSizer() {
     setErrorMessage(null)
 
     try {
-      const started = await startSizerJob({ book: effectiveBook, target_leverage: targetLeverage, positions })
+      const started = await startSizerJob({
+        book: effectiveBook,
+        target_leverage: targetLeverage,
+        beta_hedge_mode: betaHedgeMode,
+        positions,
+      })
       if (runSeq !== runSeqRef.current) return
 
       if (started.status === "done") {
@@ -566,7 +576,7 @@ export function PortfolioSizer() {
       </div>
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-8 gap-y-5">
           <div className="space-y-1">
             <TextInput
               label="Book Size"
@@ -589,6 +599,28 @@ export function PortfolioSizer() {
             minLabel="0.5x"
             maxLabel="4.0x"
           />
+
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between text-sm text-muted">
+              <span>Beta Hedge Mode</span>
+              <span className="text-sm font-semibold text-app">
+                {betaHedgeMode === "spy" ? "SPY only" : "SPY + IWM"}
+              </span>
+            </div>
+            <SegmentedControl
+              options={[
+                { value: "spy_iwm", label: "SPY + IWM" },
+                { value: "spy", label: "SPY only" },
+              ]}
+              value={betaHedgeMode}
+              onChange={setBetaHedgeMode}
+            />
+            <p className="text-xs text-gray-400">
+              {betaHedgeMode === "spy"
+                ? "Neutralizes SPY beta; IWM beta remains a residual diagnostic."
+                : "Neutralizes SPY and IWM beta with both hedge legs."}
+            </p>
+          </div>
         </div>
 
         <div>

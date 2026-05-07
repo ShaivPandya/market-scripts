@@ -14,7 +14,7 @@ import logging
 import traceback
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple  # noqa: UP035
+from typing import Any, Dict, Literal, Optional, Tuple  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -36,6 +36,7 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     EQ_NET_MIN,
     FX_GROSS_MAX,
     GROSS_MAX,
+    HEDGE_SOLVE_RIDGE,
     LONG_MAX,
     MARKET_TICKER_LONG,
     MARKET_TICKER_SHORT,
@@ -47,6 +48,7 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     compute_10yr_equivalent,
     compute_beta_frame,
     compute_defense_volatility,
+    compute_equity_net_betas,
     compute_severe_drawdown_flags,
     download_prices,
     ensure_psd,
@@ -65,6 +67,103 @@ LOGGER = logging.getLogger(__name__)
 
 CONVICTION_MIN = 1
 CONVICTION_MAX = 5
+BetaHedgeMode = Literal["spy_iwm", "spy"]
+BETA_HEDGE_MODE_SPY_IWM: BetaHedgeMode = "spy_iwm"
+BETA_HEDGE_MODE_SPY: BetaHedgeMode = "spy"
+
+
+def _normalize_beta_hedge_mode(value: str | None) -> BetaHedgeMode:
+    if value is None or value == "":
+        return BETA_HEDGE_MODE_SPY_IWM
+    if value in (BETA_HEDGE_MODE_SPY_IWM, BETA_HEDGE_MODE_SPY):
+        return value
+    raise ValueError("beta_hedge_mode must be one of: spy_iwm, spy.")
+
+
+def _solve_spy_only_hedge_weights(
+    net_beta_spy: float,
+    net_beta_iwm: float,
+    betas_all_spy: pd.Series,
+    betas_all_iwm: pd.Series,
+) -> tuple[float, float, float, float]:
+    """
+    Solve a single SPY hedge that neutralizes SPY beta only.
+
+    IWM beta is retained as a residual diagnostic because the hedge basket does
+    not include an IWM leg in this mode.
+    """
+    beta_spy_to_spy = float(betas_all_spy.get(MARKET_TICKER_LONG, BETA_FALLBACK))
+    beta_spy_to_iwm = float(betas_all_iwm.get(MARKET_TICKER_LONG, BETA_FALLBACK))
+    hedge_spy_weight = float(-(net_beta_spy * beta_spy_to_spy) / (beta_spy_to_spy**2 + HEDGE_SOLVE_RIDGE))
+    hedge_iwm_weight = 0.0
+    post_hedge_beta_spy = float(net_beta_spy + beta_spy_to_spy * hedge_spy_weight)
+    post_hedge_beta_iwm = float(net_beta_iwm + beta_spy_to_iwm * hedge_spy_weight)
+    return hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm
+
+
+def _apply_beta_hedges_with_gross_cap(
+    w: pd.Series,
+    betas_spy: pd.Series,
+    betas_iwm: pd.Series,
+    betas_all_spy: pd.Series,
+    betas_all_iwm: pd.Series,
+    long_mask: np.ndarray,
+    short_mask: np.ndarray,
+    eq_mask: np.ndarray,
+    beta_hedge_mode: BetaHedgeMode,
+) -> tuple[pd.Series, dict[str, Any]]:
+    if beta_hedge_mode == BETA_HEDGE_MODE_SPY_IWM:
+        hedged_w, summary = apply_hedges_with_gross_cap(
+            w,
+            betas_spy,
+            betas_iwm,
+            betas_all_spy,
+            betas_all_iwm,
+            long_mask,
+            short_mask,
+            eq_mask,
+        )
+        summary["beta_hedge_mode"] = beta_hedge_mode
+        return hedged_w, summary
+
+    def _solve_for_weights(weights: pd.Series) -> dict[str, Any]:
+        beta_summary = compute_equity_net_betas(weights, betas_spy, betas_iwm, long_mask, short_mask, eq_mask)
+        hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm = _solve_spy_only_hedge_weights(
+            beta_summary["net_beta_spy"],
+            beta_summary["net_beta_iwm"],
+            betas_all_spy,
+            betas_all_iwm,
+        )
+
+        pre_hedge_gross = float(np.abs(weights).sum())
+        hedge_gross = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
+        gross_with_hedges = pre_hedge_gross + hedge_gross
+
+        out = dict(beta_summary)
+        out.update(
+            {
+                "hedge_spy_weight": hedge_spy_weight,
+                "hedge_iwm_weight": hedge_iwm_weight,
+                "post_hedge_beta_spy": post_hedge_beta_spy,
+                "post_hedge_beta_iwm": post_hedge_beta_iwm,
+                "pre_hedge_gross": pre_hedge_gross,
+                "hedge_gross": hedge_gross,
+                "gross_with_hedges": gross_with_hedges,
+                "beta_hedge_mode": beta_hedge_mode,
+            }
+        )
+        return out
+
+    summary = _solve_for_weights(w)
+    gross_scale_factor = 1.0
+
+    if summary["gross_with_hedges"] > GROSS_MAX + 1e-10:
+        gross_scale_factor = GROSS_MAX / summary["gross_with_hedges"]
+        w = w * gross_scale_factor
+        summary = _solve_for_weights(w)
+
+    summary["gross_scale_factor"] = gross_scale_factor
+    return w, summary
 
 
 def _parse_positions(
@@ -165,6 +264,7 @@ def size_portfolio(
     positions: Sequence[Mapping[str, Any]],
     book: float | None = 100_000.0,
     target_leverage: float | None = 2.0,
+    beta_hedge_mode: str | None = BETA_HEDGE_MODE_SPY_IWM,
 ) -> dict:
     """
     Size a portfolio from user conviction levels using CVXPY optimization.
@@ -173,11 +273,14 @@ def size_portfolio(
         positions: List of {ticker: str, conviction: int (1–5)} dicts.
         book: Book size in USD.
         target_leverage: Target gross leverage (0.5–4.0).
+        beta_hedge_mode: "spy_iwm" to jointly neutralize SPY/IWM beta, or
+            "spy" to neutralize SPY beta with SPY only.
 
     Returns:
         Same output dict structure as optimize_portfolio().
     """
     try:
+        beta_hedge_mode = _normalize_beta_hedge_mode(beta_hedge_mode)
         convictions = _parse_positions(positions)
 
         # Load portfolio metadata
@@ -365,7 +468,7 @@ def size_portfolio(
         vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
 
         # Hedges
-        w_final, hedge_summary = apply_hedges_with_gross_cap(
+        w_final, hedge_summary = _apply_beta_hedges_with_gross_cap(
             w_final,
             betas_spy,
             betas_iwm,
@@ -374,6 +477,7 @@ def size_portfolio(
             long_mask,
             short_mask,
             eq_mask,
+            beta_hedge_mode,
         )
 
         # Strict post-hedge leverage cap: ensure final gross (incl. hedges) <= target leverage.
@@ -387,7 +491,7 @@ def size_portfolio(
                     break
                 scale = effective_target / gross_with_hedges
                 w_final = w_final * scale
-                w_final, hedge_summary = apply_hedges_with_gross_cap(
+                w_final, hedge_summary = _apply_beta_hedges_with_gross_cap(
                     w_final,
                     betas_spy,
                     betas_iwm,
@@ -396,6 +500,7 @@ def size_portfolio(
                     long_mask,
                     short_mask,
                     eq_mask,
+                    beta_hedge_mode,
                 )
         vol_final = port_vol(w_final.values)
 
@@ -489,21 +594,30 @@ def size_portfolio(
         )
         spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
         iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
-        hedges_data: dict[str, Any] = {
-            "ticker": [MARKET_TICKER_LONG, MARKET_TICKER_SHORT],
-            "type": ["hedge", "hedge"],
-            "direction": [
-                "short" if hedge_spy_weight < 0 else "long",
-                "long" if hedge_iwm_weight > 0 else "short",
-            ],
-            "weight": [hedge_spy_weight, hedge_iwm_weight],
-            "price": [spy_price, iwm_price],
-        }
+        hedge_rows = [
+            {
+                "ticker": MARKET_TICKER_LONG,
+                "type": "hedge",
+                "direction": "short" if hedge_spy_weight < 0 else "long",
+                "weight": hedge_spy_weight,
+                "price": spy_price,
+            }
+        ]
+        if beta_hedge_mode == BETA_HEDGE_MODE_SPY_IWM:
+            hedge_rows.append(
+                {
+                    "ticker": MARKET_TICKER_SHORT,
+                    "type": "hedge",
+                    "direction": "long" if hedge_iwm_weight > 0 else "short",
+                    "weight": hedge_iwm_weight,
+                    "price": iwm_price,
+                }
+            )
+        hedges_data: dict[str, Any] = {key: [row[key] for row in hedge_rows] for key in hedge_rows[0]}
         if book is not None:
-            hedges_data["dollar_weight"] = [hedge_spy_weight * book, hedge_iwm_weight * book]
+            hedges_data["dollar_weight"] = [float(row["weight"]) * book for row in hedge_rows]
             hedges_data["shares"] = [
-                int(round(hedge_spy_weight * book / spy_price)),
-                int(round(hedge_iwm_weight * book / iwm_price)),
+                int(round(float(row["weight"]) * book / float(row["price"]))) for row in hedge_rows
             ]
         hedges_df = pd.DataFrame(hedges_data)
 
@@ -556,6 +670,7 @@ def size_portfolio(
             "timestamp": datetime.now(),
             "book_size": book,
             "target_leverage": target_leverage,
+            "beta_hedge_mode": beta_hedge_mode,
             # Solution metrics
             "vol_daily": vol_final,
             "vol_spy": vol_spy,
@@ -606,5 +721,11 @@ def get_data(
     positions: Sequence[Mapping[str, Any]],
     book: float = 100_000.0,
     target_leverage: float = 2.0,
+    beta_hedge_mode: str = BETA_HEDGE_MODE_SPY_IWM,
 ) -> dict:
-    return size_portfolio(positions=positions, book=book, target_leverage=target_leverage)
+    return size_portfolio(
+        positions=positions,
+        book=book,
+        target_leverage=target_leverage,
+        beta_hedge_mode=beta_hedge_mode,
+    )

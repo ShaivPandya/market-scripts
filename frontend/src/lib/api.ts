@@ -1680,21 +1680,22 @@ type SizerJobResponse =
   | { job_id: string; status: "error"; error?: string }
   | { job_id: string; status: "done"; result?: unknown }
 
-export const startSizerJob = (body: {
+export type BetaHedgeMode = "spy_iwm" | "spy"
+
+export type PortfolioSizerRequest = {
   book: number
   target_leverage: number
+  beta_hedge_mode: BetaHedgeMode
   positions: { ticker: string; conviction: number }[]
-}) =>
+}
+
+export const startSizerJob = (body: PortfolioSizerRequest) =>
   client.post("/portfolio-sizer/async", body, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
 
 export const fetchSizerJob = (job_id: string) =>
   client.get(`/portfolio-sizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
 
-export async function runPortfolioSizerAsync(body: {
-  book: number
-  target_leverage: number
-  positions: { ticker: string; conviction: number }[]
-}) {
+export async function runPortfolioSizerAsync(body: PortfolioSizerRequest) {
   const started = await startSizerJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Sizer failed")
@@ -1716,28 +1717,6 @@ export async function runPortfolioSizerAsync(body: {
   }
 }
 
-export const runQualityScreen = (body: {
-  universe: string
-  tickers: string
-  benchmark: string
-  input_mode: string
-}) => {
-  const controller = new AbortController()
-  const timeoutMs = 180_000
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-
-  return client
-    .post("/quality-screen", body, { signal: controller.signal, timeout: timeoutMs })
-    .then(r => r.data)
-    .catch(err => {
-      if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
-        throw new Error("Timeout: Quality screen exceeded 180s. Try a smaller universe or custom tickers.")
-      }
-      throw err
-    })
-    .finally(() => clearTimeout(timer))
-}
-
 export type ScreenJobProgress = {
   phase?: string
   done?: number
@@ -1752,7 +1731,9 @@ type ScreenJobResponse<T> =
 export type ScreenResult = {
   results_df?: Record<string, unknown>[]
   failed_tickers?: string[]
+  failed?: string[]
   input_count?: number
+  universe_size?: number
   scored_count?: number
   benchmark_name?: string
   date?: string | null
@@ -1761,6 +1742,13 @@ export type ScreenResult = {
   phase3_pass_count?: number
   final_count?: number
   [key: string]: unknown
+}
+
+export type QualityScreenRequest = {
+  input_mode: string
+  universe: string
+  tickers: string
+  benchmark: string
 }
 
 export type ShortScreenRequest = {
@@ -1814,6 +1802,12 @@ export type PriceMomentumRequest = {
   benchmark: string
 }
 
+const startQualityScreenJob = (body: QualityScreenRequest) =>
+  client.post("/quality-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const fetchQualityScreenJob = (job_id: string) =>
+  client.get(`/quality-screen/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
 const startShortScreenJob = (body: ShortScreenRequest) =>
   client.post("/short-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
 
@@ -1866,6 +1860,9 @@ async function runScreenJob<TBody>(
 
 export const runShortScreen = (body: ShortScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
   runScreenJob(body, startShortScreenJob, fetchShortScreenJob, "Short screen", onProgress)
+
+export const runQualityScreen = (body: QualityScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
+  runScreenJob(body, startQualityScreenJob, fetchQualityScreenJob, "Quality screen", onProgress)
 
 export const runLongScreen = (body: LongScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
   runScreenJob(body, startLongScreenJob, fetchLongScreenJob, "Long screen", onProgress)

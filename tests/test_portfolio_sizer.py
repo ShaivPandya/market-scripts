@@ -48,3 +48,31 @@ def test_equity_beta_inputs_ignore_non_equity_returns(monkeypatch):
     assert display_spy.loc["EQ"] == 1.25
     assert pd.isna(display_spy.loc["GLD"])
     assert pd.isna(display_iwm.loc["EURUSD=X"])
+
+
+def test_spy_only_beta_hedge_uses_no_iwm_leg():
+    weights = pd.Series({"AAA": 0.40, "BBB": -0.10})
+    betas_spy = pd.Series({"AAA": 1.0, "BBB": 1.0})
+    betas_iwm = pd.Series({"AAA": 1.5, "BBB": 1.0})
+    betas_all_spy = pd.Series({"SPY": 1.0, "IWM": 0.7})
+    betas_all_iwm = pd.Series({"SPY": 0.8, "IWM": 1.0})
+
+    hedged_weights, summary = portfolio_sizer._apply_beta_hedges_with_gross_cap(
+        weights,
+        betas_spy,
+        betas_iwm,
+        betas_all_spy,
+        betas_all_iwm,
+        long_mask=np.array([True, False]),
+        short_mask=np.array([False, True]),
+        eq_mask=np.array([True, True]),
+        beta_hedge_mode="spy",
+    )
+
+    assert hedged_weights.equals(weights)
+    assert summary["beta_hedge_mode"] == "spy"
+    assert summary["hedge_iwm_weight"] == 0.0
+    assert abs(summary["post_hedge_beta_spy"]) < 1e-6
+    assert abs(summary["post_hedge_beta_iwm"]) > 0.1
+    assert summary["hedge_gross"] == abs(summary["hedge_spy_weight"])
+    assert np.isclose(summary["gross_with_hedges"], float(np.abs(weights).sum() + abs(summary["hedge_spy_weight"])))
