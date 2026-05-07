@@ -94,13 +94,13 @@ DAILY_SUMMARY_SEPARATOR = "<!-- DAILY_SUMMARY_JSON -->"
 
 # Stance → leverage mapping (hybrid: fixed base ± 0.25 adjustment)
 STANCE_LEVERAGE_MAP = {
-    "Aggressively Offensive": {"base": 3.0, "low": 2.75, "high": 3.0},
-    "Offensive": {"base": 2.5, "low": 2.25, "high": 2.75},
-    "Neutral / Watchful": {"base": 2.0, "low": 1.75, "high": 2.25},
-    "Defensive": {"base": 1.25, "low": 1.0, "high": 1.5},
-    "Aggressively Defensive": {"base": 0.5, "low": 0.5, "high": 0.75},
+    "Aggressively Offensive": {"base": 2.5, "low": 2.25, "high": 2.75},
+    "Offensive": {"base": 2.0, "low": 1.75, "high": 2.25},
+    "Neutral / Watchful": {"base": 1.5, "low": 1.25, "high": 1.75},
+    "Defensive": {"base": 1.0, "low": 0.75, "high": 1.25},
+    "Aggressively Defensive": {"base": 0.5, "low": 0.25, "high": 0.75},
 }
-DEFAULT_LEVERAGE = 2.0
+DEFAULT_LEVERAGE = 1.5
 DEFAULT_STANCE = "Neutral / Watchful"
 REGIME_DIMENSION_ORDER = (
     ("market_behavior", "Market Behavior"),
@@ -679,8 +679,8 @@ Leverage ranges per stance:
 
 Pick the stance that best reflects the current environment, then choose a specific
 target_leverage within that stance's range. The leverage should reflect your conviction
-level within the stance — e.g., a borderline Offensive environment might warrant 2.25
-(low end of Offensive) rather than 2.75 (high end).
+level within the stance — e.g., a borderline Offensive environment might warrant 1.75
+(low end of Offensive) rather than 2.25 (high end).
 
 Constraints:
 - Cite specific metrics from the data and news search.
@@ -698,7 +698,7 @@ After the `# Stance Rationale` section, output the separator `{PASS1_SUMMARY_SEP
 ```json
 {{
   "stance": "<{stance_options}>",
-  "target_leverage": "<float between 0.5 and 3.0>",
+  "target_leverage": "<float between 0.25 and 2.75>",
   "leverage_rationale": "<one sentence explaining leverage choice within the stance range>",
   "confidence": "<high|medium|low>",
   "market_regime_assessment": {{

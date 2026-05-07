@@ -103,7 +103,7 @@ def test_parse_pass1_response_accepts_structured_json_and_clamps_leverage():
 
     assert analysis_md == "# Stance Rationale\n\nThe balance of evidence supports low-end offense."
     assert stance["stance"] == "Offensive"
-    assert stance["target_leverage"] == pytest.approx(2.75)
+    assert stance["target_leverage"] == pytest.approx(2.25)
     assert stance["six_dimensions"]["liquidity"] == "Cautionary"
     assert stance["watchlist_triggers"] == [
         "Oil breaks lower: Would ease inflation pressure and justify more cyclical exposure.",
