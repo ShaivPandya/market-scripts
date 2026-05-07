@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Play, Plus, RefreshCw } from "lucide-react"
+import { Play, Plus, RefreshCw, Trash2 } from "lucide-react"
 
 import { ActionPill, ConfidencePill } from "@/components/idea/EvaluationPanel"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -10,6 +10,7 @@ import { ActionButton, TextInput } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   createIdea,
+  deleteIdea,
   fetchIdeaComparisonEvaluationJob,
   fetchIdeaComparisonRuns,
   fetchIdeaEvaluationJob,
@@ -17,6 +18,7 @@ import {
   startIdeaComparisonEvaluationJob,
   type IdeaComparisonJobResponse,
   type IdeaComparisonRun,
+  type IdeaListResponse,
   type IdeaStatus,
 } from "@/lib/api"
 import {
@@ -121,6 +123,8 @@ export function IdeaWatchlist() {
   const [companyName, setCompanyName] = useState("")
   const [tags, setTags] = useState("")
   const [notes, setNotes] = useState("")
+  const [deletingIdeaIds, setDeletingIdeaIds] = useState<Set<string>>(() => new Set())
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
   const ideas = useMemo(() => ideasQuery.data?.ideas ?? [], [ideasQuery.data?.ideas])
@@ -243,6 +247,38 @@ export function IdeaWatchlist() {
     onError: err => setComparisonJobError(err instanceof Error ? err.message : "Comparative evaluation failed."),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (ideaId: string) => deleteIdea(ideaId),
+    onMutate: ideaId => {
+      setDeleteError(null)
+      setDeletingIdeaIds(prev => new Set(prev).add(String(ideaId)))
+    },
+    onSuccess: (_data, ideaId) => {
+      qc.setQueryData<IdeaListResponse>(["ideas"], current => {
+        if (!current) return current
+        const nextIdeas = current.ideas.filter(idea => String(idea.id) !== String(ideaId))
+        return { ...current, ideas: nextIdeas, count: nextIdeas.length }
+      })
+      setActiveJobs(prev => {
+        const next = { ...prev }
+        delete next[String(ideaId)]
+        writeActiveJobs(next)
+        return next
+      })
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+      void qc.invalidateQueries({ queryKey: ["idea", ideaId] })
+      void qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
+    },
+    onError: err => setDeleteError(err instanceof Error ? err.message : "Could not delete idea."),
+    onSettled: (_data, _error, ideaId) => {
+      setDeletingIdeaIds(prev => {
+        const next = new Set(prev)
+        if (ideaId) next.delete(String(ideaId))
+        return next
+      })
+    },
+  })
+
   const rows = useMemo(() => ideas.map(idea => {
     const evaluation = latestEvaluation(idea, null)
     const activeJob = activeJobs[String(idea.id)]
@@ -299,6 +335,11 @@ export function IdeaWatchlist() {
           {comparisonJobError}
         </div>
       )}
+      {deleteError && (
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {deleteError}
+        </div>
+      )}
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
@@ -341,10 +382,10 @@ export function IdeaWatchlist() {
           <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
         ) : (
           <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-            <table className="w-full min-w-[760px] border-collapse text-sm">
+            <table className="w-full min-w-[840px] border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-card-muted">
                 <tr>
-                  {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted"].map(label => (
+                  {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
                     <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                       {label}
                     </th>
@@ -353,24 +394,46 @@ export function IdeaWatchlist() {
               </thead>
               <tbody>
                 {rows.map(({ idea, evaluation, activeJob }) => (
-                  <tr
-                    key={idea.id}
-                    onClick={() => navigate(`/ideas/${idea.id}`, { state: { from: "ideas" } })}
-                    className={cn("cursor-pointer border-b border-app transition-colors hover:bg-hover")}
-                  >
-                    <td className="px-3 py-3">
-                      <div className="font-semibold text-app">{idea.ticker}</div>
-                      <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
-                    </td>
-                    <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
-                    <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
-                    <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
-                    <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
-                    <td className="px-3 py-3 text-subtle">{formatDate(evaluation?.evaluated_at)}</td>
-                    <td className="px-3 py-3">
-                      {idea.accepted_recommendation_id ? <StatusBadge tone="success">Yes</StatusBadge> : <span className="text-subtle">No</span>}
-                    </td>
-                  </tr>
+                  (() => {
+                    const ideaId = String(idea.id)
+                    const isDeleting = deletingIdeaIds.has(ideaId)
+                    return (
+                      <tr
+                        key={idea.id}
+                        onClick={() => navigate(`/ideas/${idea.id}`, { state: { from: "ideas" } })}
+                        className={cn("cursor-pointer border-b border-app transition-colors hover:bg-hover", isDeleting && "opacity-60")}
+                      >
+                        <td className="px-3 py-3">
+                          <div className="font-semibold text-app">{idea.ticker}</div>
+                          <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
+                        </td>
+                        <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
+                        <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
+                        <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
+                        <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
+                        <td className="px-3 py-3 text-subtle">{formatDate(evaluation?.evaluated_at)}</td>
+                        <td className="px-3 py-3">
+                          {idea.accepted_recommendation_id ? <StatusBadge tone="success">Yes</StatusBadge> : <span className="text-subtle">No</span>}
+                        </td>
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.stopPropagation()
+                              deleteMutation.mutate(ideaId)
+                            }}
+                            disabled={isDeleting}
+                            className="theme-button-base theme-button-secondary min-h-9 px-2 text-sm disabled:pointer-events-none disabled:opacity-50"
+                            aria-label={`Delete ${idea.ticker}`}
+                            title="Delete idea"
+                          >
+                            <Trash2 size={15} aria-hidden="true" />
+                            <span className="sr-only">Delete</span>
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })()
                 ))}
               </tbody>
             </table>

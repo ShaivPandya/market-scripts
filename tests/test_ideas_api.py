@@ -192,6 +192,39 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     assert accepted_payload["action_proposal"]["approval_id"] is not None
 
 
+def test_delete_idea_removes_from_list_detail_and_archived_view(auth_client):
+    created = auth_client.post(
+        "/api/v1/ideas",
+        json={
+            "ticker": "AAPL",
+            "company_name": "Apple",
+            "user_notes": "Delete test.",
+            "tags": ["delete"],
+        },
+    )
+    assert created.status_code == 200
+    idea = created.json()["idea"]
+
+    deleted = auth_client.delete(f"/api/v1/ideas/{idea['id']}")
+
+    assert deleted.status_code == 200
+    deleted_payload = deleted.json()
+    assert deleted_payload["status"] == "deleted"
+    assert deleted_payload["deleted"] is True
+    assert str(deleted_payload["idea_id"]) == str(idea["id"])
+
+    listed = auth_client.get("/api/v1/ideas")
+    assert listed.status_code == 200
+    assert all(str(row["id"]) != str(idea["id"]) for row in listed.json()["ideas"])
+
+    listed_with_archived = auth_client.get("/api/v1/ideas", params={"include_archived": True})
+    assert listed_with_archived.status_code == 200
+    assert all(str(row["id"]) != str(idea["id"]) for row in listed_with_archived.json()["ideas"])
+
+    detail = auth_client.get(f"/api/v1/ideas/{idea['id']}")
+    assert detail.status_code == 404
+
+
 def test_evaluate_all_persists_comparative_run_and_excludes_inactive(auth_client, monkeypatch):
     from api.routers import ideas as ideas_router
 

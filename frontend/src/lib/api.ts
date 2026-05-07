@@ -2201,8 +2201,8 @@ export const updateIdea = (id: string, body: {
   status?: IdeaStatus
 }) => client.put(`/ideas/${encodeURIComponent(id)}`, body).then(r => r.data as IdeaDetailResponse)
 
-export const archiveIdea = (id: string) =>
-  client.delete(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as { status: string; idea: InvestmentIdea })
+export const deleteIdea = (id: string) =>
+  client.delete(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as { status: string; deleted: boolean; idea_id: string })
 
 export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean }) =>
   client

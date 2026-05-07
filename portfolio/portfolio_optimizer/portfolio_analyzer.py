@@ -2546,6 +2546,29 @@ def _snapshot_is_fresh(
     return (now - updated_at.astimezone(UTC)).total_seconds() <= max_age_seconds
 
 
+def _touch_analyzer_input_snapshot(snapshot_key: str) -> None:
+    try:
+        now = _analyzer_input_cache_now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        path = _analyzer_input_snapshot_path(snapshot_key)
+        if _use_analyzer_input_state_storage_cache():
+            from api.state_storage import touch_object
+
+            touch_object(
+                path,
+                _analyzer_input_snapshot_gcs_key(snapshot_key),
+                metadata={"portfolio_analyzer_input_cache_touched_at": now.isoformat()},
+            )
+            return
+
+        if path.exists():
+            timestamp = now.timestamp()
+            os.utime(path, (timestamp, timestamp))
+    except Exception:
+        LOGGER.debug("analyzer input snapshot touch failed key=%s", snapshot_key, exc_info=True)
+
+
 def _read_analyzer_input_snapshot(snapshot_key: str) -> dict[str, Any] | None:
     path = _analyzer_input_snapshot_path(snapshot_key)
     try:
@@ -2553,13 +2576,29 @@ def _read_analyzer_input_snapshot(snapshot_key: str) -> dict[str, Any] | None:
             from api.state_storage import object_updated, read_bytes
 
             gcs_key = _analyzer_input_snapshot_gcs_key(snapshot_key)
-            if not _snapshot_is_fresh(object_updated(path, gcs_key)):
+            updated_at = object_updated(path, gcs_key)
+            if updated_at is None:
+                LOGGER.info("analyzer input cache miss tier=durable key=%s reason=missing", snapshot_key)
                 return None
-            return _decode_analyzer_input_snapshot(read_bytes(path, gcs_key))
+            if not _snapshot_is_fresh(updated_at):
+                LOGGER.info("analyzer input cache stale tier=durable key=%s updated_at=%s", snapshot_key, updated_at)
+                return None
+            snapshot = _decode_analyzer_input_snapshot(read_bytes(path, gcs_key))
+            _touch_analyzer_input_snapshot(snapshot_key)
+            LOGGER.info("analyzer input cache hit tier=durable key=%s", snapshot_key)
+            return snapshot
 
-        if not path.exists() or not _snapshot_is_fresh(datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)):
+        if not path.exists():
+            LOGGER.info("analyzer input cache miss tier=durable key=%s reason=missing", snapshot_key)
             return None
-        return _decode_analyzer_input_snapshot(path.read_bytes())
+        updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        if not _snapshot_is_fresh(updated_at):
+            LOGGER.info("analyzer input cache stale tier=durable key=%s updated_at=%s", snapshot_key, updated_at)
+            return None
+        snapshot = _decode_analyzer_input_snapshot(path.read_bytes())
+        _touch_analyzer_input_snapshot(snapshot_key)
+        LOGGER.info("analyzer input cache hit tier=durable key=%s", snapshot_key)
+        return snapshot
     except _AnalyzerInputSnapshotVersionMismatch:
         LOGGER.debug("analyzer input snapshot version mismatch key=%s", snapshot_key, exc_info=True)
         return None
@@ -2581,12 +2620,14 @@ def _write_analyzer_input_snapshot(snapshot_key: str, inputs: Mapping[str, Any])
                 raw,
                 content_type="application/zip",
             )
+            LOGGER.info("analyzer input snapshot write success key=%s", snapshot_key)
             return
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f"{path.name}.tmp")
         tmp_path.write_bytes(raw)
         tmp_path.replace(path)
+        LOGGER.info("analyzer input snapshot write success key=%s", snapshot_key)
     except Exception:
         LOGGER.warning("analyzer input snapshot write failed key=%s", snapshot_key, exc_info=True)
 
@@ -2766,6 +2807,7 @@ def _cached_analyzer_inputs() -> dict:
     with _ANALYZER_INPUTS_LOCK:
         hit = _ANALYZER_INPUTS_CACHE.get(key)
         if hit is not None:
+            LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
             return cast(dict[Any, Any], hit)
 
     durable_hit = _read_analyzer_input_snapshot(snapshot_key)
@@ -2792,6 +2834,7 @@ def _cached_analyzer_inputs() -> dict:
         with _ANALYZER_INPUTS_LOCK:
             hit = _ANALYZER_INPUTS_CACHE.get(key)
             if hit is not None:
+                LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
                 return cast(dict[Any, Any], hit)
         durable_hit = _read_analyzer_input_snapshot(snapshot_key)
         if durable_hit is not None:
@@ -2803,6 +2846,7 @@ def _cached_analyzer_inputs() -> dict:
         with _ANALYZER_INPUTS_LOCK:
             hit = _ANALYZER_INPUTS_CACHE.get(key)
             if hit is not None:
+                LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
                 flight.value = cast(dict[str, Any], hit)
                 return cast(dict[Any, Any], hit)
 
@@ -2813,6 +2857,7 @@ def _cached_analyzer_inputs() -> dict:
             flight.value = durable_hit
             return durable_hit
 
+        LOGGER.info("analyzer input cache miss key=%s; computing", snapshot_key)
         inputs = _compute_analyzer_inputs()
         _write_analyzer_input_snapshot(snapshot_key, inputs)
         with _ANALYZER_INPUTS_LOCK:

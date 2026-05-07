@@ -120,6 +120,26 @@ def write_bytes(
     return str(local_path)
 
 
+def touch_object(local_path: Path, gcs_key: str, *, metadata: dict[str, str] | None = None) -> bool:
+    """Refresh the modified timestamp for a state object when it exists."""
+    if use_gcs_state():
+        blob = _bucket().blob(gcs_key)
+        if not blob.exists():
+            return False
+        blob.reload()
+        merged_metadata = dict(blob.metadata or {})
+        merged_metadata.update(metadata or {"touched_at": datetime.now(UTC).isoformat()})
+        blob.metadata = merged_metadata
+        blob.patch()
+        return True
+
+    if not local_path.exists():
+        return False
+    assert_project_write_allowed(local_path, operation="touch")
+    local_path.touch()
+    return True
+
+
 def upload_file(
     local_path: Path,
     gcs_key: str,

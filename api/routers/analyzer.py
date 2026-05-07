@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any, cast
 
 from fastapi import APIRouter, Body, HTTPException
@@ -23,7 +22,6 @@ from portfolio.portfolio_optimizer.analyzer_scenarios import (
 router = APIRouter()
 
 _ANALYZER_STRATEGY_VERSION = "v4_qualitative_course_of_action"
-_ANALYZER_CACHE_FRESHNESS_SECONDS = 5 * 60
 
 
 class AnalyzerFactorWeights(BaseModel):
@@ -159,11 +157,8 @@ def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
     return normalize_analyzer_scenario(req.scenario.model_dump(exclude_unset=True))
 
 
-def _cache_freshness_bucket(now_s: float | None = None) -> int:
-    return int((time.time() if now_s is None else now_s) // _ANALYZER_CACHE_FRESHNESS_SECONDS)
-
-
 def _cache_key(req: AnalyzerRequest, *, freshness_bucket: int | None = None) -> str:
+    del freshness_bucket
     scenario = json.dumps(_canonical_scenario(req), sort_keys=True, separators=(",", ":"))
     source_token = {}
     try:
@@ -173,8 +168,7 @@ def _cache_key(req: AnalyzerRequest, *, freshness_bucket: int | None = None) -> 
     except Exception:
         source_token = {"status": "unavailable"}
     source = json.dumps(source_token, sort_keys=True, separators=(",", ":"), default=str)
-    bucket = _cache_freshness_bucket() if freshness_bucket is None else freshness_bucket
-    return f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:scenario={scenario}:source={source}:bucket={bucket}"
+    return f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:scenario={scenario}:source={source}"
 
 
 def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:

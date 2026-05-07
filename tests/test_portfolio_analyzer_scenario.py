@@ -77,14 +77,24 @@ def test_analyzer_cache_key_changes_with_scenario_weights():
     assert _cache_key(quality_req) != _cache_key(value_req)
 
 
-def test_analyzer_cache_key_changes_with_freshness_bucket():
+def test_analyzer_cache_key_ignores_freshness_bucket():
     req = AnalyzerRequest()
 
     assert _cache_key(req, freshness_bucket=123) == _cache_key(req, freshness_bucket=123)
-    assert _cache_key(req, freshness_bucket=123) != _cache_key(req, freshness_bucket=124)
+    assert _cache_key(req, freshness_bucket=123) == _cache_key(req, freshness_bucket=124)
 
 
-def test_analyzer_short_cache_reuses_result_within_bucket(monkeypatch):
+def test_analyzer_cache_key_changes_with_source_token(monkeypatch):
+    req = AnalyzerRequest()
+
+    monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: {"portfolio_metadata_hash": "one"})
+    first = _cache_key(req)
+    monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: {"portfolio_metadata_hash": "two"})
+
+    assert first != _cache_key(req)
+
+
+def test_analyzer_short_cache_reuses_result_within_ttl(monkeypatch):
     calls: list[dict] = []
     source_token = {"test_token": uuid4().hex}
 
@@ -100,7 +110,6 @@ def test_analyzer_short_cache_reuses_result_within_bucket(monkeypatch):
         }
 
     analyzer_router.short_cache.clear()
-    monkeypatch.setattr(analyzer_router, "_cache_freshness_bucket", lambda _now_s=None: 321)
     monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: source_token)
     monkeypatch.setattr(analyzer_module, "get_data", fake_get_data)
 
@@ -198,21 +207,28 @@ def _reset_analyzer_input_cache(monkeypatch, tmp_path, *, now: datetime | None =
 
 def test_phase_a_snapshot_reused_across_missions(monkeypatch, tmp_path):
     _reset_analyzer_input_cache(monkeypatch, tmp_path)
-    calls = {"compute": 0}
+    calls = {"compute": 0, "apply": 0}
     source_token = {"tickers": ["AAA"], "portfolio_metadata_hash": uuid4().hex, "qualitative_sources": []}
+    original_apply_scenario = analyzer_module._apply_scenario
 
     def fake_compute():
         calls["compute"] += 1
         return _sample_analyzer_inputs()
 
+    def counting_apply_scenario(inputs, scenario_config):
+        calls["apply"] += 1
+        return original_apply_scenario(inputs, scenario_config)
+
     monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: source_token)
     monkeypatch.setattr(analyzer_module, "_compute_analyzer_inputs", fake_compute)
+    monkeypatch.setattr(analyzer_module, "_apply_scenario", counting_apply_scenario)
 
     balanced = analyzer_module.analyze_portfolio({"preset": "balanced"})
     analyzer_module._ANALYZER_INPUTS_CACHE.clear()
     capital_preservation = analyzer_module.analyze_portfolio({"preset": "capital_preservation"})
 
     assert calls["compute"] == 1
+    assert calls["apply"] == 2
     assert balanced["scenario"]["preset"] == "balanced"
     assert capital_preservation["scenario"]["preset"] == "capital_preservation"
     assert balanced["scenario"] != capital_preservation["scenario"]
@@ -229,6 +245,33 @@ def test_phase_a_snapshot_uses_sliding_freshness_not_fixed_bucket(monkeypatch, t
     os.utime(path, (base.timestamp(), base.timestamp()))
 
     monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=20))
+    assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is not None
+    assert math.isclose(path.stat().st_mtime, (base + timedelta(seconds=20)).timestamp(), abs_tol=0.01)
+
+    monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=301))
+    assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is not None
+
+    os.utime(path, (base.timestamp(), base.timestamp()))
+    assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is None
+
+
+def test_phase_a_snapshot_touch_failure_does_not_break_read(monkeypatch, tmp_path):
+    base = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
+    _reset_analyzer_input_cache(monkeypatch, tmp_path, now=base)
+    snapshot_key = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "touch-failure", "qualitative_sources": []}
+    )
+    analyzer_module._write_analyzer_input_snapshot(snapshot_key, _sample_analyzer_inputs())
+    path = analyzer_module._analyzer_input_snapshot_path(snapshot_key)
+    os.utime(path, (base.timestamp(), base.timestamp()))
+
+    monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=20))
+    monkeypatch.setattr(
+        analyzer_module.os,
+        "utime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("touch failed")),
+    )
+
     assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is not None
 
     monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=301))

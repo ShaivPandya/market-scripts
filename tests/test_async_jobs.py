@@ -302,6 +302,33 @@ def test_agent_chat_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     assert persisted["queue_name"] == "agent"
 
 
+def test_analyzer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_ANALYZER", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+
+    row, disposition = async_job_runner.enqueue_registered_job(
+        "analyzer",
+        {},
+        cache_key="analyzer-warm-worker",
+    )
+
+    assert disposition == "created"
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "queued"
+    assert persisted["queue_name"] == "analyzer"
+
+
 def test_sizer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job
@@ -431,6 +458,31 @@ def test_generic_worker_loop_claims_and_completes_sizer_job(monkeypatch):
     assert persisted is not None
     assert persisted["status"] == "completed"
     assert persisted["result_json"] == {"ok": "AAA"}
+
+
+def test_generic_worker_loop_claims_and_completes_analyzer_job(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+    from api.job_worker_loop import run_once
+    from api.routers import analyzer
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_ANALYZER", "warm_worker")
+    monkeypatch.setattr(analyzer, "_compute_analyzer_result", lambda req: {"ok": req.scenario is None})
+
+    row, _disposition = async_job_runner.enqueue_registered_job(
+        "analyzer",
+        {},
+        cache_key="analyzer-worker-loop",
+    )
+
+    assert run_once(job_type="analyzer", queue_name="analyzer") is True
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "completed"
+    assert persisted["result_json"] == {"ok": True}
 
 
 def test_generic_worker_loop_claims_and_completes_ontology_job(monkeypatch):

@@ -210,6 +210,65 @@ class TestInvestmentIdeas:
         assert core_db.list_investment_ideas() == []
         assert core_db.list_investment_ideas(include_archived=True)[0]["ticker"] == "AAPL"
 
+    def test_delete_removes_idea_history_and_recomputes_comparison_rankings(self):
+        apple = core_db.create_investment_idea("AAPL", company_name="Apple")
+        microsoft = core_db.create_investment_idea("MSFT", company_name="Microsoft")
+        apple_eval = core_db.create_idea_evaluation(
+            apple["id"],
+            {
+                "action": "watch",
+                "evaluated_at": "2026-05-05T12:00:00+00:00",
+                "rationale": "Watch Apple.",
+            },
+        )
+        microsoft_eval = core_db.create_idea_evaluation(
+            microsoft["id"],
+            {
+                "action": "buy",
+                "evaluated_at": "2026-05-05T12:05:00+00:00",
+                "rationale": "Buy Microsoft.",
+            },
+        )
+        run = core_db.create_idea_comparison_run(
+            run_id="cmp-delete-test",
+            summary="Rank two ideas.",
+            rankings=[
+                {
+                    "idea_id": apple["id"],
+                    "evaluation_id": apple_eval["id"],
+                    "ticker": "AAPL",
+                    "rank": 1,
+                    "action": "watch",
+                    "score": 61,
+                    "confidence": 0.5,
+                    "confidence_level": "medium",
+                    "rationale": "Less attractive.",
+                },
+                {
+                    "idea_id": microsoft["id"],
+                    "evaluation_id": microsoft_eval["id"],
+                    "ticker": "MSFT",
+                    "rank": 2,
+                    "action": "buy",
+                    "score": 83,
+                    "confidence": 0.8,
+                    "confidence_level": "high",
+                    "rationale": "More attractive.",
+                },
+            ],
+        )
+        assert run["ranking_count"] == 2
+
+        deleted = core_db.delete_investment_idea(apple["id"])
+
+        assert deleted and deleted["ticker"] == "AAPL"
+        assert core_db.get_investment_idea(apple["id"]) is None
+        assert core_db.get_idea_evaluations(apple["id"]) == []
+        updated_run = core_db.get_idea_comparison_run("cmp-delete-test")
+        assert updated_run is not None
+        assert updated_run["ranking_count"] == 1
+        assert [(row["ticker"], row["rank"]) for row in updated_run["rankings"]] == [("MSFT", 1)]
+
     def test_evaluation_persistence_and_acceptance_links_recommendation(self):
         idea = core_db.create_investment_idea("GOOG", company_name="Alphabet", user_notes="Review search and cloud.")
         result = {

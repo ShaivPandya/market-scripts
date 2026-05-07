@@ -5,7 +5,7 @@
 #
 # Tunables:
 #   ASYNC_JOB_RUNNER_JOB=talisman-async-job
-#   ASYNC_JOB_CPU=2  ASYNC_JOB_MEMORY=2Gi
+#   ASYNC_JOB_CPU=1  ASYNC_JOB_MEMORY=1Gi
 #   ASYNC_JOB_TIMEOUT=3600  ASYNC_JOB_MAX_RETRIES=0
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -27,7 +27,7 @@ ASYNC_JOB_ENV_VARS=(
   "ASYNC_JOB_BACKEND=cloud_run_jobs"
   "ASYNC_CLOUD_RUN_JOB=${ASYNC_JOB_RUNNER_JOB}"
   "ASYNC_JOB_COMPLETED_TTL_SECONDS=86400"
-  "ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=86400"
+  "ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"
   "ASYNC_JOB_FAILED_TTL_SECONDS=604800"
   "POSTGRES_POOL_MAX_SIZE=${POSTGRES_POOL_MAX_SIZE:-2}"
   "ASYNC_JOB_SUCCESS_READ_AUDIT_ENABLED=${ASYNC_JOB_SUCCESS_READ_AUDIT_ENABLED:-false}"
@@ -58,7 +58,7 @@ gcloud run jobs deploy "${ASYNC_JOB_RUNNER_JOB}" \
   --args=-m,api.async_job_runner,run \
   --set-env-vars="$(join_kv "${ASYNC_JOB_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${ASYNC_JOB_SECRETS[@]}")" \
-  --cpu="${ASYNC_JOB_CPU:-2}" \
-  --memory="${ASYNC_JOB_MEMORY:-2Gi}" \
+  --cpu="${ASYNC_JOB_CPU:-1}" \
+  --memory="${ASYNC_JOB_MEMORY:-1Gi}" \
   --max-retries="${ASYNC_JOB_MAX_RETRIES:-0}" \
   --task-timeout="${ASYNC_JOB_TIMEOUT:-3600}"

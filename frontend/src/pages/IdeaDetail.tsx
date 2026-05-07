@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Archive, FileUp, Play, Save } from "lucide-react"
+import { FileUp, Play, Save, Trash2 } from "lucide-react"
 
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ActionPill, EvaluationPanel } from "@/components/idea/EvaluationPanel"
@@ -11,7 +11,7 @@ import { SelectInput, TextInput } from "@/components/shared/FormControls"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import {
   acceptIdeaEvaluation,
-  archiveIdea,
+  deleteIdea,
   fetchIdea,
   fetchIdeaEvaluationJob,
   rejectIdea,
@@ -44,7 +44,6 @@ const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
   { value: "ready_for_review", label: "Ready" },
   { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
-  { value: "archived", label: "Archived" },
 ]
 
 const STATUS_TONE: Record<string, StatusTone> = {
@@ -199,8 +198,8 @@ export function IdeaDetail() {
     },
   })
 
-  const archiveMutation = useMutation({
-    mutationFn: (ideaId: string) => archiveIdea(ideaId),
+  const deleteMutation = useMutation({
+    mutationFn: (ideaId: string) => deleteIdea(ideaId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       navigate("/ideas")
@@ -319,12 +318,13 @@ export function IdeaDetail() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => archiveMutation.mutate(selectedIdea.id)}
-                  disabled={archiveMutation.isPending}
+                  onClick={() => deleteMutation.mutate(selectedIdea.id)}
+                  disabled={deleteMutation.isPending}
                   className="theme-button-base theme-button-secondary min-h-10 px-3 text-sm disabled:pointer-events-none disabled:opacity-50"
-                  aria-label="Archive idea"
+                  aria-label="Delete idea"
+                  title="Delete idea"
                 >
-                  <Archive size={16} aria-hidden="true" />
+                  <Trash2 size={16} aria-hidden="true" />
                 </button>
               </div>
             </div>

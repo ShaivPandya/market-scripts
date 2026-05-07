@@ -32,6 +32,13 @@ CRITICAL_MISSING_SEVERITIES = {"critical", "block"}
 RECOMMENDATION_STATUSES = {"clear", "review_required", "blocked", "error"}
 SOURCE_QUALITY_VALUES = {"ok", "degraded", "stale", "failed"}
 OPTIONAL_JSON_BODY = Body(default=None)
+IDEA_EVALUATION_OWNED_CHILD_RELATIONS = {
+    "research_object_has_factor_score",
+    "research_object_has_missing_information",
+    "research_object_supported_by_evidence",
+    "research_object_disconfirmed_by_evidence",
+}
+IDEA_EVIDENCE_OWNED_CHILD_RELATIONS = {"evidence_has_citation", "evidence_cites_citation"}
 
 
 class IdeaCreateRequest(BaseModel):
@@ -156,6 +163,100 @@ def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> 
     elif object_type == "IdeaComparisonRun":
         _write_idea_comparison_graph(service, written, now=now)
     return written
+
+
+def _object_uid_from_row(row: dict[str, Any]) -> str:
+    props = _object_props(row) or {}
+    return str(row.get("object_uid") or props.get("object_uid") or props.get("id") or "").strip()
+
+
+def _relation_uid_from_row(row: dict[str, Any]) -> str:
+    meta = row.get("_meta") if isinstance(row.get("_meta"), dict) else {}
+    temporal = meta.get("temporal") if isinstance(meta.get("temporal"), dict) else {}
+    return str(row.get("relation_uid") or temporal.get("relation_uid") or "").strip()
+
+
+def _expire_current_object_and_relations(service: OntologyObjectService, object_uid: str, *, now: str) -> int:
+    uid = str(object_uid or "").strip()
+    if not uid:
+        return 0
+    relation_uids: set[str] = set()
+    for relation in [
+        *service.query_relations(source_object_uid=uid, limit=1000),
+        *service.query_relations(target_object_uid=uid, limit=1000),
+    ]:
+        relation_uid = _relation_uid_from_row(relation)
+        if relation_uid:
+            relation_uids.add(relation_uid)
+    expired = service.expire_object(uid, tx_to=now)
+    for relation_uid in relation_uids:
+        service.expire_relation(relation_uid, tx_to=now)
+    return expired
+
+
+def _delete_ontology_runtime_idea(idea: dict[str, Any]) -> int:
+    idea_uid = str(idea.get("object_uid") or idea.get("id") or "").strip()
+    if not idea_uid:
+        return 0
+    service = OntologyObjectService()
+    now = _now()
+    evaluation_uids = {
+        uid
+        for row in service.query_objects("IdeaEvaluation", filters={"idea_id": idea_uid}, limit=1000)
+        if (uid := _object_uid_from_row(row))
+    }
+    ranking_uids = {
+        uid
+        for row in service.query_objects("IdeaComparisonRanking", filters={"idea_id": idea_uid}, limit=1000)
+        if (uid := _object_uid_from_row(row))
+    }
+    for evaluation_uid in evaluation_uids:
+        ranking_uids.update(
+            uid
+            for row in service.query_objects(
+                "IdeaComparisonRanking",
+                filters={"evaluation_id": evaluation_uid},
+                limit=1000,
+            )
+            if (uid := _object_uid_from_row(row))
+        )
+
+    owned_child_uids: set[str] = set()
+    for evaluation_uid in evaluation_uids:
+        for relation in service.query_relations(source_object_uid=evaluation_uid, limit=1000):
+            relation_type = str(relation.get("relation_type") or "")
+            if relation_type not in IDEA_EVALUATION_OWNED_CHILD_RELATIONS:
+                continue
+            child_uid = str(relation.get("target_object_uid") or "").strip()
+            if not child_uid:
+                continue
+            owned_child_uids.add(child_uid)
+            if relation_type in {"research_object_supported_by_evidence", "research_object_disconfirmed_by_evidence"}:
+                for child_relation in service.query_relations(source_object_uid=child_uid, limit=1000):
+                    child_relation_type = str(child_relation.get("relation_type") or "")
+                    citation_uid = str(child_relation.get("target_object_uid") or "").strip()
+                    if child_relation_type in IDEA_EVIDENCE_OWNED_CHILD_RELATIONS and citation_uid:
+                        owned_child_uids.add(citation_uid)
+
+    expired = 0
+    for object_uid in sorted(owned_child_uids):
+        expired += _expire_current_object_and_relations(service, object_uid, now=now)
+    for object_uid in sorted(ranking_uids):
+        expired += _expire_current_object_and_relations(service, object_uid, now=now)
+    for object_uid in sorted(evaluation_uids):
+        expired += _expire_current_object_and_relations(service, object_uid, now=now)
+    expired += _expire_current_object_and_relations(service, idea_uid, now=now)
+    return expired
+
+
+def _delete_runtime_idea(idea_id: str, idea: dict[str, Any]) -> int:
+    if ontology_primary_writes_enabled():
+        return _delete_ontology_runtime_idea(idea)
+    from portfolio import core_db
+
+    numeric_id = _required_legacy_numeric_id(idea.get("id") or idea_id)
+    deleted = core_db.delete_investment_idea(numeric_id)
+    return 1 if deleted else 0
 
 
 def _write_relation(
@@ -1462,12 +1563,13 @@ def delete_idea(idea_id: str):
     idea = _get_idea(idea_id)
     if not idea:
         raise NotFoundError("Investment idea", str(idea_id))
-    idea.update({"status": "archived", "archived_at": _now()})
-    idea.pop("_meta", None)
-    idea.pop("id", None)
-    idea.pop("object_uid", None)
-    idea = _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), idea)
-    return {"status": "archived", "idea": idea}
+    deleted_count = _delete_runtime_idea(idea_id, idea)
+    return {
+        "status": "deleted",
+        "deleted": True,
+        "idea_id": str(idea.get("id") or idea.get("object_uid") or idea_id),
+        "deleted_count": deleted_count,
+    }
 
 
 @router.post("/ideas/{idea_id}/evaluate/async")

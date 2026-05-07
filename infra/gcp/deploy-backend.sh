@@ -156,6 +156,8 @@ if [[ "${PARALLEL_JOB_DEPLOYS}" == "1" ]]; then
     "${_repo_root}/infra/gcp/deploy-async-job.sh"
   start_parallel_step "agent worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
+  start_parallel_step "analyzer worker pool deploy" \
+    "${_repo_root}/infra/gcp/deploy-analyzer-worker.sh"
   start_parallel_step "sizer worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
   start_parallel_step "ontology worker pool deploy" \
@@ -169,6 +171,9 @@ else
 
   log "Deploying agent worker pool"
   "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
+
+  log "Deploying analyzer worker pool"
+  "${_repo_root}/infra/gcp/deploy-analyzer-worker.sh"
 
   log "Deploying sizer worker pool"
   "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"

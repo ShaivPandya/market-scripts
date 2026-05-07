@@ -4269,6 +4269,61 @@ def archive_investment_idea(idea_id: int) -> dict:
     return update_investment_idea(idea_id, status="archived")
 
 
+def delete_investment_idea(idea_id: int) -> dict | None:
+    """Hard-delete an investment idea and idea-owned evaluation history."""
+    _guard_legacy_domain_write("core_db.delete_investment_idea")
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (int(idea_id),)).fetchone()
+        if not row:
+            return None
+        deleted = _parse_investment_idea_json_fields(_require_row_dict(row))
+
+        evaluation_rows = conn.execute("SELECT id FROM idea_evaluations WHERE idea_id = ?", (int(idea_id),)).fetchall()
+        evaluation_ids = [int(item["id"]) for item in evaluation_rows]
+        affected_run_ids: set[str] = {
+            str(item["run_id"])
+            for item in conn.execute(
+                "SELECT DISTINCT run_id FROM idea_comparison_rankings WHERE idea_id = ?",
+                (int(idea_id),),
+            ).fetchall()
+            if item["run_id"]
+        }
+        if evaluation_ids:
+            placeholders = ", ".join("?" for _ in evaluation_ids)
+            affected_run_ids.update(
+                str(item["run_id"])
+                for item in conn.execute(
+                    f"SELECT DISTINCT run_id FROM idea_comparison_rankings WHERE evaluation_id IN ({placeholders})",
+                    tuple(evaluation_ids),
+                ).fetchall()
+                if item["run_id"]
+            )
+            conn.execute(
+                f"DELETE FROM idea_comparison_rankings WHERE evaluation_id IN ({placeholders})",
+                tuple(evaluation_ids),
+            )
+
+        conn.execute("DELETE FROM idea_comparison_rankings WHERE idea_id = ?", (int(idea_id),))
+        conn.execute("DELETE FROM idea_evaluations WHERE idea_id = ?", (int(idea_id),))
+        conn.execute("DELETE FROM investment_ideas WHERE id = ?", (int(idea_id),))
+
+        for run_id in affected_run_ids:
+            ranking_rows = conn.execute(
+                "SELECT id FROM idea_comparison_rankings WHERE run_id = ? ORDER BY rank ASC, id ASC",
+                (run_id,),
+            ).fetchall()
+            for rank, ranking in enumerate(ranking_rows, start=1):
+                conn.execute("UPDATE idea_comparison_rankings SET rank = ? WHERE id = ?", (rank, int(ranking["id"])))
+            conn.execute(
+                "UPDATE idea_comparison_runs SET ranking_count = ? WHERE run_id = ?",
+                (len(ranking_rows), run_id),
+            )
+
+        conn.commit()
+    return deleted
+
+
 def get_investment_idea(idea_id: int) -> dict | None:
     conn = _get_conn()
     with _lock:

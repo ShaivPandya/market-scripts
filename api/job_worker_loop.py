@@ -25,6 +25,10 @@ _PRELOAD_MODULES: dict[str, tuple[str, ...]] = {
         "api.agent_chat_worker",
         "api.routers.agent",
     ),
+    "analyzer": (
+        "portfolio.portfolio_optimizer.portfolio_analyzer",
+        "api.routers.analyzer",
+    ),
     "sizer": (
         "portfolio.portfolio_optimizer.portfolio_sizer",
         "api.routers.sizer",
