@@ -469,6 +469,13 @@ def test_price_momentum_analyze_ticker_returns_raw_roc63():
     assert result["roc63"] == pytest.approx(expected)
 
 
+def test_price_momentum_default_uses_runtime_positions_reader():
+    from ontology import runtime_read_service
+    from portfolio.momentum.price_momentum import momentum
+
+    assert momentum._get_positions_df is runtime_read_service.get_positions_df
+
+
 def test_price_momentum_router_resolves_benchmark_and_custom_tickers():
     from api.routers import price_momentum as router
 
@@ -559,6 +566,34 @@ def test_existing_momentum_endpoint_hides_raw_roc63(monkeypatch):
     result = router.get_momentum()
 
     assert result["results"] == [{"ticker": "AAA", "avg20_roc63": 7.0}]
+
+
+def test_existing_momentum_endpoint_cache_tracks_position_token(monkeypatch):
+    from api import cache
+    from api.routers import momentum as router
+    from portfolio.momentum.price_momentum import momentum
+
+    cache.invalidate_all()
+    position_records = {"rows": [{"ticker": "AAA", "direction": "long"}]}
+    calls = {"n": 0}
+
+    monkeypatch.setattr(router, "_current_position_records", lambda: position_records["rows"])
+
+    def fake_get_data():
+        calls["n"] += 1
+        return {"results": [{"ticker": f"T{calls['n']}", "avg20_roc63": 1.0}]}
+
+    monkeypatch.setattr(momentum, "get_data", fake_get_data)
+
+    first = router.get_momentum()
+    second = router.get_momentum()
+    position_records["rows"] = [{"ticker": "BBB", "direction": "short"}]
+    third = router.get_momentum()
+
+    assert first == second
+    assert first["results"][0]["ticker"] == "T1"
+    assert third["results"][0]["ticker"] == "T2"
+    assert calls["n"] == 2
 
 
 def test_quarterly_financials_only_requested_for_growth_filters(monkeypatch):
