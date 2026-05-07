@@ -330,15 +330,31 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
 def test_parse_management_quality_filters_placeholders_and_splits_responses():
     parsed = management_quality_router.parse_management_quality_markdown(
         "# NVDA Management Quality\n\n"
+        "## Executive Summary\n"
+        "- **Overall Rating**: **Strong**\n"
+        "- **Owner Mindset**: **Strong** -- Management used buybacks well.\n"
+        "- **Business Value Understanding**: **Mixed** — Some gaps remain.\n\n"
+        "## Management Scorecard\n"
+        "| Question | Rating | Evidence |\n"
+        "|----------|--------|----------|\n"
+        "| Do managers think and act like owners? | **Strong** | Buybacks. |\n\n"
         "## Most Impressive Accomplishments\n"
         "- **AI demand ramp (2024)**: Delivered accelerated revenue growth.\n"
         "- --\n\n"
         "## Biggest Setbacks and Responses\n"
-        "- **Gaming correction (2023)**: Demand fell below guidance. **Response**: Handled well - Reset guidance and reduced channel inventory.\n"
+        "- **Gaming correction (2023)**: Demand fell below guidance. **Response**: **Handled well** -- Reset guidance and reduced channel inventory.\n"
         "- --\n"
     )
 
     assert parsed is not None
+    assert parsed["summary"] == {
+        "overall_rating": "Strong",
+        "owner_mindset": {"rating": "Strong", "text": "Management used buybacks well."},
+        "business_value_understanding": {"rating": "Mixed", "text": "Some gaps remain."},
+    }
+    assert parsed["scorecard"] == [
+        {"question": "Do managers think and act like owners?", "rating": "Strong", "evidence": "Buybacks."}
+    ]
     assert parsed["accomplishments"] == [
         {
             "title": "AI demand ramp (2024)",

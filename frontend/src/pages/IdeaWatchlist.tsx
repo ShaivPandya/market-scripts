@@ -237,7 +237,7 @@ function MissingRows({ rows }: { rows: IdeaMissingInformation[] }) {
 }
 
 function ManagementRatingBadge({ value }: { value?: string | null }) {
-  const rating = String(value || "Insufficient evidence")
+  const rating = splitManagementRatingText(value).rating || cleanManagementRatingText(value) || "Insufficient evidence"
   const normalized = rating.toLowerCase()
   const className = normalized.includes("strong")
     ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
@@ -248,6 +248,37 @@ function ManagementRatingBadge({ value }: { value?: string | null }) {
         : "border-app bg-card-muted text-muted"
 
   return <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", className)}>{rating}</span>
+}
+
+function cleanManagementRatingText(value?: string | null) {
+  return String(value || "").replace(/[*_`~]+/g, "").trim()
+}
+
+function canonicalManagementRating(value?: string | null) {
+  const normalized = cleanManagementRatingText(value).toLowerCase().replace(/\s+/g, " ")
+  if (normalized === "strong") return "Strong"
+  if (normalized === "mixed") return "Mixed"
+  if (normalized === "weak") return "Weak"
+  if (normalized === "insufficient evidence") return "Insufficient evidence"
+  return null
+}
+
+function splitManagementRatingText(value?: string | null) {
+  const raw = String(value || "").trim()
+  const match = raw.match(/^\s*(?:[*_`~]+)?\s*(Strong|Mixed|Weak|Insufficient evidence)\b\s*(?:[*_`~]+)?\s*(?:(?:[:\u2014\u2013-]+)\s*(.+)|\s+(.+))?$/i)
+  const rating = canonicalManagementRating(match?.[1])
+  return {
+    rating,
+    text: rating ? (match?.[2] || match?.[3] || "").trim() : raw,
+  }
+}
+
+function resolveManagementSummaryQuestion(item?: { rating?: string | null; text?: string | null } | null) {
+  const ratingValue = splitManagementRatingText(item?.rating)
+  const textValue = splitManagementRatingText(item?.text)
+  const rating = ratingValue.rating || textValue.rating || item?.rating || null
+  const text = textValue.rating ? textValue.text : item?.text
+  return { rating, text }
 }
 
 function ManagementQualityPreview({ parsed, content }: { parsed?: ParsedManagementQuality | null; content: string }) {
@@ -272,13 +303,14 @@ function ManagementQualityPreview({ parsed, content }: { parsed?: ParsedManageme
             ["Follow-through", summary.follow_through],
           ].map(([label, item]) => {
             const row = item as { rating?: string | null; text?: string | null } | undefined
+            const resolved = resolveManagementSummaryQuestion(row)
             return (
               <div key={String(label)} className="border-l border-app pl-3">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <h4 className="section-title text-xs">{String(label)}</h4>
-                  <ManagementRatingBadge value={row?.rating} />
+                  <ManagementRatingBadge value={resolved.rating} />
                 </div>
-                {row?.text && <p className="text-sm leading-6 text-muted">{row.text}</p>}
+                {resolved.text && <p className="text-sm leading-6 text-muted">{resolved.text}</p>}
               </div>
             )
           })}

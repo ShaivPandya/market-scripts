@@ -80,16 +80,16 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
     metric_scores: {
       quality: 20,
       price_momentum: 30,
-      revenue: 13,
-      eps: 8,
-      price_sales: 1,
-      price_operating_income: 2,
-      price_fcf: 4,
-      price_earnings: 1,
-      price_book: 1,
-      business_quality_qualitative: 8,
-      industry_quality: 6,
-      management_quality: 6,
+      revenue: 10,
+      eps: 10,
+      price_sales: 10,
+      price_operating_income: 10,
+      price_fcf: 10,
+      price_earnings: 10,
+      price_book: 10,
+      business_quality_qualitative: 10,
+      industry_quality: 10,
+      management_quality: 10,
     },
     brakes: { drawdown_sensitivity: 0, contrarian_penalty: 0, short_squeeze_brake: 0 },
   },
@@ -97,73 +97,73 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
     preset: "capital_preservation",
     metric_scores: {
       quality: 30,
-      price_momentum: 15,
-      revenue: 8,
-      eps: 5,
-      price_sales: 2,
-      price_operating_income: 5,
-      price_fcf: 8,
-      price_earnings: 3,
-      price_book: 2,
-      business_quality_qualitative: 8,
-      industry_quality: 6,
-      management_quality: 8,
+      price_momentum: 20,
+      revenue: 10,
+      eps: 10,
+      price_sales: 10,
+      price_operating_income: 10,
+      price_fcf: 10,
+      price_earnings: 10,
+      price_book: 10,
+      business_quality_qualitative: 10,
+      industry_quality: 10,
+      management_quality: 10,
     },
     brakes: { drawdown_sensitivity: 70, contrarian_penalty: 60, short_squeeze_brake: 60 },
   },
   momentum_exploitation: {
     preset: "momentum_exploitation",
     metric_scores: {
-      quality: 15,
+      quality: 20,
       price_momentum: 50,
-      revenue: 13,
-      eps: 9,
+      revenue: 10,
+      eps: 10,
       price_sales: 0,
       price_operating_income: 0,
       price_fcf: 0,
       price_earnings: 0,
       price_book: 0,
-      business_quality_qualitative: 5,
-      industry_quality: 4,
-      management_quality: 4,
+      business_quality_qualitative: 10,
+      industry_quality: 10,
+      management_quality: 10,
     },
-    brakes: { drawdown_sensitivity: 10, contrarian_penalty: 10, short_squeeze_brake: 25 },
+    brakes: { drawdown_sensitivity: 10, contrarian_penalty: 10, short_squeeze_brake: 30 },
   },
   value_dislocation: {
     preset: "value_dislocation",
     metric_scores: {
-      quality: 18,
-      price_momentum: 8,
-      revenue: 8,
-      eps: 4,
-      price_sales: 8,
+      quality: 20,
+      price_momentum: 10,
+      revenue: 10,
+      eps: 10,
+      price_sales: 10,
       price_operating_income: 10,
-      price_fcf: 17,
+      price_fcf: 20,
       price_earnings: 10,
-      price_book: 5,
-      business_quality_qualitative: 5,
-      industry_quality: 4,
-      management_quality: 3,
+      price_book: 10,
+      business_quality_qualitative: 10,
+      industry_quality: 10,
+      management_quality: 10,
     },
-    brakes: { drawdown_sensitivity: 30, contrarian_penalty: 30, short_squeeze_brake: 35 },
+    brakes: { drawdown_sensitivity: 30, contrarian_penalty: 30, short_squeeze_brake: 40 },
   },
   short_defense: {
     preset: "short_defense",
     metric_scores: {
       quality: 20,
       price_momentum: 40,
-      revenue: 8,
-      eps: 4,
+      revenue: 10,
+      eps: 10,
       price_sales: 0,
-      price_operating_income: 2,
-      price_fcf: 5,
+      price_operating_income: 10,
+      price_fcf: 10,
       price_earnings: 0,
-      price_book: 3,
-      business_quality_qualitative: 6,
-      industry_quality: 5,
-      management_quality: 7,
+      price_book: 10,
+      business_quality_qualitative: 10,
+      industry_quality: 10,
+      management_quality: 10,
     },
-    brakes: { drawdown_sensitivity: 35, contrarian_penalty: 25, short_squeeze_brake: 80 },
+    brakes: { drawdown_sensitivity: 40, contrarian_penalty: 30, short_squeeze_brake: 80 },
   },
 }
 
@@ -323,12 +323,18 @@ function clampSliderScore(value: number) {
   return clampScore(Math.round(value / SLIDER_STEP) * SLIDER_STEP)
 }
 
+function clampDefaultScore(value: number) {
+  if (!Number.isFinite(value)) return SCORE_MIN
+  if (value > SCORE_MIN && value < SLIDER_STEP) return SLIDER_STEP
+  return clampSliderScore(value)
+}
+
 function normalizeScoreMap<T extends Record<string, number>>(values: Partial<T> | undefined, defaults: T): T {
   const raw = (values ?? {}) as Partial<Record<keyof T, number>>
   return Object.fromEntries(
     Object.entries(defaults).map(([key, fallback]) => {
       const value = Number(raw[key as keyof T] ?? fallback)
-      return [key, clampScore(value)]
+      return [key, clampDefaultScore(value)]
     }),
   ) as T
 }
@@ -339,7 +345,7 @@ function normalizeBrakeScores(values: Partial<BrakeScores> | undefined, defaults
     Object.entries(defaults).map(([key, fallback]) => {
       const value = Number(raw[key as keyof BrakeScores] ?? fallback)
       const scoreValue = value > 0 && value <= 1 ? value * SCORE_MAX : value
-      return [key, clampScore(scoreValue)]
+      return [key, clampDefaultScore(scoreValue)]
     }),
   ) as BrakeScores
 }

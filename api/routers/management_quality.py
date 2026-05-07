@@ -186,14 +186,25 @@ def _call_llm_management_quality_markdown(*, ticker: str, markdown: str) -> str:
 
 
 def _split_sections(content: str) -> dict[str, str]:
+    expected_sections = {
+        "executive summary",
+        "management scorecard",
+        "most impressive accomplishments",
+        "biggest setbacks and responses",
+        "chronology / detail",
+        "chronology",
+        "evidence notes",
+    }
     sections: dict[str, str] = {}
     current_key: str | None = None
     current_lines: list[str] = []
     for line in content.splitlines():
-        if line.startswith("## "):
+        heading = re.match(r"^\s*#{2,6}\s+(.+?)\s*$", line)
+        heading_key = heading.group(1).strip().lower() if heading else None
+        if heading_key in expected_sections:
             if current_key is not None:
                 sections[current_key] = "\n".join(current_lines).strip()
-            current_key = line.lstrip("#").strip().lower()
+            current_key = heading_key
             current_lines = []
         elif current_key is not None:
             current_lines.append(line)
@@ -202,13 +213,36 @@ def _split_sections(content: str) -> dict[str, str]:
     return sections
 
 
+_SUMMARY_RATINGS = {
+    "strong": "Strong",
+    "mixed": "Mixed",
+    "weak": "Weak",
+    "insufficient evidence": "Insufficient evidence",
+}
+
+
+def _strip_inline_emphasis(raw: str) -> str:
+    return re.sub(r"[*_`~]+", "", raw).strip()
+
+
+def _canonical_summary_rating(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    key = " ".join(_strip_inline_emphasis(str(raw)).lower().split())
+    return _SUMMARY_RATINGS.get(key)
+
+
 def _split_rating_text(raw: str) -> dict[str, str | None]:
     text = raw.strip()
-    match = re.match(r"^(Strong|Mixed|Weak|Insufficient evidence)\s*(?:[—–-]\s*(.+))?$", text, flags=re.I)
+    match = re.match(
+        r"^\s*(?:[*_`~]+)?\s*(Strong|Mixed|Weak|Insufficient evidence)\b\s*(?:[*_`~]+)?\s*(?:(?:[:—–-]+)\s*(.+)|\s+(.+))?$",
+        text,
+        flags=re.I,
+    )
     if not match:
         return {"rating": None, "text": text}
-    rating = match.group(1).strip()
-    return {"rating": rating[0].upper() + rating[1:].lower(), "text": (match.group(2) or "").strip() or None}
+    rating = _canonical_summary_rating(match.group(1))
+    return {"rating": rating, "text": (match.group(2) or match.group(3) or "").strip() or None}
 
 
 def _parse_summary(text: str) -> dict | None:
@@ -220,14 +254,15 @@ def _parse_summary(text: str) -> dict | None:
         "follow-through": "follow_through",
     }
     for line in text.splitlines():
-        match = re.match(r"^\s*-\s*\*\*(.+?)\*\*:\s*(.+)", line)
+        match = re.match(r"^\s*[-*]\s*(?:\*\*)?\s*(.+?)\s*(?:\*\*)?\s*:\s*(.+)", line)
         if not match:
             continue
         label = match.group(1).strip()
         value = match.group(2).strip()
         label_key = label.lower()
         if label_key == "overall rating":
-            summary["overall_rating"] = value
+            split = _split_rating_text(value)
+            summary["overall_rating"] = split["rating"] or _strip_inline_emphasis(value)
         elif label_key == "bottom line":
             summary["bottom_line"] = value
         elif label_key in question_map:
@@ -245,7 +280,8 @@ def _parse_scorecard(text: str) -> list[dict] | None:
             continue
         if cells[0].lower() == "question" or re.match(r"^[-:]+$", cells[0]):
             continue
-        rows.append({"question": cells[0], "rating": cells[1], "evidence": cells[2]})
+        split = _split_rating_text(cells[1])
+        rows.append({"question": cells[0], "rating": split["rating"] or cells[1], "evidence": cells[2]})
     return rows if rows else None
 
 
@@ -268,7 +304,7 @@ def _parse_setbacks(text: str) -> list[dict] | None:
     for row in rows:
         body = str(row.get("text") or "")
         response = re.search(
-            r"\*\*Response\*\*:\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[—–-]\s*(.+))?",
+            r"(?:\*\*)?Response(?:\*\*)?:\s*(?:[*_`~]+)?\s*(Handled well|Mixed|Handled poorly|Too early)\s*(?:[*_`~]+)?(?:\s*[—–-]+\s*(.+))?",
             body,
             flags=re.I,
         )
