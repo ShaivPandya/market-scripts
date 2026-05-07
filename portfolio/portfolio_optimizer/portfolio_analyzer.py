@@ -136,12 +136,15 @@ MAX SCALED PORTFOLIO:
 
 import argparse
 import hashlib
+import io
 import json
 import logging
+import os
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
 
@@ -155,6 +158,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from api.serializers import serialize_value
 from utils.retry import yf_download, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
@@ -424,6 +428,73 @@ def _clip_text(content: str | None, limit: int = 12000) -> str:
     return text[:limit] + "\n\n[truncated]"
 
 
+def _hash_json(value: Any) -> str:
+    blob = json.dumps(serialize_value(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
+
+
+_PORTFOLIO_SOURCE_FIELDS = (
+    "ticker",
+    "asset",
+    "direction",
+    "contrarian",
+    "instrument_type",
+    "price_symbol",
+    "quantity",
+    "shares",
+    "contract_multiplier",
+    "currency",
+    "base_currency",
+    "country",
+    "exchange",
+)
+
+
+def _source_scalar_text(value: Any) -> str:
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _normalize_position_source_records(raw: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return stable position metadata records that affect analyzer Phase A."""
+    if raw.empty:
+        return []
+
+    df = raw.copy()
+    if "ticker" not in df.columns:
+        df = df.reset_index().rename(columns={df.index.name or "index": "ticker"})
+    df["ticker"] = df["ticker"].fillna("").astype(str).str.strip().str.upper()
+    df = df[df["ticker"].ne("")]
+    if df.empty:
+        return []
+
+    prepared = prepare_instrument_metadata(df.set_index("ticker", drop=True))
+    prepared = prepared.sort_index()
+
+    records: list[dict[str, Any]] = []
+    true_values = {"1", "true", "t", "yes", "y"}
+    for ticker, row in prepared.iterrows():
+        record: dict[str, Any] = {"ticker": str(ticker).strip().upper()}
+        for field in _PORTFOLIO_SOURCE_FIELDS:
+            if field == "ticker":
+                continue
+            value = row.get(field, None)
+            if field == "contrarian":
+                record[field] = _source_scalar_text(value).lower() in true_values
+            elif field in {"asset", "direction", "instrument_type"}:
+                record[field] = _source_scalar_text(value).lower()
+            elif field in {"price_symbol", "currency", "base_currency", "country", "exchange"}:
+                record[field] = _source_scalar_text(value).upper()
+            else:
+                record[field] = serialize_value(value)
+        records.append(record)
+    return records
+
+
 def _read_overview_markdown(ticker: str) -> str | None:
     try:
         from api.state_storage import exists_text, read_text
@@ -468,11 +539,11 @@ def _read_management_quality_markdown(ticker: str) -> str | None:
 def analyzer_source_cache_token() -> dict[str, Any]:
     try:
         meta = _get_positions_df()
-        tickers = sorted(
-            str(ticker).strip().upper() for ticker in meta["ticker"].dropna().tolist() if str(ticker).strip()
-        )
+        position_records = _normalize_position_source_records(meta)
+        tickers = [str(record["ticker"]) for record in position_records]
     except Exception:
         tickers = []
+        position_records = []
 
     sources: list[dict[str, Any]] = []
     for ticker in tickers:
@@ -485,7 +556,11 @@ def analyzer_source_cache_token() -> dict[str, Any]:
                 "management_quality_hash": _sha256_text(management),
             }
         )
-    return {"tickers": tickers, "qualitative_sources": sources}
+    return {
+        "tickers": tickers,
+        "portfolio_metadata_hash": _hash_json(position_records),
+        "qualitative_sources": sources,
+    }
 
 
 def _empty_qualitative_row(
@@ -2289,8 +2364,278 @@ def overlay_anchor_long_equity_signals(
 
 
 _ANALYZER_INPUTS_VERSION = "v1"
+_ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION = "v1"
+_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS = 300
+_ANALYZER_INPUT_SNAPSHOT_RETENTION_SECONDS = 24 * 60 * 60
 _ANALYZER_INPUTS_CACHE: TTLCache = TTLCache(maxsize=4, ttl=300)
 _ANALYZER_INPUTS_LOCK = threading.Lock()
+_ANALYZER_INPUTS_FLIGHT_LOCK = threading.Lock()
+
+
+@dataclass
+class _AnalyzerInputFlight:
+    event: threading.Event
+    value: dict[str, Any] | None = None
+    error: BaseException | None = None
+
+
+_ANALYZER_INPUTS_FLIGHTS: dict[str, _AnalyzerInputFlight] = {}
+
+
+class _AnalyzerInputSnapshotVersionMismatch(Exception):
+    """Raised when a durable analyzer input snapshot is not compatible."""
+
+
+def _analyzer_input_cache_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _analyzer_input_cache_root() -> Path:
+    env_path = (os.getenv("PORTFOLIO_ANALYZER_INPUT_CACHE_DIR") or "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    return Path(__file__).resolve().parents[2] / "data_cache" / "portfolio_analyzer_inputs"
+
+
+def _analyzer_input_cache_prefix() -> str:
+    return (os.getenv("PORTFOLIO_ANALYZER_INPUT_CACHE_PREFIX") or "live/cache/portfolio_analyzer_inputs").strip("/")
+
+
+def _use_analyzer_input_state_storage_cache() -> bool:
+    if (os.getenv("PORTFOLIO_ANALYZER_INPUT_CACHE_DIR") or "").strip():
+        return False
+    try:
+        from api.state_storage import use_gcs_state
+
+        return bool(use_gcs_state())
+    except Exception:
+        return False
+
+
+def _analyzer_input_snapshot_key(source_token: Mapping[str, Any] | None = None) -> str:
+    token = dict(source_token or analyzer_source_cache_token())
+    logical = {
+        "schema_version": _ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION,
+        "analyzer_inputs_version": _ANALYZER_INPUTS_VERSION,
+        "source_token": token,
+    }
+    return _hash_json(logical)
+
+
+def _analyzer_input_snapshot_path(snapshot_key: str) -> Path:
+    return _analyzer_input_cache_root() / f"{snapshot_key}.snapshot"
+
+
+def _analyzer_input_snapshot_gcs_key(snapshot_key: str) -> str:
+    return f"{_analyzer_input_cache_prefix()}/{snapshot_key}.snapshot"
+
+
+def _normalize_snapshot_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _normalize_snapshot_json(v) for k, v in value.items()}
+    if isinstance(value, set):
+        return [_normalize_snapshot_json(v) for v in sorted(value, key=lambda item: str(item))]
+    if isinstance(value, (list, tuple)):
+        return [_normalize_snapshot_json(v) for v in value]
+
+    normalized = serialize_value(value)
+    try:
+        json.dumps(normalized, allow_nan=False)
+        return normalized
+    except (TypeError, ValueError):
+        return str(normalized)
+
+
+def _json_bytes(value: Any) -> bytes:
+    normalized = _normalize_snapshot_json(value)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _dataframe_to_parquet_bytes(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    df.to_parquet(buf, engine="pyarrow", index=True)
+    return buf.getvalue()
+
+
+def _parquet_bytes_to_dataframe(raw: bytes) -> pd.DataFrame:
+    return pd.read_parquet(io.BytesIO(raw), engine="pyarrow")
+
+
+def _series_to_parquet_bytes(series: pd.Series, value_name: str) -> bytes:
+    frame = series.to_frame(name=value_name)
+    return _dataframe_to_parquet_bytes(frame)
+
+
+def _parquet_bytes_to_series(raw: bytes, value_name: str) -> pd.Series:
+    frame = _parquet_bytes_to_dataframe(raw)
+    if value_name not in frame.columns:
+        raise ValueError(f"Snapshot series member missing {value_name!r} column.")
+    return frame[value_name]
+
+
+def _encode_analyzer_input_snapshot(inputs: Mapping[str, Any]) -> bytes:
+    signal_anchor_meta = _normalize_snapshot_json(inputs.get("signal_anchor_meta") or {})
+    # Assert the normalized metadata is safe before it enters the manifest.
+    json.dumps(signal_anchor_meta, sort_keys=True, allow_nan=False)
+
+    signal_subcomponents = pd.DataFrame(inputs["signal_subcomponents"])
+    manifest = {
+        "schema_version": _ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION,
+        "analyzer_inputs_version": _ANALYZER_INPUTS_VERSION,
+        "created_at": _analyzer_input_cache_now().isoformat(),
+        "tickers": list(inputs["tickers"]),
+        "active_tickers": list(inputs["active_tickers"]),
+        "valuation_tickers": list(inputs["valuation_tickers"]),
+        "signal_anchor_meta": signal_anchor_meta,
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", _json_bytes(manifest))
+        archive.writestr("meta.parquet", _dataframe_to_parquet_bytes(inputs["meta"]))
+        archive.writestr("valuation_df.parquet", _dataframe_to_parquet_bytes(inputs["valuation_df"]))
+        archive.writestr("qualitative_df.parquet", _dataframe_to_parquet_bytes(inputs["qualitative_df"]))
+        archive.writestr("signal_effective.parquet", _series_to_parquet_bytes(inputs["signal_effective"], "value"))
+        archive.writestr("signal_subcomponents.parquet", _dataframe_to_parquet_bytes(signal_subcomponents))
+        archive.writestr("direction_display.parquet", _series_to_parquet_bytes(inputs["direction_display"], "value"))
+    return buf.getvalue()
+
+
+def _decode_analyzer_input_snapshot(raw: bytes) -> dict[str, Any]:
+    with zipfile.ZipFile(io.BytesIO(raw), mode="r") as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("Snapshot manifest is not an object.")
+        if manifest.get("schema_version") != _ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION:
+            raise _AnalyzerInputSnapshotVersionMismatch("Analyzer input snapshot schema version changed.")
+        if manifest.get("analyzer_inputs_version") != _ANALYZER_INPUTS_VERSION:
+            raise _AnalyzerInputSnapshotVersionMismatch("Analyzer input version changed.")
+
+        meta = _parquet_bytes_to_dataframe(archive.read("meta.parquet"))
+        valuation_df = _parquet_bytes_to_dataframe(archive.read("valuation_df.parquet"))
+        qualitative_df = _parquet_bytes_to_dataframe(archive.read("qualitative_df.parquet"))
+        signal_effective = _parquet_bytes_to_series(archive.read("signal_effective.parquet"), "value")
+        signal_subcomponents_df = _parquet_bytes_to_dataframe(archive.read("signal_subcomponents.parquet"))
+        direction_display = _parquet_bytes_to_series(archive.read("direction_display.parquet"), "value")
+
+    signal_subcomponents = {str(col): signal_subcomponents_df[col] for col in signal_subcomponents_df.columns}
+    return {
+        "meta": meta,
+        "tickers": [str(ticker) for ticker in manifest.get("tickers", [])],
+        "active_tickers": [str(ticker) for ticker in manifest.get("active_tickers", [])],
+        "valuation_tickers": [str(ticker) for ticker in manifest.get("valuation_tickers", [])],
+        "signal_effective": signal_effective,
+        "signal_subcomponents": signal_subcomponents,
+        "signal_anchor_meta": dict(manifest.get("signal_anchor_meta") or {}),
+        "valuation_df": valuation_df,
+        "qualitative_df": qualitative_df,
+        "direction_display": direction_display,
+    }
+
+
+def _snapshot_is_fresh(
+    updated_at: datetime | None, *, max_age_seconds: int = _ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS
+) -> bool:
+    if updated_at is None:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    now = _analyzer_input_cache_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return (now - updated_at.astimezone(UTC)).total_seconds() <= max_age_seconds
+
+
+def _read_analyzer_input_snapshot(snapshot_key: str) -> dict[str, Any] | None:
+    path = _analyzer_input_snapshot_path(snapshot_key)
+    try:
+        if _use_analyzer_input_state_storage_cache():
+            from api.state_storage import object_updated, read_bytes
+
+            gcs_key = _analyzer_input_snapshot_gcs_key(snapshot_key)
+            if not _snapshot_is_fresh(object_updated(path, gcs_key)):
+                return None
+            return _decode_analyzer_input_snapshot(read_bytes(path, gcs_key))
+
+        if not path.exists() or not _snapshot_is_fresh(datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)):
+            return None
+        return _decode_analyzer_input_snapshot(path.read_bytes())
+    except _AnalyzerInputSnapshotVersionMismatch:
+        LOGGER.debug("analyzer input snapshot version mismatch key=%s", snapshot_key, exc_info=True)
+        return None
+    except Exception:
+        LOGGER.warning("analyzer input snapshot read failed key=%s; recomputing", snapshot_key, exc_info=True)
+        return None
+
+
+def _write_analyzer_input_snapshot(snapshot_key: str, inputs: Mapping[str, Any]) -> None:
+    try:
+        raw = _encode_analyzer_input_snapshot(inputs)
+        path = _analyzer_input_snapshot_path(snapshot_key)
+        if _use_analyzer_input_state_storage_cache():
+            from api.state_storage import write_bytes
+
+            write_bytes(
+                path,
+                _analyzer_input_snapshot_gcs_key(snapshot_key),
+                raw,
+                content_type="application/zip",
+            )
+            return
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_bytes(raw)
+        tmp_path.replace(path)
+    except Exception:
+        LOGGER.warning("analyzer input snapshot write failed key=%s", snapshot_key, exc_info=True)
+
+
+def cleanup_analyzer_input_snapshots(max_age_seconds: int = _ANALYZER_INPUT_SNAPSHOT_RETENTION_SECONDS) -> int:
+    """Best-effort cleanup of old durable analyzer input snapshots."""
+    deleted = 0
+    now = _analyzer_input_cache_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+
+    if _use_analyzer_input_state_storage_cache():
+        try:
+            from api.state_storage import delete_file, list_keys, object_updated
+
+            root = _analyzer_input_cache_root()
+            for gcs_key in list_keys(f"{_analyzer_input_cache_prefix()}/"):
+                if not (gcs_key.endswith(".snapshot") or gcs_key.endswith(".snapshot.tmp")):
+                    continue
+                try:
+                    updated_at = object_updated(root / ".state-cache-placeholder", gcs_key)
+                    if updated_at is None:
+                        continue
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=UTC)
+                    if (now - updated_at.astimezone(UTC)).total_seconds() > max_age_seconds:
+                        if delete_file(root / ".state-cache-placeholder", gcs_key):
+                            deleted += 1
+                except Exception:
+                    LOGGER.debug("analyzer input snapshot state cleanup failed key=%s", gcs_key, exc_info=True)
+        except Exception:
+            LOGGER.warning("analyzer input snapshot state cleanup failed", exc_info=True)
+        return deleted
+
+    root = _analyzer_input_cache_root()
+    try:
+        if not root.exists():
+            return 0
+        for path in root.glob("*.snapshot*"):
+            try:
+                updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+                if (now - updated_at).total_seconds() > max_age_seconds:
+                    path.unlink(missing_ok=True)
+                    deleted += 1
+            except Exception:
+                LOGGER.debug("analyzer input snapshot cleanup failed path=%s", path, exc_info=True)
+    except Exception:
+        LOGGER.warning("analyzer input snapshot cleanup failed root=%s", root, exc_info=True)
+    return deleted
 
 
 def _compute_analyzer_inputs() -> dict:
@@ -2416,15 +2761,72 @@ def _compute_analyzer_inputs() -> dict:
 
 def _cached_analyzer_inputs() -> dict:
     token = analyzer_source_cache_token()
-    key = f"{_ANALYZER_INPUTS_VERSION}:" + json.dumps(token, sort_keys=True, default=str)
+    snapshot_key = _analyzer_input_snapshot_key(token)
+    key = f"{_ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION}:{_ANALYZER_INPUTS_VERSION}:{snapshot_key}"
     with _ANALYZER_INPUTS_LOCK:
         hit = _ANALYZER_INPUTS_CACHE.get(key)
         if hit is not None:
             return cast(dict[Any, Any], hit)
-    inputs = _compute_analyzer_inputs()
-    with _ANALYZER_INPUTS_LOCK:
-        _ANALYZER_INPUTS_CACHE[key] = inputs
-    return inputs
+
+    durable_hit = _read_analyzer_input_snapshot(snapshot_key)
+    if durable_hit is not None:
+        with _ANALYZER_INPUTS_LOCK:
+            _ANALYZER_INPUTS_CACHE[key] = durable_hit
+        return durable_hit
+
+    with _ANALYZER_INPUTS_FLIGHT_LOCK:
+        flight = _ANALYZER_INPUTS_FLIGHTS.get(key)
+        if flight is None:
+            flight = _AnalyzerInputFlight(event=threading.Event())
+            _ANALYZER_INPUTS_FLIGHTS[key] = flight
+            owner = True
+        else:
+            owner = False
+
+    if not owner:
+        flight.event.wait(timeout=_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS)
+        if flight.error is not None:
+            raise flight.error
+        if flight.value is not None:
+            return flight.value
+        with _ANALYZER_INPUTS_LOCK:
+            hit = _ANALYZER_INPUTS_CACHE.get(key)
+            if hit is not None:
+                return cast(dict[Any, Any], hit)
+        durable_hit = _read_analyzer_input_snapshot(snapshot_key)
+        if durable_hit is not None:
+            with _ANALYZER_INPUTS_LOCK:
+                _ANALYZER_INPUTS_CACHE[key] = durable_hit
+            return durable_hit
+
+    try:
+        with _ANALYZER_INPUTS_LOCK:
+            hit = _ANALYZER_INPUTS_CACHE.get(key)
+            if hit is not None:
+                flight.value = cast(dict[str, Any], hit)
+                return cast(dict[Any, Any], hit)
+
+        durable_hit = _read_analyzer_input_snapshot(snapshot_key)
+        if durable_hit is not None:
+            with _ANALYZER_INPUTS_LOCK:
+                _ANALYZER_INPUTS_CACHE[key] = durable_hit
+            flight.value = durable_hit
+            return durable_hit
+
+        inputs = _compute_analyzer_inputs()
+        _write_analyzer_input_snapshot(snapshot_key, inputs)
+        with _ANALYZER_INPUTS_LOCK:
+            _ANALYZER_INPUTS_CACHE[key] = inputs
+        flight.value = inputs
+        return inputs
+    except BaseException as exc:
+        flight.error = exc
+        raise
+    finally:
+        flight.event.set()
+        if owner:
+            with _ANALYZER_INPUTS_FLIGHT_LOCK:
+                _ANALYZER_INPUTS_FLIGHTS.pop(key, None)
 
 
 def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:

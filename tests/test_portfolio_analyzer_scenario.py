@@ -1,6 +1,9 @@
 import math
+import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 import pytest
 from pydantic import ValidationError
@@ -107,6 +110,223 @@ def test_analyzer_short_cache_reuses_result_within_bucket(monkeypatch):
 
     assert first["course_of_action"] == second["course_of_action"]
     assert len(calls) == 1
+
+
+def _sample_analyzer_inputs() -> dict:
+    tickers = ["AAA"]
+    meta = pd.DataFrame(
+        {
+            "asset": pd.Series(["equity"], index=tickers, dtype="object"),
+            "instrument_type": pd.Series(["security"], index=tickers, dtype="object"),
+            "price_symbol": pd.Series(["AAA"], index=tickers, dtype="object"),
+            "quantity": pd.Series([10.0], index=tickers, dtype="float64"),
+            "contract_multiplier": pd.Series([1.0], index=tickers, dtype="float64"),
+            "direction": pd.Series(["long"], index=tickers, dtype="object"),
+            "direction_intended": pd.Series(["long"], index=tickers, dtype="object"),
+            "contrarian": pd.Series([False], index=tickers, dtype="bool"),
+            "contrarian_eligible": pd.Series([False], index=tickers, dtype="bool"),
+            "drawdown_52w": pd.Series([0.12], index=tickers, dtype="float64"),
+            "stabilized_10d": pd.Series([True], index=tickers, dtype="bool"),
+            "days_since_new_low": pd.Series([12], index=tickers, dtype="int64"),
+            "no_new_high_20d": pd.Series([True], index=tickers, dtype="bool"),
+            "days_since_high": pd.Series([40], index=tickers, dtype="int64"),
+            "avg20_roc63": pd.Series([0.04], index=tickers, dtype="float64"),
+            "avg10_rel_roc": pd.Series([0.03], index=tickers, dtype="float64"),
+        }
+    )
+    valuation_df = pd.DataFrame(
+        {
+            "price_sales": [2.0],
+            "price_operating_income": [8.0],
+            "price_fcf": [12.0],
+            "price_earnings": [18.0],
+            "price_book": [3.0],
+            "valuation_profile_id": ["default"],
+        },
+        index=tickers,
+    )
+    qualitative_df = pd.DataFrame(
+        {
+            "business_quality_qual_score": [80.0],
+            "business_quality_qual_confidence": [0.8],
+            "business_quality_qual_status": ["available"],
+            "business_quality_qual_evidence": ["durable"],
+            "industry_quality_score": [70.0],
+            "industry_quality_confidence": [0.7],
+            "industry_quality_status": ["available"],
+            "industry_quality_evidence": ["attractive"],
+            "management_quality_score": [85.0],
+            "management_quality_confidence": [0.75],
+            "management_quality_status": ["available"],
+            "management_quality_evidence": ["strong"],
+            "overview_source_hash": ["overview"],
+            "management_quality_source_hash": ["management"],
+        },
+        index=tickers,
+    )
+    return {
+        "meta": meta,
+        "tickers": tickers,
+        "active_tickers": tickers,
+        "valuation_tickers": tickers,
+        "signal_effective": pd.Series([0.2], index=tickers, dtype="float64"),
+        "signal_subcomponents": {
+            "quality_signal": pd.Series([0.7], index=tickers, dtype="float64"),
+            "eps_mom_signal": pd.Series([0.3], index=tickers, dtype="float64"),
+            "rev_mom_signal": pd.Series([0.4], index=tickers, dtype="float64"),
+            "price_mom_signal": pd.Series([0.5], index=tickers, dtype="float64"),
+        },
+        "signal_anchor_meta": {
+            "signal_anchor_cache_status": "hit",
+            "numpy_scalar": np.float64(1.25),
+            "timestamp": pd.Timestamp("2026-05-07T12:00:00Z"),
+            "set_value": {"b", "a"},
+        },
+        "valuation_df": valuation_df,
+        "qualitative_df": qualitative_df,
+        "direction_display": pd.Series(["long"], index=tickers, dtype="object"),
+    }
+
+
+def _reset_analyzer_input_cache(monkeypatch, tmp_path, *, now: datetime | None = None):
+    monkeypatch.setenv("PORTFOLIO_ANALYZER_INPUT_CACHE_DIR", str(tmp_path))
+    analyzer_module._ANALYZER_INPUTS_CACHE.clear()
+    analyzer_module._ANALYZER_INPUTS_FLIGHTS.clear()
+    if now is not None:
+        monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: now)
+
+
+def test_phase_a_snapshot_reused_across_missions(monkeypatch, tmp_path):
+    _reset_analyzer_input_cache(monkeypatch, tmp_path)
+    calls = {"compute": 0}
+    source_token = {"tickers": ["AAA"], "portfolio_metadata_hash": uuid4().hex, "qualitative_sources": []}
+
+    def fake_compute():
+        calls["compute"] += 1
+        return _sample_analyzer_inputs()
+
+    monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: source_token)
+    monkeypatch.setattr(analyzer_module, "_compute_analyzer_inputs", fake_compute)
+
+    balanced = analyzer_module.analyze_portfolio({"preset": "balanced"})
+    analyzer_module._ANALYZER_INPUTS_CACHE.clear()
+    capital_preservation = analyzer_module.analyze_portfolio({"preset": "capital_preservation"})
+
+    assert calls["compute"] == 1
+    assert balanced["scenario"]["preset"] == "balanced"
+    assert capital_preservation["scenario"]["preset"] == "capital_preservation"
+    assert balanced["scenario"] != capital_preservation["scenario"]
+
+
+def test_phase_a_snapshot_uses_sliding_freshness_not_fixed_bucket(monkeypatch, tmp_path):
+    base = datetime(2026, 5, 7, 12, 4, 50, tzinfo=UTC)
+    _reset_analyzer_input_cache(monkeypatch, tmp_path, now=base)
+    snapshot_key = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "freshness", "qualitative_sources": []}
+    )
+    analyzer_module._write_analyzer_input_snapshot(snapshot_key, _sample_analyzer_inputs())
+    path = analyzer_module._analyzer_input_snapshot_path(snapshot_key)
+    os.utime(path, (base.timestamp(), base.timestamp()))
+
+    monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=20))
+    assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is not None
+
+    monkeypatch.setattr(analyzer_module, "_analyzer_input_cache_now", lambda: base + timedelta(seconds=301))
+    assert analyzer_module._read_analyzer_input_snapshot(snapshot_key) is None
+
+
+def test_phase_a_snapshot_key_invalidates_for_metadata_sources_and_version(monkeypatch):
+    first = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "asset": "equity",
+                "direction": "long",
+                "price_symbol": "AAA",
+                "instrument_type": "security",
+            }
+        ]
+    )
+    second = first.copy()
+    second.loc[0, "direction"] = "short"
+
+    assert analyzer_module._hash_json(
+        analyzer_module._normalize_position_source_records(first)
+    ) != analyzer_module._hash_json(analyzer_module._normalize_position_source_records(second))
+    assert analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "same", "qualitative_sources": [{"overview_hash": "a"}]}
+    ) != analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "same", "qualitative_sources": [{"overview_hash": "b"}]}
+    )
+
+    original = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "same", "qualitative_sources": []}
+    )
+    monkeypatch.setattr(analyzer_module, "_ANALYZER_INPUTS_VERSION", "v-next")
+    bumped = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "same", "qualitative_sources": []}
+    )
+    assert original != bumped
+
+
+def test_phase_a_snapshot_round_trip_preserves_dtypes_and_json_safe_metadata():
+    decoded = analyzer_module._decode_analyzer_input_snapshot(
+        analyzer_module._encode_analyzer_input_snapshot(_sample_analyzer_inputs())
+    )
+
+    assert decoded["tickers"] == ["AAA"]
+    assert decoded["meta"].index.tolist() == ["AAA"]
+    assert decoded["meta"]["contrarian_eligible"].dtype == bool
+    assert decoded["meta"]["stabilized_10d"].dtype == bool
+    assert decoded["signal_subcomponents"]["quality_signal"].index.tolist() == ["AAA"]
+    assert decoded["signal_anchor_meta"]["numpy_scalar"] == 1.25
+    assert decoded["signal_anchor_meta"]["timestamp"] == "2026-05-07T12:00:00+00:00"
+    assert decoded["signal_anchor_meta"]["set_value"] == ["a", "b"]
+
+
+def test_phase_a_snapshot_corrupt_or_tmp_only_cache_falls_through_to_compute(monkeypatch, tmp_path):
+    _reset_analyzer_input_cache(monkeypatch, tmp_path)
+    source_token = {"tickers": ["AAA"], "portfolio_metadata_hash": "corrupt", "qualitative_sources": []}
+    snapshot_key = analyzer_module._analyzer_input_snapshot_key(source_token)
+    path = analyzer_module._analyzer_input_snapshot_path(snapshot_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a zip")
+    path.with_name(f"{path.name}.tmp").write_bytes(b"partial")
+
+    calls = {"compute": 0}
+
+    def fake_compute():
+        calls["compute"] += 1
+        return _sample_analyzer_inputs()
+
+    monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: source_token)
+    monkeypatch.setattr(analyzer_module, "_compute_analyzer_inputs", fake_compute)
+
+    inputs = analyzer_module._cached_analyzer_inputs()
+
+    assert calls["compute"] == 1
+    assert inputs["tickers"] == ["AAA"]
+
+
+def test_phase_a_snapshot_cleanup_removes_old_local_snapshots(monkeypatch, tmp_path):
+    base = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
+    _reset_analyzer_input_cache(monkeypatch, tmp_path, now=base)
+    old_key = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "old", "qualitative_sources": []}
+    )
+    fresh_key = analyzer_module._analyzer_input_snapshot_key(
+        {"tickers": ["AAA"], "portfolio_metadata_hash": "fresh", "qualitative_sources": []}
+    )
+    analyzer_module._write_analyzer_input_snapshot(old_key, _sample_analyzer_inputs())
+    analyzer_module._write_analyzer_input_snapshot(fresh_key, _sample_analyzer_inputs())
+    old_path = analyzer_module._analyzer_input_snapshot_path(old_key)
+    fresh_path = analyzer_module._analyzer_input_snapshot_path(fresh_key)
+    stale_time = (base - timedelta(hours=25)).timestamp()
+    os.utime(old_path, (stale_time, stale_time))
+
+    assert analyzer_module.cleanup_analyzer_input_snapshots(max_age_seconds=24 * 60 * 60) == 1
+    assert not old_path.exists()
+    assert fresh_path.exists()
 
 
 def test_metric_scores_normalize_across_all_alpha_metrics():

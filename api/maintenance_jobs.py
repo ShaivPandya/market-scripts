@@ -44,8 +44,24 @@ def sweep_async_jobs(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
 
     stale_failed = fail_stale_active_jobs()
     deleted = sweep_expired_jobs()
-    logger.info("async_job_sweep stale_failed=%d deleted=%d", stale_failed, deleted)
-    return {"stale_failed": stale_failed, "deleted": deleted}
+    analyzer_input_snapshots_deleted = 0
+    try:
+        from portfolio.portfolio_optimizer.portfolio_analyzer import cleanup_analyzer_input_snapshots
+
+        analyzer_input_snapshots_deleted = cleanup_analyzer_input_snapshots()
+    except Exception:
+        logger.warning("async_job_sweep analyzer input snapshot cleanup failed", exc_info=True)
+    logger.info(
+        "async_job_sweep stale_failed=%d deleted=%d analyzer_input_snapshots_deleted=%d",
+        stale_failed,
+        deleted,
+        analyzer_input_snapshots_deleted,
+    )
+    return {
+        "stale_failed": stale_failed,
+        "deleted": deleted,
+        "analyzer_input_snapshots_deleted": analyzer_input_snapshots_deleted,
+    }
 
 
 def _env_int(name: str, default: int) -> int:
