@@ -632,6 +632,15 @@ function workspaceActionDescription(action: AnalyzerCourseAction) {
   return lines.join("\n")
 }
 
+function mutationErrorMessage(error: unknown) {
+  if (!error) return null
+  const message = error instanceof Error ? error.message : String(error)
+  if (/network error/i.test(message)) {
+    return "Unable to reach the API while staging this workspace action. Check that the backend or API proxy is reachable, then try again."
+  }
+  return message.replace(/^AxiosError:\s*/i, "")
+}
+
 function toWorkspaceActionRequest(action: AnalyzerCourseAction) {
   return {
     ticker: action.ticker,
@@ -655,6 +664,42 @@ function SummaryCard({ title, value, detail }: { title: string; value: string; d
       <p className="label-text">{title}</p>
       <p className="mt-2 text-2xl font-semibold text-app">{value}</p>
       {detail && <p className="mt-1 text-xs text-subtle">{detail}</p>}
+    </section>
+  )
+}
+
+function FactorCard({
+  title,
+  subtitle,
+  total,
+  onReset,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  total: number
+  onReset: () => void
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-lg border border-app bg-card-muted p-4 space-y-4">
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-app">{title}</h3>
+          {subtitle && <p className="mt-0.5 text-xs text-subtle">{subtitle}</p>}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="mono-text text-xs text-subtle">Σ {total}</span>
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-xs text-muted underline-offset-2 hover:text-app hover:underline"
+          >
+            Reset
+          </button>
+        </div>
+      </header>
+      {children}
     </section>
   )
 }
@@ -1056,6 +1101,9 @@ export function PortfolioAnalyzer() {
 
   const workspaceActionMutation = useMutation({
     mutationFn: (action: AnalyzerCourseAction) => createAction(toWorkspaceActionRequest(action)),
+    onMutate: action => {
+      setWorkspaceProposal(prev => prev?.ticker === action.ticker ? null : prev)
+    },
     onSuccess: (response, action) => {
       setWorkspaceProposal({ ticker: action.ticker, response })
       void invalidateApprovalSummaries(queryClient)
@@ -1111,7 +1159,7 @@ export function PortfolioAnalyzer() {
     selectedActionTicker != null &&
     workspaceActionMutation.variables?.ticker === selectedActionTicker &&
     workspaceActionMutation.isError
-      ? String(workspaceActionMutation.error)
+      ? mutationErrorMessage(workspaceActionMutation.error)
       : null
   const workspaceActionLoading =
     selectedActionTicker != null &&
@@ -1132,6 +1180,25 @@ export function PortfolioAnalyzer() {
 
   function setBrake(key: keyof AnalyzerScenarioState["brakes"], value: number) {
     setScenario(prev => ({ ...prev, preset: "custom", brakes: { ...prev.brakes, [key]: clampSliderScore(value) } }))
+  }
+
+  function resetMetricGroup(keys: (keyof AnalyzerScenarioState["metric_scores"])[]) {
+    setScenario(prev => ({
+      ...prev,
+      preset: "custom",
+      metric_scores: keys.reduce(
+        (acc, key) => ({ ...acc, [key]: SCENARIO_PRESETS.balanced.metric_scores[key] }),
+        prev.metric_scores,
+      ),
+    }))
+  }
+
+  function resetBrakes() {
+    setScenario(prev => ({
+      ...prev,
+      preset: "custom",
+      brakes: { ...SCENARIO_PRESETS.balanced.brakes },
+    }))
   }
 
   function handleBrief() {
@@ -1166,7 +1233,10 @@ export function PortfolioAnalyzer() {
       <div className="theme-surface mb-6 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="section-title">Mission</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="section-title">Mission</h2>
+              {scenario.preset === "custom" && <Badge tone="info">Custom</Badge>}
+            </div>
             <p className="mt-1 text-sm text-subtle">Choose the operating objective, then inspect the recommended action queue.</p>
           </div>
           <ActionButton
@@ -1205,45 +1275,94 @@ export function PortfolioAnalyzer() {
         >
           {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           Advanced metric scores
-          {scenario.preset === "custom" && <Badge tone="info">Custom</Badge>}
         </button>
 
         {advancedOpen && (
-          <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-5">
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Momentum</h3>
-              <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-            </section>
+          <div className="mt-5 space-y-6">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              <FactorCard
+                title="Momentum"
+                subtitle="What's working"
+                total={
+                  scenario.metric_scores.price_momentum +
+                  scenario.metric_scores.revenue +
+                  scenario.metric_scores.eps
+                }
+                onReset={() => resetMetricGroup(["price_momentum", "revenue", "eps"])}
+              >
+                <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Revenue Momentum" value={scenario.metric_scores.revenue} onChange={v => setMetricScore("revenue", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="EPS Momentum" value={scenario.metric_scores.eps} onChange={v => setMetricScore("eps", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              </FactorCard>
 
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Fundamental Momentum</h3>
-              <SliderInput label="Revenue" value={scenario.metric_scores.revenue} onChange={v => setMetricScore("revenue", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="EPS" value={scenario.metric_scores.eps} onChange={v => setMetricScore("eps", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-            </section>
+              <FactorCard
+                title="Value"
+                subtitle="What we're paying"
+                total={
+                  scenario.metric_scores.price_earnings +
+                  scenario.metric_scores.price_fcf +
+                  scenario.metric_scores.price_sales +
+                  scenario.metric_scores.price_operating_income +
+                  scenario.metric_scores.price_book
+                }
+                onReset={() =>
+                  resetMetricGroup([
+                    "price_earnings",
+                    "price_fcf",
+                    "price_sales",
+                    "price_operating_income",
+                    "price_book",
+                  ])
+                }
+              >
+                <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="EV/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              </FactorCard>
 
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Valuation</h3>
-              <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="EV/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-            </section>
+              <FactorCard
+                title="Quality"
+                subtitle="What we own"
+                total={
+                  scenario.metric_scores.quality +
+                  scenario.metric_scores.business_quality_qualitative +
+                  scenario.metric_scores.industry_quality +
+                  scenario.metric_scores.management_quality
+                }
+                onReset={() =>
+                  resetMetricGroup([
+                    "quality",
+                    "business_quality_qualitative",
+                    "industry_quality",
+                    "management_quality",
+                  ])
+                }
+              >
+                <SliderInput label="Financial Quality" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Business" value={scenario.metric_scores.business_quality_qualitative} onChange={v => setMetricScore("business_quality_qualitative", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Industry" value={scenario.metric_scores.industry_quality} onChange={v => setMetricScore("industry_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Management" value={scenario.metric_scores.management_quality} onChange={v => setMetricScore("management_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              </FactorCard>
+            </div>
 
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Qualitative</h3>
-              <SliderInput label="Business Quality (Quant)" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="Business Quality (Overview)" value={scenario.metric_scores.business_quality_qualitative} onChange={v => setMetricScore("business_quality_qualitative", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="Industry Quality" value={scenario.metric_scores.industry_quality} onChange={v => setMetricScore("industry_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="Management Quality" value={scenario.metric_scores.management_quality} onChange={v => setMetricScore("management_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-            </section>
-
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Risk Brakes</h3>
-              <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-              <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
-            </section>
+            <FactorCard
+              title="Risk Brakes"
+              subtitle="Penalties applied after factor scoring"
+              total={
+                scenario.brakes.drawdown_sensitivity +
+                scenario.brakes.contrarian_penalty +
+                scenario.brakes.short_squeeze_brake
+              }
+              onReset={resetBrakes}
+            >
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-3">
+                <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+                <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              </div>
+            </FactorCard>
           </div>
         )}
       </div>
