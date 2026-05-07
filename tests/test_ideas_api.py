@@ -342,6 +342,156 @@ def test_analyzer_context_overrides_canonical_scores_and_preserves_six_factor_av
     assert "price_momentum" not in result["factor_scores"]
 
 
+def test_analyzer_context_forwards_structured_short_squeeze_risk():
+    from api.routers import ideas as ideas_router
+
+    contexts = ideas_router._analyzer_contexts_from_result(
+        {
+            "status": "ok",
+            "raw_result": {
+                "timestamp": "2026-05-05T12:00:00+00:00",
+                "weights_df": [
+                    {
+                        "ticker": "SQUEEZE",
+                        "source_type": "idea",
+                        "scenario_score": -1.2,
+                        "short_cover_risk": 0.0,
+                        "long_risk_penalty": 0.0,
+                        "short_squeeze_risk": False,
+                        "short_squeeze_metrics_available": True,
+                        "drawdown_metrics_available": False,
+                    }
+                ],
+                "course_of_action": {
+                    "summary": {"as_of": "2026-05-05T12:01:00+00:00"},
+                    "action_queue": [
+                        {
+                            "ticker": "SQUEEZE",
+                            "source_type": "idea",
+                            "action": "Watch",
+                            "scenario_score": -0.4,
+                            "score_delta": 0.6,
+                            "short_cover_risk": 0.8,
+                            "long_risk_penalty": 0.0,
+                            "risk_flags": {
+                                "short_squeeze_risk": True,
+                                "risk_data_missing": False,
+                            },
+                            "risk_parts": {
+                                "short_squeeze_cover_risk": 0.8,
+                            },
+                            "warnings": ["Short squeeze risk elevated"],
+                        }
+                    ],
+                },
+            },
+        }
+    )
+
+    context = contexts["SQUEEZE"]
+    assert context["action_label"] == "Watch"
+    assert context["scenario_score"] == -0.4
+    assert context["short_cover_risk"] == 0.8
+    assert context["risk_flags"]["short_squeeze_risk"] is True
+    assert context["risk_parts"]["short_squeeze_cover_risk"] == 0.8
+    assert context["short_squeeze_metrics_available"] is True
+
+
+def test_analyzer_context_forwards_missing_squeeze_metrics_without_false_risk():
+    from api.routers import ideas as ideas_router
+
+    contexts = ideas_router._analyzer_contexts_from_result(
+        {
+            "status": "ok",
+            "raw_result": {
+                "weights_df": [
+                    {
+                        "ticker": "MISSRISK",
+                        "source_type": "idea",
+                        "short_squeeze_risk": True,
+                        "short_squeeze_data_missing": False,
+                        "risk_data_missing": False,
+                        "short_squeeze_metrics_available": False,
+                    }
+                ],
+                "course_of_action": {
+                    "action_queue": [
+                        {
+                            "ticker": "MISSRISK",
+                            "action": "Watch",
+                            "short_cover_risk": 0.0,
+                            "risk_flags": {
+                                "short_squeeze_risk": False,
+                                "short_squeeze_data_missing": True,
+                                "risk_data_missing": True,
+                            },
+                            "risk_parts": {},
+                            "warnings": ["Short squeeze metrics unavailable", "Risk metrics unavailable"],
+                        }
+                    ],
+                },
+            },
+        }
+    )
+
+    context = contexts["MISSRISK"]
+    assert context["short_cover_risk"] == 0.0
+    assert context["risk_flags"]["short_squeeze_risk"] is False
+    assert context["risk_flags"]["short_squeeze_data_missing"] is True
+    assert context["risk_flags"]["risk_data_missing"] is True
+    assert context["short_squeeze_metrics_available"] is False
+
+
+def test_analyzer_risk_is_display_only_for_idea_action():
+    from api.routers import ideas as ideas_router
+
+    context = {
+        "idea": {"id": "idea:1", "ticker": "RISKY"},
+        "ticker": "RISKY",
+        "tool_errors": [],
+        "evaluated_at": "2026-05-05T12:00:00+00:00",
+        "analyzer_context": {
+            "status": "available",
+            "action_label": "Watch",
+            "short_cover_risk": 0.8,
+            "risk_flags": {"short_squeeze_risk": True, "risk_data_missing": False},
+            "risk_parts": {"short_squeeze_cover_risk": 0.8},
+            "row": {
+                "industry_quality_score": 80,
+                "business_quality_qual_score": 80,
+                "management_quality_score": 80,
+                "valuation_signal": 0,
+            },
+            "warnings": ["Short squeeze risk elevated"],
+            "qualitative_evidence": {},
+        },
+    }
+
+    result = ideas_router._normalize_llm_result(
+        context,
+        {
+            "action": "buy",
+            "recommendation_status": "clear",
+            "score": 85,
+            "confidence": 0.8,
+            "rationale": "The thesis is attractive, but analyzer risk should be displayed separately.",
+            "factor_scores": {
+                "macro_support": {"score": 80},
+                "industry_attractiveness": {"score": 80},
+                "business_quality": {"score": 80},
+                "management_quality": {"score": 80},
+                "valuation_asymmetry": {"score": 80},
+                "portfolio_fit": {"score": 80},
+            },
+            "missing_information": [],
+        },
+    )
+
+    assert result["action"] == "buy"
+    assert result["analyzer_context"]["risk_flags"]["short_squeeze_risk"] is True
+    assert any(item["source"] == "analyzer_risk" for item in result["evidence"])
+
+
 def test_evaluate_all_computes_one_analyzer_result_for_enabled_ideas(auth_client, monkeypatch):
     from api.routers import ideas as ideas_router
 

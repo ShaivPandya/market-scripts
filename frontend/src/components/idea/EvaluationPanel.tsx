@@ -1,7 +1,14 @@
 import { CheckCircle2, XCircle } from "lucide-react"
 
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
-import type { IdeaEvaluation, IdeaFactorScore, IdeaMissingInformation } from "@/lib/api"
+import type {
+  AnalyzerRiskFlags,
+  AnalyzerRiskParts,
+  IdeaAnalyzerContext,
+  IdeaEvaluation,
+  IdeaFactorScore,
+  IdeaMissingInformation,
+} from "@/lib/api"
 import { formatDate, formatLabel, scoreText } from "@/lib/ideaUtils"
 
 const ACTION_TONE: Record<string, StatusTone> = {
@@ -19,6 +26,24 @@ const CANONICAL_FACTORS = [
   "valuation_asymmetry",
   "portfolio_fit",
 ]
+
+const RISK_FLAG_LABELS: Record<string, string> = {
+  short_squeeze_risk: "Squeeze",
+  drawdown_risk: "Drawdown",
+  contrarian_not_eligible: "Contrarian",
+  short_squeeze_data_missing: "Squeeze data",
+  drawdown_data_missing: "Drawdown data",
+  risk_data_missing: "Risk data",
+}
+
+const RISK_FLAG_TONES: Record<string, StatusTone> = {
+  short_squeeze_risk: "warning",
+  drawdown_risk: "warning",
+  contrarian_not_eligible: "warning",
+  short_squeeze_data_missing: "neutral",
+  drawdown_data_missing: "neutral",
+  risk_data_missing: "neutral",
+}
 
 export function ActionPill({ action }: { action?: string | null }) {
   if (!action) return <span className="text-sm text-subtle">N/A</span>
@@ -76,12 +101,89 @@ function formatMaybeNumber(value: unknown, digits = 2) {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "N/A"
 }
 
-function AnalyzerContextPanel({ context }: { context: Record<string, unknown> }) {
+function formatAvailability(value: boolean | undefined) {
+  if (value === true) return "Available"
+  if (value === false) return "Unavailable"
+  return "N/A"
+}
+
+function activeRiskFlags(flags?: AnalyzerRiskFlags | null) {
+  if (!flags) return []
+  return Object.entries(RISK_FLAG_LABELS).filter(([key]) => flags[key] === true)
+}
+
+function nonZeroRiskParts(parts?: AnalyzerRiskParts | null) {
+  if (!parts) return []
+  return Object.entries(parts)
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]) && Math.abs(entry[1]) > 1e-9)
+    .sort(([a], [b]) => a.localeCompare(b))
+}
+
+export function AnalyzerRiskBadges({
+  context,
+  emptyLabel = "No risk flags",
+}: {
+  context?: IdeaAnalyzerContext | null
+  emptyLabel?: string
+}) {
+  if (!context || context.status !== "available") {
+    return <StatusBadge tone="neutral">{formatLabel(String(context?.status || "inactive"))}</StatusBadge>
+  }
+  const flags = activeRiskFlags(context.risk_flags)
+  if (!flags.length) {
+    return <StatusBadge tone="neutral">{emptyLabel}</StatusBadge>
+  }
+  return (
+    <span className="flex flex-wrap gap-1.5">
+      {flags.map(([key, label]) => (
+        <StatusBadge key={key} tone={RISK_FLAG_TONES[key] ?? "neutral"}>{label}</StatusBadge>
+      ))}
+    </span>
+  )
+}
+
+function AnalyzerRiskDetails({ context }: { context: IdeaAnalyzerContext }) {
+  const parts = nonZeroRiskParts(context.risk_parts)
+  return (
+    <div className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Risk Brakes</span>
+        <AnalyzerRiskBadges context={context} />
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="rounded-md border border-app bg-card px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Short Cover Risk</span>
+          <p className="mt-1 font-mono text-sm text-app">{formatMaybeNumber(context.short_cover_risk)}</p>
+        </div>
+        <div className="rounded-md border border-app bg-card px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Long Risk Penalty</span>
+          <p className="mt-1 font-mono text-sm text-app">{formatMaybeNumber(context.long_risk_penalty)}</p>
+        </div>
+      </div>
+      {parts.length > 0 && (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {parts.map(([key, value]) => (
+            <div key={key} className="rounded-md border border-app bg-card px-3 py-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{formatLabel(key)}</span>
+              <p className="mt-1 font-mono text-sm text-app">{formatMaybeNumber(value)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-subtle">
+        <span>Drawdown metrics: {formatAvailability(context.drawdown_metrics_available)}</span>
+        <span>Squeeze metrics: {formatAvailability(context.short_squeeze_metrics_available)}</span>
+      </div>
+    </div>
+  )
+}
+
+function AnalyzerContextPanel({ context }: { context: IdeaAnalyzerContext }) {
   const status = String(context.status || "unavailable")
-  const coverage = context.coverage && typeof context.coverage === "object" ? context.coverage as Record<string, unknown> : {}
+  const coverage = context.coverage && typeof context.coverage === "object" ? context.coverage : {}
   const diagnostics =
     context.diagnostic_subfactors && typeof context.diagnostic_subfactors === "object"
-      ? context.diagnostic_subfactors as Record<string, Record<string, unknown>>
+      ? context.diagnostic_subfactors
       : {}
   const gates = Array.isArray(context.gate_reasons) ? context.gate_reasons : []
   const warnings = Array.isArray(context.warnings) ? context.warnings : []
@@ -116,6 +218,7 @@ function AnalyzerContextPanel({ context }: { context: Record<string, unknown> })
           <span>Gate: {String(context.gate_status || "N/A")}</span>
           <span>Source: {context.source_timestamp ? formatDate(String(context.source_timestamp)) : "N/A"}</span>
         </div>
+        {status === "available" && <div className="mt-3"><AnalyzerRiskDetails context={context} /></div>}
         {gates.length > 0 && <p className="mt-2 leading-6">Gates: {gates.map(String).join("; ")}</p>}
         {warnings.length > 0 && <p className="mt-2 leading-6">Warnings: {warnings.map(String).join("; ")}</p>}
         {Object.keys(diagnostics).length > 0 && (

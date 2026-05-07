@@ -836,6 +836,89 @@ def _records_from_table(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+ANALYZER_RISK_FLAG_KEYS = (
+    "drawdown_risk",
+    "drawdown_data_missing",
+    "contrarian_not_eligible",
+    "short_squeeze_risk",
+    "short_squeeze_data_missing",
+    "risk_data_missing",
+)
+ANALYZER_RISK_PART_KEYS = (
+    "drawdown_risk_penalty",
+    "contrarian_risk_pressure",
+    "short_squeeze_cover_risk",
+)
+ANALYZER_RISK_NUMBER_KEYS = (
+    "long_risk_penalty",
+    "short_cover_risk",
+)
+ANALYZER_RISK_AVAILABILITY_KEYS = (
+    "drawdown_metrics_available",
+    "short_squeeze_metrics_available",
+)
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    return None
+
+
+def _analyzer_risk_flags_from_sources(action: dict[str, Any], row: dict[str, Any]) -> dict[str, bool]:
+    action_flags = _as_dict(action.get("risk_flags"))
+    flags: dict[str, bool] = {}
+    for key in ANALYZER_RISK_FLAG_KEYS:
+        value = _bool_or_none(action_flags.get(key))
+        if value is None:
+            value = _bool_or_none(row.get(key))
+        if value is not None:
+            flags[key] = value
+    return flags
+
+
+def _analyzer_risk_parts_from_sources(action: dict[str, Any], row: dict[str, Any]) -> dict[str, float]:
+    action_parts = _as_dict(action.get("risk_parts"))
+    parts: dict[str, float] = {}
+    for key in ANALYZER_RISK_PART_KEYS:
+        value = _numeric_or_none(action_parts.get(key))
+        if value is None:
+            value = _numeric_or_none(row.get(key))
+        if value is not None:
+            parts[key] = value
+    return parts
+
+
+def _analyzer_numeric_from_sources(key: str, action: dict[str, Any], row: dict[str, Any]) -> float | None:
+    value = _numeric_or_none(action.get(key))
+    if value is None:
+        value = _numeric_or_none(row.get(key))
+    return value
+
+
+def _compact_analyzer_risk_context(analyzer_context: Any) -> dict[str, Any]:
+    context = _as_dict(analyzer_context)
+    if not context:
+        return {}
+    compact: dict[str, Any] = {
+        "status": context.get("status"),
+        "action_label": context.get("action_label"),
+        "direction": context.get("direction"),
+        "scenario_score": context.get("scenario_score"),
+        "score_delta": context.get("score_delta"),
+        "risk_flags": context.get("risk_flags") if isinstance(context.get("risk_flags"), dict) else {},
+        "risk_parts": context.get("risk_parts") if isinstance(context.get("risk_parts"), dict) else {},
+        "long_risk_penalty": context.get("long_risk_penalty"),
+        "short_cover_risk": context.get("short_cover_risk"),
+    }
+    warnings = context.get("warnings")
+    if isinstance(warnings, list):
+        compact["warnings"] = [str(warning) for warning in warnings[:4]]
+    return compact
+
+
 def _compute_portfolio_plus_ideas_analyzer_result() -> dict[str, Any]:
     try:
         from portfolio.portfolio_optimizer.portfolio_analyzer import get_data
@@ -870,11 +953,21 @@ def _analyzer_contexts_from_result(analyzer_result: dict[str, Any]) -> dict[str,
     contexts: dict[str, dict[str, Any]] = {}
     for ticker, row in weights.items():
         action = actions.get(ticker, {})
+        risk_flags = _analyzer_risk_flags_from_sources(action, row)
+        risk_parts = _analyzer_risk_parts_from_sources(action, row)
+        risk_numbers = {
+            key: value
+            for key in ANALYZER_RISK_NUMBER_KEYS
+            if (value := _analyzer_numeric_from_sources(key, action, row)) is not None
+        }
+        metric_availability = {
+            key: value for key in ANALYZER_RISK_AVAILABILITY_KEYS if (value := _bool_or_none(row.get(key))) is not None
+        }
         contexts[ticker] = {
             "status": "available",
             "ticker": ticker,
             "source_timestamp": source_timestamp,
-            "source_type": row.get("source_type") or action.get("source_type") or "portfolio",
+            "source_type": action.get("source_type") or row.get("source_type") or "portfolio",
             "action_label": action.get("action"),
             "scenario_score": action.get("scenario_score", row.get("scenario_score")),
             "baseline_score": action.get("baseline_score", row.get("baseline_score")),
@@ -887,6 +980,10 @@ def _analyzer_contexts_from_result(analyzer_result: dict[str, Any]) -> dict[str,
             "factor_breakdown": action.get("factor_breakdown")
             if isinstance(action.get("factor_breakdown"), list)
             else [],
+            "risk_flags": risk_flags,
+            "risk_parts": risk_parts,
+            **risk_numbers,
+            **metric_availability,
             "row": row,
             "diagnostic_subfactors": {
                 "fundamental_momentum": {
@@ -1041,6 +1138,33 @@ def _append_analyzer_evidence(result: dict[str, Any], analyzer_context: dict[str
                     "observed_at": source_timestamp,
                 }
             )
+    risk_flags = _as_dict(analyzer_context.get("risk_flags"))
+    active_flags = [key for key in ANALYZER_RISK_FLAG_KEYS if risk_flags.get(key) is True]
+    risk_parts = _as_dict(analyzer_context.get("risk_parts"))
+    active_parts: list[str] = []
+    for key in ANALYZER_RISK_PART_KEYS:
+        value = _numeric_or_none(risk_parts.get(key))
+        if value is not None and abs(value) > 1e-9:
+            active_parts.append(f"{key}={value:.2f}")
+    short_cover_risk = _numeric_or_none(analyzer_context.get("short_cover_risk"))
+    long_risk_penalty = _numeric_or_none(analyzer_context.get("long_risk_penalty"))
+    risk_summary_parts: list[str] = []
+    if active_flags:
+        risk_summary_parts.append("Flags: " + ", ".join(active_flags))
+    if active_parts:
+        risk_summary_parts.append("Parts: " + ", ".join(active_parts))
+    if short_cover_risk is not None:
+        risk_summary_parts.append(f"short_cover_risk={short_cover_risk:.2f}")
+    if long_risk_penalty is not None:
+        risk_summary_parts.append(f"long_risk_penalty={long_risk_penalty:.2f}")
+    if risk_summary_parts:
+        evidence.append(
+            {
+                "source": "analyzer_risk",
+                "summary": "; ".join(risk_summary_parts),
+                "observed_at": source_timestamp,
+            }
+        )
     warnings = analyzer_context.get("warnings")
     for warning in warnings if isinstance(warnings, list) else []:
         evidence.append(
@@ -1642,6 +1766,7 @@ def _call_llm_comparison_ranker(evaluations: list[dict[str, Any]]) -> dict[str, 
             "rationale": evaluation.get("rationale"),
             "factor_scores": evaluation.get("factor_scores"),
             "portfolio_fit": evaluation.get("portfolio_fit"),
+            "analyzer_context": _compact_analyzer_risk_context(evaluation.get("analyzer_context")),
         }
         for evaluation in evaluations
     ]

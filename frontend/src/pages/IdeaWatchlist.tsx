@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Play, Plus, RefreshCw, Trash2 } from "lucide-react"
 
-import { ActionPill, ConfidencePill } from "@/components/idea/EvaluationPanel"
+import { ActionPill, AnalyzerRiskBadges, ConfidencePill } from "@/components/idea/EvaluationPanel"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import { ActionButton, TextInput } from "@/components/shared/FormControls"
@@ -18,6 +18,7 @@ import {
   startIdeaComparisonEvaluationJob,
   updateIdea,
   type IdeaAnalyzerDirection,
+  type IdeaAnalyzerContext,
   type IdeaComparisonJobResponse,
   type IdeaComparisonRun,
   type IdeaListResponse,
@@ -79,7 +80,13 @@ function analyzerDirection(idea: { metadata?: Record<string, unknown> }): IdeaAn
   return direction === "long" || direction === "short" ? direction : "inactive"
 }
 
-function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
+function ComparativeRankingPanel({
+  run,
+  riskByIdeaId,
+}: {
+  run: IdeaComparisonRun | null
+  riskByIdeaId: Record<string, IdeaAnalyzerContext | null>
+}) {
   const rankings = run?.rankings ?? []
   return (
     <section className="mb-4 rounded-lg border border-app bg-card-muted p-3">
@@ -95,10 +102,10 @@ function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
       {run?.summary && <p className="mb-3 text-sm leading-6 text-muted">{run.summary}</p>}
       {rankings.length ? (
         <div className="overflow-x-auto rounded-lg border border-app bg-card">
-          <table className="w-full min-w-[760px] border-collapse text-sm">
+          <table className="w-full min-w-[860px] border-collapse text-sm">
             <thead className="bg-card-muted">
               <tr>
-                {["Rank", "Ticker", "Action", "Score", "Confidence", "Rationale"].map(label => (
+                {["Rank", "Ticker", "Action", "Risk", "Score", "Confidence", "Rationale"].map(label => (
                   <th key={label} className="border-b border-app px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                     {label}
                   </th>
@@ -111,6 +118,7 @@ function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
                   <td className="px-3 py-3 font-mono text-app">#{row.rank}</td>
                   <td className="px-3 py-3 font-semibold text-app">{row.ticker}</td>
                   <td className="px-3 py-3"><ActionPill action={row.action} /></td>
+                  <td className="px-3 py-3"><AnalyzerRiskBadges context={riskByIdeaId[String(row.idea_id)]} /></td>
                   <td className="px-3 py-3 font-mono text-app">{scoreText(row.score)}</td>
                   <td className="px-3 py-3"><ConfidencePill level={row.confidence_level} confidence={row.confidence} /></td>
                   <td className="max-w-[28rem] px-3 py-3 text-muted">{row.rationale || "N/A"}</td>
@@ -308,6 +316,10 @@ export function IdeaWatchlist() {
     const activeJob = activeJobs[String(idea.id)]
     return { idea, evaluation, activeJob }
   }), [ideas, activeJobs])
+  const riskByIdeaId = useMemo(
+    () => Object.fromEntries(rows.map(({ idea, evaluation }) => [String(idea.id), evaluation?.analyzer_context ?? null])),
+    [rows],
+  )
 
   function currentComparisonJobResponse(): { jobId: string; message: string } | null {
     if (!activeComparisonJob) return null
@@ -393,7 +405,7 @@ export function IdeaWatchlist() {
           {(ideasQuery.isLoading || comparisonQuery.isLoading) && <LoadingSpinner message="Loading ideas" />}
         </div>
 
-        <ComparativeRankingPanel run={latestComparisonRun} />
+        <ComparativeRankingPanel run={latestComparisonRun} riskByIdeaId={riskByIdeaId} />
         {comparisonQuery.error && (
           <div className="mb-4">
             <ErrorMessage message={`Could not load comparison runs: ${comparisonQuery.error.message}`} />
@@ -406,10 +418,10 @@ export function IdeaWatchlist() {
           <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
         ) : (
           <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-            <table className="w-full min-w-[960px] border-collapse text-sm">
+            <table className="w-full min-w-[1080px] border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-card-muted">
                 <tr>
-                  {["Ticker", "Status", "Analyzer", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
+                  {["Ticker", "Status", "Analyzer", "Latest Action", "Risk", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
                     <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                       {label}
                     </th>
@@ -453,6 +465,7 @@ export function IdeaWatchlist() {
                           </select>
                         </td>
                         <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
+                        <td className="px-3 py-3"><AnalyzerRiskBadges context={evaluation?.analyzer_context ?? null} /></td>
                         <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
                         <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
                         <td className="px-3 py-3 text-subtle">{formatDate(evaluation?.evaluated_at)}</td>
