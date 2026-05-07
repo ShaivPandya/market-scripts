@@ -1553,9 +1553,10 @@ export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
 
 type AnalyzerJobBase = { job_id: string; timeout_s?: number }
 
-type AnalyzerJobResponse =
+export type AnalyzerJobResponse =
   | (AnalyzerJobBase & { status: "queued" | "running" })
   | (AnalyzerJobBase & { status: "error"; error?: string })
+  | (AnalyzerJobBase & { status: "cancelled"; error?: string })
   | (AnalyzerJobBase & { status: "done"; result?: unknown })
 
 export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
@@ -1563,6 +1564,11 @@ export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
 
 export const fetchPortfolioAnalyzerJob = (job_id: string) =>
   client.get(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
+
+export const cancelPortfolioAnalyzerJob = (job_id: string) =>
+  client
+    .post(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}/cancel`, {}, { timeout: 30_000 })
+    .then(r => r.data as AnalyzerJobResponse)
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -1592,6 +1598,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
   const started = await withAnalyzerRetry(() => startPortfolioAnalyzerJob(body))
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Portfolio analyzer failed")
+  if (started.status === "cancelled") throw new Error(started.error || "Portfolio analyzer cancelled")
 
   const job_id = started.job_id
   const serverTimeoutMs = Number.isFinite(started.timeout_s) ? Math.max(180, Number(started.timeout_s)) * 1000 : 180_000
@@ -1620,6 +1627,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
       return "result" in started ? started.result : undefined
     }
     if (job.status === "error") throw new Error(job.error || "Portfolio analyzer failed")
+    if (job.status === "cancelled") throw new Error(job.error || "Portfolio analyzer cancelled")
   }
 }
 
@@ -1627,6 +1635,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
 export const runPortfolioOptimizer = runPortfolioAnalyzer
 export const startPortfolioOptimizerJob = startPortfolioAnalyzerJob
 export const fetchPortfolioOptimizerJob = fetchPortfolioAnalyzerJob
+export const cancelPortfolioOptimizerJob = cancelPortfolioAnalyzerJob
 export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
   return runPortfolioAnalyzerAsync(body)
 }

@@ -954,6 +954,50 @@ def test_core_async_endpoints_use_persisted_job_contract(auth_client, monkeypatc
             raise AssertionError(f"{path} did not complete")
 
 
+def test_analyzer_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
+    from api import cache
+    from api.job_queue import get_job
+    from api.routers import analyzer
+
+    cache.invalidate_all()
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_analyzer_job(_req, *, job_id=None):
+        assert job_id
+        started.set()
+        release.wait(timeout=2)
+        return {"ok": True}
+
+    monkeypatch.setattr(analyzer, "_compute_analyzer_result", slow_analyzer_job)
+
+    started_resp = auth_client.post(
+        "/api/v1/portfolio-analyzer/async",
+        json={"scenario": {"preset": f"cancel-test-{time.time_ns()}"}},
+    )
+    assert started_resp.status_code == 202
+    job_id = started_resp.json()["job_id"]
+    assert started.wait(timeout=2)
+
+    cancel_resp = auth_client.post(f"/api/v1/portfolio-analyzer/async/{job_id}/cancel")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancelled"
+
+    release.set()
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        row = get_job(job_id)
+        if row and row["status"] == "cancelled":
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("cancelled analyzer job was overwritten")
+
+    poll_resp = auth_client.get(f"/api/v1/portfolio-analyzer/async/{job_id}")
+    assert poll_resp.status_code == 200
+    assert poll_resp.json()["status"] == "cancelled"
+
+
 def test_sizer_async_endpoint_can_complete_via_warm_worker(auth_client, monkeypatch):
     from api import async_job_runner, cache
     from api.job_worker_loop import run_once

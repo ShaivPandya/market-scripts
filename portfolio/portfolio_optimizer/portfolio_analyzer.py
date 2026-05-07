@@ -146,7 +146,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -185,6 +185,16 @@ from portfolio.portfolio_optimizer.composite_signal import (
 )
 
 console = Console()
+
+
+class AnalyzerCancelledError(RuntimeError):
+    """Raised when a cooperative analyzer cancellation checkpoint is tripped."""
+
+
+def _check_analyzer_cancelled(is_cancelled: Callable[[], bool] | None) -> None:
+    if is_cancelled is not None and is_cancelled():
+        raise AnalyzerCancelledError("Portfolio analyzer job cancelled")
+
 
 # -----------------------------
 # Configuration
@@ -3011,12 +3021,16 @@ def cleanup_analyzer_input_snapshots(max_age_seconds: int = _ANALYZER_INPUT_SNAP
     return deleted
 
 
-def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
+def _compute_analyzer_inputs(
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
     """Compute scenario-independent inputs (positions, prices, signals, raw factor data).
 
     Phase A of the split analyzer pipeline. Cached by `_cached_analyzer_inputs`
     so preset switches do not redownload prices or recompute composite signals.
     """
+    _check_analyzer_cancelled(is_cancelled)
     mode = _normalize_analyzer_universe_mode(universe_mode)
     meta = _positions_df_for_universe(mode)
     meta["direction"] = meta["direction"].fillna("")
@@ -3027,9 +3041,11 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     if not tickers:
         raise ValueError("portfolio.csv has no tickers.")
 
+    _check_analyzer_cancelled(is_cancelled)
     market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
     prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
     all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
+    _check_analyzer_cancelled(is_cancelled)
 
     missing_cols = [t for t in tickers if t not in prices_all.columns]
     if missing_cols:
@@ -3070,6 +3086,7 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
         weights_short=DEFAULT_WEIGHTS_SHORT,
         use_edgar=False,
     )
+    _check_analyzer_cancelled(is_cancelled)
     signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
     signal_composite = signal_composite.reindex(tickers).fillna(0.0)
 
@@ -3090,6 +3107,7 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
         anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
         anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     signal_effective = signal_composite.copy()
     contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
@@ -3112,10 +3130,12 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     ]
     if valuation_tickers:
         valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
+        _check_analyzer_cancelled(is_cancelled)
         qualitative_df = fetch_qualitative_metrics_batch(valuation_tickers).reindex(tickers)
     else:
         valuation_df = pd.DataFrame(index=tickers, columns=[*VALUATION_COLUMNS, "valuation_profile_id"])
         qualitative_df = pd.DataFrame(index=tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
+    _check_analyzer_cancelled(is_cancelled)
 
     direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
 
@@ -3134,7 +3154,11 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     }
 
 
-def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
+def _cached_analyzer_inputs(
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
+    _check_analyzer_cancelled(is_cancelled)
     mode = _normalize_analyzer_universe_mode(universe_mode)
     token = _analyzer_source_cache_token_for_mode(mode)
     snapshot_key = _analyzer_input_snapshot_key(token)
@@ -3143,12 +3167,14 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
         hit = _ANALYZER_INPUTS_CACHE.get(key)
         if hit is not None:
             LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
+            _check_analyzer_cancelled(is_cancelled)
             return cast(dict[Any, Any], hit)
 
     durable_hit = _read_analyzer_input_snapshot(snapshot_key)
     if durable_hit is not None:
         with _ANALYZER_INPUTS_LOCK:
             _ANALYZER_INPUTS_CACHE[key] = durable_hit
+        _check_analyzer_cancelled(is_cancelled)
         return durable_hit
 
     with _ANALYZER_INPUTS_FLIGHT_LOCK:
@@ -3161,7 +3187,12 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
             owner = False
 
     if not owner:
-        flight.event.wait(timeout=_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS)
+        deadline = datetime.now(UTC) + timedelta(seconds=_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS)
+        while not flight.event.wait(timeout=1.0):
+            _check_analyzer_cancelled(is_cancelled)
+            if datetime.now(UTC) >= deadline:
+                break
+        _check_analyzer_cancelled(is_cancelled)
         if flight.error is not None:
             raise flight.error
         if flight.value is not None:
@@ -3175,14 +3206,17 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
         if durable_hit is not None:
             with _ANALYZER_INPUTS_LOCK:
                 _ANALYZER_INPUTS_CACHE[key] = durable_hit
+            _check_analyzer_cancelled(is_cancelled)
             return durable_hit
 
     try:
+        _check_analyzer_cancelled(is_cancelled)
         with _ANALYZER_INPUTS_LOCK:
             hit = _ANALYZER_INPUTS_CACHE.get(key)
             if hit is not None:
                 LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
                 flight.value = cast(dict[str, Any], hit)
+                _check_analyzer_cancelled(is_cancelled)
                 return cast(dict[Any, Any], hit)
 
         durable_hit = _read_analyzer_input_snapshot(snapshot_key)
@@ -3190,16 +3224,22 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
             with _ANALYZER_INPUTS_LOCK:
                 _ANALYZER_INPUTS_CACHE[key] = durable_hit
             flight.value = durable_hit
+            _check_analyzer_cancelled(is_cancelled)
             return durable_hit
 
         LOGGER.info("analyzer input cache miss key=%s; computing", snapshot_key)
         import inspect
 
-        if "universe_mode" in inspect.signature(_compute_analyzer_inputs).parameters:
-            inputs = _compute_analyzer_inputs(universe_mode=mode)
-        else:
-            inputs = _compute_analyzer_inputs()
+        params = inspect.signature(_compute_analyzer_inputs).parameters
+        kwargs: dict[str, Any] = {}
+        if "universe_mode" in params:
+            kwargs["universe_mode"] = mode
+        if "is_cancelled" in params:
+            kwargs["is_cancelled"] = is_cancelled
+        inputs = _compute_analyzer_inputs(**kwargs)
+        _check_analyzer_cancelled(is_cancelled)
         _write_analyzer_input_snapshot(snapshot_key, inputs)
+        _check_analyzer_cancelled(is_cancelled)
         with _ANALYZER_INPUTS_LOCK:
             _ANALYZER_INPUTS_CACHE[key] = inputs
         flight.value = inputs
@@ -3220,13 +3260,18 @@ def _meta_series(meta: pd.DataFrame, tickers: list[str], column: str, default: A
     return pd.Series(default, index=tickers)
 
 
-def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
+def _apply_scenario(
+    inputs: dict,
+    scenario_config: Mapping[str, Any],
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
     """Apply scenario weights/brakes to cached inputs and produce the analyzer result.
 
     Phase B of the split analyzer pipeline. Re-runs cheaply on every preset switch.
     """
     from datetime import datetime
 
+    _check_analyzer_cancelled(is_cancelled)
     meta: pd.DataFrame = inputs["meta"]
     tickers: list[str] = inputs["tickers"]
     valuation_df: pd.DataFrame = inputs["valuation_df"]
@@ -3245,6 +3290,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         if valuation_active
         else pd.Series(0.0, index=tickers, dtype="float64")
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     qualitative_active = (
         float(scenario_config["factor_weights"].get("qualitative", 0.0)) > 0
@@ -3258,6 +3304,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
             {key: pd.Series(np.nan, index=tickers, dtype="float64") for key in QUALITATIVE_COLUMNS},
         )
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     fundamental_momentum_signal = _combine_weighted_components(
         {
@@ -3279,6 +3326,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         scenario_config["factor_weights"],
         tickers,
     )
+    _check_analyzer_cancelled(is_cancelled)
     scenario_risk = _compute_scenario_risk(meta, tickers, scenario_config["brakes"])
     scenario_penalty = (scenario_risk.long_risk_penalty + scenario_risk.short_cover_risk).reindex(tickers).fillna(0.0)
     scenario_score = (
@@ -3369,9 +3417,11 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         }
     )
     weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(drop=True)
+    _check_analyzer_cancelled(is_cancelled)
     course_of_action = build_course_of_action(weights_df, scenario_config)
     generated_at = datetime.now()
     course_of_action["summary"]["as_of"] = generated_at.isoformat()
+    _check_analyzer_cancelled(is_cancelled)
 
     return {
         "status": "ok",
@@ -3392,6 +3442,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
 def analyze_portfolio(
     scenario: Mapping[str, Any] | None = None,
     universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     """
     Build an informational signal table for conviction analysis.
@@ -3400,10 +3451,25 @@ def analyze_portfolio(
         Dictionary containing weights_df with signal/factor metrics only.
     """
     try:
+        import inspect
+
+        _check_analyzer_cancelled(is_cancelled)
         scenario_config = normalize_analyzer_scenario(scenario)
         mode = _normalize_analyzer_universe_mode(universe_mode)
-        inputs = _cached_analyzer_inputs(universe_mode=mode)
+        cached_params = inspect.signature(_cached_analyzer_inputs).parameters
+        cached_kwargs: dict[str, Any] = {}
+        if "universe_mode" in cached_params:
+            cached_kwargs["universe_mode"] = mode
+        if "is_cancelled" in cached_params:
+            cached_kwargs["is_cancelled"] = is_cancelled
+        inputs = _cached_analyzer_inputs(**cached_kwargs)
+        _check_analyzer_cancelled(is_cancelled)
+        apply_params = inspect.signature(_apply_scenario).parameters
+        if "is_cancelled" in apply_params:
+            return _apply_scenario(inputs, scenario_config, is_cancelled=is_cancelled)
         return _apply_scenario(inputs, scenario_config)
+    except AnalyzerCancelledError:
+        raise
     except Exception as e:
         import traceback
 
@@ -3882,6 +3948,7 @@ def get_data(
     beta_neutral: bool = True,
     scenario: Mapping[str, Any] | None = None,
     universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     """
     Fetch portfolio analyzer results for GUI consumption.
@@ -3896,7 +3963,7 @@ def get_data(
         Dictionary with analyzer results or error.
     """
     _ = (book, target_leverage, beta_neutral)
-    return analyze_portfolio(scenario=scenario, universe_mode=universe_mode)
+    return analyze_portfolio(scenario=scenario, universe_mode=universe_mode, is_cancelled=is_cancelled)
 
 
 # -----------------------------

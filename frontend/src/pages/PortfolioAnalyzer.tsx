@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { Bell, ChevronDown, ChevronRight, Play, Send, Sparkles } from "lucide-react"
+import { Bell, ChevronDown, ChevronRight, Play, Send, Sparkles, Square } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput } from "@/components/shared/FormControls"
@@ -17,12 +17,15 @@ import {
   generatePortfolioAnalyzerBrief,
   createAction,
   dismissOptimizationAlert,
+  cancelPortfolioAnalyzerJob,
+  fetchPortfolioAnalyzerJob,
   runOptimizationMissionAsync,
-  runPortfolioAnalyzerAsync,
+  startPortfolioAnalyzerJob,
   type AnalyzerCourseAction,
   type AnalyzerCourseOfAction,
   type AnalyzerFactorBreakdown,
   type AnalyzerScenarioRequest,
+  type AnalyzerUniverseMode,
   type LLMSettings,
   type OptimizationAlert,
   type OptimizationMission,
@@ -68,7 +71,17 @@ interface AnalyzerScenarioState {
   }
 }
 
+interface ActiveAnalyzerJob {
+  jobId: string
+  status: "queued" | "running"
+  startedAt: string
+  timeoutS?: number
+  universeMode: AnalyzerUniverseMode
+  scenario: AnalyzerScenarioState
+}
+
 const ANALYZER_STATE_KEY = ["portfolio-analyzer", "state"] as const
+const ANALYZER_ACTIVE_JOB_STORAGE_PREFIX = "portfolio-analyzer:active-job"
 const LLM_SETTINGS_QUERY_KEY = ["llm-settings"] as const
 const OPTIMIZATION_MISSIONS_QUERY_KEY = ["optimization", "missions"] as const
 const OPTIMIZATION_ALERTS_QUERY_KEY = ["optimization", "alerts", "open"] as const
@@ -373,6 +386,45 @@ function normalizeScenarioState(value: AnalyzerScenarioState | undefined): Analy
   }
 }
 
+function activeJobStorageKey(universeMode: AnalyzerUniverseMode) {
+  return `${ANALYZER_ACTIVE_JOB_STORAGE_PREFIX}:${universeMode}`
+}
+
+function readStoredActiveAnalyzerJob(universeMode: AnalyzerUniverseMode): ActiveAnalyzerJob | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(activeJobStorageKey(universeMode))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<ActiveAnalyzerJob>
+    const jobId = typeof parsed.jobId === "string" ? parsed.jobId.trim() : ""
+    if (!jobId) return null
+    const status = parsed.status === "queued" ? "queued" : "running"
+    return {
+      jobId,
+      status,
+      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : new Date().toISOString(),
+      timeoutS: typeof parsed.timeoutS === "number" ? parsed.timeoutS : undefined,
+      universeMode,
+      scenario: normalizeScenarioState(parsed.scenario),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeStoredActiveAnalyzerJob(universeMode: AnalyzerUniverseMode, job: ActiveAnalyzerJob | null) {
+  if (typeof window === "undefined") return
+  try {
+    if (job) {
+      window.localStorage.setItem(activeJobStorageKey(universeMode), JSON.stringify(job))
+    } else {
+      window.localStorage.removeItem(activeJobStorageKey(universeMode))
+    }
+  } catch {
+    // Ignore localStorage failures; React Query cache still carries the active job in-session.
+  }
+}
+
 function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
   const entries = Object.entries(weights) as [keyof T, number][]
   const total = entries.reduce((sum, [, value]) => sum + Math.max(0, Number.isFinite(value) ? value : 0), 0)
@@ -646,6 +698,15 @@ function mutationErrorMessage(error: unknown) {
     return "Unable to reach the API while staging this workspace action. Check that the backend or API proxy is reachable, then try again."
   }
   return message.replace(/^AxiosError:\s*/i, "")
+}
+
+function analyzerJobErrorMessage(error: unknown, fallback: string) {
+  if (!error) return fallback
+  const message = error instanceof Error ? error.message : String(error)
+  if (/network error/i.test(message)) {
+    return "Unable to reach the API while managing this analyzer mission. Check that the backend or API proxy is reachable, then try again."
+  }
+  return message.replace(/^AxiosError:\s*/i, "") || fallback
 }
 
 function toWorkspaceActionRequest(action: AnalyzerCourseAction) {
@@ -1133,15 +1194,24 @@ export function AnalyzerWorkbench({
   showContinuousOptimization = false,
 }: AnalyzerWorkbenchProps = {}) {
   const queryClient = useQueryClient()
+  const activeJobQueryKey = useMemo(() => ["portfolio-analyzer", "active-job", universeMode] as const, [universeMode])
   const cachedState = queryClient.getQueryData<{
     result: AnalyzerResponse | null
     scenario: AnalyzerScenarioState
   }>(stateKey)
+  const cachedActiveJob = queryClient.getQueryData<ActiveAnalyzerJob | null>(activeJobQueryKey)
 
   const [scenario, setScenario] = useState<AnalyzerScenarioState>(
     normalizeScenarioState(cachedState?.scenario),
   )
   const [cachedResult, setCachedResult] = useState<AnalyzerResponse | null>(cachedState?.result ?? null)
+  const [activeJob, setActiveJob] = useState<ActiveAnalyzerJob | null>(
+    () => cachedActiveJob ?? readStoredActiveAnalyzerJob(universeMode),
+  )
+  const [isStartingMission, setIsStartingMission] = useState(false)
+  const [isStoppingMission, setIsStoppingMission] = useState(false)
+  const [missionError, setMissionError] = useState<string | null>(null)
+  const [missionNotice, setMissionNotice] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
   const [briefTicker, setBriefTicker] = useState<string | null>(null)
@@ -1151,11 +1221,15 @@ export function AnalyzerWorkbench({
   const llmReady = Boolean(
     llmSettings.data?.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured,
   )
-  const mutation = useMutation({
-    mutationFn: (nextScenario: AnalyzerScenarioState) =>
-      runPortfolioAnalyzerAsync({ scenario: toScenarioRequest(nextScenario), universe_mode: universeMode }),
-    onSuccess: result => setCachedResult((result as AnalyzerResponse) ?? null),
-  })
+
+  const setActiveJobAndPersist = useCallback(
+    (next: ActiveAnalyzerJob | null) => {
+      setActiveJob(next)
+      queryClient.setQueryData(activeJobQueryKey, next)
+      writeStoredActiveAnalyzerJob(universeMode, next)
+    },
+    [activeJobQueryKey, queryClient, universeMode],
+  )
 
   const briefMutation = useMutation({
     mutationFn: generatePortfolioAnalyzerBrief,
@@ -1178,7 +1252,86 @@ export function AnalyzerWorkbench({
     queryClient.setQueryData(stateKey, { result: cachedResult, scenario })
   }, [cachedResult, queryClient, scenario, stateKey])
 
-  const data = (mutation.data as AnalyzerResponse | undefined) ?? cachedResult
+  useEffect(() => {
+    const restored = queryClient.getQueryData<ActiveAnalyzerJob | null>(activeJobQueryKey)
+      ?? readStoredActiveAnalyzerJob(universeMode)
+    setActiveJob(restored)
+  }, [activeJobQueryKey, queryClient, universeMode])
+
+  useEffect(() => {
+    if (!activeJob) return
+    const currentJob = activeJob
+    let stopped = false
+    let transientPollErrors = 0
+    const startedAtMs = new Date(currentJob.startedAt).getTime()
+    const serverTimeoutMs = Number.isFinite(currentJob.timeoutS)
+      ? Math.max(180, Number(currentJob.timeoutS)) * 1000
+      : 180_000
+    const deadline = (Number.isFinite(startedAtMs) ? startedAtMs : Date.now()) + serverTimeoutMs + 30_000
+
+    async function pollActiveJob() {
+      if (Date.now() > deadline) {
+        setMissionError("Timeout: Portfolio analyzer is taking too long. Try again.")
+        setActiveJobAndPersist(null)
+        return
+      }
+
+      try {
+        const job = await fetchPortfolioAnalyzerJob(currentJob.jobId)
+        if (stopped) return
+        transientPollErrors = 0
+
+        if (job.status === "queued" || job.status === "running") {
+          if (job.status !== currentJob.status || job.timeout_s !== currentJob.timeoutS) {
+            setActiveJobAndPersist({ ...currentJob, status: job.status, timeoutS: job.timeout_s ?? currentJob.timeoutS })
+          }
+          return
+        }
+
+        setActiveJobAndPersist(null)
+        setIsStoppingMission(false)
+
+        if (job.status === "done") {
+          setMissionError(null)
+          setMissionNotice(null)
+          setScenario(cloneScenario(currentJob.scenario))
+          if ("result" in job && job.result != null) {
+            setCachedResult((job.result as AnalyzerResponse) ?? null)
+          }
+          return
+        }
+
+        if (job.status === "cancelled") {
+          setMissionNotice(job.error || "Mission stopped.")
+          return
+        }
+
+        if (job.status === "error") {
+          setMissionError(job.error || "Portfolio analyzer failed")
+        }
+      } catch (err) {
+        if (stopped) return
+        transientPollErrors += 1
+        if (transientPollErrors >= 5) {
+          setMissionError(analyzerJobErrorMessage(err, "Unable to poll portfolio analyzer mission."))
+        }
+      }
+    }
+
+    void pollActiveJob()
+    const handle = window.setInterval(() => void pollActiveJob(), 2000)
+    return () => {
+      stopped = true
+      window.clearInterval(handle)
+    }
+  }, [activeJob, setActiveJobAndPersist])
+
+  const data = cachedResult
+  const isMissionActive = activeJob != null
+  const missionStatus = activeJob?.status === "queued" ? "Queued" : activeJob ? "Running" : null
+  const missionStatusDetail = activeJob
+    ? `${missionStatus} since ${formatDateTime(activeJob.startedAt)}`
+    : missionNotice
   const rows = toRows(data?.weights_df)
   const course = data?.course_of_action
   const actionQueue = useMemo(() => course?.action_queue ?? [], [course?.action_queue])
@@ -1251,6 +1404,82 @@ export function AnalyzerWorkbench({
     briefMutation.mutate(selectedAction)
   }
 
+  async function handleRunMission() {
+    if (isMissionActive || isStartingMission) return
+    const submittedScenario = cloneScenario(scenario)
+    setIsStartingMission(true)
+    setMissionError(null)
+    setMissionNotice(null)
+
+    try {
+      const started = await startPortfolioAnalyzerJob({
+        scenario: toScenarioRequest(submittedScenario),
+        universe_mode: universeMode,
+      })
+
+      if (started.status === "done") {
+        if ("result" in started && started.result != null) {
+          setCachedResult((started.result as AnalyzerResponse) ?? null)
+        }
+        return
+      }
+
+      if (started.status === "error") {
+        setMissionError(started.error || "Portfolio analyzer failed")
+        return
+      }
+
+      if (started.status === "cancelled") {
+        setMissionNotice(started.error || "Mission stopped.")
+        return
+      }
+
+      setActiveJobAndPersist({
+        jobId: started.job_id,
+        status: started.status,
+        startedAt: new Date().toISOString(),
+        timeoutS: started.timeout_s,
+        universeMode,
+        scenario: submittedScenario,
+      })
+    } catch (err) {
+      setMissionError(analyzerJobErrorMessage(err, "Unable to start portfolio analyzer mission."))
+    } finally {
+      setIsStartingMission(false)
+    }
+  }
+
+  async function handleStopMission() {
+    if (!activeJob || isStoppingMission) return
+    setIsStoppingMission(true)
+    setMissionError(null)
+
+    try {
+      const job = await cancelPortfolioAnalyzerJob(activeJob.jobId)
+      if (job.status === "cancelled") {
+        setActiveJobAndPersist(null)
+        setMissionNotice(job.error || "Mission stopped.")
+        return
+      }
+      if (job.status === "done") {
+        setActiveJobAndPersist(null)
+        setMissionNotice("Mission completed before the stop request was applied.")
+        if ("result" in job && job.result != null) {
+          setCachedResult((job.result as AnalyzerResponse) ?? null)
+        }
+        return
+      }
+      if (job.status === "error") {
+        setActiveJobAndPersist(null)
+        setMissionError(job.error || "Portfolio analyzer failed")
+      }
+    } catch (err) {
+      setMissionError(analyzerJobErrorMessage(err, "Unable to stop portfolio analyzer mission."))
+    } finally {
+      setIsStoppingMission(false)
+    }
+  }
+
   return (
     <div>
       {showPageHeader && (
@@ -1268,18 +1497,38 @@ export function AnalyzerWorkbench({
             <div className="flex items-center gap-2">
               <h2 className="section-title">Mission</h2>
               {scenario.preset === "custom" && <Badge tone="info">Custom</Badge>}
+              {missionStatus && <Badge tone="info">{missionStatus}</Badge>}
             </div>
             <p className="mt-1 text-sm text-subtle">Choose the operating objective, then inspect the recommended action queue.</p>
           </div>
-          <ActionButton
-            onClick={() => mutation.mutate(scenario)}
-            loading={mutation.isPending}
-            loadingText="Running mission..."
-            className="w-auto px-5"
-          >
-            Run Mission
-          </ActionButton>
+          <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+            <ActionButton
+              onClick={handleRunMission}
+              loading={isStartingMission}
+              loadingText="Starting..."
+              disabled={isMissionActive}
+              className="w-auto px-5"
+            >
+              Run Mission
+            </ActionButton>
+            {isMissionActive && (
+              <button
+                type="button"
+                onClick={handleStopMission}
+                disabled={isStoppingMission}
+                className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+              >
+                <Square className="h-4 w-4" />
+                {isStoppingMission ? "Stopping..." : "Stop"}
+              </button>
+            )}
+          </div>
         </div>
+        {missionStatusDetail && (
+          <p className="mt-3 text-xs text-subtle">
+            {missionStatusDetail}
+          </p>
+        )}
 
         <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-5">
           {MISSION_OPTIONS.map(option => {
@@ -1396,10 +1645,10 @@ export function AnalyzerWorkbench({
         )}
       </div>
 
-      {mutation.isPending && <LoadingSpinner message="Running portfolio analyzer..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {isMissionActive && <LoadingSpinner message="Running portfolio analyzer..." />}
+      {missionError && <ErrorMessage message={missionError} />}
 
-      {data && !mutation.isPending && !mutation.isError && (
+      {data && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <SummaryCard title="Mission" value={missionLabel(summary?.mission ?? scenario.preset)} detail={scenario.preset === "custom" ? "Custom scores" : "Preset scores"} />
@@ -1460,7 +1709,7 @@ export function AnalyzerWorkbench({
         </div>
       )}
 
-      {!data && !mutation.isPending && !mutation.isError && (
+      {!data && !isMissionActive && !missionError && (
         <p className="text-gray-400 text-sm">Choose a mission and run the analyzer to generate the action queue.</p>
       )}
     </div>
