@@ -138,6 +138,7 @@ import argparse
 import hashlib
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -148,6 +149,7 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -2286,6 +2288,292 @@ def overlay_anchor_long_equity_signals(
     return signal_composite_out, sub_out, metadata
 
 
+_ANALYZER_INPUTS_VERSION = "v1"
+_ANALYZER_INPUTS_CACHE: TTLCache = TTLCache(maxsize=4, ttl=300)
+_ANALYZER_INPUTS_LOCK = threading.Lock()
+
+
+def _compute_analyzer_inputs() -> dict:
+    """Compute scenario-independent inputs (positions, prices, signals, raw factor data).
+
+    Phase A of the split analyzer pipeline. Cached by `_cached_analyzer_inputs`
+    so preset switches do not redownload prices or recompute composite signals.
+    """
+    meta = _get_positions_df()
+    meta["direction"] = meta["direction"].fillna("")
+    meta = meta.set_index("ticker")
+    meta = prepare_instrument_metadata(meta)
+
+    tickers = meta.index.tolist()
+    if not tickers:
+        raise ValueError("portfolio.csv has no tickers.")
+
+    market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+    prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
+    all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
+
+    missing_cols = [t for t in tickers if t not in prices_all.columns]
+    if missing_cols:
+        raise ValueError(f"Failed to download tickers: {missing_cols}")
+
+    for mt in market_tickers:
+        if mt not in prices_all.columns:
+            raise ValueError(f"Failed to download {mt} for signal calibration.")
+
+    usd_prices = pd.DataFrame(index=prices_all.index)
+    for t in all_tickers_to_fetch:
+        local_px = prices_all[t]
+        ccy = ticker_currencies.get(t, BASE_CCY)
+        usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
+
+    usd_prices = usd_prices.ffill()
+    rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
+    tickers = [t for t in tickers if t in rets.columns]
+    if not tickers:
+        raise ValueError("No instruments with sufficient return history for signal analysis.")
+
+    meta = meta.loc[tickers]
+    meta = apply_contrarian_gating(meta, prices_all)
+
+    active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
+    asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
+    signal_asset_map = dict(asset_map)
+    for t in tickers:
+        if str(meta.loc[t, "instrument_type"]).lower() == "future":
+            signal_asset_map[t] = "future"
+    direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
+
+    signals_df, _ = generate_composite_signals(
+        tickers=active_tickers,
+        asset_map=signal_asset_map,
+        benchmark_override=MARKET_TICKER_LONG,
+        direction_map=direction_map,
+        weights_short=DEFAULT_WEIGHTS_SHORT,
+        use_edgar=False,
+    )
+    signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+    signal_composite = signal_composite.reindex(tickers).fillna(0.0)
+
+    signal_subcomponents: dict[str, pd.Series] = {}
+    for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+        if not signals_df.empty and col in signals_df.columns:
+            signal_subcomponents[col] = signals_df[col].reindex(tickers)
+        else:
+            signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
+    signal_composite, signal_subcomponents, signal_anchor_meta = overlay_anchor_long_equity_signals(
+        tickers=tickers,
+        meta=meta,
+        signal_composite=signal_composite,
+        signal_subcomponents=signal_subcomponents,
+        years=5,
+        use_edgar=False,
+        anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
+        anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
+    )
+
+    signal_effective = signal_composite.copy()
+    contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
+        "direction_intended"
+    ].reindex(tickers).fillna("").eq("long")
+    contrarian_tickers = contrarian_active[contrarian_active].index.tolist()
+    if contrarian_tickers:
+        contrarian_drawdowns = meta.loc[contrarian_tickers, "drawdown_52w"].astype(float)
+        contrarian_signal = ((contrarian_drawdowns - CONTRARIAN_DD_THRESHOLD) / CONTRARIAN_SIGNAL_DD_SCALE).clip(
+            lower=0.0,
+            upper=CONTRARIAN_SIGNAL_CLIP,
+        )
+        signal_effective.loc[contrarian_tickers] = contrarian_signal
+
+    valuation_tickers = [
+        t
+        for t in active_tickers
+        if str(meta.loc[t, "asset"]).strip().lower() == "equity"
+        and str(meta.loc[t, "instrument_type"]).strip().lower() != "future"
+    ]
+    if valuation_tickers:
+        valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
+        qualitative_df = fetch_qualitative_metrics_batch(valuation_tickers).reindex(tickers)
+    else:
+        valuation_df = pd.DataFrame(index=tickers, columns=[*VALUATION_COLUMNS, "valuation_profile_id"])
+        qualitative_df = pd.DataFrame(index=tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
+
+    direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
+
+    return {
+        "meta": meta,
+        "tickers": tickers,
+        "active_tickers": active_tickers,
+        "valuation_tickers": valuation_tickers,
+        "signal_effective": signal_effective,
+        "signal_subcomponents": signal_subcomponents,
+        "signal_anchor_meta": signal_anchor_meta,
+        "valuation_df": valuation_df,
+        "qualitative_df": qualitative_df,
+        "direction_display": direction_display,
+    }
+
+
+def _cached_analyzer_inputs() -> dict:
+    token = analyzer_source_cache_token()
+    key = f"{_ANALYZER_INPUTS_VERSION}:" + json.dumps(token, sort_keys=True, default=str)
+    with _ANALYZER_INPUTS_LOCK:
+        hit = _ANALYZER_INPUTS_CACHE.get(key)
+        if hit is not None:
+            return hit
+    inputs = _compute_analyzer_inputs()
+    with _ANALYZER_INPUTS_LOCK:
+        _ANALYZER_INPUTS_CACHE[key] = inputs
+    return inputs
+
+
+def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
+    """Apply scenario weights/brakes to cached inputs and produce the analyzer result.
+
+    Phase B of the split analyzer pipeline. Re-runs cheaply on every preset switch.
+    """
+    from datetime import datetime
+
+    meta: pd.DataFrame = inputs["meta"]
+    tickers: list[str] = inputs["tickers"]
+    valuation_df: pd.DataFrame = inputs["valuation_df"]
+    qualitative_df: pd.DataFrame = inputs["qualitative_df"]
+    signal_subcomponents: dict[str, pd.Series] = inputs["signal_subcomponents"]
+    signal_effective: pd.Series = inputs["signal_effective"]
+    signal_anchor_meta: dict[str, Any] = inputs["signal_anchor_meta"]
+    direction_display: pd.Series = inputs["direction_display"]
+
+    valuation_active = (
+        float(scenario_config["factor_weights"].get("valuation", 0.0)) > 0
+        and sum(float(value) for value in scenario_config["valuation_weights"].values()) > 0
+    )
+    valuation_signal = (
+        compute_valuation_signal(valuation_df, scenario_config["valuation_weights"]).reindex(tickers)
+        if valuation_active
+        else pd.Series(0.0, index=tickers, dtype="float64")
+    )
+
+    qualitative_active = (
+        float(scenario_config["factor_weights"].get("qualitative", 0.0)) > 0
+        and sum(float(value) for value in scenario_config["qualitative_weights"].values()) > 0
+    )
+    qualitative_signal, qualitative_subsignals = (
+        compute_qualitative_signals(qualitative_df, scenario_config["qualitative_weights"], tickers)
+        if qualitative_active
+        else (
+            pd.Series(0.0, index=tickers, dtype="float64"),
+            {key: pd.Series(np.nan, index=tickers, dtype="float64") for key in QUALITATIVE_COLUMNS},
+        )
+    )
+
+    fundamental_momentum_signal = _combine_weighted_components(
+        {
+            "revenue": signal_subcomponents["rev_mom_signal"],
+            "eps": signal_subcomponents["eps_mom_signal"],
+        },
+        scenario_config["fundamental_momentum_weights"],
+        tickers,
+    )
+    scenario_components = {
+        "quality": signal_subcomponents["quality_signal"].reindex(tickers),
+        "price_momentum": signal_subcomponents["price_mom_signal"].reindex(tickers),
+        "fundamental_momentum": fundamental_momentum_signal.reindex(tickers),
+        "valuation": valuation_signal.reindex(tickers),
+        "qualitative": qualitative_signal.reindex(tickers),
+    }
+    scenario_base_score = _combine_weighted_components(
+        scenario_components,
+        scenario_config["factor_weights"],
+        tickers,
+    )
+    scenario_penalty, penalty_parts = _compute_scenario_penalties(meta, tickers, scenario_config["brakes"])
+    scenario_score = (scenario_base_score - scenario_penalty).reindex(tickers).fillna(0.0)
+    baseline_score = signal_effective.reindex(tickers).fillna(0.0)
+    score_delta = scenario_score - baseline_score
+    scenario_driver = _scenario_drivers(
+        tickers,
+        scenario_components,
+        scenario_config["factor_weights"],
+        penalty_parts,
+        score_delta,
+    )
+
+    weights_df = pd.DataFrame(
+        {
+            "ticker": tickers,
+            "asset": meta["asset"].values,
+            "instrument_type": meta["instrument_type"].values,
+            "price_symbol": meta["price_symbol"].values,
+            "quantity": meta["quantity"].values,
+            "contract_multiplier": meta["contract_multiplier"].values,
+            "direction": direction_display.values,
+            "contrarian": meta["contrarian"].values,
+            "drawdown_52w": meta["drawdown_52w"].values,
+            "stabilized_10d": meta["stabilized_10d"].values,
+            "days_since_new_low": meta["days_since_new_low"].values,
+            "no_new_high_20d": meta["no_new_high_20d"].values,
+            "days_since_high": meta["days_since_high"].values,
+            "avg20_roc63": meta["avg20_roc63"].values,
+            "avg10_rel_roc": meta["avg10_rel_roc"].values,
+            "signal": signal_effective.values,
+            "baseline_score": baseline_score.values,
+            "scenario_score": scenario_score.values,
+            "score_delta": score_delta.values,
+            "scenario_driver": scenario_driver,
+            "scenario_penalty": scenario_penalty.values,
+            "quality_signal": signal_subcomponents["quality_signal"].values,
+            "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
+            "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
+            "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
+            "fundamental_momentum_signal": fundamental_momentum_signal.values,
+            "valuation_signal": valuation_signal.values,
+            "qualitative_signal": qualitative_signal.values,
+            "business_quality_qual_signal": qualitative_subsignals["business_quality_qualitative"].values,
+            "industry_quality_signal": qualitative_subsignals["industry_quality"].values,
+            "management_quality_signal": qualitative_subsignals["management_quality"].values,
+            "business_quality_qual_score": qualitative_df["business_quality_qual_score"].values,
+            "business_quality_qual_confidence": qualitative_df["business_quality_qual_confidence"].values,
+            "business_quality_qual_status": qualitative_df["business_quality_qual_status"].values,
+            "business_quality_qual_evidence": qualitative_df["business_quality_qual_evidence"].values,
+            "industry_quality_score": qualitative_df["industry_quality_score"].values,
+            "industry_quality_confidence": qualitative_df["industry_quality_confidence"].values,
+            "industry_quality_status": qualitative_df["industry_quality_status"].values,
+            "industry_quality_evidence": qualitative_df["industry_quality_evidence"].values,
+            "management_quality_score": qualitative_df["management_quality_score"].values,
+            "management_quality_confidence": qualitative_df["management_quality_confidence"].values,
+            "management_quality_status": qualitative_df["management_quality_status"].values,
+            "management_quality_evidence": qualitative_df["management_quality_evidence"].values,
+            "price_sales": valuation_df["price_sales"].values,
+            "price_operating_income": valuation_df["price_operating_income"].values,
+            "price_fcf": valuation_df["price_fcf"].values,
+            "price_earnings": valuation_df["price_earnings"].values,
+            "price_book": valuation_df["price_book"].values,
+            "valuation_profile_id": valuation_df.get(
+                "valuation_profile_id", pd.Series(index=tickers, dtype="object")
+            ).values,
+        }
+    )
+    weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(drop=True)
+    course_of_action = build_course_of_action(weights_df, scenario_config)
+    generated_at = datetime.now()
+    course_of_action["summary"]["as_of"] = generated_at.isoformat()
+
+    return {
+        "status": "ok",
+        "error": None,
+        "timestamp": generated_at,
+        "scenario": scenario_config,
+        "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
+        "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
+        "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
+        "signal_anchor_cache_status": signal_anchor_meta.get("signal_anchor_cache_status"),
+        "signal_anchor_as_of": signal_anchor_meta.get("signal_anchor_as_of"),
+        "signal_anchor_stale": signal_anchor_meta.get("signal_anchor_stale"),
+        "weights_df": weights_df,
+        "course_of_action": course_of_action,
+    }
+
+
 def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
     """
     Build an informational signal table for conviction analysis.
@@ -2293,247 +2581,10 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
     Returns:
         Dictionary containing weights_df with signal/factor metrics only.
     """
-    from datetime import datetime
-
     try:
         scenario_config = normalize_analyzer_scenario(scenario)
-        meta = _get_positions_df()
-        meta["direction"] = meta["direction"].fillna("")
-        meta = meta.set_index("ticker")
-        meta = prepare_instrument_metadata(meta)
-
-        tickers = meta.index.tolist()
-        if not tickers:
-            return {"error": "portfolio.csv has no tickers."}
-
-        market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
-        prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
-        all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
-
-        missing_cols = [t for t in tickers if t not in prices_all.columns]
-        if missing_cols:
-            return {"error": f"Failed to download tickers: {missing_cols}"}
-
-        for mt in market_tickers:
-            if mt not in prices_all.columns:
-                return {"error": f"Failed to download {mt} for signal calibration."}
-
-        usd_prices = pd.DataFrame(index=prices_all.index)
-        for t in all_tickers_to_fetch:
-            local_px = prices_all[t]
-            ccy = ticker_currencies.get(t, BASE_CCY)
-            usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
-
-        usd_prices = usd_prices.ffill()
-        rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
-        tickers = [t for t in tickers if t in rets.columns]
-        if not tickers:
-            return {"error": "No instruments with sufficient return history for signal analysis."}
-
-        meta = meta.loc[tickers]
-        meta = apply_contrarian_gating(meta, prices_all)
-
-        active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-        asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
-        signal_asset_map = dict(asset_map)
-        for t in tickers:
-            if str(meta.loc[t, "instrument_type"]).lower() == "future":
-                signal_asset_map[t] = "future"
-        direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
-
-        signals_df, _ = generate_composite_signals(
-            tickers=active_tickers,
-            asset_map=signal_asset_map,
-            benchmark_override=MARKET_TICKER_LONG,
-            direction_map=direction_map,
-            weights_short=DEFAULT_WEIGHTS_SHORT,
-            use_edgar=False,
-        )
-        signal_composite = (
-            signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
-        )
-        signal_composite = signal_composite.reindex(tickers).fillna(0.0)
-
-        signal_subcomponents: dict[str, pd.Series] = {}
-        for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
-            if not signals_df.empty and col in signals_df.columns:
-                signal_subcomponents[col] = signals_df[col].reindex(tickers)
-            else:
-                signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
-
-        signal_composite, signal_subcomponents, signal_anchor_meta = overlay_anchor_long_equity_signals(
-            tickers=tickers,
-            meta=meta,
-            signal_composite=signal_composite,
-            signal_subcomponents=signal_subcomponents,
-            years=5,
-            use_edgar=False,
-            anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
-            anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
-        )
-
-        signal_effective = signal_composite.copy()
-        contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
-            "direction_intended"
-        ].reindex(tickers).fillna("").eq("long")
-        contrarian_tickers = contrarian_active[contrarian_active].index.tolist()
-        if contrarian_tickers:
-            contrarian_drawdowns = meta.loc[contrarian_tickers, "drawdown_52w"].astype(float)
-            contrarian_signal = ((contrarian_drawdowns - CONTRARIAN_DD_THRESHOLD) / CONTRARIAN_SIGNAL_DD_SCALE).clip(
-                lower=0.0,
-                upper=CONTRARIAN_SIGNAL_CLIP,
-            )
-            signal_effective.loc[contrarian_tickers] = contrarian_signal
-
-        valuation_tickers = [
-            t
-            for t in active_tickers
-            if str(meta.loc[t, "asset"]).strip().lower() == "equity"
-            and str(meta.loc[t, "instrument_type"]).strip().lower() != "future"
-        ]
-        valuation_active = (
-            float(scenario_config["factor_weights"].get("valuation", 0.0)) > 0
-            and sum(float(value) for value in scenario_config["valuation_weights"].values()) > 0
-        )
-        valuation_df = (
-            fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
-            if valuation_active
-            else pd.DataFrame(index=tickers, columns=[*VALUATION_COLUMNS, "valuation_profile_id"])
-        )
-        valuation_signal = (
-            compute_valuation_signal(valuation_df, scenario_config["valuation_weights"]).reindex(tickers)
-            if valuation_active
-            else pd.Series(0.0, index=tickers, dtype="float64")
-        )
-        qualitative_active = (
-            float(scenario_config["factor_weights"].get("qualitative", 0.0)) > 0
-            and sum(float(value) for value in scenario_config["qualitative_weights"].values()) > 0
-        )
-        qualitative_df = (
-            fetch_qualitative_metrics_batch(valuation_tickers).reindex(tickers)
-            if qualitative_active
-            else pd.DataFrame(index=tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
-        )
-        qualitative_signal, qualitative_subsignals = (
-            compute_qualitative_signals(qualitative_df, scenario_config["qualitative_weights"], tickers)
-            if qualitative_active
-            else (
-                pd.Series(0.0, index=tickers, dtype="float64"),
-                {key: pd.Series(np.nan, index=tickers, dtype="float64") for key in QUALITATIVE_COLUMNS},
-            )
-        )
-
-        fundamental_momentum_signal = _combine_weighted_components(
-            {
-                "revenue": signal_subcomponents["rev_mom_signal"],
-                "eps": signal_subcomponents["eps_mom_signal"],
-            },
-            scenario_config["fundamental_momentum_weights"],
-            tickers,
-        )
-        scenario_components = {
-            "quality": signal_subcomponents["quality_signal"].reindex(tickers),
-            "price_momentum": signal_subcomponents["price_mom_signal"].reindex(tickers),
-            "fundamental_momentum": fundamental_momentum_signal.reindex(tickers),
-            "valuation": valuation_signal.reindex(tickers),
-            "qualitative": qualitative_signal.reindex(tickers),
-        }
-        scenario_base_score = _combine_weighted_components(
-            scenario_components,
-            scenario_config["factor_weights"],
-            tickers,
-        )
-        scenario_penalty, penalty_parts = _compute_scenario_penalties(meta, tickers, scenario_config["brakes"])
-        scenario_score = (scenario_base_score - scenario_penalty).reindex(tickers).fillna(0.0)
-        baseline_score = signal_effective.reindex(tickers).fillna(0.0)
-        score_delta = scenario_score - baseline_score
-        scenario_driver = _scenario_drivers(
-            tickers,
-            scenario_components,
-            scenario_config["factor_weights"],
-            penalty_parts,
-            score_delta,
-        )
-
-        direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
-
-        weights_df = pd.DataFrame(
-            {
-                "ticker": tickers,
-                "asset": meta["asset"].values,
-                "instrument_type": meta["instrument_type"].values,
-                "price_symbol": meta["price_symbol"].values,
-                "quantity": meta["quantity"].values,
-                "contract_multiplier": meta["contract_multiplier"].values,
-                "direction": direction_display.values,
-                "contrarian": meta["contrarian"].values,
-                "drawdown_52w": meta["drawdown_52w"].values,
-                "stabilized_10d": meta["stabilized_10d"].values,
-                "days_since_new_low": meta["days_since_new_low"].values,
-                "no_new_high_20d": meta["no_new_high_20d"].values,
-                "days_since_high": meta["days_since_high"].values,
-                "avg20_roc63": meta["avg20_roc63"].values,
-                "avg10_rel_roc": meta["avg10_rel_roc"].values,
-                "signal": signal_effective.values,
-                "baseline_score": baseline_score.values,
-                "scenario_score": scenario_score.values,
-                "score_delta": score_delta.values,
-                "scenario_driver": scenario_driver,
-                "scenario_penalty": scenario_penalty.values,
-                "quality_signal": signal_subcomponents["quality_signal"].values,
-                "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
-                "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
-                "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
-                "fundamental_momentum_signal": fundamental_momentum_signal.values,
-                "valuation_signal": valuation_signal.values,
-                "qualitative_signal": qualitative_signal.values,
-                "business_quality_qual_signal": qualitative_subsignals["business_quality_qualitative"].values,
-                "industry_quality_signal": qualitative_subsignals["industry_quality"].values,
-                "management_quality_signal": qualitative_subsignals["management_quality"].values,
-                "business_quality_qual_score": qualitative_df["business_quality_qual_score"].values,
-                "business_quality_qual_confidence": qualitative_df["business_quality_qual_confidence"].values,
-                "business_quality_qual_status": qualitative_df["business_quality_qual_status"].values,
-                "business_quality_qual_evidence": qualitative_df["business_quality_qual_evidence"].values,
-                "industry_quality_score": qualitative_df["industry_quality_score"].values,
-                "industry_quality_confidence": qualitative_df["industry_quality_confidence"].values,
-                "industry_quality_status": qualitative_df["industry_quality_status"].values,
-                "industry_quality_evidence": qualitative_df["industry_quality_evidence"].values,
-                "management_quality_score": qualitative_df["management_quality_score"].values,
-                "management_quality_confidence": qualitative_df["management_quality_confidence"].values,
-                "management_quality_status": qualitative_df["management_quality_status"].values,
-                "management_quality_evidence": qualitative_df["management_quality_evidence"].values,
-                "price_sales": valuation_df["price_sales"].values,
-                "price_operating_income": valuation_df["price_operating_income"].values,
-                "price_fcf": valuation_df["price_fcf"].values,
-                "price_earnings": valuation_df["price_earnings"].values,
-                "price_book": valuation_df["price_book"].values,
-                "valuation_profile_id": valuation_df.get(
-                    "valuation_profile_id", pd.Series(index=tickers, dtype="object")
-                ).values,
-            }
-        )
-        weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(
-            drop=True
-        )
-        course_of_action = build_course_of_action(weights_df, scenario_config)
-        generated_at = datetime.now()
-        course_of_action["summary"]["as_of"] = generated_at.isoformat()
-
-        return {
-            "status": "ok",
-            "error": None,
-            "timestamp": generated_at,
-            "scenario": scenario_config,
-            "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
-            "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
-            "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
-            "signal_anchor_cache_status": signal_anchor_meta.get("signal_anchor_cache_status"),
-            "signal_anchor_as_of": signal_anchor_meta.get("signal_anchor_as_of"),
-            "signal_anchor_stale": signal_anchor_meta.get("signal_anchor_stale"),
-            "weights_df": weights_df,
-            "course_of_action": course_of_action,
-        }
-
+        inputs = _cached_analyzer_inputs()
+        return _apply_scenario(inputs, scenario_config)
     except Exception as e:
         import traceback
 
