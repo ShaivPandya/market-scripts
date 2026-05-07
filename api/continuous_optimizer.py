@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from ontology.domain_write_service import ontology_primary_writes_enabled
+from ontology.models import EntityType
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -67,7 +68,7 @@ def _business_key(prefix: str, *parts: Any) -> str:
 
 
 def _schema_write_properties(object_type: str, properties: dict[str, Any]) -> dict[str, Any]:
-    schema_cls = NODE_SCHEMAS.get(object_type)
+    schema_cls = NODE_SCHEMAS.get(cast(EntityType, object_type))
     if schema_cls is None:
         return dict(properties)
     allowed = set(getattr(schema_cls, "model_fields", {})) - {"schema_version"}

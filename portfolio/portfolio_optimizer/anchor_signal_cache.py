@@ -277,7 +277,7 @@ def _latest_stale_record(
     if not folder.exists():
         return None
 
-    candidates: list[dict[str, Any]] = []
+    local_candidates: list[dict[str, Any]] = []
     for path in folder.glob("*.json"):
         record = _read_record(path)
         if not record or record.get("key_prefix") != key_prefix:
@@ -288,11 +288,11 @@ def _latest_stale_record(
             fresh_days_after_as_of=fresh_days_after_as_of,
         ):
             continue
-        candidates.append(record)
+        local_candidates.append(record)
 
-    if not candidates:
+    if not local_candidates:
         return None
-    return max(candidates, key=lambda item: str(item.get("as_of") or ""))
+    return max(local_candidates, key=lambda item: str(item.get("as_of") or ""))
 
 
 def _load_or_refresh(

@@ -143,7 +143,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple  # noqa: UP035
+from typing import Any, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -2420,7 +2420,7 @@ def _cached_analyzer_inputs() -> dict:
     with _ANALYZER_INPUTS_LOCK:
         hit = _ANALYZER_INPUTS_CACHE.get(key)
         if hit is not None:
-            return hit
+            return cast(dict[Any, Any], hit)
     inputs = _compute_analyzer_inputs()
     with _ANALYZER_INPUTS_LOCK:
         _ANALYZER_INPUTS_CACHE[key] = inputs

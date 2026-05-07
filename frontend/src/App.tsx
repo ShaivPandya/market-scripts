@@ -130,6 +130,7 @@ const ThesisManager = lazyPage(() => import("@/pages/ThesisManager"), "ThesisMan
 const Workspace = lazyPage(() => import("@/pages/Workspace"), "Workspace")
 const PositionDossier = lazyPage(() => import("@/pages/PositionDossier"), "PositionDossier")
 const IdeaWatchlist = lazyPage(() => import("@/pages/IdeaWatchlist"), "IdeaWatchlist")
+const IdeaDetail = lazyPage(() => import("@/pages/IdeaDetail"), "IdeaDetail")
 const DCFModel = lazyPage(() => import("@/pages/DCFModel"), "DCFModel")
 const AISettings = lazyPage(() => import("@/pages/AISettings"), "AISettings")
 
@@ -180,6 +181,7 @@ function AppRoutes() {
               <Route path="/workspace" element={<Workspace />} />
               <Route path="/dossier/:ticker" element={<PositionDossier />} />
               <Route path="/ideas" element={<IdeaWatchlist />} />
+              <Route path="/ideas/:id" element={<IdeaDetail />} />
               <Route path="/theses" element={<ThesisManager />} />
               <Route path="/analyzer" element={<PortfolioAnalyzer />} />
               <Route path="/optimizer" element={<Navigate to="/analyzer" replace />} />

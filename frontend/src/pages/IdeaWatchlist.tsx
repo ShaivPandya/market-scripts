@@ -1,71 +1,37 @@
 import { useEffect, useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import {
-  Archive,
-  CheckCircle2,
-  FileUp,
-  Play,
-  Plus,
-  RefreshCw,
-  Save,
-  XCircle,
-} from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Play, Plus, RefreshCw } from "lucide-react"
 
-import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
+import { ActionPill, ConfidencePill } from "@/components/idea/EvaluationPanel"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
-import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
-import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { ActionButton, TextInput } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
-  acceptIdeaEvaluation,
-  archiveIdea,
   createIdea,
-  fetchIdea,
   fetchIdeaComparisonEvaluationJob,
   fetchIdeaComparisonRuns,
   fetchIdeaEvaluationJob,
   fetchIdeas,
-  rejectIdea,
   startIdeaComparisonEvaluationJob,
-  startIdeaEvaluationJob,
-  updateIdea,
-  uploadManagementQualityDocument,
-  uploadOverviewDocument,
-  type IdeaAction,
   type IdeaComparisonJobResponse,
   type IdeaComparisonRun,
-  type IdeaDetailResponse,
-  type IdeaEvaluation,
-  type IdeaEvaluationJobResponse,
-  type IdeaFactorScore,
-  type IdeaMissingInformation,
   type IdeaStatus,
-  type InvestmentIdea,
 } from "@/lib/api"
-import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
-import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
+import {
+  formatDate,
+  formatLabel,
+  latestEvaluation,
+  missingCount,
+  readActiveJobs,
+  scoreText,
+  writeActiveJobs,
+} from "@/lib/ideaUtils"
 import { cn } from "@/lib/utils"
 
-const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-v1"
 const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
 const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
-
-const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
-  { value: "watching", label: "Watching" },
-  { value: "researching", label: "Researching" },
-  { value: "ready_for_review", label: "Ready" },
-  { value: "accepted", label: "Accepted" },
-  { value: "rejected", label: "Rejected" },
-  { value: "archived", label: "Archived" },
-]
-
-const ACTION_TONE: Record<string, StatusTone> = {
-  buy: "success",
-  watch: "info",
-  avoid: "error",
-  do_nothing: "neutral",
-}
 
 const STATUS_TONE: Record<string, StatusTone> = {
   watching: "neutral",
@@ -74,22 +40,6 @@ const STATUS_TONE: Record<string, StatusTone> = {
   accepted: "success",
   rejected: "error",
   archived: "neutral",
-}
-
-function readActiveJobs(): Record<string, string> {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ACTIVE_JOBS_KEY) || "{}")
-    if (!parsed || typeof parsed !== "object") return {}
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, jobId]) => typeof jobId === "string" && jobId),
-    ) as Record<string, string>
-  } catch {
-    return {}
-  }
-}
-
-function writeActiveJobs(jobs: Record<string, string>) {
-  window.localStorage.setItem(ACTIVE_JOBS_KEY, JSON.stringify(jobs))
 }
 
 function readActiveComparisonJob(): string | null {
@@ -109,49 +59,8 @@ function writeActiveComparisonJob(jobId: string | null) {
   }
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "Never"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-}
-
-function formatLabel(value?: string | null) {
-  return String(value || "").replace(/_/g, " ") || "N/A"
-}
-
-function scoreText(value?: number | null) {
-  return value == null || Number.isNaN(Number(value)) ? "N/A" : `${Math.round(Number(value))}`
-}
-
-function latestEvaluation(idea: InvestmentIdea, detail?: IdeaDetailResponse | null): IdeaEvaluation | null {
-  const evaluations = detail?.evaluations ?? []
-  return evaluations.find(e => e.id === idea.latest_evaluation_id) ?? evaluations[0] ?? idea.latest_evaluation ?? null
-}
-
-function missingCount(evaluation?: IdeaEvaluation | null) {
-  return evaluation?.missing_information?.length ?? 0
-}
-
 function StatusPill({ status }: { status: string }) {
   return <StatusBadge tone={STATUS_TONE[status] ?? "neutral"}>{formatLabel(status)}</StatusBadge>
-}
-
-function ActionPill({ action }: { action?: string | null }) {
-  if (!action) return <span className="text-sm text-subtle">N/A</span>
-  return <StatusBadge tone={ACTION_TONE[action] ?? "neutral"}>{formatLabel(action)}</StatusBadge>
-}
-
-function ConfidencePill({ level, confidence }: { level?: string | null; confidence?: number | null }) {
-  const normalized = String(level || "").toLowerCase()
-  const tone: StatusTone = normalized === "high" ? "success" : normalized === "medium" ? "warning" : "neutral"
-  const confidenceLabel = confidence == null ? "N/A" : `${Math.round(Number(confidence) * 100)}%`
-  return (
-    <span className="flex flex-wrap items-center gap-2">
-      <StatusBadge tone={tone}>{formatLabel(normalized || "low")}</StatusBadge>
-      <span className="font-mono text-xs text-subtle">{confidenceLabel}</span>
-    </span>
-  )
 }
 
 function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
@@ -201,277 +110,17 @@ function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
   )
 }
 
-function FactorScore({ name, factor }: { name: string; factor: IdeaFactorScore }) {
-  const score = typeof factor?.score === "number" ? factor.score : null
-  return (
-    <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{formatLabel(name)}</span>
-        <span className="font-mono text-sm font-semibold text-app">{scoreText(score)}</span>
-      </div>
-      {factor?.status && <p className="mt-1 text-xs text-muted">{formatLabel(factor.status)}</p>}
-      {factor?.rationale && <p className="mt-2 text-xs leading-5 text-subtle">{factor.rationale}</p>}
-    </div>
-  )
-}
-
-function MissingRows({ rows }: { rows: IdeaMissingInformation[] }) {
-  if (!rows.length) {
-    return <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">No missing information flagged.</p>
-  }
-  return (
-    <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={`${row.field}-${index}`} className="rounded-lg border border-app bg-card-muted px-3 py-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-app">{formatLabel(row.field)}</span>
-            <StatusBadge tone={row.severity === "critical" ? "error" : row.severity === "high" ? "warning" : "neutral"}>
-              {formatLabel(row.severity)}
-            </StatusBadge>
-          </div>
-          {row.reason && <p className="mt-2 text-sm leading-6 text-muted">{row.reason}</p>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function ManagementRatingBadge({ value }: { value?: string | null }) {
-  const rating = splitManagementRatingText(value).rating || cleanManagementRatingText(value) || "Insufficient evidence"
-  const normalized = rating.toLowerCase()
-  const className = normalized.includes("strong")
-    ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
-    : normalized.includes("weak") || normalized.includes("poor")
-      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-      : normalized.includes("mixed") || normalized.includes("too early")
-        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-        : "border-app bg-card-muted text-muted"
-
-  return <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", className)}>{rating}</span>
-}
-
-function cleanManagementRatingText(value?: string | null) {
-  return String(value || "").replace(/[*_`~]+/g, "").trim()
-}
-
-function canonicalManagementRating(value?: string | null) {
-  const normalized = cleanManagementRatingText(value).toLowerCase().replace(/\s+/g, " ")
-  if (normalized === "strong") return "Strong"
-  if (normalized === "mixed") return "Mixed"
-  if (normalized === "weak") return "Weak"
-  if (normalized === "insufficient evidence") return "Insufficient evidence"
-  return null
-}
-
-function splitManagementRatingText(value?: string | null) {
-  const raw = String(value || "").trim()
-  const match = raw.match(/^\s*(?:[*_`~]+)?\s*(Strong|Mixed|Weak|Insufficient evidence)\b\s*(?:[*_`~]+)?\s*(?:(?:[:\u2014\u2013-]+)\s*(.+)|\s+(.+))?$/i)
-  const rating = canonicalManagementRating(match?.[1])
-  return {
-    rating,
-    text: rating ? (match?.[2] || match?.[3] || "").trim() : raw,
-  }
-}
-
-function resolveManagementSummaryQuestion(item?: { rating?: string | null; text?: string | null } | null) {
-  const ratingValue = splitManagementRatingText(item?.rating)
-  const textValue = splitManagementRatingText(item?.text)
-  const rating = ratingValue.rating || textValue.rating || item?.rating || null
-  const text = textValue.rating ? textValue.text : item?.text
-  return { rating, text }
-}
-
-function ManagementQualityPreview({ parsed, content }: { parsed?: ParsedManagementQuality | null; content: string }) {
-  const summary = parsed?.summary ?? null
-  const scorecard = parsed?.scorecard ?? []
-  const hasStructured = Boolean(summary || scorecard.length)
-
-  return (
-    <div className="space-y-4">
-      {summary && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="border-l border-app pl-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h4 className="section-title text-xs">Overall</h4>
-              <ManagementRatingBadge value={summary.overall_rating} />
-            </div>
-            {summary.bottom_line && <p className="text-sm leading-6 text-muted">{summary.bottom_line}</p>}
-          </div>
-          {[
-            ["Owner Mindset", summary.owner_mindset],
-            ["Business Value", summary.business_value_understanding],
-            ["Follow-through", summary.follow_through],
-          ].map(([label, item]) => {
-            const row = item as { rating?: string | null; text?: string | null } | undefined
-            const resolved = resolveManagementSummaryQuestion(row)
-            return (
-              <div key={String(label)} className="border-l border-app pl-3">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="section-title text-xs">{String(label)}</h4>
-                  <ManagementRatingBadge value={resolved.rating} />
-                </div>
-                {resolved.text && <p className="text-sm leading-6 text-muted">{resolved.text}</p>}
-              </div>
-            )
-          })}
-        </div>
-      )}
-      {scorecard.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-app">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-app text-xs uppercase text-subtle">
-              <tr>
-                <th className="px-3 py-2 font-semibold">Question</th>
-                <th className="px-3 py-2 font-semibold">Rating</th>
-                <th className="px-3 py-2 font-semibold">Evidence</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[hsl(var(--border))]">
-              {scorecard.map(row => (
-                <tr key={row.question}>
-                  <td className="px-3 py-2 text-app">{row.question}</td>
-                  <td className="px-3 py-2"><ManagementRatingBadge value={row.rating} /></td>
-                  <td className="px-3 py-2 text-muted">{row.evidence}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className={cn("prose prose-sm dark:prose-invert max-w-none", hasStructured && "border-t border-app pt-3")}>
-        <MarkdownRenderer content={content} />
-      </div>
-    </div>
-  )
-}
-
-function EvaluationPanel({
-  evaluation,
-  onAccept,
-  onReject,
-  accepting,
-  rejecting,
-}: {
-  evaluation: IdeaEvaluation | null
-  onAccept: () => void
-  onReject: () => void
-  accepting: boolean
-  rejecting: boolean
-}) {
-  if (!evaluation) {
-    return <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No evaluation yet.</p>
-  }
-
-  const factors = Object.entries(evaluation.factor_scores || {})
-  const evidence = evaluation.evidence || []
-  const disconfirming = evaluation.disconfirming_evidence || []
-  const accepted = Boolean(evaluation.accepted_at || evaluation.recommendation_id)
-
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <ActionPill action={evaluation.action} />
-        <span className="font-mono text-sm font-semibold text-app">Score {scoreText(evaluation.score)}</span>
-        <span className="text-sm text-subtle">Confidence {evaluation.confidence == null ? "N/A" : `${Math.round(Number(evaluation.confidence) * 100)}%`}</span>
-        <span className="text-sm text-subtle">{formatDate(evaluation.evaluated_at)}</span>
-        {accepted && <StatusBadge tone="success">Accepted</StatusBadge>}
-      </div>
-
-      {evaluation.thesis_statement && (
-        <p className="text-base font-medium leading-7 text-app">{evaluation.thesis_statement}</p>
-      )}
-      {evaluation.rationale && <p className="text-sm leading-6 text-muted">{evaluation.rationale}</p>}
-
-      {factors.length > 0 && (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {factors.map(([name, factor]) => <FactorScore key={name} name={name} factor={factor} />)}
-        </div>
-      )}
-
-      <section className="space-y-3">
-        <h3 className="section-title text-sm">Missing Information</h3>
-        <MissingRows rows={evaluation.missing_information || []} />
-      </section>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="space-y-3">
-          <h3 className="section-title text-sm">Supporting Evidence</h3>
-          {evidence.length ? evidence.slice(0, 6).map((item, index) => (
-            <div key={index} className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
-              <span className="block text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
-                {String(item.source || "Evidence")}
-              </span>
-              <span className="mt-1 block leading-6">{String(item.summary || item.url || "Evidence item")}</span>
-            </div>
-          )) : <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">No supporting evidence stored.</p>}
-        </section>
-        <section className="space-y-3">
-          <h3 className="section-title text-sm">Disconfirming Evidence</h3>
-          {disconfirming.length ? disconfirming.slice(0, 6).map((item, index) => (
-            <div key={index} className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
-              <span className="block text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
-                {String(item.source || "Risk")}
-              </span>
-              <span className="mt-1 block leading-6">{String(item.summary || item.url || "Evidence item")}</span>
-            </div>
-          )) : <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">No disconfirming evidence stored.</p>}
-        </section>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Catalyst</h3>
-          <p className="mt-2 text-sm leading-6 text-muted">{evaluation.catalyst || "N/A"}</p>
-        </div>
-        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Invalidation</h3>
-          <p className="mt-2 text-sm leading-6 text-muted">{evaluation.invalidation || "N/A"}</p>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onAccept}
-          disabled={accepted || accepting}
-          className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
-        >
-          <CheckCircle2 size={16} aria-hidden="true" />
-          {accepting ? "Accepting" : accepted ? "Accepted" : "Accept"}
-        </button>
-        <button
-          type="button"
-          onClick={onReject}
-          disabled={rejecting}
-          className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
-        >
-          <XCircle size={16} aria-hidden="true" />
-          {rejecting ? "Rejecting" : "Reject Idea"}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export function IdeaWatchlist() {
   const qc = useQueryClient()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const navigate = useNavigate()
   const [activeJobs, setActiveJobs] = useState<Record<string, string>>(() => readActiveJobs())
   const [activeComparisonJob, setActiveComparisonJob] = useState<string | null>(() => readActiveComparisonJob())
-  const [jobSnapshots, setJobSnapshots] = useState<Record<string, IdeaEvaluationJobResponse>>({})
   const [comparisonJobSnapshot, setComparisonJobSnapshot] = useState<IdeaComparisonJobResponse | null>(null)
-  const [jobErrors, setJobErrors] = useState<Record<string, string>>({})
   const [comparisonJobError, setComparisonJobError] = useState<string | null>(null)
   const [ticker, setTicker] = useState("")
   const [companyName, setCompanyName] = useState("")
   const [tags, setTags] = useState("")
   const [notes, setNotes] = useState("")
-  const [editNotes, setEditNotes] = useState("")
-  const [editTags, setEditTags] = useState("")
-  const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
-  const [uploadMessage, setUploadMessage] = useState<string | null>(null)
-  const [managementUploadMessage, setManagementUploadMessage] = useState<string | null>(null)
-  const [acceptMessage, setAcceptMessage] = useState<string | null>(null)
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
   const ideas = useMemo(() => ideasQuery.data?.ideas ?? [], [ideasQuery.data?.ideas])
@@ -485,27 +134,6 @@ export function IdeaWatchlist() {
     if (persisted) return persisted
     return comparisonJobSnapshot?.status === "done" ? comparisonJobSnapshot.result?.run ?? null : null
   }, [comparisonJobSnapshot, comparisonQuery.data?.runs])
-
-  useEffect(() => {
-    if (selectedId == null && ideas.length > 0) setSelectedId(ideas[0].id)
-  }, [ideas, selectedId])
-
-  const detailQuery = useQuery({
-    queryKey: ["idea", selectedId],
-    queryFn: () => fetchIdea(selectedId as string),
-    enabled: selectedId != null,
-    staleTime: 15_000,
-  })
-  const detail = detailQuery.data ?? null
-  const selectedIdea = detail?.idea ?? ideas.find(idea => idea.id === selectedId) ?? null
-  const selectedEvaluation = selectedIdea ? latestEvaluation(selectedIdea, detail) : null
-
-  useEffect(() => {
-    if (!selectedIdea) return
-    setEditNotes(selectedIdea.user_notes || "")
-    setEditTags((selectedIdea.tags || []).join(", "))
-    setEditStatus((selectedIdea.status as IdeaStatus) || "watching")
-  }, [selectedIdea])
 
   function setActiveJobsAndPersist(next: Record<string, string>) {
     setActiveJobs(next)
@@ -528,7 +156,6 @@ export function IdeaWatchlist() {
       await Promise.all(entries.map(async ([ideaId, jobId]) => {
         try {
           const job = await fetchIdeaEvaluationJob(jobId)
-          setJobSnapshots(prev => ({ ...prev, [ideaId]: job }))
           if (job.status === "done") {
             delete next[ideaId]
             changed = true
@@ -537,10 +164,9 @@ export function IdeaWatchlist() {
           } else if (job.status === "error" || job.status === "cancelled") {
             delete next[ideaId]
             changed = true
-            setJobErrors(prev => ({ ...prev, [ideaId]: job.error || "Evaluation failed." }))
           }
-        } catch (err) {
-          setJobErrors(prev => ({ ...prev, [ideaId]: err instanceof Error ? err.message : "Unable to poll job." }))
+        } catch {
+          // transient polling errors are surfaced on the detail page
         }
       }))
       if (!stopped && changed) setActiveJobsAndPersist(next)
@@ -567,7 +193,6 @@ export function IdeaWatchlist() {
           if (!stopped) setActiveComparisonJobAndPersist(null)
           await qc.invalidateQueries({ queryKey: ["ideas"] })
           await qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
-          if (selectedId != null) await qc.invalidateQueries({ queryKey: ["idea", selectedId] })
         } else if (job.status === "error" || job.status === "cancelled") {
           if (!stopped) setActiveComparisonJobAndPersist(null)
           setComparisonJobError(job.error || "Comparative evaluation failed.")
@@ -583,7 +208,7 @@ export function IdeaWatchlist() {
       stopped = true
       window.clearInterval(handle)
     }
-  }, [activeComparisonJob, qc, selectedId])
+  }, [activeComparisonJob, qc])
 
   const createMutation = useMutation({
     mutationFn: () => createIdea({
@@ -593,49 +218,12 @@ export function IdeaWatchlist() {
       tags: tags.split(",").map(t => t.trim()).filter(Boolean),
     }),
     onSuccess: data => {
-      setSelectedId(data.idea.id)
       setTicker("")
       setCompanyName("")
       setTags("")
       setNotes("")
       void qc.invalidateQueries({ queryKey: ["ideas"] })
-    },
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: () => {
-      if (!selectedIdea) throw new Error("No idea selected.")
-      return updateIdea(selectedIdea.id, {
-        user_notes: editNotes,
-        tags: editTags.split(",").map(t => t.trim()).filter(Boolean),
-        status: editStatus,
-      })
-    },
-    onSuccess: data => {
-      setSelectedId(data.idea.id)
-      void qc.invalidateQueries({ queryKey: ["ideas"] })
-      void qc.invalidateQueries({ queryKey: ["idea", data.idea.id] })
-    },
-  })
-
-  const evaluateMutation = useMutation({
-    mutationFn: ({ ideaId, forceRefresh }: { ideaId: string; forceRefresh?: boolean }) =>
-      startIdeaEvaluationJob(ideaId, { force_refresh: Boolean(forceRefresh) }),
-    onSuccess: (job, variables) => {
-      setJobErrors(prev => {
-        const next = { ...prev }
-        delete next[String(variables.ideaId)]
-        return next
-      })
-      setJobSnapshots(prev => ({ ...prev, [String(variables.ideaId)]: job }))
-      if (job.status === "done") {
-        void qc.invalidateQueries({ queryKey: ["ideas"] })
-        void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
-        return
-      }
-      setActiveJobsAndPersist({ ...activeJobs, [String(variables.ideaId)]: job.job_id })
-      void qc.invalidateQueries({ queryKey: ["ideas"] })
-      void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
+      navigate(`/ideas/${data.idea.id}`, { state: { from: "ideas" } })
     },
   })
 
@@ -647,7 +235,6 @@ export function IdeaWatchlist() {
       if (job.status === "done") {
         void qc.invalidateQueries({ queryKey: ["ideas"] })
         void qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
-        if (selectedId != null) void qc.invalidateQueries({ queryKey: ["idea", selectedId] })
         return
       }
       setActiveComparisonJobAndPersist(job.job_id)
@@ -656,85 +243,11 @@ export function IdeaWatchlist() {
     onError: err => setComparisonJobError(err instanceof Error ? err.message : "Comparative evaluation failed."),
   })
 
-  const archiveMutation = useMutation({
-    mutationFn: (ideaId: string) => archiveIdea(ideaId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["ideas"] })
-      setSelectedId(null)
-    },
-  })
-
-  const uploadMutation = useMutation({
-    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) => uploadOverviewDocument(idea.ticker, file),
-    onSuccess: data => {
-      setUploadMessage(`Overview saved for ${data.ticker}.`)
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
-    },
-    onError: err => setUploadMessage(err instanceof Error ? err.message : "Upload failed."),
-  })
-
-  const managementUploadMutation = useMutation({
-    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) =>
-      uploadManagementQualityDocument(idea.ticker, file),
-    onSuccess: result => {
-      setManagementUploadMessage(
-        result.approval_id
-          ? `Management quality proposal #${result.approval_id} staged.`
-          : "Management quality proposal staged.",
-      )
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
-      void invalidateApprovalSummaries(qc)
-    },
-    onError: err => setManagementUploadMessage(err instanceof Error ? err.message : "Upload failed."),
-  })
-
-  const acceptMutation = useMutation({
-    mutationFn: () => {
-      if (!selectedIdea || !selectedEvaluation) throw new Error("No evaluation selected.")
-      return acceptIdeaEvaluation(selectedIdea.id, selectedEvaluation.id)
-    },
-    onSuccess: result => {
-      setAcceptMessage(
-        result.action_proposal
-          ? `Recommendation accepted; approval #${result.action_proposal.approval_id} staged.`
-          : "Recommendation accepted.",
-      )
-      void qc.invalidateQueries({ queryKey: ["ideas"] })
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
-      void invalidateApprovalSummaries(qc)
-    },
-    onError: err => setAcceptMessage(err instanceof Error ? err.message : "Accept failed."),
-  })
-
-  const rejectMutation = useMutation({
-    mutationFn: () => {
-      if (!selectedIdea) throw new Error("No idea selected.")
-      return rejectIdea(selectedIdea.id)
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["ideas"] })
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
-    },
-  })
-
   const rows = useMemo(() => ideas.map(idea => {
-    const isSelected = idea.id === selectedId
-    const detailForRow = isSelected ? detail : null
-    const evaluation = latestEvaluation(idea, detailForRow)
+    const evaluation = latestEvaluation(idea, null)
     const activeJob = activeJobs[String(idea.id)]
     return { idea, evaluation, activeJob }
-  }), [ideas, selectedId, detail, activeJobs])
-
-  function currentJobResponse(ideaId: string): { jobId: string; message: string } | null {
-    const jobId = activeJobs[String(ideaId)]
-    if (!jobId) return null
-    const progress = jobSnapshots[String(ideaId)]?.progress
-    const phase = typeof progress?.phase === "string" ? formatLabel(progress.phase) : "running"
-    const done = typeof progress?.done === "number" ? progress.done : null
-    const total = typeof progress?.total === "number" && progress.total > 0 ? progress.total : null
-    const suffix = done != null && total != null ? ` ${done}/${total}` : ""
-    return { jobId, message: `Evaluation ${phase}${suffix}` }
-  }
+  }), [ideas, activeJobs])
 
   function currentComparisonJobResponse(): { jobId: string; message: string } | null {
     if (!activeComparisonJob) return null
@@ -809,268 +322,61 @@ export function IdeaWatchlist() {
         {createMutation.error && <p className="mt-3 text-sm text-red-600">{createMutation.error.message}</p>}
       </section>
 
-      <div className="space-y-5">
-        <section className="theme-surface rounded-lg p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="section-title text-sm">Watchlist</h2>
-            {(ideasQuery.isLoading || comparisonQuery.isLoading) && <LoadingSpinner message="Loading ideas" />}
+      <section className="theme-surface rounded-lg p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="section-title text-sm">Watchlist</h2>
+          {(ideasQuery.isLoading || comparisonQuery.isLoading) && <LoadingSpinner message="Loading ideas" />}
+        </div>
+
+        <ComparativeRankingPanel run={latestComparisonRun} />
+        {comparisonQuery.error && (
+          <div className="mb-4">
+            <ErrorMessage message={`Could not load comparison runs: ${comparisonQuery.error.message}`} />
           </div>
+        )}
 
-          <ComparativeRankingPanel run={latestComparisonRun} />
-          {comparisonQuery.error && (
-            <div className="mb-4">
-              <ErrorMessage message={`Could not load comparison runs: ${comparisonQuery.error.message}`} />
-            </div>
-          )}
-
-          {ideasQuery.error ? (
-            <ErrorMessage message={`Could not load ideas: ${ideasQuery.error.message}`} />
-          ) : rows.length === 0 ? (
-            <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
-          ) : (
-            <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-              <table className="w-full min-w-[760px] border-collapse text-sm">
-                <thead className="sticky top-0 z-10 bg-card-muted">
-                  <tr>
-                    {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted"].map(label => (
-                      <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
-                        {label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(({ idea, evaluation, activeJob }) => (
-                    <tr
-                      key={idea.id}
-                      onClick={() => setSelectedId(idea.id)}
-                      className={cn(
-                        "cursor-pointer border-b border-app transition-colors hover:bg-hover",
-                        selectedId === idea.id && "bg-card-muted",
-                      )}
-                    >
-                      <td className="px-3 py-3">
-                        <div className="font-semibold text-app">{idea.ticker}</div>
-                        <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
-                      </td>
-                      <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
-                      <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
-                      <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
-                      <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
-                      <td className="px-3 py-3 text-subtle">{formatDate(evaluation?.evaluated_at)}</td>
-                      <td className="px-3 py-3">
-                        {idea.accepted_recommendation_id ? <StatusBadge tone="success">Yes</StatusBadge> : <span className="text-subtle">No</span>}
-                      </td>
-                    </tr>
+        {ideasQuery.error ? (
+          <ErrorMessage message={`Could not load ideas: ${ideasQuery.error.message}`} />
+        ) : rows.length === 0 ? (
+          <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
+        ) : (
+          <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
+            <table className="w-full min-w-[760px] border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-card-muted">
+                <tr>
+                  {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted"].map(label => (
+                    <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                      {label}
+                    </th>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section className="theme-surface rounded-lg p-4">
-          {!selectedIdea ? (
-            <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">Select an idea.</p>
-          ) : (
-            <div className="space-y-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-semibold text-app">{selectedIdea.ticker}</h2>
-                    <StatusPill status={selectedIdea.status} />
-                  </div>
-                  <p className="mt-1 text-sm text-subtle">{selectedIdea.company_name || "Company name not set"}</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => evaluateMutation.mutate({ ideaId: selectedIdea.id, forceRefresh: true })}
-                    disabled={Boolean(activeJobs[String(selectedIdea.id)]) || evaluateMutation.isPending}
-                    className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ idea, evaluation, activeJob }) => (
+                  <tr
+                    key={idea.id}
+                    onClick={() => navigate(`/ideas/${idea.id}`, { state: { from: "ideas" } })}
+                    className={cn("cursor-pointer border-b border-app transition-colors hover:bg-hover")}
                   >
-                    <Play size={16} aria-hidden="true" />
-                    Run Evaluation
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => archiveMutation.mutate(selectedIdea.id)}
-                    disabled={archiveMutation.isPending}
-                    className="theme-button-base theme-button-secondary min-h-10 px-3 text-sm disabled:pointer-events-none disabled:opacity-50"
-                    aria-label="Archive idea"
-                  >
-                    <Archive size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-
-              {currentJobResponse(selectedIdea.id) && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
-                  {currentJobResponse(selectedIdea.id)?.message} ({currentJobResponse(selectedIdea.id)?.jobId.slice(0, 8)})
-                </div>
-              )}
-              {jobErrors[String(selectedIdea.id)] && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                  {jobErrors[String(selectedIdea.id)]}
-                </div>
-              )}
-
-              <div className="grid gap-3 md:grid-cols-[1fr_11rem]">
-                <TextInput label="Tags" value={editTags} onChange={setEditTags} placeholder="quality, cyclical" />
-                <SelectInput label="Status" value={editStatus} onChange={value => setEditStatus(value as IdeaStatus)} options={IDEA_STATUSES} />
-              </div>
-              <div>
-                <label className="theme-field-label" htmlFor="idea-notes">Notes</label>
-                <textarea
-                  id="idea-notes"
-                  value={editNotes}
-                  onChange={event => setEditNotes(event.target.value)}
-                  className="theme-input mt-1 min-h-[120px] w-full resize-y"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => updateMutation.mutate()}
-                  disabled={updateMutation.isPending}
-                  className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <Save size={16} aria-hidden="true" />
-                  Save
-                </button>
-                {updateMutation.error && <span className="self-center text-sm text-red-600">{updateMutation.error.message}</span>}
-              </div>
-
-              <section className="rounded-lg border border-app bg-card-muted p-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="section-title text-sm">Overview</h3>
-                    <p className="mt-1 text-xs text-subtle">
-                      {detail?.documents?.overview_present ? "Stored" : "Missing"}
-                      {detail?.documents?.thesis_present ? " / thesis stored" : ""}
-                      {detail?.documents?.management_quality_present ? " / management stored" : ""}
-                    </p>
-                  </div>
-                  <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
-                    <FileUp size={16} aria-hidden="true" />
-                    Upload
-                    <input
-                      type="file"
-                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
-                      className="hidden"
-                      onChange={event => {
-                        const file = event.target.files?.[0]
-                        event.currentTarget.value = ""
-                        if (file) uploadMutation.mutate({ idea: selectedIdea, file })
-                      }}
-                    />
-                  </label>
-                </div>
-                {uploadMessage && <p className="mt-2 text-xs text-subtle">{uploadMessage}</p>}
-                {detail?.documents?.overview_error && (
-                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                    {detail.documents.overview_error}
-                  </p>
-                )}
-                {detail?.documents?.overview_content ? (
-                  <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
-                    <EquityOverviewReadView
-                      content={detail.documents.overview_content}
-                      parsed={detail.documents.overview_parsed ?? null}
-                      ticker={selectedIdea.ticker}
-                    />
-                  </div>
-                ) : (
-                  <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">No overview stored.</p>
-                )}
-              </section>
-
-              <section className="rounded-lg border border-app bg-card-muted p-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="section-title text-sm">Management Quality</h3>
-                    <p className="mt-1 text-xs text-subtle">
-                      {detail?.documents?.management_quality_present ? "Stored" : "Missing"}
-                    </p>
-                  </div>
-                  <label className={cn(
-                    "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
-                    managementUploadMutation.isPending && "pointer-events-none opacity-60",
-                  )}>
-                    <FileUp size={16} aria-hidden="true" />
-                    {managementUploadMutation.isPending ? "Uploading" : "Upload"}
-                    <input
-                      type="file"
-                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
-                      className="hidden"
-                      disabled={managementUploadMutation.isPending}
-                      onChange={event => {
-                        const file = event.target.files?.[0]
-                        event.currentTarget.value = ""
-                        if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
-                      }}
-                    />
-                  </label>
-                </div>
-                {managementUploadMessage && <p className="mt-2 text-xs text-subtle">{managementUploadMessage}</p>}
-                {detail?.documents?.management_quality_error && (
-                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                    {detail.documents.management_quality_error}
-                  </p>
-                )}
-                {detail?.documents?.management_quality_content ? (
-                  <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
-                    <ManagementQualityPreview
-                      content={detail.documents.management_quality_content}
-                      parsed={detail.documents.management_quality_parsed ?? null}
-                    />
-                  </div>
-                ) : (
-                  <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">
-                    No management quality assessment stored.
-                  </p>
-                )}
-              </section>
-
-              {detailQuery.isLoading ? (
-                <LoadingSpinner message="Loading detail" />
-              ) : detailQuery.error ? (
-                <ErrorMessage message={`Could not load idea: ${detailQuery.error.message}`} />
-              ) : (
-                <EvaluationPanel
-                  evaluation={selectedEvaluation}
-                  onAccept={() => acceptMutation.mutate()}
-                  onReject={() => rejectMutation.mutate()}
-                  accepting={acceptMutation.isPending}
-                  rejecting={rejectMutation.isPending}
-                />
-              )}
-              {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
-
-              {detail?.evaluations && detail.evaluations.length > 1 && (
-                <section className="space-y-3">
-                  <h3 className="section-title text-sm">History</h3>
-                  <div className="space-y-2">
-                    {detail.evaluations.slice(1, 8).map(evaluation => (
-                      <button
-                        key={evaluation.id}
-                        type="button"
-                        className="w-full rounded-lg border border-app bg-card-muted px-3 py-3 text-left transition-colors hover:bg-hover"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <ActionPill action={evaluation.action as IdeaAction} />
-                          <span className="font-mono text-sm text-app">{scoreText(evaluation.score)}</span>
-                          <span className="text-sm text-subtle">{formatDate(evaluation.evaluated_at)}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </div>
-          )}
-        </section>
-      </div>
+                    <td className="px-3 py-3">
+                      <div className="font-semibold text-app">{idea.ticker}</div>
+                      <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
+                    </td>
+                    <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
+                    <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
+                    <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
+                    <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
+                    <td className="px-3 py-3 text-subtle">{formatDate(evaluation?.evaluated_at)}</td>
+                    <td className="px-3 py-3">
+                      {idea.accepted_recommendation_id ? <StatusBadge tone="success">Yes</StatusBadge> : <span className="text-subtle">No</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </main>
   )
 }

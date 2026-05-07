@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -208,7 +208,9 @@ def _compute_analyzer_result_cached(req: AnalyzerRequest) -> dict[str, Any]:
     # This is independent from the async-job DB cache. In-memory short_cache is
     # per process/container; cross-process reuse depends on api.cache disk/GCS
     # fallback when those backends are shared or enabled.
-    return get_or_set_cached(short_cache, _cache_key(req), lambda: _compute_analyzer_result_uncached(req))
+    return cast(
+        dict[str, Any], get_or_set_cached(short_cache, _cache_key(req), lambda: _compute_analyzer_result_uncached(req))
+    )
 
 
 def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
