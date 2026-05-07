@@ -131,6 +131,14 @@ def _normalize_analyzer_direction(value: Any) -> str:
     return direction if direction in IDEA_ANALYZER_DIRECTIONS else "inactive"
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return cast(list[Any], value) if isinstance(value, list) else []
+
+
 def _idea_analyzer_direction(idea: dict[str, Any]) -> str:
     metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
     return _normalize_analyzer_direction(cast(dict[str, Any], metadata).get("analyzer_direction"))
@@ -222,8 +230,8 @@ def _object_uid_from_row(row: dict[str, Any]) -> str:
 
 
 def _relation_uid_from_row(row: dict[str, Any]) -> str:
-    meta = row.get("_meta") if isinstance(row.get("_meta"), dict) else {}
-    temporal = meta.get("temporal") if isinstance(meta.get("temporal"), dict) else {}
+    meta = _as_dict(row.get("_meta"))
+    temporal = _as_dict(meta.get("temporal"))
     return str(row.get("relation_uid") or temporal.get("relation_uid") or "").strip()
 
 
@@ -843,20 +851,20 @@ def _compute_portfolio_plus_ideas_analyzer_result() -> dict[str, Any]:
 def _analyzer_contexts_from_result(analyzer_result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if analyzer_result.get("status") != "ok":
         return {}
-    raw_result = analyzer_result.get("raw_result") if isinstance(analyzer_result.get("raw_result"), dict) else {}
+    raw_result = _as_dict(analyzer_result.get("raw_result"))
     weights = {
         str(row.get("ticker") or "").strip().upper(): row
-        for row in _records_from_table(cast(dict[str, Any], raw_result).get("weights_df"))
+        for row in _records_from_table(raw_result.get("weights_df"))
         if str(row.get("ticker") or "").strip()
     }
-    course = raw_result.get("course_of_action") if isinstance(raw_result.get("course_of_action"), dict) else {}
-    action_rows = course.get("action_queue") if isinstance(course.get("action_queue"), list) else []
+    course = _as_dict(raw_result.get("course_of_action"))
+    action_rows = _as_list(course.get("action_queue"))
     actions = {
         str(row.get("ticker") or "").strip().upper(): cast(dict[str, Any], row)
         for row in action_rows
         if isinstance(row, dict) and str(row.get("ticker") or "").strip()
     }
-    summary = course.get("summary") if isinstance(course.get("summary"), dict) else {}
+    summary = _as_dict(course.get("summary"))
     source_timestamp = summary.get("as_of") or raw_result.get("timestamp")
 
     contexts: dict[str, dict[str, Any]] = {}
@@ -1045,7 +1053,7 @@ def _append_analyzer_evidence(result: dict[str, Any], analyzer_context: dict[str
 
 
 def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    analyzer_context = context.get("analyzer_context") if isinstance(context.get("analyzer_context"), dict) else {}
+    analyzer_context = _as_dict(context.get("analyzer_context"))
     result["evaluation_schema_version"] = IDEA_EVALUATION_SCHEMA_VERSION
     result["analyzer_context"] = analyzer_context
 
@@ -1054,7 +1062,7 @@ def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[st
         cast(dict[str, Any], factor_scores_raw) if isinstance(factor_scores_raw, dict) else {}
     )
     if analyzer_context.get("status") == "available":
-        row = analyzer_context.get("row") if isinstance(analyzer_context.get("row"), dict) else {}
+        row = _as_dict(analyzer_context.get("row"))
         analyzer_factor_specs = {
             "industry_attractiveness": ("industry_quality_score", "Analyzer raw industry_quality_score"),
             "business_quality": ("business_quality_qual_score", "Analyzer raw business_quality_qual_score"),
@@ -1092,7 +1100,7 @@ def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[st
             )
         confidence = _numeric_or_none(result.get("confidence"), minimum=0, maximum=1)
         result["confidence"] = min(confidence if confidence is not None else 0.45, 0.49)
-        data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
+        data_quality = _as_dict(result.get("data_quality"))
         result["data_quality"] = {
             **data_quality,
             "source_quality": "degraded",
