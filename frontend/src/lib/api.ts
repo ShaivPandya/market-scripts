@@ -248,6 +248,51 @@ export interface IdeaEvidenceItem {
   [key: string]: unknown
 }
 
+export interface AnalyzerRiskFlags {
+  drawdown_risk?: boolean
+  drawdown_data_missing?: boolean
+  contrarian_not_eligible?: boolean
+  short_squeeze_risk?: boolean
+  short_squeeze_data_missing?: boolean
+  risk_data_missing?: boolean
+  [key: string]: boolean | undefined
+}
+
+export interface AnalyzerRiskParts {
+  drawdown_risk_penalty?: number
+  contrarian_risk_pressure?: number
+  short_squeeze_cover_risk?: number
+  [key: string]: number | undefined
+}
+
+export interface IdeaAnalyzerContext {
+  status?: string | null
+  ticker?: string | null
+  direction?: string | null
+  source_timestamp?: string | null
+  source_type?: string | null
+  action_label?: string | null
+  scenario_score?: number | null
+  baseline_score?: number | null
+  score_delta?: number | null
+  confidence?: number | null
+  gate_status?: string | null
+  gate_reasons?: string[]
+  coverage?: Record<string, unknown>
+  warnings?: string[]
+  factor_breakdown?: AnalyzerFactorBreakdown[]
+  risk_flags?: AnalyzerRiskFlags
+  risk_parts?: AnalyzerRiskParts
+  long_risk_penalty?: number | null
+  short_cover_risk?: number | null
+  drawdown_metrics_available?: boolean
+  short_squeeze_metrics_available?: boolean
+  row?: Record<string, unknown>
+  diagnostic_subfactors?: Record<string, Record<string, unknown>>
+  qualitative_evidence?: Record<string, unknown>
+  [key: string]: unknown
+}
+
 export interface IdeaEvaluation {
   id: string
   legacy_id?: number | null
@@ -270,7 +315,7 @@ export interface IdeaEvaluation {
   invalidation: string | null
   portfolio_fit: Record<string, unknown>
   recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
-  analyzer_context?: Record<string, unknown>
+  analyzer_context?: IdeaAnalyzerContext
   evaluation_schema_version?: string | null
   recommendation_id: string | null
   approval_id: string | null
@@ -1459,6 +1504,10 @@ export interface AnalyzerCourseAction {
   scenario_score: number
   score_delta: number
   baseline_score?: number | null
+  long_risk_penalty?: number | null
+  short_cover_risk?: number | null
+  risk_parts?: AnalyzerRiskParts
+  risk_flags?: AnalyzerRiskFlags
   confidence: number
   gate_status: "pass" | "review" | "watch" | string
   gate_reasons?: string[]
