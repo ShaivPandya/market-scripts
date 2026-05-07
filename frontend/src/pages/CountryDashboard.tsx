@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useDashboardTimeframePrefetch } from "@/hooks/useDashboardTimeframePrefetch"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchCountryDashboard } from "@/lib/api"
 import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
@@ -12,6 +13,7 @@ import { ChartTile } from "@/components/shared/ChartTile"
 const METRICS = ["Inflation", "Unemployment", "GDP"] as const
 type Metric = typeof METRICS[number]
 const COUNTRY_DASHBOARD_STALE_TIME_MS = 24 * 60 * 60 * 1000
+const countryDashboardStaleTime = () => COUNTRY_DASHBOARD_STALE_TIME_MS
 
 const SOURCE_DISPLAY: Record<string, string> = {
   fred: "FRED", statcan_wds: "Statcan", ons: "ONS",
@@ -21,11 +23,19 @@ const SOURCE_DISPLAY: Record<string, string> = {
 export function CountryDashboard() {
   const [metric, setMetric] = useState<Metric>("Inflation")
   const [currentTimestamp] = useState(() => Date.now())
-  const { data, isLoading, error } = useApiQuery(
+  const { data, isLoading, error, isSuccess } = useApiQuery(
     ["country-dashboard", metric],
     () => fetchCountryDashboard(metric),
     COUNTRY_DASHBOARD_STALE_TIME_MS,
   )
+  useDashboardTimeframePrefetch({
+    queryKeyRoot: "country-dashboard",
+    timeframes: METRICS,
+    activeTimeframe: metric,
+    isReady: isSuccess,
+    fetchTimeframe: fetchCountryDashboard,
+    staleTimeForTimeframe: countryDashboardStaleTime,
+  })
 
   const METRIC_LABEL: Record<Metric, string> = {
     Inflation: "CPI YoY %",

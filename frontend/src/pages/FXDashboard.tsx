@@ -1,4 +1,8 @@
 import { useState } from "react"
+import {
+  dashboardTimeframeStaleTime,
+  useDashboardTimeframePrefetch,
+} from "@/hooks/useDashboardTimeframePrefetch"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchFxDashboard } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
@@ -25,10 +29,18 @@ function timeframeLabel(timeframe: Timeframe): string {
 export function FXDashboard() {
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
   const [viewMode, setViewMode] = useState<UnifiedViewMode>("Grid")
-  const { data, isLoading, error } = useApiQuery(
+  const { data, isLoading, error, isSuccess } = useApiQuery(
     ["fx-dashboard", timeframe],
     () => fetchFxDashboard(timeframe),
+    dashboardTimeframeStaleTime(timeframe),
   )
+  useDashboardTimeframePrefetch({
+    queryKeyRoot: "fx-dashboard",
+    timeframes: TIMEFRAMES,
+    activeTimeframe: timeframe,
+    isReady: isSuccess,
+    fetchTimeframe: fetchFxDashboard,
+  })
 
   const pairs: Record<string, DataPoint[]> = data?.pairs ?? {}
   const order: string[] = data?.pair_order ?? Object.keys(pairs)

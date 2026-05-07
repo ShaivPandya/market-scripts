@@ -1,4 +1,8 @@
 import { useState } from "react"
+import {
+  dashboardTimeframeStaleTime,
+  useDashboardTimeframePrefetch,
+} from "@/hooks/useDashboardTimeframePrefetch"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchIndexDashboard } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
@@ -36,10 +40,18 @@ function timeframeLabel(timeframe: Timeframe): string {
 export function IndexDashboard() {
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
   const [viewMode, setViewMode] = useState<UnifiedViewMode>("Grid")
-  const { data, isLoading, error } = useApiQuery(
+  const { data, isLoading, error, isSuccess } = useApiQuery(
     ["index-dashboard", timeframe],
     () => fetchIndexDashboard(timeframe),
+    dashboardTimeframeStaleTime(timeframe),
   )
+  useDashboardTimeframePrefetch({
+    queryKeyRoot: "index-dashboard",
+    timeframes: TIMEFRAMES,
+    activeTimeframe: timeframe,
+    isReady: isSuccess,
+    fetchTimeframe: fetchIndexDashboard,
+  })
 
   const indices: Record<string, DataPoint[]> = data?.indices ?? {}
   const order: string[] = data?.index_order ?? [
