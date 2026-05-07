@@ -567,17 +567,16 @@ export function PortfolioSizer() {
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
-          <SliderInput
-            label="Book Size"
-            value={bookSize}
-            onChange={v => setBookSize(clampBookSize(v))}
-            min={MIN_BOOK_SIZE}
-            max={MAX_BOOK_SIZE}
-            step={1_000}
-            formatValue={v => currencyFormatter.format(v)}
-            minLabel="$10k"
-            maxLabel="$10m"
-          />
+          <div className="space-y-1">
+            <TextInput
+              label="Book Size"
+              type="number"
+              value={bookSizeInput}
+              onChange={setBookSizeInput}
+              placeholder="100000"
+            />
+            <p className="text-xs text-gray-400">$10k - $10m · used for analysis run</p>
+          </div>
 
           <SliderInput
             label="Target Gross Leverage"
@@ -590,17 +589,6 @@ export function PortfolioSizer() {
             minLabel="0.5x"
             maxLabel="4.0x"
           />
-
-          <div className="space-y-1">
-            <TextInput
-              label="Book Size (Manual)"
-              type="number"
-              value={bookSizeInput}
-              onChange={setBookSizeInput}
-              placeholder="100000"
-            />
-            <p className="text-xs text-gray-400">$10k - $10m · used for analysis run</p>
-          </div>
         </div>
 
         <div>
