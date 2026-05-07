@@ -101,6 +101,17 @@ def test_api_deploy_routes_analyzer_to_warm_worker() -> None:
     assert '"ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"' in script
 
 
+def test_common_gcp_env_enables_ontology_read_model_for_api_and_ontology_worker() -> None:
+    lib = (ROOT / "infra/gcp/lib.sh").read_text()
+
+    assert "ONTOLOGY_READ_MODEL=true" in lib
+
+    for script_name in ("deploy-api.sh", "deploy-ontology-worker.sh"):
+        script = (ROOT / "infra/gcp" / script_name).read_text()
+        assert "mapfile -t COMMON_ENV < <(common_env_vars)" in script
+        assert '"${COMMON_ENV[@]}"' in script
+
+
 def test_backend_deploy_includes_analyzer_worker_paths() -> None:
     script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
 

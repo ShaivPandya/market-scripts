@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from ontology.decision_writeback import DecisionOntologyWriteback
 from ontology.models import OntologyNode
-from ontology.object_service import OntologyObjectService
+from ontology.object_service import OntologyObjectService, source_record_object_uid_for
 from ontology.schemas.identity import (
     audit_event_id,
     executed_action_id,
@@ -156,6 +156,36 @@ def test_decision_object_schemas_have_stable_identities():
     assert executed.id == "executed_action:1_2_create_action_item"
     assert audit.id == "audit_event:evt_1"
     assert recommendation.id == "recommendation:daily_2026_05_02_buy_mu"
+
+
+def test_source_record_identity_canonicalizes_logical_prefixed_ids():
+    repo = _FakeTemporalRepo()
+    service = OntologyObjectService(repository=repo)
+    logical_id = "source_record:portfolio:portfolio_position:d1370b6e76212e53"
+    canonical_uid = "source_record:source_record_portfolio_portfolio_position_d1370b6e76212e53"
+
+    assert source_record_object_uid_for(logical_id) == canonical_uid
+    assert source_record_object_uid_for(canonical_uid) == canonical_uid
+
+    row = service.write_object(
+        "SourceRecord",
+        logical_id,
+        SourceRecordV1(
+            source_record_id=logical_id,
+            vendor="portfolio",
+            source_name="portfolio",
+            dataset="portfolio",
+            record_kind="portfolio_position",
+            record_key_hash="abc",
+            payload_hash="def",
+        ).model_dump(mode="json"),
+        "2026-05-04T00:00:00+00:00",
+        provenance="pv:source-record-test",
+    )
+
+    assert row["object_uid"] == canonical_uid
+    assert row["business_key"] == logical_id
+    assert row["properties_json"]["source_record_id"] == logical_id
 
 
 def test_audit_event_identity_accepts_prefixed_business_key():

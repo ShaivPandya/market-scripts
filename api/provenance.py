@@ -19,7 +19,7 @@ from typing import Any
 
 from api.audit import summarize_for_audit
 from api.logging_config import request_id_var
-from ontology.object_service import OntologyObjectService
+from ontology.object_service import OntologyObjectService, source_record_object_uid_for
 from ontology.schemas.identity import (
     action_item_id,
     action_run_id,
@@ -239,7 +239,7 @@ def ref_object_uid_for(ref_type: str, ref_id: Any) -> str:
     if not text:
         raise ProvenanceWriteError(f"Provenance ref {ref_type} requires a non-empty id")
     if ref_type == REF_SOURCE_RECORD:
-        return _prefixed_or("source_record", source_record_object_id, text)
+        return source_record_object_uid_for(text)
     if ref_type == "recommendation":
         return _prefixed_or("recommendation", recommendation_id, text)
     if ref_type == "report_run":
