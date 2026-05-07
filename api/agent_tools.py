@@ -924,9 +924,6 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
         aliases=("workflow run detail", "run detail"),
     ),
     _cap(
-        "get_weekly_report", "Fetch the weekly report payload.", category="reports", aliases=("weekly report", "weekly")
-    ),
-    _cap(
         "get_commodities",
         "Fetch the commodity dashboard across major commodities for a timeframe.",
         _schema(
@@ -3285,16 +3282,6 @@ def _dispatch(
         from api.routers.workflow_runs import get_workflow_run_detail
 
         return get_workflow_run_detail(str(args.get("run_id") or "")), {"cache": "n/a"}
-
-    if name == "get_weekly_report":
-        from api.routers.weekly_report import get_weekly_report
-
-        return serialize_value(
-            get_weekly_report(
-                refresh=bool(args.get("refresh", False)),
-                cached_only=bool(args.get("cached_only", False)),
-            )
-        ), {"cache": "n/a"}
 
     if name == "get_commodities":
         from api.routers.commodities import get_commodities

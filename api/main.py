@@ -103,7 +103,6 @@ _OPTIONAL_MODULES = [
     ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
     ("api.routers.ontology", "ontology", "ontology"),
     ("api.routers.risk", "risk", "risk"),
-    ("api.routers.weekly_report", "weekly_report", "reports"),
     ("api.routers.dcf", "dcf", "equities"),
 ]
 

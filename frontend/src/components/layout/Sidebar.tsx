@@ -18,7 +18,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Workspace", path: "/workspace" },
       { label: "Investment Theses", path: "/theses" },
       { label: "Idea Watchlist", path: "/ideas" },
-      { label: "Weekly Report", path: "/weekly-report" },
     ],
   },
   {

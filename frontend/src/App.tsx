@@ -121,7 +121,6 @@ const BondDashboard = lazyPage(() => import("@/pages/BondDashboard"), "BondDashb
 const CommoditiesCurve = lazyPage(() => import("@/pages/CommoditiesCurve"), "CommoditiesCurve")
 const CommodityResearch = lazyPage(() => import("@/pages/CommodityResearch"), "CommodityResearch")
 const PortfolioNews = lazyPage(() => import("@/pages/PortfolioNews"), "PortfolioNews")
-const WeeklyReport = lazyPage(() => import("@/pages/WeeklyReport"), "WeeklyReport")
 const Sentiment = lazyPage(() => import("@/pages/Sentiment"), "Sentiment")
 const SignalAggregator = lazyPage(() => import("@/pages/SignalAggregator"), "SignalAggregator")
 const OntologyWorkbench = lazyPage(() => import("@/pages/OntologyWorkbench"), "OntologyWorkbench")
@@ -216,7 +215,6 @@ function AppRoutes() {
               <Route path="/commodities-curve" element={<CommoditiesCurve />} />
               <Route path="/commodity-research" element={<CommodityResearch />} />
               <Route path="/portfolio-news" element={<PortfolioNews />} />
-              <Route path="/weekly-report" element={<WeeklyReport />} />
               <Route path="/settings/ai" element={<AISettings />} />
             </Route>
           </Route>

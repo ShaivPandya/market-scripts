@@ -1189,21 +1189,6 @@ export const uploadEconomicGrowthCrbFile = (file: File) => {
     })
 }
 
-export const fetchWeeklyReport = () =>
-  client.get("/weekly-report", { timeout: 180_000 }).then(r => r.data)
-
-export const fetchWeeklyReportCached = () =>
-  client
-    .get("/weekly-report", { params: { cached_only: true }, timeout: 30_000 })
-    .then(r => r.data)
-    .catch(err => {
-      if (axios.isAxiosError(err) && err.response?.status === 404) return null
-      throw err
-    })
-
-export const generateWeeklyReport = () =>
-  client.get("/weekly-report", { params: { refresh: true }, timeout: 180_000 }).then(r => r.data)
-
 export const analyzeMarketTechnicals = (body: {
   market_breadth: Record<string, unknown>
   top50_breadth: Record<string, unknown>

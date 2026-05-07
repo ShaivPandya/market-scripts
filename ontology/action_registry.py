@@ -42,7 +42,9 @@ from portfolio.instruments import (
     normalize_asset,
     normalize_instrument_type,
     normalize_quantity,
+    normalize_spot_fx_symbol,
     normalize_symbol,
+    spot_fx_currencies,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,9 +263,11 @@ class PortfolioPositionInput(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -276,13 +280,21 @@ class PortfolioPositionInput(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPositionInput:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
@@ -346,9 +358,11 @@ class HedgePositionInput(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -361,13 +375,21 @@ class HedgePositionInput(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePositionInput:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
@@ -791,6 +813,8 @@ _POSITION_DIFF_FIELDS = (
     "instrument_type",
     "price_symbol",
     "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
 )
 
 
@@ -2023,6 +2047,8 @@ def _position_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "fx_base_currency": pos.fx_base_currency,
+            "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,
             "country": pos.country,
             "exchange": pos.exchange,
@@ -2058,6 +2084,8 @@ def _hedge_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "fx_base_currency": pos.fx_base_currency,
+            "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,
             "country": pos.country,
             "exchange": pos.exchange,
@@ -3024,7 +3052,6 @@ _CONTROL_PLANE_TOOL_NAMES = {
     "get_portfolio_news",
     "get_portfolio_positions",
     "get_hedge_positions",
-    "get_weekly_report",
     "search_agent_capabilities",
 }
 
@@ -3375,7 +3402,6 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_hedge_positions', 'description': 'Fetch hedge positions from the portfolio editor.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('hedge positions', 'hedges'), 'selectable': True}
 {'name': 'get_portfolio_news', 'description': 'List uploaded news digests, or fetch one digest when digest_id is provided.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string', 'description': 'Optional digest id for detail.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('news digests', 'portfolio news', 'uploaded news'), 'selectable': True}
 {'name': 'get_workflow_run', 'description': 'Fetch one persisted workflow run by run_id.', 'parameters': {'type': 'object', 'properties': {'run_id': {'type': 'string'}}, 'required': ['run_id']}, 'category': 'workflows', 'access_mode': 'read', 'aliases': ('workflow run detail', 'run detail'), 'selectable': True}
-{'name': 'get_weekly_report', 'description': 'Fetch the weekly report payload.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'reports', 'access_mode': 'read', 'aliases': ('weekly report', 'weekly'), 'selectable': True}
 {'name': 'get_commodities', 'description': 'Fetch the commodity dashboard across major commodities for a timeframe.', 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': 'This Week, Daily, Weekly, or Monthly. Default Daily.'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities dashboard', 'commodity prices'), 'selectable': True}
 {'name': 'get_commodities_curve', 'description': 'Fetch futures curve data for CL, BZ, NG, or TTF.', 'parameters': {'type': 'object', 'properties': {'commodity': {'type': 'string'}, 'lookback_days': {'type': 'integer'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities curve', 'oil curve', 'gas curve', 'futures curve'), 'selectable': True}
 {'name': 'get_commodity_research', 'description': 'Fetch the commodity proxy research screener.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodity research', 'commodity proxy', 'aluminum research'), 'selectable': True}

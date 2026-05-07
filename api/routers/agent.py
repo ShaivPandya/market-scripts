@@ -482,7 +482,7 @@ _DATA_SEEKING_RX = re.compile(
     r"positioning|sentiment|sector|yield|curve|bond|labor|housing|growth|central bank|industry|"
     r"thesis|catalysts?|kill conditions?|dossier|workflow|approvals?|action items?|triggers?|search|news|"
     r"commodity|commodities|country|index|indices|fx|currency|financials|dcf|valuation|chart|"
-    r"screener|screen|analyzer|sizer|hedging|workspace|weekly report"
+    r"screener|screen|analyzer|sizer|hedging|workspace"
     r")\b",
     flags=re.IGNORECASE,
 )
