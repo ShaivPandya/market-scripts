@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
 import pytest
 from cachetools import TTLCache
@@ -14,6 +15,40 @@ def _memory_only_cache(monkeypatch) -> TTLCache:
 
     monkeypatch.setattr(cache_mod, "_DISK_CACHE_ENABLED", False)
     return TTLCache(maxsize=16, ttl=60)
+
+
+def _fake_gcs_cache(monkeypatch, *, ttl: int = 60) -> tuple[TTLCache, dict[str, str]]:
+    import api.cache as cache_mod
+    from api import state_storage
+
+    store: dict[str, str] = {}
+    updated: dict[str, datetime] = {}
+
+    def write_text(_local_path, gcs_key, content, **_kwargs):
+        store[gcs_key] = content
+        updated[gcs_key] = datetime.now()
+        return f"gs://test/{gcs_key}"
+
+    def read_text(_local_path, gcs_key, **_kwargs):
+        if gcs_key not in store:
+            raise FileNotFoundError(gcs_key)
+        return store[gcs_key]
+
+    def delete_file(_local_path, gcs_key):
+        existed = gcs_key in store
+        store.pop(gcs_key, None)
+        updated.pop(gcs_key, None)
+        return existed
+
+    monkeypatch.setattr(cache_mod, "_DISK_CACHE_ENABLED", False)
+    monkeypatch.setattr(cache_mod, "_GCS_CACHE_PREFIX", "test/cache")
+    monkeypatch.setattr(state_storage, "use_gcs_state", lambda: True)
+    monkeypatch.setattr(state_storage, "write_text", write_text)
+    monkeypatch.setattr(state_storage, "read_text", read_text)
+    monkeypatch.setattr(state_storage, "delete_file", delete_file)
+    monkeypatch.setattr(state_storage, "list_keys", lambda prefix: sorted(k for k in store if k.startswith(prefix)))
+    monkeypatch.setattr(state_storage, "object_updated", lambda _local_path, gcs_key: updated.get(gcs_key))
+    return TTLCache(maxsize=16, ttl=ttl), store
 
 
 def test_set_and_get_cached():
@@ -202,3 +237,48 @@ def test_get_or_set_cached_timeout_rechecks_cache_before_second_loader(monkeypat
 
         owner_release.set()
         assert owner.result(timeout=1)["value"] == "owner"
+
+
+def test_gcs_cache_reads_after_memory_clear_when_disk_disabled(monkeypatch):
+    from api.cache import get_cached, set_cached
+
+    cache, store = _fake_gcs_cache(monkeypatch)
+
+    set_cached(cache, "shared", {"value": 42})
+    assert store
+
+    cache.clear()
+    assert get_cached(cache, "shared")["value"] == 42
+
+
+def test_gcs_cache_respects_ttl(monkeypatch):
+    from api.cache import get_cached, set_cached
+
+    cache, store = _fake_gcs_cache(monkeypatch, ttl=1)
+    set_cached(cache, "expired", {"value": "old"})
+
+    gcs_key = next(iter(store))
+    payload = json.loads(store[gcs_key])
+    payload["created_at"] = (datetime.now() - timedelta(seconds=10)).isoformat()
+    store[gcs_key] = json.dumps(payload)
+
+    cache.clear()
+    assert get_cached(cache, "expired") is None
+
+
+def test_gcs_cache_failures_fall_back_to_loader(monkeypatch):
+    from api import state_storage
+    from api.cache import get_or_set_cached
+
+    cache = _memory_only_cache(monkeypatch)
+    monkeypatch.setattr(state_storage, "use_gcs_state", lambda: True)
+    monkeypatch.setattr(
+        state_storage, "read_text", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("read failed"))
+    )
+    monkeypatch.setattr(
+        state_storage, "write_text", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("write failed"))
+    )
+
+    result = get_or_set_cached(cache, "fallback", lambda: {"value": "fresh"})
+
+    assert result["value"] == "fresh"

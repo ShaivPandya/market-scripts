@@ -10,6 +10,29 @@ from portfolio.portfolio_optimizer import anchor_signal_cache as anchor_cache
 from portfolio.portfolio_optimizer import composite_signal
 
 
+def _fake_anchor_gcs(monkeypatch) -> dict[str, str]:
+    from api import state_storage
+
+    store: dict[str, str] = {}
+
+    def write_text(_local_path, gcs_key, content, **_kwargs):
+        store[gcs_key] = content
+        return f"gs://test/{gcs_key}"
+
+    def read_text(_local_path, gcs_key, **_kwargs):
+        if gcs_key not in store:
+            raise FileNotFoundError(gcs_key)
+        return store[gcs_key]
+
+    monkeypatch.delenv("PORTFOLIO_ANALYZER_ANCHOR_CACHE_DIR", raising=False)
+    monkeypatch.setenv("PORTFOLIO_ANALYZER_ANCHOR_CACHE_PREFIX", "test/cache/portfolio_analyzer_anchor")
+    monkeypatch.setattr(state_storage, "use_gcs_state", lambda: True)
+    monkeypatch.setattr(state_storage, "write_text", write_text)
+    monkeypatch.setattr(state_storage, "read_text", read_text)
+    monkeypatch.setattr(state_storage, "list_keys", lambda prefix: sorted(k for k in store if k.startswith(prefix)))
+    return store
+
+
 def _raw_price_frame(tickers: list[str]) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -127,6 +150,73 @@ def test_spdr_anchor_universe_uses_weekly_cache(monkeypatch, tmp_path):
     assert calls["holdings"] == 1
     assert first_meta["cache_status"] == "refresh"
     assert second_meta["cache_status"] == "hit"
+
+
+def test_spdr_anchor_universe_uses_gcs_state_cache(monkeypatch):
+    store = _fake_anchor_gcs(monkeypatch)
+    monkeypatch.setattr(anchor_cache, "_today", lambda: date(2026, 5, 6))
+    calls = {"holdings": 0}
+
+    def holdings_fetcher(etfs, top_n):
+        calls["holdings"] += 1
+        return {etfs[0]: pd.Series({"AAA": 0.6, "BBB": 0.4})}
+
+    first, first_meta = anchor_cache.get_spdr_anchor_universe(
+        top_n=2,
+        min_unique=1,
+        sector_etfs=["XLA"],
+        holdings_fetcher=holdings_fetcher,
+    )
+    second, second_meta = anchor_cache.get_spdr_anchor_universe(
+        top_n=2,
+        min_unique=1,
+        sector_etfs=["XLA"],
+        holdings_fetcher=holdings_fetcher,
+    )
+
+    assert first == second == ["AAA", "BBB"]
+    assert calls["holdings"] == 1
+    assert first_meta["cache_status"] == "refresh"
+    assert second_meta["cache_status"] == "hit"
+    assert next(iter(store)).startswith("test/cache/portfolio_analyzer_anchor/spdr_holdings/")
+
+
+def test_anchor_price_gcs_cache_stale_fallback_uses_prefix_listing(monkeypatch):
+    _fake_anchor_gcs(monkeypatch)
+    monkeypatch.setattr(anchor_cache, "latest_market_close_date", lambda _benchmark: "2026-05-06")
+
+    def price_loader(_tickers, years):
+        return pd.DataFrame({"AAA": [1.0], "SPY": [1.0]})
+
+    def price_momentum_fetcher(tickers, _benchmark_map, _prices):
+        return _raw_price_frame(list(tickers))
+
+    first, first_meta = anchor_cache.get_anchor_price_raw(
+        anchor_universe=["AAA"],
+        benchmark="SPY",
+        years=5,
+        price_loader=price_loader,
+        price_momentum_fetcher=price_momentum_fetcher,
+    )
+    assert first_meta["cache_status"] == "refresh"
+    assert first.index.tolist() == ["AAA"]
+
+    monkeypatch.setattr(anchor_cache, "latest_market_close_date", lambda _benchmark: "2026-05-07")
+
+    def fail_price_loader(_tickers, years):
+        raise RuntimeError("yahoo unavailable")
+
+    stale, stale_meta = anchor_cache.get_anchor_price_raw(
+        anchor_universe=["AAA"],
+        benchmark="SPY",
+        years=5,
+        price_loader=fail_price_loader,
+        price_momentum_fetcher=price_momentum_fetcher,
+    )
+
+    assert stale_meta["cache_status"] == "stale_fallback"
+    assert stale_meta["stale"] is True
+    assert stale.index.tolist() == ["AAA"]
 
 
 def test_anchor_signal_generation_reuses_cached_anchor_fundamentals(monkeypatch, tmp_path):

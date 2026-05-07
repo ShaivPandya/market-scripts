@@ -44,6 +44,21 @@ def _cache_root() -> Path:
     return _repo_root() / "data_cache" / "portfolio_analyzer_anchor"
 
 
+def _cache_prefix() -> str:
+    return (os.getenv("PORTFOLIO_ANALYZER_ANCHOR_CACHE_PREFIX") or "live/cache/portfolio_analyzer_anchor").strip("/")
+
+
+def _use_state_storage_cache() -> bool:
+    if (os.getenv("PORTFOLIO_ANALYZER_ANCHOR_CACHE_DIR") or "").strip():
+        return False
+    try:
+        from api.state_storage import use_gcs_state
+
+        return bool(use_gcs_state())
+    except Exception:
+        return False
+
+
 def _today() -> date:
     return datetime.now(UTC).date()
 
@@ -108,11 +123,36 @@ def _record_path(kind: str, key_prefix: str, freshness_token: str) -> Path:
     return _cache_root() / kind / f"{digest}.json"
 
 
+def _record_gcs_key(kind: str, key_prefix: str, freshness_token: str) -> str:
+    logical = f"{CACHE_SCHEMA_VERSION}:{kind}:{key_prefix}:{freshness_token}"
+    digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()
+    return f"{_cache_prefix()}/{kind}/{digest}.json"
+
+
+def _load_record_text(*, local_path: Path, gcs_key: str) -> str | None:
+    if _use_state_storage_cache():
+        try:
+            from api.state_storage import read_text
+
+            return read_text(local_path, gcs_key, encoding="utf-8")
+        except Exception:
+            LOGGER.debug("anchor cache state read failed key=%s", gcs_key, exc_info=True)
+            return None
+    try:
+        if not local_path.exists():
+            return None
+        return local_path.read_text(encoding="utf-8")
+    except Exception:
+        LOGGER.debug("anchor cache read failed path=%s", local_path, exc_info=True)
+        return None
+
+
 def _read_record(path: Path) -> dict[str, Any] | None:
     try:
-        if not path.exists():
+        raw_text = _load_record_text(local_path=path, gcs_key="")
+        if raw_text is None:
             return None
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(raw_text)
         if not isinstance(raw, dict) or raw.get("schema_version") != CACHE_SCHEMA_VERSION:
             return None
         payload = raw.get("payload")
@@ -121,6 +161,42 @@ def _read_record(path: Path) -> dict[str, Any] | None:
         return raw
     except Exception:
         LOGGER.debug("anchor cache read failed path=%s", path, exc_info=True)
+        return None
+
+
+def _read_record_for_key(kind: str, key_prefix: str, freshness_token: str) -> dict[str, Any] | None:
+    path = _record_path(kind, key_prefix, freshness_token)
+    if not _use_state_storage_cache():
+        return _read_record(path)
+    try:
+        raw_text = _load_record_text(local_path=path, gcs_key=_record_gcs_key(kind, key_prefix, freshness_token))
+        if raw_text is None:
+            return None
+        raw = json.loads(raw_text)
+        if not isinstance(raw, dict) or raw.get("schema_version") != CACHE_SCHEMA_VERSION:
+            return None
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        return raw
+    except Exception:
+        LOGGER.debug("anchor cache state record decode failed kind=%s", kind, exc_info=True)
+        return None
+
+
+def _read_record_from_gcs_key(gcs_key: str) -> dict[str, Any] | None:
+    try:
+        from api.state_storage import read_text
+
+        raw = json.loads(read_text(_cache_root() / ".state-cache-placeholder", gcs_key, encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("schema_version") != CACHE_SCHEMA_VERSION:
+            return None
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        return raw
+    except Exception:
+        LOGGER.debug("anchor cache state read failed key=%s", gcs_key, exc_info=True)
         return None
 
 
@@ -143,6 +219,17 @@ def _write_record(
         "payload": serialize_value(payload),
     }
     try:
+        if _use_state_storage_cache():
+            from api.state_storage import write_text
+
+            write_text(
+                path,
+                _record_gcs_key(kind, key_prefix, freshness_token),
+                json.dumps(record, allow_nan=False),
+                encoding="utf-8",
+                content_type="application/json; charset=utf-8",
+            )
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, allow_nan=False), encoding="utf-8")
@@ -158,6 +245,34 @@ def _latest_stale_record(
     current_date: date,
     fresh_days_after_as_of: int,
 ) -> dict[str, Any] | None:
+    if _use_state_storage_cache():
+        try:
+            from api.state_storage import list_keys
+
+            keys = list_keys(f"{_cache_prefix()}/{kind}/")
+        except Exception:
+            LOGGER.debug("anchor cache state list failed kind=%s", kind, exc_info=True)
+            keys = []
+
+        candidates: list[dict[str, Any]] = []
+        for key in keys:
+            if not key.endswith(".json"):
+                continue
+            record = _read_record_from_gcs_key(key)
+            if not record or record.get("key_prefix") != key_prefix:
+                continue
+            if not _within_stale_grace(
+                record_as_of=_iso_date(record.get("as_of")),
+                current_date=current_date,
+                fresh_days_after_as_of=fresh_days_after_as_of,
+            ):
+                continue
+            candidates.append(record)
+
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: str(item.get("as_of") or ""))
+
     folder = _cache_root() / kind
     if not folder.exists():
         return None
@@ -190,8 +305,7 @@ def _load_or_refresh(
     fresh_days_after_as_of: int,
     loader: Callable[[], dict[str, Any]],
 ) -> AnchorCacheResult:
-    path = _record_path(kind, key_prefix, freshness_token)
-    record = _read_record(path)
+    record = _read_record_for_key(kind, key_prefix, freshness_token)
     if record:
         return AnchorCacheResult(
             payload=dict(record["payload"]),

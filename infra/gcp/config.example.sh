@@ -34,8 +34,9 @@ export ONTOLOGY_WORKER_INSTANCES="1"   # fixed Cloud Run worker-pool capacity
 export MIGRATION_JOB="talisman-migrate"
 export TOP50_REFRESH_JOB="talisman-top50-refresh"
 
-# Frontend origin allowed by API CORS (Firebase Hosting URL).
-export CORS_ORIGINS="https://${PROJECT_ID}.web.app,https://${PROJECT_ID}.firebaseapp.com"
+# Frontend origins allowed by API CORS. Include Firebase Hosting defaults plus
+# every production custom domain that can serve the frontend.
+export CORS_ORIGINS="https://${PROJECT_ID}.web.app,https://${PROJECT_ID}.firebaseapp.com,https://shaivpandya.com,https://www.shaivpandya.com"
 
 # Secret Manager names (left of "=") map to env vars consumed by api/* (right).
 # These names must already exist in Secret Manager.

@@ -770,7 +770,38 @@ def test_perform_job_uses_p0_completed_result_ttl(monkeypatch):
     assert completed is not None
     assert completed["status"] == "completed"
     delta = completed["result_expires_at"] - completed["completed_at"]
-    assert 299 <= delta.total_seconds() <= 301
+    assert 86399 <= delta.total_seconds() <= 86401
+
+
+def test_analyzer_ttl_follows_generic_completed_ttl_when_unset(monkeypatch):
+    import importlib
+
+    import api.job_registry as registry
+
+    monkeypatch.delenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_COMPLETED_TTL_SECONDS", "43200")
+    reloaded = importlib.reload(registry)
+
+    assert reloaded.get_job_spec("analyzer").completed_ttl_s == 43200
+
+    monkeypatch.delenv("ASYNC_JOB_COMPLETED_TTL_SECONDS", raising=False)
+    importlib.reload(registry)
+
+
+def test_analyzer_ttl_specific_env_overrides_generic(monkeypatch):
+    import importlib
+
+    import api.job_registry as registry
+
+    monkeypatch.setenv("ASYNC_JOB_COMPLETED_TTL_SECONDS", "43200")
+    monkeypatch.setenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", "86400")
+    reloaded = importlib.reload(registry)
+
+    assert reloaded.get_job_spec("analyzer").completed_ttl_s == 86400
+
+    monkeypatch.delenv("ASYNC_JOB_COMPLETED_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", raising=False)
+    importlib.reload(registry)
 
 
 def test_completed_job_reuse_respects_expiry(monkeypatch):

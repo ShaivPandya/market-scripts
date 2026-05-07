@@ -155,6 +155,18 @@ def delete_file(local_path: Path, gcs_key: str) -> bool:
     return True
 
 
+def list_keys(prefix: str) -> list[str]:
+    """List object keys under a state-storage prefix.
+
+    Local callers should prefer direct filesystem listing when they have a local
+    root path; this helper is primarily for production GCS-backed shared state.
+    """
+    normalized = prefix.lstrip("/")
+    if use_gcs_state():
+        return sorted(blob.name for blob in _bucket().list_blobs(prefix=normalized))
+    return []
+
+
 def object_metadata(gcs_key: str) -> dict[str, Any] | None:
     if not use_gcs_state():
         return None

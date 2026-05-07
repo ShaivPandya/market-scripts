@@ -82,7 +82,7 @@ JOB_SPECS: dict[str, JobSpec] = {
         cache_key_func="api.routers.analyzer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_ANALYZER", "default"),
         timeout_s=_env_int("ASYNC_TIMEOUT_ANALYZER_SECONDS", 10 * 60),
-        completed_ttl_s=_env_int("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", 300),
+        completed_ttl_s=_env_int("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", DEFAULT_COMPLETED_TTL_S),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Portfolio analyzer failed",
     ),

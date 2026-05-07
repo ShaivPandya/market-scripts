@@ -44,6 +44,7 @@ _singleflight_by_key: dict[str, _SingleFlightState] = {}
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DISK_CACHE_ENABLED = os.getenv("API_DISK_CACHE_DISABLE", "").strip().lower() not in ("1", "true", "yes")
+_GCS_CACHE_PREFIX = (os.getenv("API_GCS_CACHE_PREFIX") or "live/cache/api_cache").strip("/")
 
 
 def _candidate_disk_cache_roots() -> list[Path]:
@@ -105,6 +106,38 @@ def _disk_cache_path(cache: TTLCache, key: str) -> Path:
     return _DISK_CACHE_ROOT / name / f"{h}.json"
 
 
+def _gcs_cache_enabled() -> bool:
+    if _DISK_CACHE_ENABLED:
+        return False
+    try:
+        from api.state_storage import use_gcs_state
+
+        return bool(use_gcs_state())
+    except Exception:
+        return False
+
+
+def _gcs_cache_key(cache: TTLCache, key: str) -> str:
+    name = _disk_cache_name(cache)
+    h = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    return f"{_GCS_CACHE_PREFIX}/{name}/{h}.json"
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except Exception:
+        return None
+    return parsed
+
+
+def _timestamp_age_seconds(value: datetime) -> float:
+    now = datetime.now(value.tzinfo) if value.tzinfo is not None else datetime.now()
+    return (now - value).total_seconds()
+
+
 def _disk_get(cache: TTLCache, key: str):
     if not _DISK_CACHE_ENABLED:
         return None
@@ -139,6 +172,69 @@ def _disk_set(cache: TTLCache, key: str, value) -> None:
         return
 
 
+def _gcs_get(cache: TTLCache, key: str):
+    if not _gcs_cache_enabled():
+        return None
+    gcs_key = _gcs_cache_key(cache, key)
+    try:
+        from api.state_storage import object_updated, read_text
+
+        payload = json.loads(read_text(_DISK_CACHE_ROOT / ".state-cache-placeholder", gcs_key, encoding="utf-8"))
+        ttl = getattr(cache, "ttl", None)
+        if isinstance(ttl, (int, float)) and ttl > 0:
+            created_at = _parse_timestamp(payload.get("created_at"))
+            if created_at is None:
+                created_at = object_updated(_DISK_CACHE_ROOT / ".state-cache-placeholder", gcs_key)
+            if created_at is not None and _timestamp_age_seconds(created_at) > float(ttl):
+                return None
+        return payload.get("value")
+    except Exception:
+        logger.debug("api cache state read failed (key=%s gcs_key=%s)", key, gcs_key, exc_info=True)
+        return None
+
+
+def _gcs_set(cache: TTLCache, key: str, value) -> None:
+    if not _gcs_cache_enabled():
+        return
+    gcs_key = _gcs_cache_key(cache, key)
+    try:
+        from api.state_storage import write_text
+
+        write_text(
+            _DISK_CACHE_ROOT / ".state-cache-placeholder",
+            gcs_key,
+            json.dumps({"key": key, "created_at": datetime.now().isoformat(), "value": value}, allow_nan=False),
+            encoding="utf-8",
+            content_type="application/json; charset=utf-8",
+        )
+    except Exception:
+        logger.debug("api cache state write failed (key=%s gcs_key=%s)", key, gcs_key, exc_info=True)
+
+
+def _gcs_delete(cache: TTLCache, key: str) -> None:
+    if not _gcs_cache_enabled():
+        return
+    gcs_key = _gcs_cache_key(cache, key)
+    try:
+        from api.state_storage import delete_file
+
+        delete_file(_DISK_CACHE_ROOT / ".state-cache-placeholder", gcs_key)
+    except Exception:
+        logger.debug("api cache state delete failed (key=%s gcs_key=%s)", key, gcs_key, exc_info=True)
+
+
+def _gcs_invalidate_all() -> None:
+    if not _gcs_cache_enabled():
+        return
+    try:
+        from api.state_storage import delete_file, list_keys
+
+        for key in list_keys(f"{_GCS_CACHE_PREFIX}/"):
+            delete_file(_DISK_CACHE_ROOT / ".state-cache-placeholder", key)
+    except Exception:
+        logger.debug("api cache state invalidate_all failed", exc_info=True)
+
+
 def _stamp_age(v, cache: TTLCache) -> None:
     """Compute data_age_seconds and stale flag from _meta.fetched_at."""
     if not isinstance(v, dict):
@@ -165,6 +261,8 @@ def get_cached(cache: TTLCache, key: str):
         # the in-memory TTLCache.  Re-populating the in-memory cache after
         # TTL eviction defeats eviction and causes unbounded memory growth.
         v = _disk_get(cache, key)
+        if v is None:
+            v = _gcs_get(cache, key)
         if v is not None:
             _stamp_age(v, cache)
         return v
@@ -182,6 +280,7 @@ def set_cached(cache: TTLCache, key: str, value) -> None:
     with _lock:
         cache[key] = value
         _disk_set(cache, key, value)
+        _gcs_set(cache, key, value)
 
 
 def _singleflight_key(cache: TTLCache, key: str) -> str:
@@ -290,6 +389,7 @@ def delete_cached(cache: TTLCache, key: str) -> None:
                 _disk_cache_path(cache, key).unlink(missing_ok=True)
             except Exception:
                 pass
+        _gcs_delete(cache, key)
     logger.info("api cache delete (key=%s)", key)
 
 
@@ -312,6 +412,8 @@ def invalidate_all() -> None:
                             pass
     except Exception:
         logger.debug("api cache invalidate_all: disk cleanup failed", exc_info=True)
+
+    _gcs_invalidate_all()
 
     # Downstream module disk caches that survive between server restarts.
     try:
