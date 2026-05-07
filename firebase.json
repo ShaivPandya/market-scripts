@@ -31,7 +31,7 @@
         }
       },
       {
-        "source": "**",
+        "regex": "^/(?:index\\.html|login(?:/.*)?|portfolio(?:/.*)?|workspace(?:/.*)?|dossier(?:/.*)?|ideas(?:/.*)?|theses(?:/.*)?|analyzer(?:/.*)?|optimizer(?:/.*)?|hedging-tool(?:/.*)?|sizer(?:/.*)?|momentum(?:/.*)?|signal-aggregator(?:/.*)?|ontology(?:/.*)?|chart(?:/.*)?|screeners(?:/.*)?|quality(?:/.*)?|short-screen(?:/.*)?|fundamental-momentum(?:/.*)?|financials(?:/.*)?|dcf-model(?:/.*)?|index-dashboard(?:/.*)?|fx-dashboard(?:/.*)?|commodities(?:/.*)?|market-technicals(?:/.*)?|sector-metrics(?:/.*)?|positioning(?:/.*)?|sentiment(?:/.*)?|breakout(?:/.*)?|fx-model(?:/.*)?|economic-growth(?:/.*)?|labor-market(?:/.*)?|housing(?:/.*)?|liquidity(?:/.*)?|country-dashboard(?:/.*)?|central-banks(?:/.*)?|industry-monitor(?:/.*)?|yield-curve(?:/.*)?|bond-dashboard(?:/.*)?|commodities-curve(?:/.*)?|commodity-research(?:/.*)?|portfolio-news(?:/.*)?|weekly-report(?:/.*)?|settings(?:/.*)?)?$",
         "destination": "/index.html"
       }
     ]

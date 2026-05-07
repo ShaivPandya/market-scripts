@@ -1,8 +1,49 @@
+import json
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ARGS_RE = re.compile(r"--args=([^\\\s]+)")
+
+
+def test_firebase_hosting_spa_rewrite_does_not_capture_missing_assets() -> None:
+    config = json.loads((ROOT / "firebase.json").read_text())
+    hosting = config["hosting"]
+    rewrites = hosting["rewrites"]
+
+    assert rewrites[0]["source"] == "/api/**"
+
+    index_rewrites = [rewrite for rewrite in rewrites if rewrite.get("destination") == "/index.html"]
+    assert len(index_rewrites) == 1
+
+    spa_rewrite = index_rewrites[0]
+    assert rewrites[1] == spa_rewrite
+    assert spa_rewrite.get("source") != "**"
+    assert "regex" in spa_rewrite
+
+    no_cache_route_headers = [
+        header_rule
+        for header_rule in hosting["headers"]
+        if header_rule.get("regex")
+        and any(
+            header["key"].lower() == "cache-control" and "no-cache" in header["value"]
+            for header in header_rule["headers"]
+        )
+    ]
+    assert len(no_cache_route_headers) == 1
+    assert spa_rewrite["regex"] == no_cache_route_headers[0]["regex"]
+
+    spa_pattern = re.compile(spa_rewrite["regex"])
+    for path in ["/", "/index.html", "/sizer", "/sizer/results", "/analyzer"]:
+        assert spa_pattern.fullmatch(path)
+
+    for path in [
+        "/api/health",
+        "/assets/DefinitelyMissing-test.js",
+        "/assets/index-old.js",
+        "/favicon.ico",
+    ]:
+        assert not spa_pattern.fullmatch(path)
 
 
 def test_deploy_scripts_do_not_repeat_gcloud_args_values() -> None:

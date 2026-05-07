@@ -4,9 +4,14 @@ const CHUNK_LOAD_ERROR_PATTERNS = [
   /ChunkLoadError/i,
   /CSS_CHUNK_LOAD_FAILED/i,
   /Failed to fetch dynamically imported module/i,
+  /Failed to load module script/i,
   /error loading dynamically imported module/i,
   /Importing a module script failed/i,
   /Loading module .* failed/i,
+  /Expected a JavaScript-or-Wasm module script/i,
+  /strict MIME type checking/i,
+  /text\/html/i,
+  /Unexpected token '<'/i,
   /Unable to preload CSS/i,
 ]
 
