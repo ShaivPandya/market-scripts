@@ -17,6 +17,232 @@ def _poll(client, path: str, job_id: str, timeout_s: float = 3.0):
     raise AssertionError(f"job {job_id} did not finish")
 
 
+def test_quality_router_resolves_inputs(monkeypatch):
+    import equities.common as common
+    from api.routers import quality as router
+
+    seen_keys = []
+
+    def fake_universe(key):
+        seen_keys.append(key)
+        return [f"{key}-A"]
+
+    monkeypatch.setattr(common, "get_universe_tickers", fake_universe)
+
+    custom = router.QualityRequest(
+        input_mode="Custom Tickers",
+        tickers="bbb, AAA, aaa",
+        benchmark="Same as Input",
+    )
+
+    assert router._resolve_tickers(custom) == ["BBB", "AAA"]
+    assert router._resolve_benchmark(custom.benchmark) == "self"
+    assert router._resolve_benchmark("VFH — Financials") == "VFH"
+    assert router._resolve_universe_tickers("VFH — Financials") == ["VFH-A"]
+    assert seen_keys == ["VFH"]
+    assert '"tickers":"AAA,BBB"' in router._cache_key(custom)
+    assert '"benchmark_key":"self"' in router._cache_key(custom)
+
+
+def test_quality_fetches_raw_metrics_in_batches(monkeypatch):
+    from equities.quality import quality as quality_module
+    from equities.quality.quality_single import RawMetrics
+
+    calls = []
+    sleeps = []
+
+    def fake_fetch(ticker, **_kwargs):
+        calls.append(ticker)
+        return RawMetrics(
+            gpoa=1.0,
+            roe=1.0,
+            roa=1.0,
+            cfoa=1.0,
+            gmar=1.0,
+            acc_low_is_good=1.0,
+            dgpoa=1.0,
+            droe=1.0,
+            droa=1.0,
+            dcfoa=1.0,
+            dgmar=1.0,
+            beta_low_is_good=1.0,
+            leverage_low_is_good=1.0,
+            zscore_high_is_good=1.0,
+            roe_vol_low_is_good=1.0,
+        )
+
+    monkeypatch.setattr(quality_module, "fetch_raw_metrics", fake_fetch)
+    monkeypatch.setattr(quality_module.time, "sleep", lambda delay: sleeps.append(delay))
+
+    tickers = [f"Q{i:02d}" for i in range(55)]
+    result = quality_module.get_data(tickers=tickers, benchmark="self")
+
+    assert sorted(calls) == sorted(tickers)
+    assert sleeps == [quality_module.QUALITY_BATCH_DELAY]
+    assert result["input_count"] == 55
+    assert result["scored_count"] == 55
+
+
+def test_quality_screen_async_returns_result_and_cache(auth_client, monkeypatch):
+    from api import cache
+    from api.job_queue import clear_memory_jobs
+    from api.routers import quality as router
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+    calls = {"n": 0}
+
+    def fake_compute(req, progress_callback=None):
+        calls["n"] += 1
+        if progress_callback:
+            progress_callback("quality", 1, 1)
+        return {
+            "results_df": [{"index": "AAA", "quality": 1.2}],
+            "z_metrics_df": [{"index": "AAA", "roe": 0.5}],
+            "raw_metrics_df": [{"index": "AAA", "roe": 0.1}],
+            "failed": [],
+            "benchmark_name": "Self",
+            "input_count": 1,
+            "universe_size": 1,
+            "scored_count": 1,
+            "final_count": 1,
+        }
+
+    monkeypatch.setattr(router, "_compute_quality_screen", fake_compute)
+
+    body = {
+        "input_mode": "Custom Tickers",
+        "tickers": "AAA",
+        "universe": "S&P 500",
+        "benchmark": "Same as Input",
+    }
+
+    started = auth_client.post("/api/v1/quality-screen/async", json=body)
+    assert started.status_code in (200, 202)
+    job_id = started.json()["job_id"]
+    done = _poll(auth_client, "/api/v1/quality-screen/async", job_id)
+    assert done["status"] == "done"
+    assert done["result"]["results_df"] == [{"index": "AAA", "quality": 1.2}]
+
+    cached = auth_client.post("/api/v1/quality-screen/async", json=body)
+    assert cached.status_code in (200, 202)
+    assert cached.json()["status"] == "done"
+    assert cached.json()["result"]["scored_count"] == 1
+    assert calls["n"] == 1
+
+
+def test_quality_screen_async_dedupes_running_job(auth_client, monkeypatch):
+    from api import cache
+    from api.job_queue import clear_memory_jobs
+    from api.routers import quality as router
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+    started_compute = threading.Event()
+    release_compute = threading.Event()
+
+    def slow_compute(req, progress_callback=None):
+        started_compute.set()
+        assert release_compute.wait(timeout=2)
+        return {
+            "results_df": [],
+            "failed": [],
+            "benchmark_name": "Self",
+            "input_count": 1,
+            "universe_size": 1,
+            "scored_count": 0,
+            "final_count": 0,
+        }
+
+    monkeypatch.setattr(router, "_compute_quality_screen", slow_compute)
+
+    body = {
+        "input_mode": "Custom Tickers",
+        "tickers": "QDEDUP",
+        "universe": "S&P 500",
+        "benchmark": "Same as Input",
+    }
+
+    first = auth_client.post("/api/v1/quality-screen/async", json=body)
+    assert first.status_code in (200, 202)
+    assert started_compute.wait(timeout=2)
+
+    second = auth_client.post("/api/v1/quality-screen/async", json=body)
+    assert second.status_code in (200, 202)
+    assert second.json()["job_id"] == first.json()["job_id"]
+
+    release_compute.set()
+    done = _poll(auth_client, "/api/v1/quality-screen/async", first.json()["job_id"])
+    assert done["status"] == "done"
+
+
+def test_quality_screen_async_surfaces_worker_error(auth_client, monkeypatch):
+    from api import cache
+    from api.job_queue import clear_memory_jobs
+    from api.routers import quality as router
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+
+    def failing_compute(req, progress_callback=None):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(router, "_compute_quality_screen", failing_compute)
+
+    body = {
+        "input_mode": "Custom Tickers",
+        "tickers": "QERR",
+        "universe": "S&P 500",
+        "benchmark": "Same as Input",
+    }
+
+    started = auth_client.post("/api/v1/quality-screen/async", json=body)
+    assert started.status_code in (200, 202)
+    done = _poll(auth_client, "/api/v1/quality-screen/async", started.json()["job_id"])
+    assert done["status"] == "error"
+    assert "rate limited" in done["error"]
+
+
+def test_quality_screen_direct_endpoint_enqueues(auth_client, monkeypatch):
+    from api import cache
+    from api.job_queue import clear_memory_jobs
+    from api.routers import quality as router
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+    release_compute = threading.Event()
+
+    def slow_compute(req, progress_callback=None):
+        assert release_compute.wait(timeout=2)
+        return {
+            "results_df": [],
+            "failed": [],
+            "benchmark_name": "Self",
+            "input_count": 1,
+            "universe_size": 1,
+            "scored_count": 0,
+            "final_count": 0,
+        }
+
+    monkeypatch.setattr(router, "_compute_quality_screen", slow_compute)
+
+    body = {
+        "input_mode": "Custom Tickers",
+        "tickers": "QDIRECT",
+        "universe": "S&P 500",
+        "benchmark": "Same as Input",
+    }
+
+    started = auth_client.post("/api/v1/quality-screen", json=body)
+    assert started.status_code == 202
+    assert started.json()["status"] in {"queued", "running"}
+    assert started.headers["location"].startswith("/api/v1/quality-screen/async/")
+
+    release_compute.set()
+    done = _poll(auth_client, "/api/v1/quality-screen/async", started.json()["job_id"])
+    assert done["status"] == "done"
+
+
 def test_short_screen_async_returns_result_and_cache(auth_client, monkeypatch):
     from api import cache
     from api.routers import short_screen as router
@@ -243,6 +469,13 @@ def test_price_momentum_analyze_ticker_returns_raw_roc63():
     assert result["roc63"] == pytest.approx(expected)
 
 
+def test_price_momentum_default_uses_runtime_positions_reader():
+    from ontology import runtime_read_service
+    from portfolio.momentum.price_momentum import momentum
+
+    assert momentum._get_positions_df is runtime_read_service.get_positions_df
+
+
 def test_price_momentum_router_resolves_benchmark_and_custom_tickers():
     from api.routers import price_momentum as router
 
@@ -333,6 +566,34 @@ def test_existing_momentum_endpoint_hides_raw_roc63(monkeypatch):
     result = router.get_momentum()
 
     assert result["results"] == [{"ticker": "AAA", "avg20_roc63": 7.0}]
+
+
+def test_existing_momentum_endpoint_cache_tracks_position_token(monkeypatch):
+    from api import cache
+    from api.routers import momentum as router
+    from portfolio.momentum.price_momentum import momentum
+
+    cache.invalidate_all()
+    position_records = {"rows": [{"ticker": "AAA", "direction": "long"}]}
+    calls = {"n": 0}
+
+    monkeypatch.setattr(router, "_current_position_records", lambda: position_records["rows"])
+
+    def fake_get_data():
+        calls["n"] += 1
+        return {"results": [{"ticker": f"T{calls['n']}", "avg20_roc63": 1.0}]}
+
+    monkeypatch.setattr(momentum, "get_data", fake_get_data)
+
+    first = router.get_momentum()
+    second = router.get_momentum()
+    position_records["rows"] = [{"ticker": "BBB", "direction": "short"}]
+    third = router.get_momentum()
+
+    assert first == second
+    assert first["results"][0]["ticker"] == "T1"
+    assert third["results"][0]["ticker"] == "T2"
+    assert calls["n"] == 2
 
 
 def test_quarterly_financials_only_requested_for_growth_filters(monkeypatch):

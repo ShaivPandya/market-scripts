@@ -736,6 +736,8 @@ class OntologyCommandService:
                         "asset_class": row.get("asset") or "security",
                         "instrument_type": row.get("instrument_type") or "security",
                         "price_symbol": row.get("price_symbol") or ticker,
+                        "fx_base_currency": row.get("fx_base_currency"),
+                        "fx_quote_currency": row.get("fx_quote_currency"),
                         "status": "active",
                         "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                     },

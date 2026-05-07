@@ -126,7 +126,7 @@ Core portfolio and research workflows:
 Market and macro modules:
 
 - Equity screeners, fundamental momentum, financials, DCF, market technicals, sector metrics, index dashboard, and sentiment.
-- Macro dashboards for liquidity, economic growth, labor, housing, country data, central banks, positioning, breakout signals, and signal aggregation.
+- Macro dashboards for liquidity, economic growth, labor, housing, country data, central banks, positioning, and signal aggregation.
 - FX dashboard and FX macro model.
 - Commodities dashboard, futures curve tools, commodity research, and aluminum model/backtests.
 - Yield curve and bond dashboard.
@@ -263,7 +263,6 @@ FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
 - `government_bonds/README.md`
 - `macro/economic_growth/README.md`
 - `macro/liquidity/README.md`
-- `macro/breakout/README.md`
 - `macro/positioning/README.md`
 - `portfolio/momentum/price_momentum/README.md`
 - `equities/market_technicals/README.md`

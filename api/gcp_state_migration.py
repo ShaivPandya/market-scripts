@@ -380,6 +380,8 @@ class StateMigrator:
             row["instrument_type"] = row.get("instrument_type") or "security"
             row["price_symbol"] = row.get("price_symbol") or row.get("ticker")
             row["contract_multiplier"] = row.get("contract_multiplier") or 1.0
+            row["fx_base_currency"] = row.get("fx_base_currency")
+            row["fx_quote_currency"] = row.get("fx_quote_currency")
             row["base_currency"] = row.get("base_currency") or "USD"
             row["valuation_status"] = row.get("valuation_status") or "missing_position_inputs"
         self._upsert_rows(
@@ -396,6 +398,8 @@ class StateMigrator:
                 "instrument_type",
                 "price_symbol",
                 "contract_multiplier",
+                "fx_base_currency",
+                "fx_quote_currency",
                 "currency",
                 "country",
                 "exchange",

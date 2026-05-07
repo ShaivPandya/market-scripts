@@ -27,7 +27,9 @@ from portfolio.instruments import (
     normalize_asset,
     normalize_instrument_type,
     normalize_quantity,
+    normalize_spot_fx_symbol,
     normalize_symbol,
+    spot_fx_currencies,
 )
 
 DB_PATH = Path(__file__).parent / "portfolio.db"
@@ -46,6 +48,8 @@ _POSITION_COLUMNS = [
     "instrument_type",
     "price_symbol",
     "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
     "currency",
     "country",
     "exchange",
@@ -73,10 +77,12 @@ CREATE TABLE IF NOT EXISTS positions (
     shares      REAL,
     quantity    REAL,
     instrument_type TEXT NOT NULL DEFAULT 'security'
-                        CHECK (instrument_type IN ('security','future')),
+                        CHECK (instrument_type IN ('security','future','spot_fx')),
     price_symbol TEXT,
     contract_multiplier REAL NOT NULL DEFAULT 1.0
                         CHECK (contract_multiplier > 0),
+    fx_base_currency TEXT,
+    fx_quote_currency TEXT,
     currency    TEXT,
     country     TEXT,
     exchange    TEXT,
@@ -144,6 +150,14 @@ def _init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE positions ADD COLUMN contract_multiplier REAL NOT NULL DEFAULT 1.0")
         conn.commit()
         cols.add("contract_multiplier")
+    if "fx_base_currency" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN fx_base_currency TEXT")
+        conn.commit()
+        cols.add("fx_base_currency")
+    if "fx_quote_currency" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN fx_quote_currency TEXT")
+        conn.commit()
+        cols.add("fx_quote_currency")
     valuation_columns = {
         "currency": "TEXT",
         "country": "TEXT",
@@ -179,6 +193,23 @@ def _init_db(conn: sqlite3.Connection) -> None:
         "UPDATE positions SET valuation_status = 'missing_position_inputs' "
         "WHERE valuation_status IS NULL OR valuation_status = ''"
     )
+    conn.commit()
+    _ensure_sqlite_spot_fx_schema(conn)
+
+
+def _ensure_sqlite_spot_fx_schema(conn: sqlite3.Connection) -> None:
+    create_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'positions'").fetchone()
+    sql = str(create_sql[0] if create_sql else "")
+    if "spot_fx" in sql:
+        return
+    temp = "positions_spot_fx_migration_old"
+    conn.execute(f"ALTER TABLE positions RENAME TO {temp}")
+    conn.execute(_CREATE_TABLE)
+    old_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({temp})").fetchall()}
+    common = [column for column in _POSITION_COLUMNS if column in old_cols]
+    columns = ", ".join(common)
+    conn.execute(f"INSERT INTO positions ({columns}) SELECT {columns} FROM {temp}")
+    conn.execute(f"DROP TABLE {temp}")
     conn.commit()
 
 
@@ -235,6 +266,8 @@ def load_positions_csv() -> pd.DataFrame:
         "instrument_type": None,
         "price_symbol": None,
         "contract_multiplier": None,
+        "fx_base_currency": None,
+        "fx_quote_currency": None,
         "currency": None,
         "country": None,
         "exchange": None,
@@ -251,19 +284,26 @@ def load_positions_csv() -> pd.DataFrame:
             df[column] = default
 
     df = df[_POSITION_COLUMNS].copy()
-    df["ticker"] = df["ticker"].map(lambda value: normalize_symbol(value) if str(value).strip() else "")
-    df["price_symbol"] = df.apply(
-        lambda row: (
-            normalize_symbol(row["price_symbol"], field_name="price_symbol")
-            if str(row.get("price_symbol") or "").strip()
-            else row["ticker"]
-        ),
-        axis=1,
-    )
     df["instrument_type"] = df.apply(
         lambda row: normalize_instrument_type(
             row.get("instrument_type"), ticker=row["ticker"], price_symbol=row["price_symbol"]
         ),
+        axis=1,
+    )
+    df["price_symbol"] = df.apply(
+        lambda row: (
+            normalize_spot_fx_symbol(row.get("price_symbol") or row.get("ticker"), field_name="price_symbol")
+            if row["instrument_type"] == "spot_fx"
+            else (
+                normalize_symbol(row["price_symbol"], field_name="price_symbol")
+                if str(row.get("price_symbol") or "").strip()
+                else normalize_symbol(row["ticker"])
+            )
+        ),
+        axis=1,
+    )
+    df["ticker"] = df.apply(
+        lambda row: row["price_symbol"] if row["instrument_type"] == "spot_fx" else normalize_symbol(row["ticker"]),
         axis=1,
     )
     df["asset"] = df.apply(
@@ -286,7 +326,23 @@ def load_positions_csv() -> pd.DataFrame:
         ),
         axis=1,
     )
-    for column in ("currency", "country", "exchange", "base_currency", "fx_rate_as_of", "valuation_status"):
+    for idx, row in df[df["instrument_type"].eq("spot_fx")].iterrows():
+        fx_base, fx_quote = spot_fx_currencies(row["price_symbol"])
+        df.at[idx, "fx_base_currency"] = fx_base
+        df.at[idx, "fx_quote_currency"] = fx_quote
+        df.at[idx, "currency"] = fx_quote
+        df.at[idx, "asset"] = "fx"
+        df.at[idx, "contract_multiplier"] = 1.0
+    for column in (
+        "fx_base_currency",
+        "fx_quote_currency",
+        "currency",
+        "country",
+        "exchange",
+        "base_currency",
+        "fx_rate_as_of",
+        "valuation_status",
+    ):
         df[column] = df[column].where(df[column].notna(), None)
     for column in ("fx_rate_to_base", "cost_basis_base", "notional_base"):
         df[column] = pd.to_numeric(df[column], errors="coerce")
@@ -342,9 +398,10 @@ def save_positions(
         conn.executemany(
             "INSERT INTO positions "
             "(ticker, asset, direction, contrarian, conviction, cost_basis, shares, quantity, "
-            "instrument_type, price_symbol, contract_multiplier, currency, country, exchange, base_currency, "
+            "instrument_type, price_symbol, contract_multiplier, fx_base_currency, fx_quote_currency, "
+            "currency, country, exchange, base_currency, "
             "fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status, role) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -361,9 +418,17 @@ def _normalize_position_rows(
 
     for raw in positions:
         p = enrich_position_valuation(raw, preserve_existing=preserve_existing_valuation)
-        ticker = normalize_symbol(p.get("ticker", ""))
-        price_symbol = normalize_symbol(p.get("price_symbol") or ticker, field_name="price_symbol")
-        instrument_type = normalize_instrument_type(p.get("instrument_type"), ticker=ticker, price_symbol=price_symbol)
+        raw_ticker = p.get("ticker", "")
+        raw_price_symbol = p.get("price_symbol") or raw_ticker
+        instrument_type = normalize_instrument_type(
+            p.get("instrument_type"), ticker=str(raw_ticker), price_symbol=str(raw_price_symbol)
+        )
+        if instrument_type == "spot_fx":
+            price_symbol = normalize_spot_fx_symbol(raw_price_symbol, field_name="price_symbol")
+            ticker = price_symbol
+        else:
+            ticker = normalize_symbol(raw_ticker)
+            price_symbol = normalize_symbol(raw_price_symbol or ticker, field_name="price_symbol")
         if instrument_type == "future" and not is_continuous_future_symbol(price_symbol):
             raise ValueError(f"Futures positions require a continuous '=F' price_symbol, got {price_symbol!r}.")
         asset = normalize_asset(p.get("asset"), instrument_type=instrument_type, symbol=price_symbol)
@@ -390,9 +455,19 @@ def _normalize_position_rows(
             symbol=price_symbol,
             override=p.get("contract_multiplier"),
         )
+        fx_base_currency = _optional_text(p.get("fx_base_currency"))
+        fx_quote_currency = _optional_text(p.get("fx_quote_currency"))
+        if instrument_type == "spot_fx":
+            fx_base_currency, fx_quote_currency = spot_fx_currencies(price_symbol)
+            asset = "fx"
+            contract_multiplier = 1.0
         currency = _optional_text(p.get("currency"))
+        if instrument_type == "spot_fx":
+            currency = fx_quote_currency
         country = _optional_text(p.get("country"))
         exchange = _optional_text(p.get("exchange"))
+        if instrument_type == "spot_fx" and not exchange:
+            exchange = "FX"
         base_currency = _optional_text(p.get("base_currency")) or "USD"
         fx_rate_to_base = _optional_float(p.get("fx_rate_to_base"))
         fx_rate_as_of = _optional_text(p.get("fx_rate_as_of"))
@@ -412,6 +487,8 @@ def _normalize_position_rows(
                 instrument_type,
                 price_symbol,
                 contract_multiplier,
+                fx_base_currency,
+                fx_quote_currency,
                 currency,
                 country,
                 exchange,
@@ -452,10 +529,11 @@ def _pg_save_position_rows(rows: list[tuple], *, role: str) -> None:
                 """
                 INSERT INTO positions (
                     ticker, asset, direction, contrarian, conviction, cost_basis, shares, quantity,
-                    instrument_type, price_symbol, contract_multiplier, currency, country, exchange, base_currency,
+                    instrument_type, price_symbol, contract_multiplier, fx_base_currency, fx_quote_currency,
+                    currency, country, exchange, base_currency,
                     fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status, role
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 rows,
             )
@@ -472,6 +550,14 @@ def _position_dict(row) -> dict:
     out["instrument_type"] = str(out.get("instrument_type") or "security")
     out["price_symbol"] = str(out.get("price_symbol") or out.get("ticker") or "").upper()
     out["contract_multiplier"] = float(out.get("contract_multiplier") or 1.0)
+    if out["instrument_type"] == "spot_fx":
+        out["price_symbol"] = normalize_spot_fx_symbol(out["price_symbol"])
+        out["ticker"] = out["price_symbol"]
+        out["asset"] = "fx"
+        out["contract_multiplier"] = 1.0
+        out["fx_base_currency"], out["fx_quote_currency"] = spot_fx_currencies(out["price_symbol"])
+        out["currency"] = out["fx_quote_currency"]
+        out["exchange"] = out.get("exchange") or "FX"
     out["base_currency"] = str(out.get("base_currency") or "USD").upper()
     out["valuation_status"] = str(out.get("valuation_status") or "missing_position_inputs")
     return out

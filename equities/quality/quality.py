@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional  # noqa: UP035
@@ -32,6 +33,9 @@ import pandas as pd
 
 from equities.common import clean_ticker, get_sp500_universe, get_universe_tickers, list_universes, load_universe
 from equities.quality.quality_single import RawMetrics, compute_scores, fetch_raw_metrics
+
+QUALITY_BATCH_SIZE = 50
+QUALITY_BATCH_DELAY = 1.0
 
 
 def _build_universe(
@@ -98,26 +102,34 @@ def get_data(
     raws: dict[str, RawMetrics] = {}
     failed = []
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {
-            pool.submit(
-                fetch_raw_metrics,
-                ticker,
-                market=market,
-                growth_years=growth_years,
-                beta_years=beta_years,
-            ): ticker
-            for ticker in scoring_universe
-        }
-        for i, future in enumerate(as_completed(futures), 1):
-            ticker = futures[future]
-            try:
-                raws[ticker] = future.result()
-            except Exception:
-                failed.append(ticker)
+    total = len(scoring_universe)
+    done = 0
+    batches = [scoring_universe[i : i + QUALITY_BATCH_SIZE] for i in range(0, total, QUALITY_BATCH_SIZE)]
+    for batch_idx, batch in enumerate(batches, 1):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(
+                    fetch_raw_metrics,
+                    ticker,
+                    market=market,
+                    growth_years=growth_years,
+                    beta_years=beta_years,
+                ): ticker
+                for ticker in batch
+            }
+            for future in as_completed(futures):
+                ticker = futures[future]
+                try:
+                    raws[ticker] = future.result()
+                except Exception:
+                    failed.append(ticker)
 
-            if progress_callback and (i % 10 == 0 or i == len(scoring_universe)):
-                progress_callback(i, len(scoring_universe))
+                done += 1
+                if progress_callback and (done % 10 == 0 or done == total):
+                    progress_callback(done, total)
+
+        if batch_idx < len(batches):
+            time.sleep(QUALITY_BATCH_DELAY)
 
     if len(raws) < 3:
         return {

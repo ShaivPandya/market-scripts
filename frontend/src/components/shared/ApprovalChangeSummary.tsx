@@ -125,9 +125,13 @@ function positionDescriptor(value: unknown): string {
   const record = asRecord(value)
   const bits: string[] = []
   if (record.direction || record.asset) bits.push([record.direction, record.asset].filter(Boolean).map(formatValue).join(" "))
+  if (record.instrument_type === "spot_fx" && (record.fx_base_currency || record.fx_quote_currency)) {
+    bits.push(`${formatValue(record.fx_base_currency)}/${formatValue(record.fx_quote_currency)} spot`)
+  }
   const quantity = record.quantity ?? record.shares
   if (quantity != null) {
-    bits.push(`${formatValue(quantity)} ${record.instrument_type === "future" ? "contracts" : "shares"}`)
+    const unitLabel = record.instrument_type === "future" ? "contracts" : record.instrument_type === "spot_fx" ? "base units" : "shares"
+    bits.push(`${formatValue(quantity)} ${unitLabel}`)
   }
   if (record.contract_multiplier != null && record.instrument_type === "future") {
     bits.push(`multiplier ${formatValue(record.contract_multiplier)}`)

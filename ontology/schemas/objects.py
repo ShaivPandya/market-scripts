@@ -69,6 +69,8 @@ class PositionV1(OntologySchemaBase):
     instrument_type: str = "security"
     price_symbol: str | None = None
     contract_multiplier: float = 1.0
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -101,6 +103,8 @@ class PositionV1(OntologySchemaBase):
         "instrument_id",
         "as_of",
         "price_symbol",
+        "fx_base_currency",
+        "fx_quote_currency",
         "currency",
         "country",
         "exchange",
@@ -154,6 +158,8 @@ class InstrumentV1(OntologySchemaBase):
     currency: str | None = None
     exchange: str | None = None
     country: str | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     sector: str | None = None
     industry: str | None = None
     price_symbol: str | None = None
@@ -181,6 +187,8 @@ class InstrumentV1(OntologySchemaBase):
         "currency",
         "exchange",
         "country",
+        "fx_base_currency",
+        "fx_quote_currency",
         "sector",
         "industry",
         "price_symbol",
@@ -814,6 +822,8 @@ class HedgePositionV1(OntologySchemaBase):
     instrument_type: str = "security"
     price_symbol: str | None = None
     contract_multiplier: float = 1.0
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -842,6 +852,8 @@ class HedgePositionV1(OntologySchemaBase):
 
     @field_validator(
         "price_symbol",
+        "fx_base_currency",
+        "fx_quote_currency",
         "currency",
         "country",
         "exchange",

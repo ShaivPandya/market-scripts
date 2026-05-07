@@ -537,7 +537,7 @@ export const fetchPortfolio = (timeframe: string) =>
 export const fetchPortfolioAllTimeframes = () =>
   client.get("/portfolio?all_timeframes=true").then(r => r.data)
 
-export type InstrumentType = "security" | "future"
+export type InstrumentType = "security" | "future" | "spot_fx"
 export type PortfolioAsset = "equity" | "commodity" | "fx" | "bond"
 
 export interface PortfolioPosition {
@@ -552,6 +552,8 @@ export interface PortfolioPosition {
   instrument_type?: InstrumentType | null
   price_symbol?: string | null
   contract_multiplier?: number | null
+  fx_base_currency?: string | null
+  fx_quote_currency?: string | null
   currency?: string | null
   country?: string | null
   exchange?: string | null
@@ -596,6 +598,8 @@ export interface HedgePosition {
   instrument_type?: InstrumentType | null
   price_symbol?: string | null
   contract_multiplier?: number | null
+  fx_base_currency?: string | null
+  fx_quote_currency?: string | null
   currency?: string | null
   country?: string | null
   exchange?: string | null
@@ -1189,21 +1193,6 @@ export const uploadEconomicGrowthCrbFile = (file: File) => {
     })
 }
 
-export const fetchWeeklyReport = () =>
-  client.get("/weekly-report", { timeout: 180_000 }).then(r => r.data)
-
-export const fetchWeeklyReportCached = () =>
-  client
-    .get("/weekly-report", { params: { cached_only: true }, timeout: 30_000 })
-    .then(r => r.data)
-    .catch(err => {
-      if (axios.isAxiosError(err) && err.response?.status === 404) return null
-      throw err
-    })
-
-export const generateWeeklyReport = () =>
-  client.get("/weekly-report", { params: { refresh: true }, timeout: 180_000 }).then(r => r.data)
-
 export const analyzeMarketTechnicals = (body: {
   market_breadth: Record<string, unknown>
   top50_breadth: Record<string, unknown>
@@ -1253,9 +1242,6 @@ export const analyzeLiquidity = (body: {
 
 export const fetchCountryDashboard = (metric: string) =>
   client.get(`/country-dashboard?metric=${encodeURIComponent(metric)}`).then(r => r.data)
-
-export const fetchBreakout = () =>
-  client.get("/breakout").then(r => r.data)
 
 export const fetchCentralBanks = (refresh = false) =>
   client.get(`/central-banks?refresh=${refresh}`).then(r => r.data)
@@ -1556,9 +1542,10 @@ export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
 
 type AnalyzerJobBase = { job_id: string; timeout_s?: number }
 
-type AnalyzerJobResponse =
+export type AnalyzerJobResponse =
   | (AnalyzerJobBase & { status: "queued" | "running" })
   | (AnalyzerJobBase & { status: "error"; error?: string })
+  | (AnalyzerJobBase & { status: "cancelled"; error?: string })
   | (AnalyzerJobBase & { status: "done"; result?: unknown })
 
 export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
@@ -1566,6 +1553,11 @@ export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
 
 export const fetchPortfolioAnalyzerJob = (job_id: string) =>
   client.get(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
+
+export const cancelPortfolioAnalyzerJob = (job_id: string) =>
+  client
+    .post(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}/cancel`, {}, { timeout: 30_000 })
+    .then(r => r.data as AnalyzerJobResponse)
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -1595,6 +1587,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
   const started = await withAnalyzerRetry(() => startPortfolioAnalyzerJob(body))
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Portfolio analyzer failed")
+  if (started.status === "cancelled") throw new Error(started.error || "Portfolio analyzer cancelled")
 
   const job_id = started.job_id
   const serverTimeoutMs = Number.isFinite(started.timeout_s) ? Math.max(180, Number(started.timeout_s)) * 1000 : 180_000
@@ -1623,6 +1616,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
       return "result" in started ? started.result : undefined
     }
     if (job.status === "error") throw new Error(job.error || "Portfolio analyzer failed")
+    if (job.status === "cancelled") throw new Error(job.error || "Portfolio analyzer cancelled")
   }
 }
 
@@ -1630,6 +1624,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
 export const runPortfolioOptimizer = runPortfolioAnalyzer
 export const startPortfolioOptimizerJob = startPortfolioAnalyzerJob
 export const fetchPortfolioOptimizerJob = fetchPortfolioAnalyzerJob
+export const cancelPortfolioOptimizerJob = cancelPortfolioAnalyzerJob
 export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
   return runPortfolioAnalyzerAsync(body)
 }
@@ -1680,21 +1675,22 @@ type SizerJobResponse =
   | { job_id: string; status: "error"; error?: string }
   | { job_id: string; status: "done"; result?: unknown }
 
-export const startSizerJob = (body: {
+export type BetaHedgeMode = "spy_iwm" | "spy"
+
+export type PortfolioSizerRequest = {
   book: number
   target_leverage: number
+  beta_hedge_mode: BetaHedgeMode
   positions: { ticker: string; conviction: number }[]
-}) =>
+}
+
+export const startSizerJob = (body: PortfolioSizerRequest) =>
   client.post("/portfolio-sizer/async", body, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
 
 export const fetchSizerJob = (job_id: string) =>
   client.get(`/portfolio-sizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
 
-export async function runPortfolioSizerAsync(body: {
-  book: number
-  target_leverage: number
-  positions: { ticker: string; conviction: number }[]
-}) {
+export async function runPortfolioSizerAsync(body: PortfolioSizerRequest) {
   const started = await startSizerJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Sizer failed")
@@ -1716,28 +1712,6 @@ export async function runPortfolioSizerAsync(body: {
   }
 }
 
-export const runQualityScreen = (body: {
-  universe: string
-  tickers: string
-  benchmark: string
-  input_mode: string
-}) => {
-  const controller = new AbortController()
-  const timeoutMs = 180_000
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-
-  return client
-    .post("/quality-screen", body, { signal: controller.signal, timeout: timeoutMs })
-    .then(r => r.data)
-    .catch(err => {
-      if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
-        throw new Error("Timeout: Quality screen exceeded 180s. Try a smaller universe or custom tickers.")
-      }
-      throw err
-    })
-    .finally(() => clearTimeout(timer))
-}
-
 export type ScreenJobProgress = {
   phase?: string
   done?: number
@@ -1752,7 +1726,9 @@ type ScreenJobResponse<T> =
 export type ScreenResult = {
   results_df?: Record<string, unknown>[]
   failed_tickers?: string[]
+  failed?: string[]
   input_count?: number
+  universe_size?: number
   scored_count?: number
   benchmark_name?: string
   date?: string | null
@@ -1761,6 +1737,13 @@ export type ScreenResult = {
   phase3_pass_count?: number
   final_count?: number
   [key: string]: unknown
+}
+
+export type QualityScreenRequest = {
+  input_mode: string
+  universe: string
+  tickers: string
+  benchmark: string
 }
 
 export type ShortScreenRequest = {
@@ -1814,6 +1797,12 @@ export type PriceMomentumRequest = {
   benchmark: string
 }
 
+const startQualityScreenJob = (body: QualityScreenRequest) =>
+  client.post("/quality-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const fetchQualityScreenJob = (job_id: string) =>
+  client.get(`/quality-screen/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
 const startShortScreenJob = (body: ShortScreenRequest) =>
   client.post("/short-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
 
@@ -1866,6 +1855,9 @@ async function runScreenJob<TBody>(
 
 export const runShortScreen = (body: ShortScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
   runScreenJob(body, startShortScreenJob, fetchShortScreenJob, "Short screen", onProgress)
+
+export const runQualityScreen = (body: QualityScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
+  runScreenJob(body, startQualityScreenJob, fetchQualityScreenJob, "Quality screen", onProgress)
 
 export const runLongScreen = (body: LongScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
   runScreenJob(body, startLongScreenJob, fetchLongScreenJob, "Long screen", onProgress)

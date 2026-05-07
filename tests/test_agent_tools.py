@@ -340,7 +340,6 @@ def test_agent_capability_registry_covers_user_facing_app_surface():
         "run_portfolio_sizer",
         "run_hedging_tool",
         "get_workspace",
-        "get_weekly_report",
         "search_agent_capabilities",
     }
 

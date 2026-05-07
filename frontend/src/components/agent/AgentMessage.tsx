@@ -23,7 +23,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_sentiment: "Sentiment",
   get_central_banks: "Central Banks",
   get_industry_monitor: "Industry Monitor",
-  get_breakout: "Breakout Signals",
   get_signal_aggregator: "Signal Aggregator",
   query_ontology: "Ontology Query",
   search_web: "Web Search",

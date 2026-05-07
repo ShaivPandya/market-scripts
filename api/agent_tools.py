@@ -317,16 +317,6 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
-        "name": "get_breakout",
-        "description": (
-            "Fetch macro breakout signals across asset classes. Returns recent breakouts "
-            "with direction (up/down), date, market, and close price. Use this to identify "
-            "which major markets are making significant technical moves."
-        ),
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "type": "function",
         "name": "query_ontology",
         "description": (
             "Run a cross-module ontology query that joins portfolio positions with macro/market "
@@ -837,7 +827,6 @@ _BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "get_sentiment": ("macro", "read", ("sentiment", "put call", "aaii", "naaim")),
     "get_central_banks": ("macro", "read", ("central banks", "fed", "ecb", "boe", "boj")),
     "get_industry_monitor": ("macro", "read", ("industry monitor", "transcripts", "management commentary")),
-    "get_breakout": ("technical", "read", ("breakout", "technical breakouts")),
     "query_ontology": ("ontology", "read", ("ontology", "risk exposure", "portfolio risk")),
     "get_thesis": ("thesis", "read", ("thesis", "investment thesis")),
     "get_thesis_evaluations": ("thesis", "read", ("thesis evaluations", "monitoring history")),
@@ -933,9 +922,6 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
         _schema({"run_id": _STRING}, ["run_id"]),
         category="workflows",
         aliases=("workflow run detail", "run detail"),
-    ),
-    _cap(
-        "get_weekly_report", "Fetch the weekly report payload.", category="reports", aliases=("weekly report", "weekly")
     ),
     _cap(
         "get_commodities",
@@ -1173,7 +1159,14 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
     _cap(
         "run_portfolio_sizer",
         "Start or reuse the portfolio sizer.",
-        _schema({"book": _NUMBER, "target_leverage": _NUMBER, "positions": _ARRAY_OBJECTS}),
+        _schema(
+            {
+                "book": _NUMBER,
+                "target_leverage": _NUMBER,
+                "beta_hedge_mode": {"type": "string", "enum": ["spy_iwm", "spy"]},
+                "positions": _ARRAY_OBJECTS,
+            }
+        ),
         category="portfolio",
         access_mode="compute",
         aliases=("portfolio sizer", "sizing"),
@@ -1605,6 +1598,8 @@ def _compact_portfolio_payload(payload: Any) -> Any:
                 "price_symbol": meta.get("price_symbol") or ticker,
                 "quantity": meta.get("quantity"),
                 "contract_multiplier": meta.get("contract_multiplier") or 1,
+                "fx_base_currency": meta.get("fx_base_currency"),
+                "fx_quote_currency": meta.get("fx_quote_currency"),
                 "current_notional": meta.get("current_notional"),
                 "price_as_of": last.get("date") if isinstance(last, dict) else None,
                 "current_price": last_val,
@@ -1627,6 +1622,7 @@ def _compact_portfolio_payload(payload: Any) -> Any:
             "quantity_field": "quantity",
             "futures_quantity": "contracts",
             "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
+            "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
         },
         "summary": {
             "position_count": len(compact_rows),
@@ -1717,6 +1713,8 @@ def _build_agent_portfolio_payload(
             "shares": quantity,
             "quantity": quantity,
             "contract_multiplier": contract_multiplier,
+            "fx_base_currency": holding.get("fx_base_currency"),
+            "fx_quote_currency": holding.get("fx_quote_currency"),
             "conviction": holding.get("conviction"),
             "contrarian": bool(holding.get("contrarian")),
             "role": holding.get("role") or "position",
@@ -1754,6 +1752,7 @@ def _build_agent_portfolio_payload(
                 "legacy_shares_alias": True,
                 "futures_quantity": "contracts",
                 "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
+                "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
             },
             "summary": {
                 "position_count": len(rows),
@@ -2984,17 +2983,6 @@ def _dispatch(
         data, meta = fetch(long_cache, key, _load)
         return data, meta
 
-    if name == "get_breakout":
-        key = "breakout"
-
-        def _load():
-            from macro.breakout.breakout import get_data
-
-            return serialize_value(get_data())
-
-        data, meta = fetch(short_cache, key, _load)
-        return data, meta
-
     if name == "query_ontology":
         from ontology.service import OntologyQueryService
 
@@ -3301,16 +3289,6 @@ def _dispatch(
 
         return get_workflow_run_detail(str(args.get("run_id") or "")), {"cache": "n/a"}
 
-    if name == "get_weekly_report":
-        from api.routers.weekly_report import get_weekly_report
-
-        return serialize_value(
-            get_weekly_report(
-                refresh=bool(args.get("refresh", False)),
-                cached_only=bool(args.get("cached_only", False)),
-            )
-        ), {"cache": "n/a"}
-
     if name == "get_commodities":
         from api.routers.commodities import get_commodities
 
@@ -3404,10 +3382,16 @@ def _dispatch(
         return run_fx_model(req), {"cache": "n/a"}
 
     if name == "run_quality_screen":
-        from api.routers.quality import QualityRequest, run_quality_screen
+        from api.routers.quality import QualityRequest
+        from api.routers.quality import _cache_key as quality_screen_cache_key
 
         req = _model_validate(QualityRequest, args)
-        return run_quality_screen(req), {"cache": "n/a"}
+        return _run_registered_job_for_agent(
+            "quality_screen",
+            req.model_dump(),
+            cache_key=quality_screen_cache_key(req),
+            poll_path="/api/v1/quality-screen/async/{job_id}",
+        ), {"cache": "n/a"}
 
     if name == "run_short_screen":
         from api.routers.short_screen import ShortScreenRequest

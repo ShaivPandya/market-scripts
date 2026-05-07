@@ -42,7 +42,9 @@ from portfolio.instruments import (
     normalize_asset,
     normalize_instrument_type,
     normalize_quantity,
+    normalize_spot_fx_symbol,
     normalize_symbol,
+    spot_fx_currencies,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,9 +263,11 @@ class PortfolioPositionInput(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -276,13 +280,21 @@ class PortfolioPositionInput(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPositionInput:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
@@ -346,9 +358,11 @@ class HedgePositionInput(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -361,13 +375,21 @@ class HedgePositionInput(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePositionInput:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
@@ -791,6 +813,8 @@ _POSITION_DIFF_FIELDS = (
     "instrument_type",
     "price_symbol",
     "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
 )
 
 
@@ -2023,6 +2047,8 @@ def _position_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "fx_base_currency": pos.fx_base_currency,
+            "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,
             "country": pos.country,
             "exchange": pos.exchange,
@@ -2058,6 +2084,8 @@ def _hedge_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "fx_base_currency": pos.fx_base_currency,
+            "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,
             "country": pos.country,
             "exchange": pos.exchange,
@@ -3024,7 +3052,6 @@ _CONTROL_PLANE_TOOL_NAMES = {
     "get_portfolio_news",
     "get_portfolio_positions",
     "get_hedge_positions",
-    "get_weekly_report",
     "search_agent_capabilities",
 }
 
@@ -3349,7 +3376,6 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_sentiment', 'description': 'Fetch market sentiment indicators. Returns put/call ratios (equity aggregate,SPY, QQQ, IWM), investor surveys (AAII bull/bear spread, NAAIM exposure index), and volatility indices (VIX, VXN, VVIX). Includes quality checks and latest-date validation metadata. If quality.ok is false, do not draw directional sentiment conclusions and treat sentiment as unavailable for this turn.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('sentiment', 'put call', 'aaii', 'naaim', 'get sentiment'), 'selectable': True}
 {'name': 'get_central_banks', 'description': 'Fetch central bank news and recent publications. Returns articles and documents from the Fed, ECB, BoE, BoJ, SNB, RBA, and other major central banks, grouped by source with counts. Use this to check for recent policy signals or speeches.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('central banks', 'fed', 'ecb', 'boe', 'boj', 'get central banks'), 'selectable': True}
 {'name': 'get_industry_monitor', 'description': 'Fetch what businesses and companies are actually saying from their earnings call transcripts. Covers leading (housing, trucking), coincident (banks, retail), and lagging (capital goods) industry sectors. Returns per-company sentiment (bullish/neutral/bearish), demand trends, pricing commentary, guidance outlook, macro quotes, and sector-level economic signals (expanding/stable/slowing/contracting). Use this when the user asks what businesses, companies, or management teams are saying about the economy, demand, or business conditions.', 'parameters': {'type': 'object', 'properties': {'refresh': {'type': 'boolean', 'description': 'If true, bypass cached data and recompute from source files. Default: false.'}}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('industry monitor', 'transcripts', 'management commentary', 'get industry monitor'), 'selectable': True}
-{'name': 'get_breakout', 'description': 'Fetch macro breakout signals across asset classes. Returns recent breakouts with direction (up/down), date, market, and close price. Use this to identify which major markets are making significant technical moves.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'technical', 'access_mode': 'read', 'aliases': ('breakout', 'technical breakouts', 'get breakout'), 'selectable': True}
 {'name': 'query_ontology', 'description': 'Run a cross-module ontology query that joins portfolio positions with macro/market signals (VIX, breadth, sector stress, liquidity, and other read-only data modules). Returns per-position risk scores with evidence. Use this when users ask about portfolio risk exposure, positions in deteriorating conditions, or entity-level context. Pair with get_thesis for the investment reasoning behind positions.', 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': "Natural-language query, e.g. 'Which positions are in deteriorating macro conditions?'"}, 'intent': {'type': 'string', 'description': 'Optional explicit intent. Allowed: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context.'}, 'filters': {'type': 'object', 'description': 'Optional filters: tickers, sectors, assets, min_risk_score.'}, 'page': {'type': 'integer', 'description': 'Optional 1-based results page. Defaults to 1.'}, 'page_size': {'type': 'integer', 'description': 'Optional page size from 1 to 100. Defaults to 25.'}, 'timeframe': {'type': 'string', 'description': 'Timeframe for portfolio-linked data. Options: This Week, Daily, Weekly, Monthly.'}, 'include_graph': {'type': 'boolean', 'description': 'If true, include ontology nodes and edges in output.'}, 'run_id': {'type': 'string', 'description': 'Optional ontology snapshot run_id for historical replay.'}, 'refresh_snapshot': {'type': 'boolean', 'description': 'If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.'}}, 'required': []}, 'category': 'ontology', 'access_mode': 'read', 'aliases': ('ontology', 'risk exposure', 'portfolio risk', 'query ontology'), 'selectable': True}
 {'name': 'get_thesis', 'description': "Fetch the investment thesis for a specific ticker. Returns the thesis markdown content (thesis statement, key catalysts, risk factors) and metadata (status, creation date, last update). Use this when the user asks about a position's investment reasoning, thesis, catalysts, kill conditions, or why they own something. Also useful for thesis pressure-tests and reviews.", 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive."}}, 'required': ['ticker']}, 'category': 'thesis', 'access_mode': 'read', 'aliases': ('thesis', 'investment thesis', 'get thesis'), 'selectable': True}
 {'name': 'get_thesis_evaluations', 'description': "Fetch the monitoring evaluation history for a specific ticker's thesis. Returns weekly evaluations (thesis status, technical read, fundamental read, recommended action, confidence, key developments, earnings notes, risk flags) and status change history. Use this to understand how a thesis has evolved over time, whether conviction has increased or decreased, and what developments have occurred since the thesis was written.", 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive."}, 'limit': {'type': 'integer', 'description': 'Maximum number of evaluations to return (most recent first). Default: 10.'}}, 'required': ['ticker']}, 'category': 'thesis', 'access_mode': 'read', 'aliases': ('thesis evaluations', 'monitoring history', 'get thesis evaluations'), 'selectable': True}
@@ -3376,7 +3402,6 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_hedge_positions', 'description': 'Fetch hedge positions from the portfolio editor.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('hedge positions', 'hedges'), 'selectable': True}
 {'name': 'get_portfolio_news', 'description': 'List uploaded news digests, or fetch one digest when digest_id is provided.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string', 'description': 'Optional digest id for detail.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('news digests', 'portfolio news', 'uploaded news'), 'selectable': True}
 {'name': 'get_workflow_run', 'description': 'Fetch one persisted workflow run by run_id.', 'parameters': {'type': 'object', 'properties': {'run_id': {'type': 'string'}}, 'required': ['run_id']}, 'category': 'workflows', 'access_mode': 'read', 'aliases': ('workflow run detail', 'run detail'), 'selectable': True}
-{'name': 'get_weekly_report', 'description': 'Fetch the weekly report payload.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'reports', 'access_mode': 'read', 'aliases': ('weekly report', 'weekly'), 'selectable': True}
 {'name': 'get_commodities', 'description': 'Fetch the commodity dashboard across major commodities for a timeframe.', 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': 'This Week, Daily, Weekly, or Monthly. Default Daily.'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities dashboard', 'commodity prices'), 'selectable': True}
 {'name': 'get_commodities_curve', 'description': 'Fetch futures curve data for CL, BZ, NG, or TTF.', 'parameters': {'type': 'object', 'properties': {'commodity': {'type': 'string'}, 'lookback_days': {'type': 'integer'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities curve', 'oil curve', 'gas curve', 'futures curve'), 'selectable': True}
 {'name': 'get_commodity_research', 'description': 'Fetch the commodity proxy research screener.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodity research', 'commodity proxy', 'aluminum research'), 'selectable': True}

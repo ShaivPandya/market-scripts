@@ -24,7 +24,6 @@ _AUTH_GET_ENDPOINTS = [
     f"{_API_PREFIX}/vix-term-structure",
     f"{_API_PREFIX}/economic-growth",
     f"{_API_PREFIX}/liquidity",
-    f"{_API_PREFIX}/breakout",
     f"{_API_PREFIX}/positioning/summary",
     f"{_API_PREFIX}/positioning/instruments",
     f"{_API_PREFIX}/index-dashboard",

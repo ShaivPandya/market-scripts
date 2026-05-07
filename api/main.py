@@ -92,7 +92,6 @@ _OPTIONAL_MODULES = [
     ("api.routers.country_dashboard", "country_dashboard", "macro"),
     ("api.routers.positioning", "positioning", "macro"),
     ("api.routers.sentiment", "sentiment", "macro"),
-    ("api.routers.breakout", "breakout", "macro"),
     ("api.routers.central_banks", "central_banks", "macro"),
     ("api.routers.sector_metrics", "sector_metrics", "equities"),
     ("api.routers.industry", "industry", "macro"),
@@ -104,7 +103,6 @@ _OPTIONAL_MODULES = [
     ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
     ("api.routers.ontology", "ontology", "ontology"),
     ("api.routers.risk", "risk", "risk"),
-    ("api.routers.weekly_report", "weekly_report", "reports"),
     ("api.routers.dcf", "dcf", "equities"),
 ]
 

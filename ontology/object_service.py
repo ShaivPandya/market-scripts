@@ -184,6 +184,16 @@ _GOVERNED_RELATION_TYPES = {
 }
 
 
+def source_record_object_uid_for(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("source_record:"):
+        suffix = text.removeprefix("source_record:")
+        if suffix and ":" not in suffix and source_record_object_id(suffix) == text:
+            return text
+        return source_record_object_id(text)
+    return source_record_object_id(text)
+
+
 class OntologyWriteContractError(ValueError):
     """Raised when an ontology write violates the authoritative write contract."""
 
@@ -527,9 +537,7 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
             return key
         return trade_proposal_id(props.get("proposal_id") or key)
     if object_type == "SourceRecord":
-        if key.startswith("source_record:"):
-            return key
-        return source_record_object_id(props.get("source_record_id") or key)
+        return source_record_object_uid_for(props.get("source_record_id") or key)
     if object_type == "ObjectVersionRef":
         if key.startswith("object_version_ref:"):
             return key

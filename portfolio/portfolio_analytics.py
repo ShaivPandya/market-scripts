@@ -25,6 +25,7 @@ def _position_pnl(
     direction: str,
     quantity: float | None = None,
     contract_multiplier: float = 1.0,
+    quote_to_base_rate: float | None = 1.0,
 ) -> tuple[float | None, float | None, float | None]:
     """Unrealized PnL % plus total and per-unit dollars, direction-adjusted."""
     if cost_basis is None or cost_basis == 0:
@@ -37,6 +38,8 @@ def _position_pnl(
     pnl_dollar = None
     if quantity is not None:
         pnl_dollar = pnl_per_unit * abs(quantity) * contract_multiplier
+        if quote_to_base_rate is not None:
+            pnl_dollar *= quote_to_base_rate
     return round(pnl_pct, 2), round(pnl_dollar, 4) if pnl_dollar is not None else None, round(pnl_per_unit, 4)
 
 
@@ -161,7 +164,7 @@ def compute_analytics(
         current_prices[ticker] = cp
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
-        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
+        current_notional = _position_base_notional_value(pos, quantity, cp, contract_multiplier)
         if current_notional is not None:
             notionals[ticker] = current_notional
 
@@ -188,19 +191,20 @@ def compute_analytics(
         contract_multiplier = pos.get("contract_multiplier") or 1.0
         instrument_type = pos.get("instrument_type", "security")
         cp = current_prices[ticker]
+        pnl_quote_to_base = _spot_fx_quote_to_base_rate(pos, cp) if instrument_type == "spot_fx" else 1.0
 
         pnl_pct, pnl_dollar, pnl_per_unit = (
-            _position_pnl(cost_basis, cp, direction, quantity, contract_multiplier)
+            _position_pnl(cost_basis, cp, direction, quantity, contract_multiplier, pnl_quote_to_base)
             if cp is not None
             else (None, None, None)
         )
         notional_base = _float_or_none(pos.get("notional_base"))
         cost_basis_base = _float_or_none(pos.get("cost_basis_base"))
-        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
+        current_notional = _position_base_notional_value(pos, quantity, cp, contract_multiplier)
         cost_notional = (
             notional_base
             if notional_base is not None
-            else _base_notional_value(quantity, cost_basis, contract_multiplier, pos.get("fx_rate_to_base"))
+            else _position_base_notional_value(pos, quantity, cost_basis, contract_multiplier)
         )
         high_52w, dd_pct = _drawdown_52w(series, direction) if series is not None else (None, None)
         weekly_ret = _period_return(series, 7, direction) if series is not None else None
@@ -264,3 +268,42 @@ def _base_notional_value(
     if fx_rate <= 0:
         return None
     return local_notional * fx_rate
+
+
+def _position_base_notional_value(
+    position: dict,
+    quantity,
+    price,
+    contract_multiplier,
+) -> float | None:
+    if str(position.get("instrument_type") or "").strip().lower() == "spot_fx":
+        return _spot_fx_base_notional_value(position, quantity, price)
+    return _base_notional_value(quantity, price, contract_multiplier, position.get("fx_rate_to_base"))
+
+
+def _spot_fx_base_notional_value(position: dict, quantity, price) -> float | None:
+    try:
+        qty = abs(float(quantity))
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(qty) and math.isfinite(px)) or qty <= 0 or px <= 0:
+        return None
+    rate = _spot_fx_quote_to_base_rate(position, px)
+    if rate is None or rate <= 0:
+        return None
+    return qty * px * rate
+
+
+def _spot_fx_quote_to_base_rate(position: dict, price) -> float | None:
+    fx_base = str(position.get("fx_base_currency") or "").strip().upper()
+    fx_quote = str(position.get("fx_quote_currency") or position.get("currency") or "").strip().upper()
+    portfolio_base = str(position.get("base_currency") or "USD").strip().upper()
+    px = _float_or_none(price)
+    if not fx_quote:
+        return _float_or_none(position.get("fx_rate_to_base"))
+    if fx_quote == portfolio_base:
+        return 1.0
+    if fx_base == portfolio_base and px is not None and px > 0:
+        return 1.0 / px
+    return _float_or_none(position.get("fx_rate_to_base"))

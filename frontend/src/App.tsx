@@ -108,7 +108,6 @@ const CommodityDashboard = lazyPage(() => import("@/pages/CommodityDashboard"), 
 const MarketTechnicals = lazyPage(() => import("@/pages/MarketTechnicals"), "MarketTechnicals")
 const SectorMetrics = lazyPage(() => import("@/pages/SectorMetrics"), "SectorMetrics")
 const Positioning = lazyPage(() => import("@/pages/Positioning"), "Positioning")
-const Breakout = lazyPage(() => import("@/pages/Breakout"), "Breakout")
 const FXModel = lazyPage(() => import("@/pages/FXModel"), "FXModel")
 const EconomicGrowth = lazyPage(() => import("@/pages/EconomicGrowth"), "EconomicGrowth")
 const LaborMarket = lazyPage(() => import("@/pages/LaborMarket"), "LaborMarket")
@@ -122,7 +121,6 @@ const BondDashboard = lazyPage(() => import("@/pages/BondDashboard"), "BondDashb
 const CommoditiesCurve = lazyPage(() => import("@/pages/CommoditiesCurve"), "CommoditiesCurve")
 const CommodityResearch = lazyPage(() => import("@/pages/CommodityResearch"), "CommodityResearch")
 const PortfolioNews = lazyPage(() => import("@/pages/PortfolioNews"), "PortfolioNews")
-const WeeklyReport = lazyPage(() => import("@/pages/WeeklyReport"), "WeeklyReport")
 const Sentiment = lazyPage(() => import("@/pages/Sentiment"), "Sentiment")
 const SignalAggregator = lazyPage(() => import("@/pages/SignalAggregator"), "SignalAggregator")
 const OntologyWorkbench = lazyPage(() => import("@/pages/OntologyWorkbench"), "OntologyWorkbench")
@@ -204,7 +202,6 @@ function AppRoutes() {
               <Route path="/sector-metrics" element={<SectorMetrics />} />
               <Route path="/positioning" element={<Positioning />} />
               <Route path="/sentiment" element={<Sentiment />} />
-              <Route path="/breakout" element={<Breakout />} />
               <Route path="/fx-model" element={<FXModel />} />
               <Route path="/economic-growth" element={<EconomicGrowth />} />
               <Route path="/labor-market" element={<LaborMarket />} />
@@ -218,7 +215,6 @@ function AppRoutes() {
               <Route path="/commodities-curve" element={<CommoditiesCurve />} />
               <Route path="/commodity-research" element={<CommodityResearch />} />
               <Route path="/portfolio-news" element={<PortfolioNews />} />
-              <Route path="/weekly-report" element={<WeeklyReport />} />
               <Route path="/settings/ai" element={<AISettings />} />
             </Route>
           </Route>

@@ -146,7 +146,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, cast  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -159,6 +159,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from api.serializers import serialize_value
+from portfolio.instruments import is_spot_fx_symbol, normalize_spot_fx_symbol, spot_fx_currencies
 from utils.retry import yf_download, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
@@ -185,6 +186,16 @@ from portfolio.portfolio_optimizer.composite_signal import (
 )
 
 console = Console()
+
+
+class AnalyzerCancelledError(RuntimeError):
+    """Raised when a cooperative analyzer cancellation checkpoint is tripped."""
+
+
+def _check_analyzer_cancelled(is_cancelled: Callable[[], bool] | None) -> None:
+    if is_cancelled is not None and is_cancelled():
+        raise AnalyzerCancelledError("Portfolio analyzer job cancelled")
+
 
 # -----------------------------
 # Configuration
@@ -448,6 +459,8 @@ _PORTFOLIO_SOURCE_FIELDS = (
     "quantity",
     "shares",
     "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
     "currency",
     "base_currency",
     "country",
@@ -502,7 +515,15 @@ def _normalize_position_source_records(raw: pd.DataFrame) -> list[dict[str, Any]
                 record[field] = _source_scalar_text(value).lower() in true_values
             elif field in {"asset", "direction", "instrument_type", "source_type"}:
                 record[field] = _source_scalar_text(value).lower()
-            elif field in {"price_symbol", "currency", "base_currency", "country", "exchange"}:
+            elif field in {
+                "price_symbol",
+                "fx_base_currency",
+                "fx_quote_currency",
+                "currency",
+                "base_currency",
+                "country",
+                "exchange",
+            }:
                 record[field] = _source_scalar_text(value).upper()
             elif field in {"source_id", "idea_id", "company_name"}:
                 record[field] = _source_scalar_text(value)
@@ -1753,6 +1774,19 @@ def prepare_instrument_metadata(meta: pd.DataFrame) -> pd.DataFrame:
     else:
         out["instrument_type"] = out["instrument_type"].fillna("security").astype(str).str.strip().str.lower()
         out.loc[out["instrument_type"].eq(""), "instrument_type"] = "security"
+    for ticker in list(out.index):
+        symbol = str(out.loc[ticker, "price_symbol"] or ticker).strip().upper()
+        instrument_type = str(out.loc[ticker, "instrument_type"] or "security").strip().lower()
+        if instrument_type == "spot_fx" or (symbol.endswith("=X") and is_spot_fx_symbol(symbol)):
+            symbol = normalize_spot_fx_symbol(symbol)
+            fx_base, fx_quote = spot_fx_currencies(symbol)
+            out.loc[ticker, "instrument_type"] = "spot_fx"
+            out.loc[ticker, "asset"] = "fx"
+            out.loc[ticker, "price_symbol"] = symbol
+            out.loc[ticker, "fx_base_currency"] = fx_base
+            out.loc[ticker, "fx_quote_currency"] = fx_quote
+            out.loc[ticker, "currency"] = fx_quote
+            out.loc[ticker, "contract_multiplier"] = 1.0
     if "contract_multiplier" not in out.columns:
         out["contract_multiplier"] = 1.0
     out["contract_multiplier"] = pd.to_numeric(out["contract_multiplier"], errors="coerce").fillna(1.0)
@@ -1771,14 +1805,26 @@ def fetch_prices_for_portfolio_symbols(
 ) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
     symbol_map = {ticker: str(meta.loc[ticker, "price_symbol"] or ticker).strip().upper() for ticker in tickers}
     symbols_to_fetch = list(dict.fromkeys([*symbol_map.values(), *extra_tickers]))
+    spot_fx_symbols = {
+        symbol
+        for ticker, symbol in symbol_map.items()
+        if str(meta.loc[ticker].get("instrument_type") or "").strip().lower() == "spot_fx"
+    }
     symbol_currencies = fetch_currencies(symbols_to_fetch)
+    for symbol in spot_fx_symbols:
+        symbol_currencies[symbol] = BASE_CCY
     fx_tickers = get_required_fx_tickers(symbol_currencies)
     prices_by_symbol = download_prices(symbols_to_fetch, fx_tickers)
     prices = prices_by_symbol.copy()
     for ticker, symbol in symbol_map.items():
         if symbol in prices_by_symbol.columns:
             prices[ticker] = prices_by_symbol[symbol]
-    ticker_currencies = {ticker: symbol_currencies.get(symbol, BASE_CCY) for ticker, symbol in symbol_map.items()}
+    ticker_currencies = {
+        ticker: BASE_CCY
+        if str(meta.loc[ticker].get("instrument_type") or "").strip().lower() == "spot_fx"
+        else symbol_currencies.get(symbol, BASE_CCY)
+        for ticker, symbol in symbol_map.items()
+    }
     for ticker in extra_tickers:
         ticker_currencies[ticker] = symbol_currencies.get(ticker, BASE_CCY)
     return prices, ticker_currencies, symbol_map
@@ -2414,6 +2460,31 @@ def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> dict[str, float]:
     return out
 
 
+def unit_notional_in_base(rows: pd.DataFrame, *, base_currency: str = BASE_CCY) -> pd.Series:
+    price = pd.to_numeric(rows["price"], errors="coerce")
+    multiplier_raw = (
+        rows["contract_multiplier"] if "contract_multiplier" in rows.columns else pd.Series(1.0, index=rows.index)
+    )
+    multiplier = pd.to_numeric(multiplier_raw, errors="coerce").fillna(1.0).replace(0, np.nan)
+    unit = price * multiplier
+    instrument_raw = rows["instrument_type"] if "instrument_type" in rows.columns else pd.Series("", index=rows.index)
+    instrument_type = instrument_raw.fillna("").astype(str).str.lower()
+    spot_mask = instrument_type.eq("spot_fx")
+    if spot_mask.any():
+        fx_base_raw = (
+            rows["fx_base_currency"] if "fx_base_currency" in rows.columns else pd.Series("", index=rows.index)
+        )
+        fx_quote_raw = (
+            rows["fx_quote_currency"] if "fx_quote_currency" in rows.columns else pd.Series("", index=rows.index)
+        )
+        fx_base = fx_base_raw.fillna("").astype(str).str.upper()
+        fx_quote = fx_quote_raw.fillna("").astype(str).str.upper()
+        portfolio_base = base_currency.upper()
+        unit.loc[spot_mask & fx_quote.eq(portfolio_base)] = price.loc[spot_mask & fx_quote.eq(portfolio_base)]
+        unit.loc[spot_mask & fx_base.eq(portfolio_base)] = 1.0
+    return unit
+
+
 def compute_10yr_equivalent(w: pd.Series, meta: pd.DataFrame) -> float:
     """Compute total 10-year equivalent exposure for bond positions."""
     bond_mask = meta["asset"].str.lower().eq("bond")
@@ -3011,12 +3082,16 @@ def cleanup_analyzer_input_snapshots(max_age_seconds: int = _ANALYZER_INPUT_SNAP
     return deleted
 
 
-def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
+def _compute_analyzer_inputs(
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
     """Compute scenario-independent inputs (positions, prices, signals, raw factor data).
 
     Phase A of the split analyzer pipeline. Cached by `_cached_analyzer_inputs`
     so preset switches do not redownload prices or recompute composite signals.
     """
+    _check_analyzer_cancelled(is_cancelled)
     mode = _normalize_analyzer_universe_mode(universe_mode)
     meta = _positions_df_for_universe(mode)
     meta["direction"] = meta["direction"].fillna("")
@@ -3027,9 +3102,11 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     if not tickers:
         raise ValueError("portfolio.csv has no tickers.")
 
+    _check_analyzer_cancelled(is_cancelled)
     market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
     prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
     all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
+    _check_analyzer_cancelled(is_cancelled)
 
     missing_cols = [t for t in tickers if t not in prices_all.columns]
     if missing_cols:
@@ -3070,6 +3147,7 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
         weights_short=DEFAULT_WEIGHTS_SHORT,
         use_edgar=False,
     )
+    _check_analyzer_cancelled(is_cancelled)
     signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
     signal_composite = signal_composite.reindex(tickers).fillna(0.0)
 
@@ -3090,6 +3168,7 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
         anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
         anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     signal_effective = signal_composite.copy()
     contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
@@ -3112,10 +3191,12 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     ]
     if valuation_tickers:
         valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
+        _check_analyzer_cancelled(is_cancelled)
         qualitative_df = fetch_qualitative_metrics_batch(valuation_tickers).reindex(tickers)
     else:
         valuation_df = pd.DataFrame(index=tickers, columns=[*VALUATION_COLUMNS, "valuation_profile_id"])
         qualitative_df = pd.DataFrame(index=tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
+    _check_analyzer_cancelled(is_cancelled)
 
     direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
 
@@ -3134,7 +3215,11 @@ def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -
     }
 
 
-def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
+def _cached_analyzer_inputs(
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
+    _check_analyzer_cancelled(is_cancelled)
     mode = _normalize_analyzer_universe_mode(universe_mode)
     token = _analyzer_source_cache_token_for_mode(mode)
     snapshot_key = _analyzer_input_snapshot_key(token)
@@ -3143,12 +3228,14 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
         hit = _ANALYZER_INPUTS_CACHE.get(key)
         if hit is not None:
             LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
+            _check_analyzer_cancelled(is_cancelled)
             return cast(dict[Any, Any], hit)
 
     durable_hit = _read_analyzer_input_snapshot(snapshot_key)
     if durable_hit is not None:
         with _ANALYZER_INPUTS_LOCK:
             _ANALYZER_INPUTS_CACHE[key] = durable_hit
+        _check_analyzer_cancelled(is_cancelled)
         return durable_hit
 
     with _ANALYZER_INPUTS_FLIGHT_LOCK:
@@ -3161,7 +3248,12 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
             owner = False
 
     if not owner:
-        flight.event.wait(timeout=_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS)
+        deadline = datetime.now(UTC) + timedelta(seconds=_ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS)
+        while not flight.event.wait(timeout=1.0):
+            _check_analyzer_cancelled(is_cancelled)
+            if datetime.now(UTC) >= deadline:
+                break
+        _check_analyzer_cancelled(is_cancelled)
         if flight.error is not None:
             raise flight.error
         if flight.value is not None:
@@ -3175,14 +3267,17 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
         if durable_hit is not None:
             with _ANALYZER_INPUTS_LOCK:
                 _ANALYZER_INPUTS_CACHE[key] = durable_hit
+            _check_analyzer_cancelled(is_cancelled)
             return durable_hit
 
     try:
+        _check_analyzer_cancelled(is_cancelled)
         with _ANALYZER_INPUTS_LOCK:
             hit = _ANALYZER_INPUTS_CACHE.get(key)
             if hit is not None:
                 LOGGER.info("analyzer input cache hit tier=memory key=%s", snapshot_key)
                 flight.value = cast(dict[str, Any], hit)
+                _check_analyzer_cancelled(is_cancelled)
                 return cast(dict[Any, Any], hit)
 
         durable_hit = _read_analyzer_input_snapshot(snapshot_key)
@@ -3190,16 +3285,22 @@ def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) ->
             with _ANALYZER_INPUTS_LOCK:
                 _ANALYZER_INPUTS_CACHE[key] = durable_hit
             flight.value = durable_hit
+            _check_analyzer_cancelled(is_cancelled)
             return durable_hit
 
         LOGGER.info("analyzer input cache miss key=%s; computing", snapshot_key)
         import inspect
 
-        if "universe_mode" in inspect.signature(_compute_analyzer_inputs).parameters:
-            inputs = _compute_analyzer_inputs(universe_mode=mode)
-        else:
-            inputs = _compute_analyzer_inputs()
+        params = inspect.signature(_compute_analyzer_inputs).parameters
+        kwargs: dict[str, Any] = {}
+        if "universe_mode" in params:
+            kwargs["universe_mode"] = mode
+        if "is_cancelled" in params:
+            kwargs["is_cancelled"] = is_cancelled
+        inputs = _compute_analyzer_inputs(**kwargs)
+        _check_analyzer_cancelled(is_cancelled)
         _write_analyzer_input_snapshot(snapshot_key, inputs)
+        _check_analyzer_cancelled(is_cancelled)
         with _ANALYZER_INPUTS_LOCK:
             _ANALYZER_INPUTS_CACHE[key] = inputs
         flight.value = inputs
@@ -3220,13 +3321,18 @@ def _meta_series(meta: pd.DataFrame, tickers: list[str], column: str, default: A
     return pd.Series(default, index=tickers)
 
 
-def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
+def _apply_scenario(
+    inputs: dict,
+    scenario_config: Mapping[str, Any],
+    is_cancelled: Callable[[], bool] | None = None,
+) -> dict:
     """Apply scenario weights/brakes to cached inputs and produce the analyzer result.
 
     Phase B of the split analyzer pipeline. Re-runs cheaply on every preset switch.
     """
     from datetime import datetime
 
+    _check_analyzer_cancelled(is_cancelled)
     meta: pd.DataFrame = inputs["meta"]
     tickers: list[str] = inputs["tickers"]
     valuation_df: pd.DataFrame = inputs["valuation_df"]
@@ -3245,6 +3351,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         if valuation_active
         else pd.Series(0.0, index=tickers, dtype="float64")
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     qualitative_active = (
         float(scenario_config["factor_weights"].get("qualitative", 0.0)) > 0
@@ -3258,6 +3365,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
             {key: pd.Series(np.nan, index=tickers, dtype="float64") for key in QUALITATIVE_COLUMNS},
         )
     )
+    _check_analyzer_cancelled(is_cancelled)
 
     fundamental_momentum_signal = _combine_weighted_components(
         {
@@ -3279,6 +3387,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         scenario_config["factor_weights"],
         tickers,
     )
+    _check_analyzer_cancelled(is_cancelled)
     scenario_risk = _compute_scenario_risk(meta, tickers, scenario_config["brakes"])
     scenario_penalty = (scenario_risk.long_risk_penalty + scenario_risk.short_cover_risk).reindex(tickers).fillna(0.0)
     scenario_score = (
@@ -3369,9 +3478,11 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         }
     )
     weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(drop=True)
+    _check_analyzer_cancelled(is_cancelled)
     course_of_action = build_course_of_action(weights_df, scenario_config)
     generated_at = datetime.now()
     course_of_action["summary"]["as_of"] = generated_at.isoformat()
+    _check_analyzer_cancelled(is_cancelled)
 
     return {
         "status": "ok",
@@ -3392,6 +3503,7 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
 def analyze_portfolio(
     scenario: Mapping[str, Any] | None = None,
     universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     """
     Build an informational signal table for conviction analysis.
@@ -3400,10 +3512,25 @@ def analyze_portfolio(
         Dictionary containing weights_df with signal/factor metrics only.
     """
     try:
+        import inspect
+
+        _check_analyzer_cancelled(is_cancelled)
         scenario_config = normalize_analyzer_scenario(scenario)
         mode = _normalize_analyzer_universe_mode(universe_mode)
-        inputs = _cached_analyzer_inputs(universe_mode=mode)
+        cached_params = inspect.signature(_cached_analyzer_inputs).parameters
+        cached_kwargs: dict[str, Any] = {}
+        if "universe_mode" in cached_params:
+            cached_kwargs["universe_mode"] = mode
+        if "is_cancelled" in cached_params:
+            cached_kwargs["is_cancelled"] = is_cancelled
+        inputs = _cached_analyzer_inputs(**cached_kwargs)
+        _check_analyzer_cancelled(is_cancelled)
+        apply_params = inspect.signature(_apply_scenario).parameters
+        if "is_cancelled" in apply_params:
+            return _apply_scenario(inputs, scenario_config, is_cancelled=is_cancelled)
         return _apply_scenario(inputs, scenario_config)
+    except AnalyzerCancelledError:
+        raise
     except Exception as e:
         import traceback
 
@@ -3733,6 +3860,8 @@ def optimize_portfolio(
                 "price_symbol": meta["price_symbol"].values,
                 "quantity": meta["quantity"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": _meta_series(meta, tickers, "fx_base_currency", "").values,
+                "fx_quote_currency": _meta_series(meta, tickers, "fx_quote_currency", "").values,
                 "direction": meta["direction"].values,
                 "direction_intended": meta["direction_intended"].values,
                 "contrarian": meta["contrarian"].values,
@@ -3759,10 +3888,11 @@ def optimize_portfolio(
         )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
-            unit_notional = weights_df["price"] * weights_df["contract_multiplier"].replace(0, np.nan)
+            unit_notional = unit_notional_in_base(weights_df)
             weights_df["quantity"] = (weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             weights_df["target_quantity"] = weights_df["quantity"]
             weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
+            weights_df["base_units"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("spot_fx"))
             weights_df["shares"] = weights_df["quantity"]
         weights_df = weights_df.sort_values("weight", ascending=False)
 
@@ -3798,6 +3928,8 @@ def optimize_portfolio(
                 "instrument_type": meta["instrument_type"].values,
                 "price_symbol": meta["price_symbol"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": _meta_series(meta, tickers, "fx_base_currency", "").values,
+                "fx_quote_currency": _meta_series(meta, tickers, "fx_quote_currency", "").values,
                 "direction": meta["direction"].values,
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
@@ -3805,15 +3937,16 @@ def optimize_portfolio(
         )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            unit_notional = max_scaled_weights_df["price"] * max_scaled_weights_df["contract_multiplier"].replace(
-                0, np.nan
-            )
+            unit_notional = unit_notional_in_base(max_scaled_weights_df)
             max_scaled_weights_df["quantity"] = (
                 (max_scaled_weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             )
             max_scaled_weights_df["target_quantity"] = max_scaled_weights_df["quantity"]
             max_scaled_weights_df["contracts"] = max_scaled_weights_df["quantity"].where(
                 max_scaled_weights_df["instrument_type"].eq("future")
+            )
+            max_scaled_weights_df["base_units"] = max_scaled_weights_df["quantity"].where(
+                max_scaled_weights_df["instrument_type"].eq("spot_fx")
             )
             max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
@@ -3882,6 +4015,7 @@ def get_data(
     beta_neutral: bool = True,
     scenario: Mapping[str, Any] | None = None,
     universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     """
     Fetch portfolio analyzer results for GUI consumption.
@@ -3896,7 +4030,7 @@ def get_data(
         Dictionary with analyzer results or error.
     """
     _ = (book, target_leverage, beta_neutral)
-    return analyze_portfolio(scenario=scenario, universe_mode=universe_mode)
+    return analyze_portfolio(scenario=scenario, universe_mode=universe_mode, is_cancelled=is_cancelled)
 
 
 # -----------------------------

@@ -38,7 +38,7 @@ from equities.common import list_universes, load_universe
 RED = "\033[91m"
 GREEN = "\033[38;2;52;199;89m"
 RESET = "\033[0m"
-from portfolio.portfolio_db import get_positions_df as _get_positions_df
+from ontology.runtime_read_service import get_positions_df as _get_positions_df
 
 
 def colorize(value: float, threshold: float, below_is_red: bool = True) -> str:

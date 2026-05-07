@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } from "react"
+import { Suspense, useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
 import { Sidebar, getRouteLabel } from "./Sidebar"
@@ -48,6 +48,11 @@ function LayoutInner({
   const location = useLocation()
   const routeLabel = getRouteLabel(location.pathname)
 
+  const openPageSearch = useCallback(() => {
+    setPageSearchOpen(true)
+    setSidebarOpen(false)
+  }, [setPageSearchOpen, setSidebarOpen])
+
   useEffect(() => {
     function handleGlobalKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.isComposing || event.repeat) return
@@ -56,8 +61,7 @@ function LayoutInner({
       const key = event.key.toLowerCase()
       if (key === "j") {
         event.preventDefault()
-        setPageSearchOpen(true)
-        setSidebarOpen(false)
+        openPageSearch()
         return
       }
 
@@ -70,7 +74,7 @@ function LayoutInner({
 
     window.addEventListener("keydown", handleGlobalKeyDown, true)
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true)
-  }, [setAgentOpen, setPageSearchOpen, setSidebarOpen])
+  }, [openPageSearch, setAgentOpen, setPageSearchOpen])
 
   return (
     <div className="flex min-h-screen bg-app text-app">
@@ -81,7 +85,11 @@ function LayoutInner({
         />
       )}
 
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onOpenSearch={openPageSearch}
+      />
 
       <main className="theme-page flex-1 overflow-auto min-w-0">
         <div className="theme-page-content">

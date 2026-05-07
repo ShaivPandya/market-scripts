@@ -183,6 +183,8 @@ def ingest_into_repository(
                     "price_symbol": getattr(position, "price_symbol", None) or ticker_norm,
                     "quantity": getattr(position, "quantity", None),
                     "contract_multiplier": getattr(position, "contract_multiplier", 1.0),
+                    "fx_base_currency": getattr(position, "fx_base_currency", None),
+                    "fx_quote_currency": getattr(position, "fx_quote_currency", None),
                     "latest_price": latest_price,
                     "timeframe": timeframe,
                     "as_of": portfolio_timestamp,
@@ -200,6 +202,8 @@ def ingest_into_repository(
                     "asset": asset_class,
                     "instrument_type": getattr(position, "instrument_type", "security"),
                     "price_symbol": getattr(position, "price_symbol", None) or ticker_norm,
+                    "fx_base_currency": getattr(position, "fx_base_currency", None),
+                    "fx_quote_currency": getattr(position, "fx_quote_currency", None),
                 },
             )
         )
@@ -603,6 +607,8 @@ def _record_source_record_refs(source_results: dict[str, Any]) -> None:
                         "direction": position.direction,
                         "latest_price": position.latest_price,
                         "series_points": position.series_points,
+                        "fx_base_currency": getattr(position, "fx_base_currency", None),
+                        "fx_quote_currency": getattr(position, "fx_quote_currency", None),
                         "as_of": position.as_of,
                     },
                     as_of=position.as_of or as_of,

@@ -7,6 +7,7 @@ import pytest
 
 import portfolio.core_db as core_db
 from api import agent_tools, provenance
+from ontology.object_service import OntologyObjectService, source_record_object_uid_for
 from ontology.policy import Actor, PolicyDenied, admin_actor, agent_actor
 from ontology.schemas.identity import provenance_event_id
 
@@ -363,6 +364,46 @@ def test_primary_source_and_workflow_artifact_refs_require_event(monkeypatch):
             artifact_index=0,
             artifact_value={"value": 1},
         )
+
+
+def test_primary_record_source_ref_canonicalizes_logical_source_record_uid(monkeypatch):
+    class _FakeTemporalRepo:
+        def __init__(self):
+            self.object_writes = []
+
+        def write_object_version(self, write):
+            self.object_writes.append(write)
+            return {
+                "object_uid": write.object_uid,
+                "object_type": write.object_type,
+                "business_key": write.business_key,
+                "schema_name": write.schema_name,
+                "schema_version": write.schema_version,
+                "properties_json": write.properties,
+            }
+
+    repo = _FakeTemporalRepo()
+    service = OntologyObjectService(repository=repo)
+    monkeypatch.setattr(provenance, "_ontology_primary_writes_enabled", lambda: True)
+    monkeypatch.setattr(provenance, "OntologyObjectService", lambda: service)
+
+    row = provenance.record_source_ref(
+        adapter_run_event_id="pv:adapter:portfolio",
+        source_name="portfolio",
+        record_kind="portfolio_position",
+        record_key="APO",
+        record_value={"ticker": "APO", "asset": "equity"},
+        as_of="2026-05-07T00:00:00+00:00",
+        summary={"ticker": "APO"},
+    )
+
+    logical_id = row["source_record_id"]
+    expected_uid = source_record_object_uid_for(logical_id)
+    assert logical_id.startswith("source_record:portfolio:portfolio_position:")
+    assert provenance.ref_object_uid_for(provenance.REF_SOURCE_RECORD, logical_id) == expected_uid
+    assert row["object_uid"] == expected_uid
+    assert repo.object_writes[0].business_key == logical_id
+    assert repo.object_writes[0].properties["source_record_id"] == logical_id
 
 
 def test_provenance_trace_api_accepts_entity_selector(auth_client):

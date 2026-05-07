@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.cache import get_or_set_cached, short_cache
+from api.job_queue import cancel_job, get_job
+from api.job_registry import get_job_spec
 from api.serializers import serialize_dataframe, serialize_value
 from portfolio.portfolio_optimizer.analyzer_scenarios import (
     SCENARIO_BRAKE_DEFAULTS,
@@ -178,7 +180,14 @@ def _cache_key(req: AnalyzerRequest, *, freshness_bucket: int | None = None) -> 
     )
 
 
-def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
+def _job_cancelled(job_id: str | None) -> bool:
+    if not job_id:
+        return False
+    row = get_job(job_id)
+    return bool(row and str(row.get("status") or "") == "cancelled")
+
+
+def _compute_analyzer_result_uncached(req: AnalyzerRequest, *, job_id: str | None = None) -> dict[str, Any]:
     try:
         from portfolio.portfolio_optimizer.portfolio_analyzer import get_data
 
@@ -188,6 +197,7 @@ def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
             beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
             scenario=_canonical_scenario(req),
             universe_mode=req.universe_mode,
+            is_cancelled=lambda: _job_cancelled(job_id),
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e
@@ -206,17 +216,27 @@ def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
     return result
 
 
-def _compute_analyzer_result_cached(req: AnalyzerRequest) -> dict[str, Any]:
+def _compute_analyzer_result_cached(req: AnalyzerRequest, *, job_id: str | None = None) -> dict[str, Any]:
     # This is independent from the async-job DB cache. In-memory short_cache is
     # per process/container; cross-process reuse depends on api.cache disk/GCS
     # fallback when those backends are shared or enabled.
+    if _job_cancelled(job_id):
+        raise RuntimeError("Portfolio analyzer job cancelled")
     return cast(
-        dict[str, Any], get_or_set_cached(short_cache, _cache_key(req), lambda: _compute_analyzer_result_uncached(req))
+        dict[str, Any],
+        get_or_set_cached(
+            short_cache,
+            _cache_key(req),
+            lambda: _compute_analyzer_result_uncached(req, job_id=job_id),
+        ),
     )
 
 
-def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
-    return _compute_analyzer_result_cached(req)
+def _compute_analyzer_result(req: AnalyzerRequest, *, job_id: str | None = None) -> dict[str, Any]:
+    result = _compute_analyzer_result_cached(req, job_id=job_id)
+    if _job_cancelled(job_id):
+        raise RuntimeError("Portfolio analyzer job cancelled")
+    return result
 
 
 @router.post("/portfolio-analyzer")
@@ -239,6 +259,23 @@ def start_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest))
 @router.get("/portfolio-analyzer/async/{job_id}")
 @router.get("/portfolio-optimizer/async/{job_id}")
 def get_analyzer_job(job_id: str):
+    try:
+        return poll_registered_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job_id")  # noqa: B904
+
+
+@router.post("/portfolio-analyzer/async/{job_id}/cancel")
+@router.post("/portfolio-optimizer/async/{job_id}/cancel")
+def cancel_analyzer_job(job_id: str):
+    row = get_job(job_id)
+    if not row or str(row.get("job_type") or "") != "analyzer":
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+    cancel_job(
+        job_id,
+        "Portfolio analyzer job cancelled by user",
+        result_ttl_seconds=get_job_spec("analyzer").failed_ttl_s,
+    )
     try:
         return poll_registered_job(job_id)
     except KeyError:

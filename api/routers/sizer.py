@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -24,6 +24,7 @@ class SizerPosition(BaseModel):
 class SizerRequest(BaseModel):
     book: float | None = None
     target_leverage: float = 2.0
+    beta_hedge_mode: Literal["spy_iwm", "spy"] = "spy_iwm"
     positions: list[SizerPosition] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -59,7 +60,7 @@ def _cache_key(req: SizerRequest) -> str:
     token = "|".join(f"{ticker}:{conviction}" for ticker, conviction in canonical) or "none"
     return (
         f"portfolio_sizer:{strategy_version}:book={_effective_book(req):.4f}:"
-        f"lev={float(req.target_leverage):.4f}:positions={token}"
+        f"lev={float(req.target_leverage):.4f}:beta_hedge_mode={req.beta_hedge_mode}:positions={token}"
     )
 
 
@@ -72,6 +73,7 @@ def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
             positions=payload,
             book=_effective_book(req),
             target_leverage=float(req.target_leverage),
+            beta_hedge_mode=req.beta_hedge_mode,
         )
     except ValueError:
         raise

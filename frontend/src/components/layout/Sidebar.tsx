@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { NavLink, useNavigate } from "react-router-dom"
-import { Moon, Sun } from "lucide-react"
+import { Moon, Search, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
@@ -18,7 +18,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Workspace", path: "/workspace" },
       { label: "Investment Theses", path: "/theses" },
       { label: "Idea Watchlist", path: "/ideas" },
-      { label: "Weekly Report", path: "/weekly-report" },
     ],
   },
   {
@@ -42,7 +41,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Ontology Workbench", path: "/ontology" },
       { label: "Market Technicals", path: "/market-technicals" },
       { label: "News Digests", path: "/portfolio-news" },
-      { label: "Breakout", path: "/breakout" },
       { label: "Sentiment", path: "/sentiment" },
       { label: "Positioning", path: "/positioning" },
       { label: "Central Bank Monitor", path: "/central-banks" },
@@ -83,6 +81,7 @@ export const NAV_SECTIONS: NavSection[] = [
 interface SidebarProps {
   isOpen: boolean
   onClose: () => void
+  onOpenSearch: () => void
 }
 
 export function getRouteLabel(pathname: string) {
@@ -94,7 +93,7 @@ export function getRouteLabel(pathname: string) {
   return "Market Dashboard"
 }
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, onOpenSearch }: SidebarProps) {
   const { logout, mode } = useAuth()
   const { resolvedTheme, toggleTheme } = useTheme()
   const navigate = useNavigate()
@@ -125,6 +124,19 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <div className="border-b border-app px-4 pb-4 pt-[max(1rem,var(--safe-top))]">
         <p className="theme-eyebrow mb-2">Workspace</p>
         <p className="text-lg font-semibold tracking-[-0.03em] text-app">Market Dashboard</p>
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          aria-label="Search pages"
+          aria-keyshortcuts="Meta+J"
+          className="mt-4 flex h-11 w-full items-center gap-2 rounded-[var(--radius-md)] border border-app bg-input px-3 text-left text-sm text-muted transition-colors hover:border-strong hover:bg-hover hover:text-app"
+        >
+          <Search size={15} className="shrink-0 text-subtle" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">Search pages</span>
+          <kbd className="shrink-0 rounded-md border border-app bg-card-muted px-1.5 py-0.5 text-[10px] font-medium leading-none text-subtle">
+            Cmd J
+          </kbd>
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-4">

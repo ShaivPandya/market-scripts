@@ -52,6 +52,16 @@ def test_analyzer_request_rejects_all_zero_nested_weight_group():
         )
 
 
+def test_analyzer_get_data_respects_preflight_cancellation(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("cached analyzer inputs should not run after cancellation")
+
+    monkeypatch.setattr(analyzer_module, "_cached_analyzer_inputs", fail_if_called)
+
+    with pytest.raises(analyzer_module.AnalyzerCancelledError):
+        analyzer_module.get_data(is_cancelled=lambda: True)
+
+
 def test_analyzer_cache_key_changes_with_scenario_weights():
     quality_req = AnalyzerRequest(
         scenario={

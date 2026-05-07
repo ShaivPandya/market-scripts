@@ -6,6 +6,7 @@ import {
   runLongScreen,
   runFundamentalMomentum,
   runPriceMomentum,
+  type QualityScreenRequest,
   type LongScreenRequest,
   type PriceMomentumRequest,
   type ScreenJobProgress,
@@ -88,6 +89,7 @@ function formatScreenProgress(progress: ScreenJobProgress | undefined, fallback:
   const labels: Record<string, string> = {
     queued: "Queued",
     prices: "Screening prices",
+    quality: "Scoring quality",
     fundamentals: "Fetching fundamentals",
     issuance: "Checking issuance",
     finalizing: "Finalizing",
@@ -120,29 +122,20 @@ function QualityPanel() {
   const [universe, setUniverse] = useState("S&P 500")
   const [tickers, setTickers] = useState("")
   const [benchmark, setBenchmark] = useState("Same as Input")
-  const [isRunning, setIsRunning] = useState(false)
+  const [progress, setProgress] = useState<ScreenJobProgress | undefined>(undefined)
 
-  const mutation = useMutation({ mutationFn: runQualityScreen })
+  const mutation = useMutation({
+    mutationFn: (body: QualityScreenRequest) => runQualityScreen(body, setProgress),
+  })
 
   useEffect(() => {
     mutation.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function handleRun() {
-    if (isRunning) return
-    const resolvedBenchmark = benchmark === "Same as Input" && inputMode === "Universe"
-      ? universe
-      : benchmark
-
-    setIsRunning(true)
-    try {
-      await mutation.mutateAsync({ universe, tickers, benchmark: resolvedBenchmark, input_mode: inputMode })
-    } catch {
-      // mutation state already captures the error
-    } finally {
-      setIsRunning(false)
-    }
+  function handleRun() {
+    setProgress({ phase: "queued", done: 0, total: 0 })
+    mutation.mutate({ universe, tickers, benchmark, input_mode: inputMode })
   }
 
   const rows: Record<string, unknown>[] = mutation.data?.results_df ?? []
@@ -193,12 +186,19 @@ function QualityPanel() {
           options={BENCHMARK_OPTIONS.map(o => ({ value: o, label: o }))}
         />
 
-        <ActionButton onClick={handleRun} loading={isRunning} loadingText="Screening (~30s)...">
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText={`Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe}...`}>
           Run Screen
         </ActionButton>
       </ControlPanel>
 
-      {isRunning && <LoadingSpinner message="Running quality screen..." />}
+      {mutation.isPending && (
+        <LoadingSpinner
+          message={formatScreenProgress(
+            progress,
+            `Scoring quality for ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`,
+          )}
+        />
+      )}
       {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (

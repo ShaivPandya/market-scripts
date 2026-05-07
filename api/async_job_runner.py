@@ -395,6 +395,15 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
         )
         return result
     except Exception as exc:
+        cancelled_row = get_job(job_id) or row
+        if str(cancelled_row.get("status") or "") == "cancelled":
+            _emit_job_audit(
+                "async_job.cancelled",
+                row=cancelled_row,
+                status="cancelled",
+                after_summary={"status": "cancelled"},
+            )
+            return None
         error = str(exc) or spec.error_message
         fail_job(job_id, error, result_ttl_seconds=spec.failed_ttl_s)
         failed_row = get_job(job_id) or row

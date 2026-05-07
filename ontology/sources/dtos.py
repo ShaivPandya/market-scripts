@@ -13,6 +13,8 @@ class PortfolioMetadata:
     price_symbol: str | None = None
     quantity: float | None = None
     contract_multiplier: float = 1.0
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -29,6 +31,8 @@ class PortfolioPosition:
     price_symbol: str | None = None
     quantity: float | None = None
     contract_multiplier: float = 1.0
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
 
 
 @dataclass(slots=True)

@@ -41,6 +41,7 @@ const ASSET_OPTIONS = [
 const INSTRUMENT_TYPE_OPTIONS = [
   { value: "security", label: "Security" },
   { value: "future", label: "Future" },
+  { value: "spot_fx", label: "Spot FX" },
 ]
 
 const DIRECTION_OPTIONS = [
@@ -69,7 +70,28 @@ function proposalSubjectLabel(entityType?: string | null): string {
   return String(entityType || "proposal").replace(/_/g, " ")
 }
 
+function canonicalSpotFxSymbol(value?: string | null) {
+  let symbol = (value ?? "").trim().toUpperCase()
+  if (!symbol) return null
+  symbol = symbol.replace(/[/-]/g, "")
+  if (symbol.endsWith("=X")) symbol = symbol.slice(0, -2)
+  if (!/^[A-Z]{6}$/.test(symbol)) return null
+  if (symbol.slice(0, 3) === symbol.slice(3, 6)) return null
+  return `${symbol}=X`
+}
+
+function spotFxCurrencies(value?: string | null) {
+  const symbol = canonicalSpotFxSymbol(value)
+  if (!symbol) return { fx_base_currency: null, fx_quote_currency: null }
+  return {
+    fx_base_currency: symbol.slice(0, 3),
+    fx_quote_currency: symbol.slice(3, 6),
+  }
+}
+
 function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null): InstrumentType {
+  if (instrumentType === "spot_fx") return "spot_fx"
+  if (ticker.trim().toUpperCase().endsWith("=X")) return "spot_fx"
   if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
   return instrumentType ?? "security"
 }
@@ -80,6 +102,14 @@ function normalizedSymbol(value?: string | null) {
 
 function effectivePriceSymbol(row: { ticker: string; price_symbol?: string | null }) {
   return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
+}
+
+function submissionSymbol(row: { ticker: string; price_symbol?: string | null; instrument_type?: PortfolioPosition["instrument_type"] | null }) {
+  const instrumentType = inferInstrumentType(row.ticker, row.instrument_type)
+  if (instrumentType === "spot_fx") {
+    return canonicalSpotFxSymbol(row.price_symbol || row.ticker) || normalizedSymbol(row.price_symbol || row.ticker)
+  }
+  return normalizedSymbol(row.ticker)
 }
 
 function nextContractMultiplier(
@@ -93,7 +123,7 @@ function nextContractMultiplier(
   nextInstrumentType: InstrumentType,
   nextPriceSymbol = effectivePriceSymbol(row),
 ) {
-  if (nextInstrumentType === "security") return 1
+  if (nextInstrumentType === "security" || nextInstrumentType === "spot_fx") return 1
   if (row._contractMultiplierTouched) return row.contract_multiplier ?? null
 
   const currentInstrumentType = inferInstrumentType(row.ticker, row.instrument_type)
@@ -129,6 +159,9 @@ function parseBookSizeInput(value: string) {
 function valuationSummary(row: PortfolioPosition | HedgePosition) {
   const parts: string[] = []
   const market = [row.country, row.exchange].filter(Boolean).join(" / ")
+  if (row.instrument_type === "spot_fx" && row.fx_base_currency && row.fx_quote_currency) {
+    parts.push(`${row.fx_base_currency}/${row.fx_quote_currency} spot`)
+  }
   if (market) parts.push(market)
   if (row.currency) parts.push(`${row.currency}${row.base_currency ? ` to ${row.base_currency}` : ""}`)
   if (typeof row.notional_base === "number" && Number.isFinite(row.notional_base)) {
@@ -152,7 +185,7 @@ function positionToRow(p: PortfolioPosition): EditorRow {
     shares: quantity,
     instrument_type: instrumentType,
     price_symbol: p.price_symbol ?? p.ticker,
-    contract_multiplier: p.contract_multiplier ?? (instrumentType === "security" ? 1 : null),
+    contract_multiplier: p.contract_multiplier ?? (instrumentType === "future" ? null : 1),
   }
 }
 
@@ -190,7 +223,7 @@ function hedgeToRow(p: HedgePosition): HedgeEditorRow {
     quantity,
     instrument_type: instrumentType,
     price_symbol: p.price_symbol ?? p.ticker,
-    contract_multiplier: p.contract_multiplier ?? (instrumentType === "security" ? 1 : null),
+    contract_multiplier: p.contract_multiplier ?? (instrumentType === "future" ? null : 1),
   }
 }
 
@@ -325,7 +358,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   function handleSavePositions() {
     setPositionValidationError(null)
 
-    const tickers = positionRows.map(r => r.ticker.trim().toUpperCase()).filter(Boolean)
+    const tickers = positionRows.map(submissionSymbol).filter(Boolean)
     const unique = new Set(tickers)
     if (unique.size !== tickers.length) {
       setPositionValidationError("Duplicate tickers detected. Each ticker must be unique.")
@@ -339,12 +372,19 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       setPositionValidationError("At least one position is required.")
       return
     }
+    if (positionRows.some(r => inferInstrumentType(r.ticker, r.instrument_type) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
+      setPositionValidationError("Spot FX rows must use a pair like EURUSD=X, EURUSD, EUR/USD, or EUR-USD.")
+      return
+    }
 
     const positions: PortfolioPosition[] = positionRows.map(r => {
       const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
+      const ticker = instrumentType === "spot_fx" ? canonicalSpotFxSymbol(r.price_symbol || r.ticker) ?? r.ticker.trim().toUpperCase() : r.ticker.trim().toUpperCase()
+      const priceSymbol = instrumentType === "spot_fx" ? ticker : (r.price_symbol?.trim() || r.ticker).toUpperCase()
+      const fxCurrencies = instrumentType === "spot_fx" ? spotFxCurrencies(priceSymbol) : { fx_base_currency: r.fx_base_currency ?? null, fx_quote_currency: r.fx_quote_currency ?? null }
       return {
-        ticker: r.ticker.trim().toUpperCase(),
-        asset: r.asset,
+        ticker,
+        asset: instrumentType === "spot_fx" ? "fx" : r.asset,
         direction: r.direction,
         contrarian: r.contrarian,
         conviction: r.conviction,
@@ -352,11 +392,13 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
         shares: rowQuantity(r),
         quantity: rowQuantity(r),
         instrument_type: instrumentType,
-        price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
+        price_symbol: priceSymbol,
         contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
-        currency: r.currency ?? null,
+        fx_base_currency: fxCurrencies.fx_base_currency,
+        fx_quote_currency: fxCurrencies.fx_quote_currency,
+        currency: instrumentType === "spot_fx" ? fxCurrencies.fx_quote_currency : r.currency ?? null,
         country: r.country ?? null,
-        exchange: r.exchange ?? null,
+        exchange: instrumentType === "spot_fx" ? r.exchange ?? "FX" : r.exchange ?? null,
         base_currency: r.base_currency ?? null,
         fx_rate_to_base: r.fx_rate_to_base ?? null,
         fx_rate_as_of: r.fx_rate_as_of ?? null,
@@ -372,7 +414,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   function handleSaveHedges() {
     setHedgeValidationError(null)
 
-    const tickers = hedgeRows.map(r => r.ticker.trim().toUpperCase()).filter(Boolean)
+    const tickers = hedgeRows.map(submissionSymbol).filter(Boolean)
     const unique = new Set(tickers)
     if (unique.size !== tickers.length) {
       setHedgeValidationError("Duplicate tickers detected. Each ticker must be unique.")
@@ -382,22 +424,31 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       setHedgeValidationError("All hedge rows must have a ticker.")
       return
     }
+    if (hedgeRows.some(r => inferInstrumentType(r.ticker, r.instrument_type) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
+      setHedgeValidationError("Spot FX rows must use a pair like EURUSD=X, EURUSD, EUR/USD, or EUR-USD.")
+      return
+    }
 
     const positions: HedgePosition[] = hedgeRows.map(r => {
       const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
+      const ticker = instrumentType === "spot_fx" ? canonicalSpotFxSymbol(r.price_symbol || r.ticker) ?? r.ticker.trim().toUpperCase() : r.ticker.trim().toUpperCase()
+      const priceSymbol = instrumentType === "spot_fx" ? ticker : (r.price_symbol?.trim() || r.ticker).toUpperCase()
+      const fxCurrencies = instrumentType === "spot_fx" ? spotFxCurrencies(priceSymbol) : { fx_base_currency: r.fx_base_currency ?? null, fx_quote_currency: r.fx_quote_currency ?? null }
       return {
-        ticker: r.ticker.trim().toUpperCase(),
-        asset: r.asset ?? "equity",
+        ticker,
+        asset: instrumentType === "spot_fx" ? "fx" : r.asset ?? "equity",
         direction: r.direction,
         cost_basis: r.cost_basis,
         shares: rowQuantity(r),
         quantity: rowQuantity(r),
         instrument_type: instrumentType,
-        price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
+        price_symbol: priceSymbol,
         contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
-        currency: r.currency ?? null,
+        fx_base_currency: fxCurrencies.fx_base_currency,
+        fx_quote_currency: fxCurrencies.fx_quote_currency,
+        currency: instrumentType === "spot_fx" ? fxCurrencies.fx_quote_currency : r.currency ?? null,
         country: r.country ?? null,
-        exchange: r.exchange ?? null,
+        exchange: instrumentType === "spot_fx" ? r.exchange ?? "FX" : r.exchange ?? null,
         base_currency: r.base_currency ?? null,
         fx_rate_to_base: r.fx_rate_to_base ?? null,
         fx_rate_as_of: r.fx_rate_as_of ?? null,
@@ -516,8 +567,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                 <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Quantity</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Cost / Entry</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Qty / Base Units</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
                 <p className="col-span-1 text-xs font-medium text-gray-500">Contrarian</p>
                 <p className="col-span-1 text-xs font-medium text-gray-500"></p>
@@ -537,14 +588,18 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             ? nextTicker
                             : row.price_symbol
                           const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
+                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol) : { fx_base_currency: null, fx_quote_currency: null }
                           updatePositionRow(row._id, {
                             ticker: nextTicker,
                             price_symbol: nextPriceSymbol,
                             instrument_type: nextInstrumentType,
+                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
                             contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "AAPL"}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "EURUSD=X" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "AAPL"}
                         className="theme-input w-full font-mono text-sm"
                       />
                     </div>
@@ -554,10 +609,18 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={inferInstrumentType(row.ticker, row.instrument_type)}
                         onChange={v => {
                           const nextInstrumentType = v as InstrumentType
+                          const nextPriceSymbol = nextInstrumentType === "spot_fx"
+                            ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
+                            : row.price_symbol
+                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
                           updatePositionRow(row._id, {
                             instrument_type: nextInstrumentType,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
-                            _contractMultiplierTouched: nextInstrumentType === "security"
+                            price_symbol: nextPriceSymbol,
+                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
+                            _contractMultiplierTouched: nextInstrumentType !== "future"
                               ? false
                               : row._contractMultiplierTouched,
                           })
@@ -571,6 +634,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={row.asset}
                         onChange={v => updatePositionRow(row._id, { asset: v as PortfolioPosition["asset"] })}
                         options={ASSET_OPTIONS}
+                        disabled={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx"}
                       />
                     </div>
 
@@ -634,7 +698,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const v = e.target.value
                           updatePositionRow(row._id, { cost_basis: v === "" ? null : Number(v) })
                         }}
-                        placeholder="Optional"
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Entry rate" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="0.01"
                         min="0"
@@ -650,7 +714,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const quantity = v === "" ? null : Number(v)
                           updatePositionRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Base units" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                         min="0"
@@ -728,8 +792,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                 <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Quantity</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Cost / Entry</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Qty / Base Units</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500"></p>
               </div>
@@ -748,14 +812,18 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             ? nextTicker
                             : row.price_symbol
                           const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
+                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol) : { fx_base_currency: null, fx_quote_currency: null }
                           updateHedgeRow(row._id, {
                             ticker: nextTicker,
                             price_symbol: nextPriceSymbol,
                             instrument_type: nextInstrumentType,
+                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
                             contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "SPY"}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "EURUSD=X" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "SPY"}
                         className="theme-input w-full font-mono text-sm"
                       />
                     </div>
@@ -765,10 +833,18 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={inferInstrumentType(row.ticker, row.instrument_type)}
                         onChange={v => {
                           const nextInstrumentType = v as InstrumentType
+                          const nextPriceSymbol = nextInstrumentType === "spot_fx"
+                            ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
+                            : row.price_symbol
+                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
                           updateHedgeRow(row._id, {
                             instrument_type: nextInstrumentType,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
-                            _contractMultiplierTouched: nextInstrumentType === "security"
+                            price_symbol: nextPriceSymbol,
+                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
+                            _contractMultiplierTouched: nextInstrumentType !== "future"
                               ? false
                               : row._contractMultiplierTouched,
                           })
@@ -782,6 +858,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={row.asset ?? "equity"}
                         onChange={v => updateHedgeRow(row._id, { asset: v as HedgePosition["asset"] })}
                         options={ASSET_OPTIONS}
+                        disabled={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx"}
                       />
                     </div>
 
@@ -801,7 +878,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const v = e.target.value
                           updateHedgeRow(row._id, { cost_basis: v === "" ? null : Number(v) })
                         }}
-                        placeholder="Optional"
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Entry rate" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="0.01"
                         min="0"
@@ -817,7 +894,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const quantity = v === "" ? null : Number(v)
                           updateHedgeRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Base units" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                       />
