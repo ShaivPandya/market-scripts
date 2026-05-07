@@ -651,7 +651,7 @@ files; use web search to verify and cite claims rather than citing the uploaded 
 Analyze the market environment through the lens of the investment philosophy.
 
 Before the separator, output only the existing-style `# Stance Rationale` section as
-Markdown prose. Do not include Market Regime Assessment, Regime Evidence Dashboard,
+Markdown prose. Do not include Market Regime Assessment, Macro & Market Conditions,
 or Watchlist in the Markdown before the separator; those sections are rendered from
 the structured JSON.
 
@@ -689,7 +689,9 @@ Constraints:
 - Assess the context for a long/short equity portfolio — not generic market commentary.
 - Be direct and concise. No filler.
 - Max 1200 words across the Markdown rationale and structured text fields.
-- In `regime_evidence`, write `evidence` as one metric-driven sentence and `stance_implication` as one sentence explaining the effect on stance or leverage.
+- In `regime_evidence`, write `evidence` as 1-2 complete grammatical sentences with clear subjects and verbs, and include the specific metrics that support the rating. Do not omit numbers or make the sentence generic. Do not use compressed market-note fragments, comma-spliced ticker tape, or sentence fragments.
+- Example evidence style: "Market behavior is neutral because the S&P 500 and Nasdaq 100 are at new highs, but breadth is not confirming the move: 57.3% of stocks are above their 200-DMA, 45.1% are above their 20-DMA, and only 22 stocks are making 52-week highs."
+- `stance_implication` must be one complete sentence explaining the effect on stance or leverage.
 - In `watchlist`, each `implication` must state what changes in stance, leverage, hedging, or exposure if relevant.
 
 After the `# Stance Rationale` section, output the separator `{PASS1_SUMMARY_SEPARATOR}` on its own line, then a JSON block:
@@ -708,37 +710,37 @@ After the `# Stance Rationale` section, output the separator `{PASS1_SUMMARY_SEP
     {{
       "dimension": "Market Behavior",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }},
     {{
       "dimension": "Macro Momentum",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }},
     {{
       "dimension": "Liquidity",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }},
     {{
       "dimension": "Positioning",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }},
     {{
       "dimension": "Risk Sentiment",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }},
     {{
       "dimension": "Cycle Position",
       "rating": "<Supportive|Neutral|Cautionary|Adverse>",
-      "evidence": "<one metric-driven sentence>",
+      "evidence": "<1-2 complete sentences that include specific supporting metrics>",
       "stance_implication": "<one sentence explaining impact on stance/leverage>"
     }}
   ],
@@ -934,7 +936,7 @@ def _render_regime_evidence_dashboard(regime_evidence) -> str | None:
     if any(dim_key not in evidence_by_key for dim_key, _label in REGIME_DIMENSION_ORDER):
         return None
 
-    sections = ["# Regime Evidence Dashboard"]
+    sections = ["# Macro & Market Conditions"]
     for dim_key, label in REGIME_DIMENSION_ORDER:
         entry = evidence_by_key[dim_key]
         rating = _clean_report_text(entry.get("rating"))

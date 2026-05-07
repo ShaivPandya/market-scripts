@@ -52,7 +52,11 @@ def test_daily_pass1_user_message_requests_structured_market_sections():
     assert "`market_regime_assessment`" in msg
     assert "`regime_evidence`" in msg
     assert "`watchlist`" in msg
-    assert "Regime Evidence Dashboard" in msg
+    assert "Macro & Market Conditions" in msg
+    assert "1-2 complete grammatical sentences" in msg
+    assert "include the specific metrics" in msg
+    assert "Do not omit numbers" in msg
+    assert "compressed market-note fragments" in msg
 
 
 def test_agent_instructions_compose_core_and_overlay(tmp_path, monkeypatch):

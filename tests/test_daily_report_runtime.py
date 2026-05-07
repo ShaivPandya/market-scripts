@@ -139,8 +139,8 @@ def test_render_pass1_market_analysis_uses_templated_sections_in_order():
 
     rendered = auto_daily_report._render_pass1_market_analysis(raw, stance)
 
-    assert rendered.index("# Market Regime Assessment") < rendered.index("# Regime Evidence Dashboard")
-    assert rendered.index("# Regime Evidence Dashboard") < rendered.index("# Stance Rationale")
+    assert rendered.index("# Market Regime Assessment") < rendered.index("# Macro & Market Conditions")
+    assert rendered.index("# Macro & Market Conditions") < rendered.index("# Stance Rationale")
     assert rendered.index("# Stance Rationale") < rendered.index("# Watchlist")
     assert "**Post-shock cyclical relief rally.**" in rendered
     assert "### Market Behavior — Supportive" in rendered

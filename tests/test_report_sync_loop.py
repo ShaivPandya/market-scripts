@@ -293,6 +293,10 @@ def test_github_actions_keep_artifacts_and_sync_steps():
     daily = open(".github/workflows/daily_report.yml", encoding="utf-8").read()
     weekly = open(".github/workflows/weekly_report.yml", encoding="utf-8").read()
 
+    assert 'cron: "7 13 * * 1-6"' in daily
+    assert 'cron: "7 14 * * 1-6"' in daily
+    assert 'ny_day" -le 6' in daily
+
     for workflow, report_type in ((daily, "daily"), (weekly, "weekly")):
         assert "actions/upload-artifact" in workflow
         assert "Sync report state to app" in workflow
