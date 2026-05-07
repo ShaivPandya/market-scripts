@@ -102,6 +102,27 @@ STANCE_LEVERAGE_MAP = {
 }
 DEFAULT_LEVERAGE = 2.0
 DEFAULT_STANCE = "Neutral / Watchful"
+REGIME_DIMENSION_ORDER = (
+    ("market_behavior", "Market Behavior"),
+    ("macro_momentum", "Macro Momentum"),
+    ("liquidity", "Liquidity"),
+    ("positioning", "Positioning"),
+    ("risk_sentiment", "Risk Sentiment"),
+    ("cycle_position", "Cycle Position"),
+)
+REGIME_DIMENSION_KEYS = {dim_key for dim_key, _label in REGIME_DIMENSION_ORDER}
+REGIME_DIMENSION_ALIASES = {
+    "market_behavior": "market_behavior",
+    "marketbehavior": "market_behavior",
+    "macro_momentum": "macro_momentum",
+    "macromomentum": "macro_momentum",
+    "liquidity": "liquidity",
+    "positioning": "positioning",
+    "risk_sentiment": "risk_sentiment",
+    "risksentiment": "risk_sentiment",
+    "cycle_position": "cycle_position",
+    "cycleposition": "cycle_position",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -627,18 +648,29 @@ Weave this context into your analysis and cite sources for news-driven claims.
 Treat the news_digests block as user-curated high-signal leads from uploaded digest
 files; use web search to verify and cite claims rather than citing the uploaded digest itself.
 
-Analyze the market environment through the lens of the investment philosophy and produce:
+Analyze the market environment through the lens of the investment philosophy.
 
-1. **Market Regime Assessment** — Where are we in the cycle? What is the dominant market character today? How is the market handling news (constructively or destructively)?
-2. **Six Dimensions** — Evaluate each dimension as Supportive / Neutral / Cautionary / Adverse with one-sentence evidence:
+Before the separator, output only the existing-style `# Stance Rationale` section as
+Markdown prose. Do not include Market Regime Assessment, Regime Evidence Dashboard,
+or Watchlist in the Markdown before the separator; those sections are rendered from
+the structured JSON.
+
+In the JSON block, provide these structured sections:
+
+1. `market_regime_assessment` — a headline plus exactly two paragraphs:
+   - `headline`: one sentence naming the dominant regime.
+   - `dominant_character`: 2-4 sentences on price action, breadth/leadership, and how the market is reacting to news.
+   - `main_tension`: 2-4 sentences on the main tension beneath the surface.
+2. `regime_evidence` — exactly six entries in this order. Each rating must be Supportive / Neutral / Cautionary / Adverse:
    - Market Behavior (breadth, sector internals, price action)
    - Macro Momentum (economic_growth, labor_market, housing, country_dashboard, earnings)
    - Liquidity (Fed balance sheet, central_banks, yield_curve, bond_dashboard, credit conditions, funding markets)
    - Positioning (COT data, sentiment, consensus)
    - Risk Sentiment (VIX term structure, credit spreads, safe haven flows)
    - Cycle Position (where in boom-bust, credit cycle phase)
-3. **Stance Rationale** — Summarize the balance of evidence and justify the stance. Be explicit about which dimensions dominate and why.
-4. **Watchlist Triggers** — 3-5 specific, observable events that would change the stance. For each: what it is, which direction it pushes, what action it implies.
+3. `six_dimensions` — legacy rating map for the Market Stance table. It must match the ratings in `regime_evidence`.
+4. `watchlist` — split into `risks_to_upside` and `risks_to_downside`. Each side needs 1-4 trigger/implication entries.
+5. `watchlist_triggers` — legacy flattened strings derived from the watchlist entries.
 
 Stance options: {stance_options}
 
@@ -656,15 +688,60 @@ Constraints:
 - Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and country_dashboard explicitly when they inform Macro Momentum, Liquidity/Rates, Risk Sentiment, or Cycle Position.
 - Assess the context for a long/short equity portfolio — not generic market commentary.
 - Be direct and concise. No filler.
-- Max 1200 words for the analysis sections.
+- Max 1200 words across the Markdown rationale and structured text fields.
+- In `regime_evidence`, write `evidence` as one metric-driven sentence and `stance_implication` as one sentence explaining the effect on stance or leverage.
+- In `watchlist`, each `implication` must state what changes in stance, leverage, hedging, or exposure if relevant.
 
-After the analysis, output the separator `{PASS1_SUMMARY_SEPARATOR}` on its own line, then a JSON block:
+After the `# Stance Rationale` section, output the separator `{PASS1_SUMMARY_SEPARATOR}` on its own line, then a JSON block:
 ```json
 {{
   "stance": "<{stance_options}>",
   "target_leverage": "<float between 0.5 and 3.0>",
   "leverage_rationale": "<one sentence explaining leverage choice within the stance range>",
   "confidence": "<high|medium|low>",
+  "market_regime_assessment": {{
+    "headline": "<one-sentence regime label>",
+    "dominant_character": "<2-4 sentences on dominant market character>",
+    "main_tension": "<2-4 sentences on the main tension beneath the surface>"
+  }},
+  "regime_evidence": [
+    {{
+      "dimension": "Market Behavior",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }},
+    {{
+      "dimension": "Macro Momentum",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }},
+    {{
+      "dimension": "Liquidity",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }},
+    {{
+      "dimension": "Positioning",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }},
+    {{
+      "dimension": "Risk Sentiment",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }},
+    {{
+      "dimension": "Cycle Position",
+      "rating": "<Supportive|Neutral|Cautionary|Adverse>",
+      "evidence": "<one metric-driven sentence>",
+      "stance_implication": "<one sentence explaining impact on stance/leverage>"
+    }}
+  ],
   "six_dimensions": {{
     "market_behavior": "<Supportive|Neutral|Cautionary|Adverse>",
     "macro_momentum": "<Supportive|Neutral|Cautionary|Adverse>",
@@ -674,11 +751,114 @@ After the analysis, output the separator `{PASS1_SUMMARY_SEPARATOR}` on its own 
     "cycle_position": "<Supportive|Neutral|Cautionary|Adverse>"
   }},
   "drivers": ["<top 3-5 drivers>"],
-  "watchlist_triggers": ["<3-5 specific triggers>"]
+  "watchlist": {{
+    "risks_to_upside": [
+      {{
+        "trigger": "<specific observable trigger>",
+        "implication": "<what changes if it happens>"
+      }}
+    ],
+    "risks_to_downside": [
+      {{
+        "trigger": "<specific observable trigger>",
+        "implication": "<what changes if it happens>"
+      }}
+    ]
+  }},
+  "watchlist_triggers": ["<legacy flattened watchlist strings>"]
 }}
 ```
 
 End immediately after the JSON. No assistant meta text."""
+
+
+def _clean_report_text(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalized_dimension_key(value) -> str:
+    raw = _clean_report_text(value).lower()
+    compact = "".join(ch if ch.isalnum() else "_" for ch in raw)
+    while "__" in compact:
+        compact = compact.replace("__", "_")
+    compact = compact.strip("_")
+    return REGIME_DIMENSION_ALIASES.get(compact, compact)
+
+
+def _regime_evidence_by_key(regime_evidence) -> dict[str, dict]:
+    if isinstance(regime_evidence, dict):
+        items = []
+        for dim, entry in regime_evidence.items():
+            if isinstance(entry, dict):
+                merged = {"dimension": dim, **entry}
+            else:
+                merged = {"dimension": dim, "rating": entry}
+            items.append(merged)
+    elif isinstance(regime_evidence, list):
+        items = [entry for entry in regime_evidence if isinstance(entry, dict)]
+    else:
+        return {}
+
+    by_key: dict[str, dict] = {}
+    for entry in items:
+        key = _normalized_dimension_key(entry.get("dimension") or entry.get("key") or entry.get("name"))
+        if key in REGIME_DIMENSION_KEYS:
+            by_key[key] = entry
+    return by_key
+
+
+def _derive_six_dimensions(stance_dict: dict) -> None:
+    existing = stance_dict.get("six_dimensions")
+    if isinstance(existing, dict) and existing:
+        return
+
+    evidence_by_key = _regime_evidence_by_key(stance_dict.get("regime_evidence"))
+    derived = {}
+    for dim_key, _label in REGIME_DIMENSION_ORDER:
+        rating = _clean_report_text(evidence_by_key.get(dim_key, {}).get("rating"))
+        if rating:
+            derived[dim_key] = rating
+    if derived:
+        stance_dict["six_dimensions"] = derived
+
+
+def _watchlist_entries(entries) -> list[str]:
+    if not isinstance(entries, list):
+        return []
+    rendered = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            trigger = _clean_report_text(entry.get("trigger"))
+            implication = _clean_report_text(entry.get("implication"))
+        else:
+            trigger = _clean_report_text(entry)
+            implication = ""
+        if not trigger:
+            continue
+        rendered.append(f"{trigger}: {implication}" if implication else trigger)
+    return rendered
+
+
+def _derive_watchlist_triggers(stance_dict: dict) -> None:
+    existing = stance_dict.get("watchlist_triggers")
+    if isinstance(existing, list) and existing:
+        return
+
+    watchlist = stance_dict.get("watchlist")
+    if not isinstance(watchlist, dict):
+        return
+
+    flattened = _watchlist_entries(watchlist.get("risks_to_upside"))
+    flattened.extend(_watchlist_entries(watchlist.get("risks_to_downside")))
+    if flattened:
+        stance_dict["watchlist_triggers"] = flattened
+
+
+def _normalize_pass1_structured_fields(stance_dict: dict) -> None:
+    _derive_six_dimensions(stance_dict)
+    _derive_watchlist_triggers(stance_dict)
 
 
 def parse_pass1_response(text: str) -> tuple[str, dict]:
@@ -724,8 +904,102 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
         stance_dict["stance"] = stance
 
     stance_dict["target_leverage"] = validate_and_clamp_leverage(raw_leverage, stance)
+    _normalize_pass1_structured_fields(stance_dict)
 
     return analysis_md, stance_dict
+
+
+def _render_market_regime_assessment(market_regime_assessment) -> str | None:
+    if not isinstance(market_regime_assessment, dict):
+        return None
+
+    headline = _clean_report_text(market_regime_assessment.get("headline"))
+    dominant_character = _clean_report_text(market_regime_assessment.get("dominant_character"))
+    main_tension = _clean_report_text(market_regime_assessment.get("main_tension"))
+    if not headline or not dominant_character or not main_tension:
+        return None
+
+    return "\n\n".join(
+        [
+            "# Market Regime Assessment",
+            f"**{headline}**",
+            dominant_character,
+            main_tension,
+        ]
+    )
+
+
+def _render_regime_evidence_dashboard(regime_evidence) -> str | None:
+    evidence_by_key = _regime_evidence_by_key(regime_evidence)
+    if any(dim_key not in evidence_by_key for dim_key, _label in REGIME_DIMENSION_ORDER):
+        return None
+
+    sections = ["# Regime Evidence Dashboard"]
+    for dim_key, label in REGIME_DIMENSION_ORDER:
+        entry = evidence_by_key[dim_key]
+        rating = _clean_report_text(entry.get("rating"))
+        evidence = _clean_report_text(entry.get("evidence"))
+        stance_implication = _clean_report_text(entry.get("stance_implication") or entry.get("implication"))
+        if not rating or not evidence or not stance_implication:
+            return None
+        sections.append(
+            "\n\n".join(
+                [
+                    f"### {label} — {rating}",
+                    f"**Evidence:** {evidence}",
+                    f"**Stance implication:** {stance_implication}",
+                ]
+            )
+        )
+    return "\n\n".join(sections)
+
+
+def _render_watchlist_entries(entries) -> list[str] | None:
+    if not isinstance(entries, list) or not entries:
+        return None
+
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        trigger = _clean_report_text(entry.get("trigger"))
+        implication = _clean_report_text(entry.get("implication"))
+        if not trigger or not implication:
+            return None
+        lines.append(f"- **{trigger}:** {implication}")
+    return lines
+
+
+def _render_watchlist(watchlist) -> str | None:
+    if not isinstance(watchlist, dict):
+        return None
+
+    upside_lines = _render_watchlist_entries(watchlist.get("risks_to_upside"))
+    downside_lines = _render_watchlist_entries(watchlist.get("risks_to_downside"))
+    if upside_lines is None or downside_lines is None:
+        return None
+
+    return "\n\n".join(
+        [
+            "# Watchlist",
+            "## Risks to upside",
+            "\n".join(upside_lines),
+            "## Risks to downside",
+            "\n".join(downside_lines),
+        ]
+    )
+
+
+def _render_pass1_market_analysis(raw_analysis_md: str, stance_dict: dict) -> str:
+    """Render structured Pass 1 sections, falling back to raw analysis when incomplete."""
+    raw_analysis_md = (raw_analysis_md or "").strip()
+    regime_md = _render_market_regime_assessment(stance_dict.get("market_regime_assessment"))
+    evidence_md = _render_regime_evidence_dashboard(stance_dict.get("regime_evidence"))
+    watchlist_md = _render_watchlist(stance_dict.get("watchlist"))
+    if not raw_analysis_md or not regime_md or not evidence_md or not watchlist_md:
+        return raw_analysis_md
+
+    return "\n\n".join([regime_md, evidence_md, raw_analysis_md, watchlist_md])
 
 
 # ---------------------------------------------------------------------------
@@ -956,6 +1230,7 @@ def _merge_summary(
     persisted_recommendations: list[dict] | None = None,
 ) -> dict:
     """Merge Pass 1 stance dict with Pass 2 risk summary into final summary.json."""
+    _normalize_pass1_structured_fields(stance_dict)
     summary = {
         # Stance fields (from Pass 1)
         "stance": stance_dict.get("stance", DEFAULT_STANCE),
@@ -992,6 +1267,7 @@ def _merge_summary(
 
 def _build_stance_header_markdown(stance_dict: dict) -> str:
     """Build the stance header section for the final report."""
+    _normalize_pass1_structured_fields(stance_dict)
     stance = stance_dict.get("stance", DEFAULT_STANCE)
     leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
     confidence = stance_dict.get("confidence", "medium")
@@ -1269,6 +1545,7 @@ def main():
     # STEP 13: Compose commentary report
     # ---------------------------------------------------------------
     stance_header_md = _build_stance_header_markdown(stance_dict)
+    market_analysis_report_md = _render_pass1_market_analysis(market_analysis_md, stance_dict)
 
     # Collect all citations
     all_citations = pass1_citations + pass2_citations
@@ -1281,7 +1558,7 @@ def main():
             stance_header_md,
             "---",
             "## Market Analysis",
-            market_analysis_md,
+            market_analysis_report_md,
             "---",
             perf_md,
             "---",

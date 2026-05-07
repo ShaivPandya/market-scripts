@@ -45,6 +45,16 @@ def test_daily_pass1_system_message_uses_weekly_overlay(monkeypatch):
     assert "<prompts/weekly_system.md>" in msg
 
 
+def test_daily_pass1_user_message_requests_structured_market_sections():
+    msg = auto_daily_report._build_pass1_user_message({}, "## Weekly Performance")
+
+    assert "output only the existing-style `# Stance Rationale` section" in msg
+    assert "`market_regime_assessment`" in msg
+    assert "`regime_evidence`" in msg
+    assert "`watchlist`" in msg
+    assert "Regime Evidence Dashboard" in msg
+
+
 def test_agent_instructions_compose_core_and_overlay(tmp_path, monkeypatch):
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
