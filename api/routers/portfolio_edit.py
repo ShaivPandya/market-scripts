@@ -27,7 +27,9 @@ from portfolio.instruments import (
     normalize_asset,
     normalize_instrument_type,
     normalize_quantity,
+    normalize_spot_fx_symbol,
     normalize_symbol,
+    spot_fx_currencies,
 )
 
 router = APIRouter()
@@ -96,9 +98,11 @@ class PortfolioPosition(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -111,13 +115,21 @@ class PortfolioPosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPosition:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
@@ -185,9 +197,11 @@ class HedgePosition(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
     currency: str | None = None
     country: str | None = None
     exchange: str | None = None
@@ -200,13 +214,21 @@ class HedgePosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePosition:
-        self.ticker = normalize_symbol(self.ticker)
-        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
-            ticker=self.ticker,
-            price_symbol=self.price_symbol,
+            ticker=str(self.ticker),
+            price_symbol=str(self.price_symbol or self.ticker),
         )
+        if self.instrument_type == "spot_fx":
+            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+            self.ticker = self.price_symbol
+            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
+            self.asset = "fx"
+            self.currency = self.fx_quote_currency
+            self.exchange = self.exchange or "FX"
+        else:
+            self.ticker = normalize_symbol(self.ticker)
+            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
         if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
             raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
         self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)

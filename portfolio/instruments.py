@@ -8,13 +8,14 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 AssetClass = Literal["equity", "commodity", "fx", "bond"]
-InstrumentType = Literal["security", "future"]
+InstrumentType = Literal["security", "future", "spot_fx"]
 
 ASSET_CLASSES: set[str] = {"equity", "commodity", "fx", "bond"}
-INSTRUMENT_TYPES: set[str] = {"security", "future"}
+INSTRUMENT_TYPES: set[str] = {"security", "future", "spot_fx"}
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=-]{0,31}$")
 _CONTINUOUS_FUTURE_RE = re.compile(r"^[A-Z0-9]{1,8}=F$")
+_SPOT_FX_PAIR_RE = re.compile(r"^([A-Z]{3})([A-Z]{3})(?:=X)?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,37 @@ def is_continuous_future_symbol(symbol: str) -> bool:
     return bool(_CONTINUOUS_FUTURE_RE.match(symbol.strip().upper()))
 
 
+def normalize_spot_fx_symbol(value: Any, *, field_name: str = "ticker") -> str:
+    symbol = str(value or "").strip().upper()
+    if not symbol:
+        raise ValueError(f"{field_name} cannot be empty.")
+    if "\\" in symbol or ":" in symbol or any(ch.isspace() for ch in symbol):
+        raise ValueError(f"Invalid {field_name} format: '{symbol}'.")
+    compact = symbol.replace("/", "").replace("-", "")
+    match = _SPOT_FX_PAIR_RE.match(compact)
+    if not match:
+        raise ValueError(
+            f"Invalid {field_name} format: '{symbol}'. Spot FX pairs must look like EURUSD=X, EURUSD, EUR/USD, or EUR-USD."
+        )
+    base, quote = match.groups()
+    if base == quote:
+        raise ValueError("Spot FX base and quote currencies must be different.")
+    return f"{base}{quote}=X"
+
+
+def is_spot_fx_symbol(value: Any) -> bool:
+    try:
+        normalize_spot_fx_symbol(value)
+        return True
+    except ValueError:
+        return False
+
+
+def spot_fx_currencies(symbol: Any) -> tuple[str, str]:
+    normalized = normalize_spot_fx_symbol(symbol)
+    return normalized[:3], normalized[3:6]
+
+
 def futures_root(symbol: str) -> str:
     normalized = normalize_symbol(symbol)
     return normalized[:-2] if normalized.endswith("=F") else normalized
@@ -96,11 +128,17 @@ def normalize_instrument_type(value: Any, *, ticker: str, price_symbol: str | No
             raise ValueError(f"Invalid instrument_type: {raw!r}.")
         return raw  # type: ignore[return-value]
     symbol = price_symbol or ticker
-    return "future" if is_continuous_future_symbol(symbol) else "security"
+    if is_continuous_future_symbol(symbol):
+        return "future"
+    if str(symbol or "").strip().upper().endswith("=X") and is_spot_fx_symbol(symbol):
+        return "spot_fx"
+    return "security"
 
 
 def normalize_asset(value: Any, *, instrument_type: InstrumentType, symbol: str) -> AssetClass:
     raw = str(value or "").strip().lower()
+    if instrument_type == "spot_fx":
+        return "fx"
     spec = futures_spec(symbol) if instrument_type == "future" else None
     asset = raw or (spec.asset if spec else "equity")
     if asset not in ASSET_CLASSES:
@@ -126,7 +164,7 @@ def default_contract_multiplier(
             return multiplier
         if str(override).lower() != "nan":
             raise ValueError("contract_multiplier must be positive.")
-    if instrument_type == "security":
+    if instrument_type in {"security", "spot_fx"}:
         return 1.0
     spec = futures_spec(symbol)
     if spec is None:

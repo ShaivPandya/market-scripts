@@ -118,6 +118,8 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
             "instrument_type": "security",
             "price_symbol": "MU",
             "contract_multiplier": 1.0,
+            "fx_base_currency": None,
+            "fx_quote_currency": None,
             "currency": "USD",
             "country": "United States",
             "exchange": None,
@@ -176,6 +178,34 @@ def test_portfolio_action_accepts_continuous_future_positions():
     assert position["asset"] == "commodity"
     assert position["quantity"] == 1.0
     assert position["contract_multiplier"] == 1000.0
+
+
+def test_portfolio_action_accepts_spot_fx_positions():
+    result = _approve_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "EUR-USD",
+                    "instrument_type": "spot_fx",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 1.08,
+                    "quantity": 50_000,
+                }
+            ]
+        },
+    )
+
+    assert result == {"status": "ok", "count": 1}
+    position = portfolio_db.get_positions()[0]
+    assert position["ticker"] == "EURUSD=X"
+    assert position["instrument_type"] == "spot_fx"
+    assert position["asset"] == "fx"
+    assert position["fx_base_currency"] == "EUR"
+    assert position["fx_quote_currency"] == "USD"
+    assert position["notional_base"] == pytest.approx(54_000.0)
 
 
 def test_portfolio_update_approval_payload_lists_position_changes():

@@ -93,6 +93,8 @@ class PortfolioAdapter:
                     meta_raw.get("quantity") if meta_raw.get("quantity") is not None else meta_raw.get("shares")
                 ),
                 contract_multiplier=_float_or_none(meta_raw.get("contract_multiplier")) or 1.0,
+                fx_base_currency=clean_str(meta_raw.get("fx_base_currency")),
+                fx_quote_currency=clean_str(meta_raw.get("fx_quote_currency")),
                 raw=dict(meta_raw),
             )
             series = _get_mapping_value(positions_raw, ticker, str(ticker_obj))
@@ -108,6 +110,8 @@ class PortfolioAdapter:
                 price_symbol=metadata.price_symbol,
                 quantity=metadata.quantity,
                 contract_multiplier=metadata.contract_multiplier,
+                fx_base_currency=metadata.fx_base_currency,
+                fx_quote_currency=metadata.fx_quote_currency,
             )
 
         snapshot = PortfolioSnapshot(

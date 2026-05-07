@@ -61,6 +61,7 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     prepare_instrument_metadata,
     solve_joint_hedge_weights,
     to_usd_price,
+    unit_notional_in_base,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -75,8 +76,10 @@ BETA_HEDGE_MODE_SPY: BetaHedgeMode = "spy"
 def _normalize_beta_hedge_mode(value: str | None) -> BetaHedgeMode:
     if value is None or value == "":
         return BETA_HEDGE_MODE_SPY_IWM
-    if value in (BETA_HEDGE_MODE_SPY_IWM, BETA_HEDGE_MODE_SPY):
-        return value
+    if value == BETA_HEDGE_MODE_SPY_IWM:
+        return BETA_HEDGE_MODE_SPY_IWM
+    if value == BETA_HEDGE_MODE_SPY:
+        return BETA_HEDGE_MODE_SPY
     raise ValueError("beta_hedge_mode must be one of: spy_iwm, spy.")
 
 
@@ -113,7 +116,7 @@ def _apply_beta_hedges_with_gross_cap(
     beta_hedge_mode: BetaHedgeMode,
 ) -> tuple[pd.Series, dict[str, Any]]:
     if beta_hedge_mode == BETA_HEDGE_MODE_SPY_IWM:
-        hedged_w, summary = apply_hedges_with_gross_cap(
+        hedged_w, hedge_summary = apply_hedges_with_gross_cap(
             w,
             betas_spy,
             betas_iwm,
@@ -123,6 +126,7 @@ def _apply_beta_hedges_with_gross_cap(
             short_mask,
             eq_mask,
         )
+        summary: dict[str, Any] = dict(hedge_summary)
         summary["beta_hedge_mode"] = beta_hedge_mode
         return hedged_w, summary
 
@@ -139,7 +143,7 @@ def _apply_beta_hedges_with_gross_cap(
         hedge_gross = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
         gross_with_hedges = pre_hedge_gross + hedge_gross
 
-        out = dict(beta_summary)
+        out: dict[str, Any] = dict(beta_summary)
         out.update(
             {
                 "hedge_spy_weight": hedge_spy_weight,
@@ -556,6 +560,8 @@ def size_portfolio(
                 "price_symbol": meta["price_symbol"].values,
                 "quantity": meta["quantity"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": meta["fx_base_currency"].values if "fx_base_currency" in meta.columns else "",
+                "fx_quote_currency": meta["fx_quote_currency"].values if "fx_quote_currency" in meta.columns else "",
                 "direction": meta["direction"].values,
                 "contrarian": meta["contrarian"].values if "contrarian" in meta.columns else False,
                 "conviction": [convictions.get(t, 0) for t in tickers],
@@ -568,10 +574,11 @@ def size_portfolio(
         )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
-            unit_notional = weights_df["price"] * weights_df["contract_multiplier"].replace(0, np.nan)
+            unit_notional = unit_notional_in_base(weights_df)
             weights_df["quantity"] = (weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             weights_df["target_quantity"] = weights_df["quantity"]
             weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
+            weights_df["base_units"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("spot_fx"))
             weights_df["shares"] = weights_df["quantity"]
         weights_df = weights_df.sort_values("weight", ascending=False)
 
@@ -644,6 +651,8 @@ def size_portfolio(
                 "instrument_type": meta["instrument_type"].values,
                 "price_symbol": meta["price_symbol"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": meta["fx_base_currency"].values if "fx_base_currency" in meta.columns else "",
+                "fx_quote_currency": meta["fx_quote_currency"].values if "fx_quote_currency" in meta.columns else "",
                 "direction": meta["direction"].values,
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
@@ -651,15 +660,16 @@ def size_portfolio(
         )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            unit_notional = max_scaled_weights_df["price"] * max_scaled_weights_df["contract_multiplier"].replace(
-                0, np.nan
-            )
+            unit_notional = unit_notional_in_base(max_scaled_weights_df)
             max_scaled_weights_df["quantity"] = (
                 (max_scaled_weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             )
             max_scaled_weights_df["target_quantity"] = max_scaled_weights_df["quantity"]
             max_scaled_weights_df["contracts"] = max_scaled_weights_df["quantity"].where(
                 max_scaled_weights_df["instrument_type"].eq("future")
+            )
+            max_scaled_weights_df["base_units"] = max_scaled_weights_df["quantity"].where(
+                max_scaled_weights_df["instrument_type"].eq("spot_fx")
             )
             max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)

@@ -43,6 +43,8 @@ def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
             "quantity": getattr(row, "quantity", getattr(row, "shares", None)),
             "shares": getattr(row, "quantity", getattr(row, "shares", None)),
             "contract_multiplier": getattr(row, "contract_multiplier", 1.0),
+            "fx_base_currency": getattr(row, "fx_base_currency", None),
+            "fx_quote_currency": getattr(row, "fx_quote_currency", None),
             "currency": getattr(row, "currency", None),
             "country": getattr(row, "country", None),
             "exchange": getattr(row, "exchange", None),
@@ -170,6 +172,8 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     warnings_out: list[str] = []
     if any(str(row.get("instrument_type") or "").lower() == "future" for row in holdings):
         warnings_out.append("Continuous futures use front/active contract pricing; roll P&L is not modeled.")
+    if any(str(row.get("instrument_type") or "").lower() == "spot_fx" for row in holdings):
+        warnings_out.append("Spot FX positions use base-currency units and yfinance spot pair pricing.")
 
     payload = {
         "positions": positions,

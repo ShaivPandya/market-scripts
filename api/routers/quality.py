@@ -73,7 +73,7 @@ def _resolve_tickers(req: QualityRequest) -> list[str]:
     return _resolve_universe_tickers(req.universe)
 
 
-def _resolve_benchmark(label: str) -> str | None:
+def _resolve_benchmark(label: str) -> str:
     if label == "Same as Input":
         return "self"
     return _BENCHMARK_MAP.get(label) or _SECTOR_PREFIX_MAP.get(label) or _UNIVERSE_MAP.get(label) or label

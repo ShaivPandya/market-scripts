@@ -1598,6 +1598,8 @@ def _compact_portfolio_payload(payload: Any) -> Any:
                 "price_symbol": meta.get("price_symbol") or ticker,
                 "quantity": meta.get("quantity"),
                 "contract_multiplier": meta.get("contract_multiplier") or 1,
+                "fx_base_currency": meta.get("fx_base_currency"),
+                "fx_quote_currency": meta.get("fx_quote_currency"),
                 "current_notional": meta.get("current_notional"),
                 "price_as_of": last.get("date") if isinstance(last, dict) else None,
                 "current_price": last_val,
@@ -1620,6 +1622,7 @@ def _compact_portfolio_payload(payload: Any) -> Any:
             "quantity_field": "quantity",
             "futures_quantity": "contracts",
             "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
+            "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
         },
         "summary": {
             "position_count": len(compact_rows),
@@ -1710,6 +1713,8 @@ def _build_agent_portfolio_payload(
             "shares": quantity,
             "quantity": quantity,
             "contract_multiplier": contract_multiplier,
+            "fx_base_currency": holding.get("fx_base_currency"),
+            "fx_quote_currency": holding.get("fx_quote_currency"),
             "conviction": holding.get("conviction"),
             "contrarian": bool(holding.get("contrarian")),
             "role": holding.get("role") or "position",
@@ -1747,6 +1752,7 @@ def _build_agent_portfolio_payload(
                 "legacy_shares_alias": True,
                 "futures_quantity": "contracts",
                 "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
+                "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
             },
             "summary": {
                 "position_count": len(rows),

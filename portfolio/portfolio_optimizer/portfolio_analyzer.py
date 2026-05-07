@@ -159,6 +159,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from api.serializers import serialize_value
+from portfolio.instruments import is_spot_fx_symbol, normalize_spot_fx_symbol, spot_fx_currencies
 from utils.retry import yf_download, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
@@ -458,6 +459,8 @@ _PORTFOLIO_SOURCE_FIELDS = (
     "quantity",
     "shares",
     "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
     "currency",
     "base_currency",
     "country",
@@ -512,7 +515,15 @@ def _normalize_position_source_records(raw: pd.DataFrame) -> list[dict[str, Any]
                 record[field] = _source_scalar_text(value).lower() in true_values
             elif field in {"asset", "direction", "instrument_type", "source_type"}:
                 record[field] = _source_scalar_text(value).lower()
-            elif field in {"price_symbol", "currency", "base_currency", "country", "exchange"}:
+            elif field in {
+                "price_symbol",
+                "fx_base_currency",
+                "fx_quote_currency",
+                "currency",
+                "base_currency",
+                "country",
+                "exchange",
+            }:
                 record[field] = _source_scalar_text(value).upper()
             elif field in {"source_id", "idea_id", "company_name"}:
                 record[field] = _source_scalar_text(value)
@@ -1763,6 +1774,19 @@ def prepare_instrument_metadata(meta: pd.DataFrame) -> pd.DataFrame:
     else:
         out["instrument_type"] = out["instrument_type"].fillna("security").astype(str).str.strip().str.lower()
         out.loc[out["instrument_type"].eq(""), "instrument_type"] = "security"
+    for ticker in list(out.index):
+        symbol = str(out.loc[ticker, "price_symbol"] or ticker).strip().upper()
+        instrument_type = str(out.loc[ticker, "instrument_type"] or "security").strip().lower()
+        if instrument_type == "spot_fx" or (symbol.endswith("=X") and is_spot_fx_symbol(symbol)):
+            symbol = normalize_spot_fx_symbol(symbol)
+            fx_base, fx_quote = spot_fx_currencies(symbol)
+            out.loc[ticker, "instrument_type"] = "spot_fx"
+            out.loc[ticker, "asset"] = "fx"
+            out.loc[ticker, "price_symbol"] = symbol
+            out.loc[ticker, "fx_base_currency"] = fx_base
+            out.loc[ticker, "fx_quote_currency"] = fx_quote
+            out.loc[ticker, "currency"] = fx_quote
+            out.loc[ticker, "contract_multiplier"] = 1.0
     if "contract_multiplier" not in out.columns:
         out["contract_multiplier"] = 1.0
     out["contract_multiplier"] = pd.to_numeric(out["contract_multiplier"], errors="coerce").fillna(1.0)
@@ -1781,14 +1805,26 @@ def fetch_prices_for_portfolio_symbols(
 ) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
     symbol_map = {ticker: str(meta.loc[ticker, "price_symbol"] or ticker).strip().upper() for ticker in tickers}
     symbols_to_fetch = list(dict.fromkeys([*symbol_map.values(), *extra_tickers]))
+    spot_fx_symbols = {
+        symbol
+        for ticker, symbol in symbol_map.items()
+        if str(meta.loc[ticker].get("instrument_type") or "").strip().lower() == "spot_fx"
+    }
     symbol_currencies = fetch_currencies(symbols_to_fetch)
+    for symbol in spot_fx_symbols:
+        symbol_currencies[symbol] = BASE_CCY
     fx_tickers = get_required_fx_tickers(symbol_currencies)
     prices_by_symbol = download_prices(symbols_to_fetch, fx_tickers)
     prices = prices_by_symbol.copy()
     for ticker, symbol in symbol_map.items():
         if symbol in prices_by_symbol.columns:
             prices[ticker] = prices_by_symbol[symbol]
-    ticker_currencies = {ticker: symbol_currencies.get(symbol, BASE_CCY) for ticker, symbol in symbol_map.items()}
+    ticker_currencies = {
+        ticker: BASE_CCY
+        if str(meta.loc[ticker].get("instrument_type") or "").strip().lower() == "spot_fx"
+        else symbol_currencies.get(symbol, BASE_CCY)
+        for ticker, symbol in symbol_map.items()
+    }
     for ticker in extra_tickers:
         ticker_currencies[ticker] = symbol_currencies.get(ticker, BASE_CCY)
     return prices, ticker_currencies, symbol_map
@@ -2422,6 +2458,31 @@ def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> dict[str, float]:
     out["total_gross"] = float(np.abs(w).sum())
     out["total_net"] = float(w.sum())
     return out
+
+
+def unit_notional_in_base(rows: pd.DataFrame, *, base_currency: str = BASE_CCY) -> pd.Series:
+    price = pd.to_numeric(rows["price"], errors="coerce")
+    multiplier_raw = (
+        rows["contract_multiplier"] if "contract_multiplier" in rows.columns else pd.Series(1.0, index=rows.index)
+    )
+    multiplier = pd.to_numeric(multiplier_raw, errors="coerce").fillna(1.0).replace(0, np.nan)
+    unit = price * multiplier
+    instrument_raw = rows["instrument_type"] if "instrument_type" in rows.columns else pd.Series("", index=rows.index)
+    instrument_type = instrument_raw.fillna("").astype(str).str.lower()
+    spot_mask = instrument_type.eq("spot_fx")
+    if spot_mask.any():
+        fx_base_raw = (
+            rows["fx_base_currency"] if "fx_base_currency" in rows.columns else pd.Series("", index=rows.index)
+        )
+        fx_quote_raw = (
+            rows["fx_quote_currency"] if "fx_quote_currency" in rows.columns else pd.Series("", index=rows.index)
+        )
+        fx_base = fx_base_raw.fillna("").astype(str).str.upper()
+        fx_quote = fx_quote_raw.fillna("").astype(str).str.upper()
+        portfolio_base = base_currency.upper()
+        unit.loc[spot_mask & fx_quote.eq(portfolio_base)] = price.loc[spot_mask & fx_quote.eq(portfolio_base)]
+        unit.loc[spot_mask & fx_base.eq(portfolio_base)] = 1.0
+    return unit
 
 
 def compute_10yr_equivalent(w: pd.Series, meta: pd.DataFrame) -> float:
@@ -3799,6 +3860,8 @@ def optimize_portfolio(
                 "price_symbol": meta["price_symbol"].values,
                 "quantity": meta["quantity"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": _meta_series(meta, tickers, "fx_base_currency", "").values,
+                "fx_quote_currency": _meta_series(meta, tickers, "fx_quote_currency", "").values,
                 "direction": meta["direction"].values,
                 "direction_intended": meta["direction_intended"].values,
                 "contrarian": meta["contrarian"].values,
@@ -3825,10 +3888,11 @@ def optimize_portfolio(
         )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
-            unit_notional = weights_df["price"] * weights_df["contract_multiplier"].replace(0, np.nan)
+            unit_notional = unit_notional_in_base(weights_df)
             weights_df["quantity"] = (weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             weights_df["target_quantity"] = weights_df["quantity"]
             weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
+            weights_df["base_units"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("spot_fx"))
             weights_df["shares"] = weights_df["quantity"]
         weights_df = weights_df.sort_values("weight", ascending=False)
 
@@ -3864,6 +3928,8 @@ def optimize_portfolio(
                 "instrument_type": meta["instrument_type"].values,
                 "price_symbol": meta["price_symbol"].values,
                 "contract_multiplier": meta["contract_multiplier"].values,
+                "fx_base_currency": _meta_series(meta, tickers, "fx_base_currency", "").values,
+                "fx_quote_currency": _meta_series(meta, tickers, "fx_quote_currency", "").values,
                 "direction": meta["direction"].values,
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
@@ -3871,15 +3937,16 @@ def optimize_portfolio(
         )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            unit_notional = max_scaled_weights_df["price"] * max_scaled_weights_df["contract_multiplier"].replace(
-                0, np.nan
-            )
+            unit_notional = unit_notional_in_base(max_scaled_weights_df)
             max_scaled_weights_df["quantity"] = (
                 (max_scaled_weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
             )
             max_scaled_weights_df["target_quantity"] = max_scaled_weights_df["quantity"]
             max_scaled_weights_df["contracts"] = max_scaled_weights_df["quantity"].where(
                 max_scaled_weights_df["instrument_type"].eq("future")
+            )
+            max_scaled_weights_df["base_units"] = max_scaled_weights_df["quantity"].where(
+                max_scaled_weights_df["instrument_type"].eq("spot_fx")
             )
             max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)

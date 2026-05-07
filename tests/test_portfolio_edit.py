@@ -79,6 +79,8 @@ def test_save_and_get_hedge_positions(auth_client):
             "instrument_type": "security",
             "price_symbol": "SPY",
             "contract_multiplier": 1.0,
+            "fx_base_currency": None,
+            "fx_quote_currency": None,
             "currency": "USD",
             "country": "United States",
             "exchange": None,
@@ -185,6 +187,112 @@ def test_save_and_get_futures_position(auth_client):
     assert position["quantity"] == 2.0
     assert position["shares"] == 2.0
     assert position["contract_multiplier"] == 50.0
+
+
+def test_save_and_get_spot_fx_position(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {
+                    "ticker": "eur/usd",
+                    "instrument_type": "spot_fx",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 4,
+                    "cost_basis": 1.085,
+                    "quantity": 100_000,
+                }
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+
+    fetch_resp = auth_client.get("/api/v1/portfolio-positions")
+    assert fetch_resp.status_code == 200
+    position = fetch_resp.json()["positions"][0]
+    assert position["ticker"] == "EURUSD=X"
+    assert position["price_symbol"] == "EURUSD=X"
+    assert position["instrument_type"] == "spot_fx"
+    assert position["asset"] == "fx"
+    assert position["quantity"] == 100_000.0
+    assert position["shares"] == 100_000.0
+    assert position["contract_multiplier"] == 1.0
+    assert position["fx_base_currency"] == "EUR"
+    assert position["fx_quote_currency"] == "USD"
+    assert position["currency"] == "USD"
+    assert position["exchange"] == "FX"
+    assert position["cost_basis_base"] == pytest.approx(1.085)
+    assert position["notional_base"] == pytest.approx(108_500.0)
+
+
+def test_save_and_get_spot_fx_hedge_position(auth_client):
+    resp = auth_client.put(
+        "/api/v1/hedge-positions",
+        json={
+            "positions": [
+                {
+                    "ticker": "USDJPY",
+                    "instrument_type": "spot_fx",
+                    "direction": "short",
+                    "cost_basis": 155.0,
+                    "quantity": 100_000,
+                }
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+
+    fetch_resp = auth_client.get("/api/v1/hedge-positions")
+    assert fetch_resp.status_code == 200
+    position = fetch_resp.json()["positions"][0]
+    assert position["ticker"] == "USDJPY=X"
+    assert position["asset"] == "fx"
+    assert position["instrument_type"] == "spot_fx"
+    assert position["fx_base_currency"] == "USD"
+    assert position["fx_quote_currency"] == "JPY"
+    assert position["currency"] == "JPY"
+    assert position["fx_rate_to_base"] == pytest.approx(1 / 155)
+    assert position["cost_basis_base"] == pytest.approx(1.0)
+    assert position["notional_base"] == pytest.approx(100_000.0)
+
+
+def test_spot_fx_duplicate_aliases_fail(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {
+                    "ticker": "EURUSD",
+                    "instrument_type": "spot_fx",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 1.08,
+                    "quantity": 10_000,
+                },
+                {
+                    "ticker": "EUR/USD",
+                    "instrument_type": "spot_fx",
+                    "direction": "short",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 1.09,
+                    "quantity": 5_000,
+                },
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+    assert resp.status_code == 400
+    assert "Duplicate ticker" in resp.json()["detail"]
 
 
 def test_save_and_get_portfolio_position_preserves_negative_shares(auth_client):
@@ -472,6 +580,8 @@ def test_sqlite_init_backfills_legacy_position_columns():
             "instrument_type": "security",
             "price_symbol": "MU",
             "contract_multiplier": 1.0,
+            "fx_base_currency": None,
+            "fx_quote_currency": None,
             "currency": None,
             "country": None,
             "exchange": None,

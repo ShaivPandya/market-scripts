@@ -635,6 +635,8 @@ def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]
         "instrument_type": str(row.get("instrument_type") or "security").lower(),
         "price_symbol": str(row.get("price_symbol") or ticker).upper(),
         "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
+        "fx_base_currency": _optional_text(row.get("fx_base_currency")),
+        "fx_quote_currency": _optional_text(row.get("fx_quote_currency")),
         "role": role,
     }
 
@@ -651,6 +653,8 @@ def _hedge_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "instrument_type": str(row.get("instrument_type") or "security").lower(),
         "price_symbol": str(row.get("price_symbol") or ticker).upper(),
         "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
+        "fx_base_currency": _optional_text(row.get("fx_base_currency")),
+        "fx_quote_currency": _optional_text(row.get("fx_quote_currency")),
     }
 
 
@@ -891,6 +895,11 @@ def _as_optional_dict(value: Any) -> dict[str, Any] | None:
 def _optional_ticker(value: Any) -> str | None:
     ticker = str(value or "").strip().upper()
     return ticker or None
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _optional_int(value: Any) -> int | None:
