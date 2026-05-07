@@ -137,7 +137,7 @@ def default_contract_multiplier(
     return float(spec.contract_multiplier)
 
 
-def normalize_quantity(*, quantity: Any = None, shares: Any = None) -> float | None:
+def normalize_quantity(*, quantity: Any = None, shares: Any = None, allow_negative: bool = False) -> float | None:
     raw = quantity if quantity is not None else shares
     if raw is None or str(raw).strip() == "":
         return None
@@ -147,7 +147,7 @@ def normalize_quantity(*, quantity: Any = None, shares: Any = None) -> float | N
         return None
     if not math.isfinite(out):
         return None
-    return out if out >= 0 else abs(out)
+    return out if allow_negative or out >= 0 else abs(out)
 
 
 def notional_value(quantity: Any, price: Any, contract_multiplier: Any = 1.0) -> float | None:

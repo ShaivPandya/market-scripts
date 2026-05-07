@@ -66,8 +66,8 @@ def domain_write_scope(
     *,
     action_id: str,
     actor_type: str,
-    approval_id: int | None = None,
-    action_run_id: int | None = None,
+    approval_id: int | str | None = None,
+    action_run_id: int | str | None = None,
     source_type: str | None = None,
     source_id: str | None = None,
 ):

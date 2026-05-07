@@ -113,6 +113,29 @@ def test_save_and_get_hedge_positions(auth_client):
     assert updated_fetch.json()["positions"][0]["quantity"] == 8.5
 
 
+def test_save_and_get_hedge_positions_preserves_negative_shares(auth_client):
+    create_resp = auth_client.put(
+        "/api/v1/hedge-positions",
+        json={
+            "positions": [
+                {"ticker": "spy", "direction": "short", "cost_basis": 510.25, "shares": -12},
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+    assert create_resp.status_code == 200
+    assert create_resp.json()["status"] == "applied"
+
+    fetch_resp = auth_client.get("/api/v1/hedge-positions")
+    assert fetch_resp.status_code == 200
+    assert fetch_resp.json()["positions"][0]["ticker"] == "SPY"
+    assert fetch_resp.json()["positions"][0]["direction"] == "short"
+    assert fetch_resp.json()["positions"][0]["shares"] == -12.0
+    assert fetch_resp.json()["positions"][0]["quantity"] == -12.0
+    assert fetch_resp.json()["positions"][0]["notional_base"] == 6123.0
+
+
 def test_portfolio_settings_book_size_persists(auth_client):
     default_resp = auth_client.get("/api/v1/portfolio-settings")
     assert default_resp.status_code == 200

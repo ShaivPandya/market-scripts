@@ -13,7 +13,18 @@ from ontology.command_service import (
 )
 from ontology.object_service import OntologyObjectService
 from ontology.policy import admin_actor
+from ontology.schemas.identity import document_artifact_id
 from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
+
+SAMPLE_NEWS_DIGEST = """# Newsletter Digest - May 1, 2026
+
+*Generated: 2026-05-01*
+
+## liquidity_path
+
+- [MULTI-SIGNAL] Japan launches FX intervention for the first time since 2024 - (Bloomberg) - [body content]
+  - *MOF/BOJ-coordinated dollar-selling intervention with explicit final warning rhetoric.*
+"""
 
 
 class FakeObjectService:
@@ -163,6 +174,20 @@ class NormalizingTemporalRepo:
         return count
 
 
+def _isolate_news_digest_store(monkeypatch, tmp_path):
+    import portfolio.news_digests as digests
+
+    base = tmp_path / "news_digests"
+    monkeypatch.setattr(digests, "DIGESTS_DIR", base)
+    monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
+    monkeypatch.setattr(digests, "FILES_DIR", base / "files")
+    monkeypatch.setattr(digests, "DIGESTS_GCS_PREFIX", "test/news_digests")
+    monkeypatch.setattr(digests, "MANIFEST_GCS_KEY", "test/news_digests/manifest.json")
+    monkeypatch.setattr(digests, "FILES_GCS_PREFIX", "test/news_digests/files")
+    monkeypatch.setenv("STATE_STORAGE_BACKEND", "local")
+    return digests
+
+
 def test_propose_and_apply_position_update_writes_only_ontology_objects():
     service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
     context = OntologyCommandContext(
@@ -303,6 +328,105 @@ def test_hedge_update_apply_accepts_enriched_payload_fields():
     assert approval["entity_type"] == "hedge_positions"
     assert applied["application_status"] == "applied"
     assert "hedge_position:SPY" in repo.objects
+
+
+def test_hedge_update_apply_preserves_negative_quantity():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_hedge_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "direction": "short",
+                    "shares": -12,
+                    "quantity": -12,
+                }
+            ]
+        },
+        context,
+        reason="signed hedge",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+    hedge = repo.objects["hedge_position:SPY"]["properties_json"]
+
+    assert applied["application_status"] == "applied"
+    assert approval["proposed_change"]["positions"][0]["shares"] == -12
+    assert hedge["shares"] == -12
+    assert hedge["quantity"] == -12
+
+
+def test_news_digest_create_approval_persists_digest_store_and_projection(monkeypatch, tmp_path):
+    digests = _isolate_news_digest_store(monkeypatch, tmp_path)
+    monkeypatch.setattr("api.routers.portfolio_news._index_digest_best_effort", lambda _detail: None)
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_portfolio_news_digest",
+        {"content": SAMPLE_NEWS_DIGEST, "filename": "05012026_digest.md"},
+        context,
+        reason="upload digest",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    listed = digests.list_digests()
+    digest_id = listed["items"][0]["id"]
+    detail = digests.get_digest(digest_id)
+    doc_uid = document_artifact_id("news_digest", digest_id)
+    doc = repo.objects[doc_uid]["properties_json"]
+
+    assert approval["entity_type"] == "news_digest_create"
+    assert applied["application_status"] == "applied"
+    assert listed["counts"]["digests"] == 1
+    assert detail["content"] == SAMPLE_NEWS_DIGEST
+    assert digest_id == "2026-05-01-newsletter-digest-may-1-2026"
+    assert doc["document_id"] == digest_id
+    assert doc["status"] == "active"
+    assert "05012026_digest" not in doc_uid
+    assert not doc_uid.startswith("document_artifact:news_digest:news_digest")
+
+
+def test_news_digest_delete_approval_removes_digest_store_and_marks_projection(monkeypatch, tmp_path):
+    digests = _isolate_news_digest_store(monkeypatch, tmp_path)
+    monkeypatch.setattr("api.routers.portfolio_news._index_digest_best_effort", lambda _detail: None)
+    monkeypatch.setattr("api.routers.portfolio_news._delete_digest_index_best_effort", lambda _digest_id: None)
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_portfolio_news_digest",
+        {"content": SAMPLE_NEWS_DIGEST, "filename": "05012026_digest.md"},
+        context,
+        reason="upload digest",
+    )
+    service.resolve_approval(create["id"], "approved", "apply", context)
+    digest_id = digests.list_digests()["items"][0]["id"]
+
+    delete = service.propose_action(
+        "delete_portfolio_news_digest",
+        {"digest_id": digest_id},
+        context,
+        reason="delete digest",
+    )
+    applied = service.resolve_approval(delete["id"], "approved", "apply", context)
+    doc = repo.objects[document_artifact_id("news_digest", digest_id)]["properties_json"]
+
+    assert delete["entity_type"] == "news_digest_delete"
+    assert applied["application_status"] == "applied"
+    assert digests.list_digests()["counts"]["digests"] == 0
+    with pytest.raises(FileNotFoundError):
+        digests.get_digest(digest_id)
+    assert doc["document_id"] == digest_id
+    assert doc["status"] == "deleted"
 
 
 @pytest.mark.parametrize(

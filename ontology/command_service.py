@@ -474,6 +474,7 @@ class OntologyCommandService:
             provenance_id=provenance_id,
             input_hash=input_hash,
             approval_object_id=approval["id"],
+            action_run_id=run_uid,
         )
         run = self.objects.write_object(
             "ActionRun",
@@ -589,6 +590,119 @@ class OntologyCommandService:
             if relation_uid:
                 self.objects.expire_relation(relation_uid, tx_to=now)
 
+    def _create_portfolio_news_digest(
+        self,
+        payload: Mapping[str, Any],
+        context: OntologyCommandContext,
+        *,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+        now: str,
+        approval_object_id: str | None,
+        action_run_id: str | None,
+    ) -> list[dict[str, Any]]:
+        from api.routers.portfolio_news import _index_digest_best_effort
+        from ontology.action_registry import CreatePortfolioNewsDigestInput
+        from ontology.domain_write_service import domain_write_scope
+        from portfolio.news_digests import save_digest
+
+        typed = CreatePortfolioNewsDigestInput(**dict(payload))
+        with domain_write_scope(
+            action_id="create_portfolio_news_digest",
+            actor_type=context.actor.actor_type,
+            approval_id=approval_object_id,
+            action_run_id=action_run_id,
+            source_type=context.source_type,
+            source_id=context.source_id,
+        ):
+            detail = save_digest(typed.content, filename=typed.filename)
+
+        digest_id = _non_blank(detail.get("id"), "digest_id")
+        row = self.objects.write_object(
+            "DocumentArtifact",
+            _strip_uid_prefix(digest_id, "document_artifact"),
+            {
+                "document_type": "news_digest",
+                "document_id": digest_id,
+                "title": detail.get("title") or detail.get("filename") or digest_id,
+                "content_hash": detail.get("content_hash") or hashlib.sha256(typed.content.encode("utf-8")).hexdigest(),
+                "artifact_uri": f"news_digests/{digest_id}.md",
+                "status": "active",
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "created_at": detail.get("uploaded_at") or now,
+                "updated_at": detail.get("updated_at") or now,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        try:
+            _index_digest_best_effort(detail)
+        except Exception:
+            logger.debug("Failed to index news digest %s", digest_id, exc_info=True)
+        return [_version_ref_from_row(row)]
+
+    def _delete_portfolio_news_digest(
+        self,
+        payload: Mapping[str, Any],
+        context: OntologyCommandContext,
+        *,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+        now: str,
+        approval_object_id: str | None,
+        action_run_id: str | None,
+    ) -> list[dict[str, Any]]:
+        from api.routers.portfolio_news import _delete_digest_index_best_effort
+        from ontology.action_registry import DeletePortfolioNewsDigestInput
+        from ontology.domain_write_service import domain_write_scope
+        from portfolio.news_digests import delete_digest
+
+        typed = DeletePortfolioNewsDigestInput(**dict(payload))
+        with domain_write_scope(
+            action_id="delete_portfolio_news_digest",
+            actor_type=context.actor.actor_type,
+            approval_id=approval_object_id,
+            action_run_id=action_run_id,
+            source_type=context.source_type,
+            source_id=context.source_id,
+        ):
+            deleted = delete_digest(typed.digest_id)
+        if not deleted:
+            raise OntologyCommandNotFound("News digest", typed.digest_id)
+
+        row = self.objects.write_object(
+            "DocumentArtifact",
+            _strip_uid_prefix(typed.digest_id, "document_artifact"),
+            {
+                "document_type": "news_digest",
+                "document_id": typed.digest_id,
+                "title": typed.digest_id,
+                "content_hash": None,
+                "artifact_uri": f"news_digests/{typed.digest_id}.md",
+                "status": "deleted",
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "created_at": now,
+                "updated_at": now,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        try:
+            _delete_digest_index_best_effort(typed.digest_id)
+        except Exception:
+            logger.debug("Failed to delete news digest index %s", typed.digest_id, exc_info=True)
+        return [_version_ref_from_row(row)]
+
     def _write_action_targets(
         self,
         action_id: str,
@@ -598,6 +712,7 @@ class OntologyCommandService:
         provenance_id: str,
         input_hash: str,
         approval_object_id: str | None = None,
+        action_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         now = _now()
         actor = actor_to_dict(context.actor)
@@ -709,31 +824,33 @@ class OntologyCommandService:
             )
             refs.append(_version_ref_from_row(row))
             return refs
-        if action_id in {"create_portfolio_news_digest", "delete_portfolio_news_digest"}:
-            digest_id = str(payload.get("digest_id") or payload.get("filename") or _stable_hash(payload))
-            content = str(payload.get("content") or "")
-            status = "deleted" if action_id == "delete_portfolio_news_digest" else "active"
-            row = self.objects.write_object(
-                "DocumentArtifact",
-                f"news_digest:{digest_id}",
-                {
-                    "document_type": "news_digest",
-                    "document_id": digest_id,
-                    "title": str(payload.get("filename") or digest_id),
-                    "content_hash": _stable_hash(content) if content else None,
-                    "status": status,
-                    "source_type": context.source_type,
-                    "source_id": context.source_id,
-                    "created_at": now,
-                    "updated_at": now if status == "deleted" else None,
-                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-                },
-                now,
-                actor=actor,
-                provenance=provenance_id,
-                input_hash=input_hash,
+        if action_id == "create_portfolio_news_digest":
+            refs.extend(
+                self._create_portfolio_news_digest(
+                    payload,
+                    context,
+                    actor=actor,
+                    provenance_id=provenance_id,
+                    input_hash=input_hash,
+                    now=now,
+                    approval_object_id=approval_object_id,
+                    action_run_id=action_run_id,
+                )
             )
-            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "delete_portfolio_news_digest":
+            refs.extend(
+                self._delete_portfolio_news_digest(
+                    payload,
+                    context,
+                    actor=actor,
+                    provenance_id=provenance_id,
+                    input_hash=input_hash,
+                    now=now,
+                    approval_object_id=approval_object_id,
+                    action_run_id=action_run_id,
+                )
+            )
             return refs
         if action_id in {"create_catalyst", "update_catalyst_status"}:
             existing = _legacy_object_context(self.objects, "Catalyst", payload.get("catalyst_id"))
@@ -2183,6 +2300,10 @@ def _entity_type_for_action(action_id: str) -> str:
         return "hedge_positions"
     if action_id == "create_recommendation":
         return "recommendation"
+    if action_id == "create_portfolio_news_digest":
+        return "news_digest_create"
+    if action_id == "delete_portfolio_news_digest":
+        return "news_digest_delete"
     if action_id in RESEARCH_ACTION_IDS:
         return "research_object"
     return "ontology_action"
@@ -2204,6 +2325,10 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
     if action_id == "create_recommendation":
         rec = _dict(payload.get("record") or payload)
         return instrument_id(rec.get("instrument") or rec.get("ticker") or _stable_hash(rec)), "Instrument"
+    if action_id == "delete_portfolio_news_digest":
+        digest_id = str(payload.get("digest_id") or "").strip()
+        if digest_id:
+            return document_artifact_id("news_digest", digest_id), "DocumentArtifact"
     return None, None
 
 

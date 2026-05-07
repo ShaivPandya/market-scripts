@@ -36,7 +36,7 @@ def _position_pnl(
     pnl_pct = (pnl_per_unit / cost_basis) * 100
     pnl_dollar = None
     if quantity is not None:
-        pnl_dollar = pnl_per_unit * quantity * contract_multiplier
+        pnl_dollar = pnl_per_unit * abs(quantity) * contract_multiplier
     return round(pnl_pct, 2), round(pnl_dollar, 4) if pnl_dollar is not None else None, round(pnl_per_unit, 4)
 
 

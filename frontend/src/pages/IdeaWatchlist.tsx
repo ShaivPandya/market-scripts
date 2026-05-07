@@ -493,7 +493,7 @@ export function IdeaWatchlist() {
       <section className="mt-5">
         <AnalyzerWorkbench
           universeMode="portfolio_plus_ideas"
-          title="Portfolio + Idea Analyzer"
+          title="Idea Analyzer"
           subtitle="Manual analyzer run using current portfolio rows plus watchlist ideas marked long or short."
           stateKey={IDEA_WATCHLIST_ANALYZER_STATE_KEY}
         />
