@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Archive, FileUp, Play, Save } from "lucide-react"
@@ -35,6 +35,9 @@ import {
 } from "@/lib/ideaUtils"
 import { cn } from "@/lib/utils"
 
+const TABS = ["Overview", "Management Quality", "Thesis", "Evaluation"] as const
+type Tab = typeof TABS[number]
+
 const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
   { value: "watching", label: "Watching" },
   { value: "researching", label: "Researching" },
@@ -57,11 +60,16 @@ function StatusPill({ status }: { status: string }) {
   return <StatusBadge tone={STATUS_TONE[status] ?? "neutral"}>{formatLabel(status)}</StatusBadge>
 }
 
+function normalizeTagsString(value: string): string {
+  return value.split(",").map(t => t.trim()).filter(Boolean).join(",")
+}
+
 export function IdeaDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
 
+  const [tab, setTab] = useState<Tab>("Overview")
   const [editNotes, setEditNotes] = useState("")
   const [editTags, setEditTags] = useState("")
   const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
@@ -81,6 +89,19 @@ export function IdeaDetail() {
   const detail = detailQuery.data ?? null
   const selectedIdea = detail?.idea ?? null
   const selectedEvaluation = selectedIdea ? latestEvaluation(selectedIdea, detail) : null
+
+  const originalNotes = selectedIdea?.user_notes || ""
+  const originalTagsString = (selectedIdea?.tags || []).join(", ")
+  const originalStatus = (selectedIdea?.status as IdeaStatus) || "watching"
+
+  const isDirty = useMemo(() => {
+    if (!selectedIdea) return false
+    return (
+      editNotes !== originalNotes ||
+      normalizeTagsString(editTags) !== normalizeTagsString(originalTagsString) ||
+      editStatus !== originalStatus
+    )
+  }, [selectedIdea, editNotes, editTags, editStatus, originalNotes, originalTagsString, originalStatus])
 
   useEffect(() => {
     if (!selectedIdea) return
@@ -276,8 +297,8 @@ export function IdeaDetail() {
       ) : !selectedIdea ? (
         <ErrorMessage message="Idea not found." />
       ) : (
-        <section className="theme-surface rounded-lg p-4">
-          <div className="space-y-5">
+        <>
+          <section className="theme-surface mb-4 rounded-lg p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -309,164 +330,193 @@ export function IdeaDetail() {
             </div>
 
             {jobBannerMessage() && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
                 {jobBannerMessage()} ({activeJobId?.slice(0, 8)})
               </div>
             )}
             {jobError && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
                 {jobError}
               </div>
             )}
+          </section>
 
-            <div className="grid gap-3 md:grid-cols-[1fr_11rem]">
-              <TextInput label="Tags" value={editTags} onChange={setEditTags} placeholder="quality, cyclical" />
-              <SelectInput label="Status" value={editStatus} onChange={value => setEditStatus(value as IdeaStatus)} options={IDEA_STATUSES} />
-            </div>
-            <div>
-              <label className="theme-field-label" htmlFor="idea-notes">Notes</label>
-              <textarea
-                id="idea-notes"
-                value={editNotes}
-                onChange={event => setEditNotes(event.target.value)}
-                className="theme-input mt-1 min-h-[120px] w-full resize-y"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <div className="mb-4 flex w-full max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-app [-webkit-overflow-scrolling:touch]">
+            {TABS.map(t => (
               <button
-                type="button"
-                onClick={() => updateMutation.mutate()}
-                disabled={updateMutation.isPending}
-                className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+                key={t}
+                onClick={() => setTab(t)}
+                className={cn(
+                  "shrink-0 px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
+                  tab === t
+                    ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                    : "border-transparent text-muted hover:text-app",
+                )}
               >
-                <Save size={16} aria-hidden="true" />
-                Save
+                {t}
+                {t === "Evaluation" && detail?.evaluations && detail.evaluations.length > 0 && (
+                  <span className="ml-1 text-xs text-subtle">({detail.evaluations.length})</span>
+                )}
               </button>
-              {updateMutation.error && <span className="self-center text-sm text-red-600">{updateMutation.error.message}</span>}
-            </div>
+            ))}
+          </div>
 
-            <section className="rounded-lg border border-app bg-card-muted p-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="section-title text-sm">Overview</h3>
-                  <p className="mt-1 text-xs text-subtle">
-                    {detail?.documents?.overview_present ? "Stored" : "Missing"}
-                    {detail?.documents?.thesis_present ? " / thesis stored" : ""}
-                    {detail?.documents?.management_quality_present ? " / management stored" : ""}
-                  </p>
+          <div className="theme-surface rounded-lg p-4">
+            {tab === "Overview" && (
+              <section>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="section-title text-sm">Overview</h3>
+                    <p className="mt-1 text-xs text-subtle">
+                      {detail?.documents?.overview_present ? "Stored" : "Missing"}
+                      {detail?.documents?.thesis_present ? " / thesis stored" : ""}
+                      {detail?.documents?.management_quality_present ? " / management stored" : ""}
+                    </p>
+                  </div>
+                  <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
+                    <FileUp size={16} aria-hidden="true" />
+                    Upload
+                    <input
+                      type="file"
+                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
+                      className="hidden"
+                      onChange={event => {
+                        const file = event.target.files?.[0]
+                        event.currentTarget.value = ""
+                        if (file) uploadMutation.mutate({ idea: selectedIdea, file })
+                      }}
+                    />
+                  </label>
                 </div>
-                <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
-                  <FileUp size={16} aria-hidden="true" />
-                  Upload
-                  <input
-                    type="file"
-                    accept=".md,.markdown,.pdf,text/markdown,application/pdf"
-                    className="hidden"
-                    onChange={event => {
-                      const file = event.target.files?.[0]
-                      event.currentTarget.value = ""
-                      if (file) uploadMutation.mutate({ idea: selectedIdea, file })
-                    }}
-                  />
-                </label>
-              </div>
-              {uploadMessage && <p className="mt-2 text-xs text-subtle">{uploadMessage}</p>}
-              {detail?.documents?.overview_error && (
-                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                  {detail.documents.overview_error}
-                </p>
-              )}
-              {detail?.documents?.overview_content ? (
-                <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
+                {uploadMessage && <p className="mb-2 text-xs text-subtle">{uploadMessage}</p>}
+                {detail?.documents?.overview_error && (
+                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    {detail.documents.overview_error}
+                  </p>
+                )}
+                {detail?.documents?.overview_content ? (
                   <EquityOverviewReadView
                     content={detail.documents.overview_content}
                     parsed={detail.documents.overview_parsed ?? null}
                     ticker={selectedIdea.ticker}
                   />
-                </div>
-              ) : (
-                <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">No overview stored.</p>
-              )}
-            </section>
+                ) : (
+                  <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No overview stored.</p>
+                )}
+              </section>
+            )}
 
-            <section className="rounded-lg border border-app bg-card-muted p-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="section-title text-sm">Management Quality</h3>
-                  <p className="mt-1 text-xs text-subtle">
-                    {detail?.documents?.management_quality_present ? "Stored" : "Missing"}
-                  </p>
+            {tab === "Management Quality" && (
+              <section>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="section-title text-sm">Management Quality</h3>
+                    <p className="mt-1 text-xs text-subtle">
+                      {detail?.documents?.management_quality_present ? "Stored" : "Missing"}
+                    </p>
+                  </div>
+                  <label className={cn(
+                    "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
+                    managementUploadMutation.isPending && "pointer-events-none opacity-60",
+                  )}>
+                    <FileUp size={16} aria-hidden="true" />
+                    {managementUploadMutation.isPending ? "Uploading" : "Upload"}
+                    <input
+                      type="file"
+                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
+                      className="hidden"
+                      disabled={managementUploadMutation.isPending}
+                      onChange={event => {
+                        const file = event.target.files?.[0]
+                        event.currentTarget.value = ""
+                        if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
+                      }}
+                    />
+                  </label>
                 </div>
-                <label className={cn(
-                  "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
-                  managementUploadMutation.isPending && "pointer-events-none opacity-60",
-                )}>
-                  <FileUp size={16} aria-hidden="true" />
-                  {managementUploadMutation.isPending ? "Uploading" : "Upload"}
-                  <input
-                    type="file"
-                    accept=".md,.markdown,.pdf,text/markdown,application/pdf"
-                    className="hidden"
-                    disabled={managementUploadMutation.isPending}
-                    onChange={event => {
-                      const file = event.target.files?.[0]
-                      event.currentTarget.value = ""
-                      if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
-                    }}
-                  />
-                </label>
-              </div>
-              {managementUploadMessage && <p className="mt-2 text-xs text-subtle">{managementUploadMessage}</p>}
-              {detail?.documents?.management_quality_error && (
-                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                  {detail.documents.management_quality_error}
-                </p>
-              )}
-              {detail?.documents?.management_quality_content ? (
-                <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
+                {managementUploadMessage && <p className="mb-2 text-xs text-subtle">{managementUploadMessage}</p>}
+                {detail?.documents?.management_quality_error && (
+                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    {detail.documents.management_quality_error}
+                  </p>
+                )}
+                {detail?.documents?.management_quality_content ? (
                   <ManagementQualityPreview
                     content={detail.documents.management_quality_content}
                     parsed={detail.documents.management_quality_parsed ?? null}
                   />
+                ) : (
+                  <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">
+                    No management quality assessment stored.
+                  </p>
+                )}
+              </section>
+            )}
+
+            {tab === "Thesis" && (
+              <section className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-[1fr_11rem]">
+                  <TextInput label="Tags" value={editTags} onChange={setEditTags} placeholder="quality, cyclical" />
+                  <SelectInput label="Status" value={editStatus} onChange={value => setEditStatus(value as IdeaStatus)} options={IDEA_STATUSES} />
                 </div>
-              ) : (
-                <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">
-                  No management quality assessment stored.
-                </p>
-              )}
-            </section>
-
-            <EvaluationPanel
-              evaluation={selectedEvaluation}
-              onAccept={() => acceptMutation.mutate()}
-              onReject={() => rejectMutation.mutate()}
-              accepting={acceptMutation.isPending}
-              rejecting={rejectMutation.isPending}
-            />
-            {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
-
-            {detail?.evaluations && detail.evaluations.length > 1 && (
-              <section className="space-y-3">
-                <h3 className="section-title text-sm">History</h3>
-                <div className="space-y-2">
-                  {detail.evaluations.slice(1, 8).map(evaluation => (
-                    <button
-                      key={evaluation.id}
-                      type="button"
-                      className="w-full rounded-lg border border-app bg-card-muted px-3 py-3 text-left transition-colors hover:bg-hover"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <ActionPill action={evaluation.action as IdeaAction} />
-                        <span className="font-mono text-sm text-app">{scoreText(evaluation.score)}</span>
-                        <span className="text-sm text-subtle">{formatDate(evaluation.evaluated_at)}</span>
-                      </div>
-                    </button>
-                  ))}
+                <div>
+                  <label className="theme-field-label" htmlFor="idea-notes">Notes</label>
+                  <textarea
+                    id="idea-notes"
+                    value={editNotes}
+                    onChange={event => setEditNotes(event.target.value)}
+                    className="theme-input mt-1 min-h-[120px] w-full resize-y"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateMutation.mutate()}
+                    disabled={!isDirty || updateMutation.isPending}
+                    className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Save size={16} aria-hidden="true" />
+                    {updateMutation.isPending ? "Saving" : "Save"}
+                  </button>
+                  {updateMutation.error && <span className="self-center text-sm text-red-600">{updateMutation.error.message}</span>}
                 </div>
               </section>
             )}
+
+            {tab === "Evaluation" && (
+              <section className="space-y-5">
+                <EvaluationPanel
+                  evaluation={selectedEvaluation}
+                  onAccept={() => acceptMutation.mutate()}
+                  onReject={() => rejectMutation.mutate()}
+                  accepting={acceptMutation.isPending}
+                  rejecting={rejectMutation.isPending}
+                />
+                {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
+
+                {detail?.evaluations && detail.evaluations.length > 1 && (
+                  <section className="space-y-3">
+                    <h3 className="section-title text-sm">History</h3>
+                    <div className="space-y-2">
+                      {detail.evaluations.slice(1, 8).map(evaluation => (
+                        <div
+                          key={evaluation.id}
+                          className="w-full rounded-lg border border-app bg-card-muted px-3 py-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <ActionPill action={evaluation.action as IdeaAction} />
+                            <span className="font-mono text-sm text-app">{scoreText(evaluation.score)}</span>
+                            <span className="text-sm text-subtle">{formatDate(evaluation.evaluated_at)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </section>
+            )}
           </div>
-        </section>
+        </>
       )}
     </main>
   )
