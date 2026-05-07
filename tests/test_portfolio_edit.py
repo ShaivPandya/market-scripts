@@ -187,6 +187,36 @@ def test_save_and_get_futures_position(auth_client):
     assert position["contract_multiplier"] == 50.0
 
 
+def test_save_and_get_portfolio_position_preserves_negative_shares(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "asset": "equity",
+                    "direction": "short",
+                    "cost_basis": 510.25,
+                    "shares": -12,
+                }
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+
+    fetch_resp = auth_client.get("/api/v1/portfolio-positions")
+    assert fetch_resp.status_code == 200
+    position = fetch_resp.json()["positions"][0]
+    assert position["ticker"] == "SPY"
+    assert position["direction"] == "short"
+    assert position["shares"] == -12.0
+    assert position["quantity"] == -12.0
+    assert position["notional_base"] == 6123.0
+
+
 def test_unsafe_futures_symbol_is_rejected(auth_client):
     resp = auth_client.put(
         "/api/v1/portfolio-positions",

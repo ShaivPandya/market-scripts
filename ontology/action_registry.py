@@ -291,7 +291,7 @@ class PortfolioPositionInput(BaseModel):
             symbol=self.price_symbol,
             override=self.contract_multiplier,
         )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares)
+        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
         self.shares = self.quantity
         return self
 

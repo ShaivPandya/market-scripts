@@ -383,9 +383,7 @@ def _normalize_position_rows(
             cost_basis = float(cost_basis_raw) if cost_basis_raw is not None else None
         except (ValueError, TypeError):
             cost_basis = None
-        quantity = normalize_quantity(
-            quantity=p.get("quantity"), shares=p.get("shares"), allow_negative=role == "hedge"
-        )
+        quantity = normalize_quantity(quantity=p.get("quantity"), shares=p.get("shares"), allow_negative=True)
         shares = quantity
         contract_multiplier = default_contract_multiplier(
             instrument_type=instrument_type,

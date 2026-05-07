@@ -212,6 +212,37 @@ def test_propose_and_apply_position_update_writes_only_ontology_objects():
     assert any(rel["relation_type"] == "executed_decision_applies_approval" for rel in service.objects.relations)  # type: ignore[attr-defined]
 
 
+def test_position_update_apply_preserves_negative_quantity():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "asset": "equity",
+                    "direction": "short",
+                    "shares": -12,
+                    "quantity": -12,
+                }
+            ]
+        },
+        context,
+        reason="signed regular position",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+    position = repo.objects["position:SPY"]["properties_json"]
+
+    assert applied["application_status"] == "applied"
+    assert approval["proposed_change"]["positions"][0]["shares"] == -12
+    assert position["shares"] == -12
+    assert position["quantity"] == -12
+
+
 def test_position_update_apply_accepts_reviewed_valuation_fields():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
