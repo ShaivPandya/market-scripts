@@ -613,8 +613,8 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
     if not isinstance(payload, Mapping):
         raise ValueError("Value range payload is required")
 
-    if isinstance(payload.get("metric_assumptions"), Mapping):
-        raw_assumptions = payload.get("metric_assumptions")
+    raw_assumptions = payload.get("metric_assumptions")
+    if isinstance(raw_assumptions, Mapping):
         metric_assumptions: dict[str, dict[str, Any]] = {}
         for key, value in raw_assumptions.items():
             try:
@@ -787,8 +787,9 @@ def value_range_payload(
         if saved_assumption is not None
         else {"metric_assumptions": {}}
     )
-    metric_assumptions = (
-        stored.get("metric_assumptions") if isinstance(stored.get("metric_assumptions"), Mapping) else {}
+    raw_metric_assumptions = stored.get("metric_assumptions")
+    metric_assumptions: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], raw_metric_assumptions)) if isinstance(raw_metric_assumptions, Mapping) else {}
     )
     selected_metric = stored.get("selected_metric")
     metric = (
@@ -796,7 +797,8 @@ def value_range_payload(
         if selected_metric in VALUATION_COLUMNS
         else (_first_value_range_metric(metric_assumptions) or _default_value_range_metric(metrics, effective_weights))
     )
-    assumption = metric_assumptions.get(metric) if isinstance(metric_assumptions.get(metric), Mapping) else None
+    raw_assumption = metric_assumptions.get(metric)
+    assumption = cast(Mapping[str, Any], raw_assumption) if isinstance(raw_assumption, Mapping) else None
     saved = assumption is not None
     price_currency = (
         _clean_currency(currency_context.get("price_currency")) or _clean_currency(market_data.get("currency")) or "USD"
@@ -825,6 +827,8 @@ def value_range_payload(
             out["denominator"] = denominator * display_rate
         return out
 
+    raw_scenarios = assumption.get("scenarios") if assumption is not None else None
+    scenario_rows = cast(Mapping[str, Any], raw_scenarios) if isinstance(raw_scenarios, Mapping) else {}
     scenarios = {
         scenario: compute_value_range_scenario(
             metric,
@@ -837,7 +841,7 @@ def value_range_payload(
             denominator_to_output_fx_rate=denominator_to_price_rate,
             fx_rate_as_of=denominator_to_price.get("as_of"),
         )
-        for scenario, row in ((assumption or {}).get("scenarios") or {}).items()
+        for scenario, row in scenario_rows.items()
         if scenario in VALUE_RANGE_SCENARIOS and isinstance(row, Mapping)
     }
 
