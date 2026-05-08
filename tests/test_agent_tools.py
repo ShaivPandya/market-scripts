@@ -575,6 +575,78 @@ def test_agent_capabilities_endpoint(auth_client):
     assert "run_fx_model" in names
 
 
+def test_get_catalysts_tool_returns_object_payload(monkeypatch):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    rows = [
+        {
+            "id": 1,
+            "ticker": "APO",
+            "description": "Origination recovery",
+            "status": "pending",
+        }
+    ]
+    seen = {}
+
+    def fake_catalysts(self, ticker, status=None, limit=100):
+        seen["ticker"] = ticker
+        return rows
+
+    monkeypatch.setattr(OntologyRuntimeReadService, "catalysts", fake_catalysts)
+
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "apo"}))
+
+    assert payload.get("error") is None
+    assert payload["ticker"] == "APO"
+    assert payload["catalysts"] == rows
+    assert payload["count"] == 1
+    assert payload["_meta"]["status"] == "ok"
+    assert seen["ticker"] == "APO"
+
+
+def test_get_catalysts_tool_empty_result_is_not_blocked(monkeypatch):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    monkeypatch.setattr(OntologyRuntimeReadService, "catalysts", lambda self, ticker, status=None, limit=100: [])
+
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "APO"}))
+
+    assert payload.get("error") is None
+    assert payload["ticker"] == "APO"
+    assert payload["catalysts"] == []
+    assert payload["count"] == 0
+    assert payload["_meta"]["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "args", "method_name", "collection_key"),
+    [
+        ("get_kill_conditions", {"ticker": "APO"}, "kill_conditions", "kill_conditions"),
+        ("get_action_items", {"ticker": "APO"}, "action_items", "action_items"),
+        ("get_watch_triggers", {"ticker": "APO"}, "watch_triggers", "watch_triggers"),
+        ("get_pending_approvals", {"ticker": "APO"}, "approvals", "pending_approvals"),
+        ("get_workflow_history", {"ticker": "APO"}, "workflow_runs", "workflow_runs"),
+    ],
+)
+def test_control_plane_list_tools_return_object_payloads(monkeypatch, tool_name, args, method_name, collection_key):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    rows = [{"id": f"{collection_key}:1", "ticker": "APO"}]
+
+    def fake_reader(self, *reader_args, **reader_kwargs):
+        return rows
+
+    monkeypatch.setattr(OntologyRuntimeReadService, method_name, fake_reader)
+
+    payload = json.loads(agent_tools.execute_tool(tool_name, args))
+
+    assert payload.get("error") is None
+    assert payload[collection_key] == rows
+    assert payload["count"] == 1
+    assert payload["_meta"]["status"] == "ok"
+    assert payload.get("type") != "tool_output_validation"
+
+
 def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(monkeypatch):
     dates = pd.date_range("2026-04-24", periods=2, freq="D")
     raw = {

@@ -35,11 +35,19 @@ function formatPct(v: unknown): string {
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`
 }
 
-function formatRevenue(v: unknown): string {
+function currencyPrefix(currency: string): string {
+  const normalized = currency.toUpperCase()
+  if (normalized === "USD") return "$"
+  if (normalized === "TWD") return "NT$"
+  return `${normalized} `
+}
+
+function formatRevenue(v: unknown, currency = "USD"): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
-  if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(2)}B`
-  if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(2)}M`
-  return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  const prefix = currencyPrefix(currency)
+  if (Math.abs(v) >= 1e9) return `${prefix}${(v / 1e9).toFixed(2)}B`
+  if (Math.abs(v) >= 1e6) return `${prefix}${(v / 1e6).toFixed(2)}M`
+  return `${prefix}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
 function formatEps(v: unknown): string {
@@ -80,7 +88,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const [view, setView] = useState<FinancialViewMode>("annual")
 
   const { data: rawData, isLoading, error } = useApiQuery<Record<string, unknown>>(
-    ["financials-overview-v9", ticker],
+    ["financials-overview-v10", ticker],
     () => runFinancials({ ticker }),
     300_000,
   )
@@ -90,15 +98,23 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const quarterly = (rawData?.quarterly ?? {}) as Record<string, unknown>
   const revenueRows = (view === "annual" ? annual.revenue : quarterly.revenue) as FinancialRow[] | undefined
   const epsRows = (view === "annual" ? annual.eps : quarterly.eps) as FinancialRow[] | undefined
+  const dataSource = typeof rawData?.data_source === "string" ? rawData.data_source : "sec_edgar"
+  const financialCurrency = typeof rawData?.financial_currency === "string" ? rawData.financial_currency : "USD"
+  const revenueFormatter = (v: unknown) => formatRevenue(v, financialCurrency)
 
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-app">Financials</h3>
 
-      {isLoading && <LoadingSpinner message="Loading SEC EDGAR financials..." />}
+      {isLoading && <LoadingSpinner message="Loading live financials..." />}
       {error && <p className="text-xs text-red-500">Live financials unavailable: {String(error)}</p>}
       {rawData && (
         <>
+          {dataSource === "yfinance" && (
+            <p className="text-xs text-subtle">
+              Yahoo Finance fallback. Quarterly YoY metrics and filing breakdown are unavailable.
+            </p>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard title="3Y Revenue CAGR" value={formatPct(metrics.revenue_cagr_3y)} />
             <MetricCard title="3Y EPS CAGR" value={formatPct(metrics.eps_cagr_3y)} />
@@ -120,7 +136,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <DataTable columns={revenueHistoryCols} rows={mapFinancialRows(revenueRows ?? [], formatRevenue)} maxHeight="300px" label="Revenue" />
+            <DataTable columns={revenueHistoryCols} rows={mapFinancialRows(revenueRows ?? [], revenueFormatter)} maxHeight="300px" label="Revenue" />
             <DataTable columns={revenueHistoryCols} rows={mapFinancialRows(epsRows ?? [], formatEps)} maxHeight="300px" label="EPS" />
           </div>
         </>

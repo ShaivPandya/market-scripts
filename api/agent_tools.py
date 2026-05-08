@@ -2649,6 +2649,13 @@ def _legacy_entity_id(value: Any) -> int | None:
         return None
 
 
+def _collection_payload(key: str, rows: list[dict[str, Any]], **filters: Any) -> dict[str, Any]:
+    payload = {name: value for name, value in filters.items() if value is not None and value != ""}
+    payload[key] = rows
+    payload["count"] = len(rows)
+    return payload
+
+
 def _dispatch(
     name: str,
     args: dict,
@@ -3168,37 +3175,39 @@ def _dispatch(
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
         ticker = args.get("ticker", "").strip().upper()
-        return OntologyRuntimeReadService().catalysts(ticker), {"cache": "n/a"}
+        rows = OntologyRuntimeReadService().catalysts(ticker)
+        return _collection_payload("catalysts", rows, ticker=ticker), {"cache": "n/a"}
 
     if name == "get_kill_conditions":
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
         ticker = args.get("ticker", "").strip().upper()
-        return OntologyRuntimeReadService().kill_conditions(ticker), {"cache": "n/a"}
+        rows = OntologyRuntimeReadService().kill_conditions(ticker)
+        return _collection_payload("kill_conditions", rows, ticker=ticker), {"cache": "n/a"}
 
     if name == "get_action_items":
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return OntologyRuntimeReadService().action_items(
-            ticker=args.get("ticker"),
-            status=args.get("status", "open"),
-        ), {"cache": "n/a"}
+        ticker = args.get("ticker")
+        status = args.get("status", "open")
+        rows = OntologyRuntimeReadService().action_items(ticker=ticker, status=status)
+        return _collection_payload("action_items", rows, ticker=ticker, status=status), {"cache": "n/a"}
 
     if name == "get_watch_triggers":
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return OntologyRuntimeReadService().watch_triggers(
-            ticker=args.get("ticker"),
-            status=args.get("status", "active"),
-        ), {"cache": "n/a"}
+        ticker = args.get("ticker")
+        status = args.get("status", "active")
+        rows = OntologyRuntimeReadService().watch_triggers(ticker=ticker, status=status)
+        return _collection_payload("watch_triggers", rows, ticker=ticker, status=status), {"cache": "n/a"}
 
     if name == "get_pending_approvals":
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return OntologyRuntimeReadService().approvals(
-            ticker=args.get("ticker"),
-            status=args.get("status", "pending"),
-        ), {"cache": "n/a"}
+        ticker = args.get("ticker")
+        status = args.get("status", "pending")
+        rows = OntologyRuntimeReadService().approvals(ticker=ticker, status=status)
+        return _collection_payload("pending_approvals", rows, ticker=ticker, status=status), {"cache": "n/a"}
 
     if name == "get_dossier":
         from api.routers.dossier import get_dossier as _get_dossier
@@ -3216,7 +3225,13 @@ def _dispatch(
         workflow_name = args.get("workflow_name")
         if workflow_name:
             runs = [run for run in runs if run.get("workflow_name") == workflow_name]
-        return runs, {"cache": "n/a"}
+        return _collection_payload(
+            "workflow_runs",
+            runs,
+            ticker=args.get("ticker"),
+            workflow_name=workflow_name,
+            limit=int(args.get("limit", 10)),
+        ), {"cache": "n/a"}
 
     # -------------------------------------------------------------------
     # Full app capability registry additions

@@ -1,3 +1,9 @@
+import sys
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
 import portfolio.momentum.fundamental_momentum.financials_single as fs
 
 
@@ -402,3 +408,49 @@ def test_quarterly_selection_prefers_period_own_filing_over_later_comparative():
     q1 = next(r for r in quarterly if r["end"] == "2025-03-31")
 
     assert q1["accn"] == "q1-2025-own"
+
+
+def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkeypatch):
+    income_stmt = pd.DataFrame(
+        {
+            pd.Timestamp("2025-12-31"): [160.0, 4.0],
+            pd.Timestamp("2024-12-31"): [140.0, 3.0],
+            pd.Timestamp("2023-12-31"): [120.0, 2.5],
+            pd.Timestamp("2022-12-31"): [100.0, 2.0],
+        },
+        index=["Total Revenue", "Diluted EPS"],
+    )
+
+    class FakeTicker:
+        def __init__(self, ticker: str):
+            self.ticker = ticker
+            self.info = {
+                "longName": "Taiwan Semiconductor Manufacturing Company Limited",
+                "financialCurrency": "TWD",
+            }
+            self.income_stmt = income_stmt
+            self.financials = income_stmt
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=FakeTicker))
+    monkeypatch.setattr(fs, "get_cik_for_ticker", lambda ticker: "0001046179")
+    monkeypatch.setattr(
+        fs,
+        "fetch_companyfacts_by_cik",
+        lambda cik: {"entityName": "Taiwan Semiconductor Manufacturing Company Limited", "facts": {"us-gaap": {}}},
+    )
+    monkeypatch.setattr(fs, "fetch_submissions_by_cik", lambda cik: {})
+
+    out = fs.get_data("tsm")
+
+    assert out["ticker"] == "TSM"
+    assert out["data_source"] == "yfinance"
+    assert out["cik"] is None
+    assert out["financial_currency"] == "TWD"
+    assert out["quarterly"] == {"revenue": [], "eps": []}
+    assert out["annual"]["revenue"][0]["period_end"] == "2025-12-31"
+    assert out["annual"]["revenue"][0]["form"] == "Yahoo Finance"
+    assert out["annual"]["revenue"][0]["yoy_growth"] == pytest.approx((160.0 - 140.0) / 140.0)
+    assert out["metrics"]["revenue_cagr_3y"] == pytest.approx((160.0 / 100.0) ** (1.0 / 3.0) - 1.0)
+    assert out["metrics"]["eps_cagr_3y"] == pytest.approx((4.0 / 2.0) ** (1.0 / 3.0) - 1.0)
+    assert out["metrics"]["avg_yoy_revenue_growth_3q"] is None
+    assert out["metrics"]["avg_yoy_eps_growth_3q"] is None

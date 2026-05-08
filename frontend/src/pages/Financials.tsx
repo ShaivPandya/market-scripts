@@ -27,7 +27,7 @@ type BreakdownRow = {
 }
 
 type AxisStatus = "found" | "not_disclosed" | "unavailable"
-type AxisSource = "xbrl" | "ai" | "none"
+type AxisSource = "xbrl" | "html" | "ai" | "none"
 
 type AxisExtractionMeta = {
   status?: AxisStatus
@@ -44,11 +44,19 @@ function formatPctWhole(v: unknown): string {
   return `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`
 }
 
-function formatRevenue(v: unknown): string {
+function currencyPrefix(currency: string): string {
+  const normalized = currency.toUpperCase()
+  if (normalized === "USD") return "$"
+  if (normalized === "TWD") return "NT$"
+  return `${normalized} `
+}
+
+function formatRevenue(v: unknown, currency = "USD"): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
-  if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(2)}B`
-  if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(2)}M`
-  return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  const prefix = currencyPrefix(currency)
+  if (Math.abs(v) >= 1e9) return `${prefix}${(v / 1e9).toFixed(2)}B`
+  if (Math.abs(v) >= 1e6) return `${prefix}${(v / 1e6).toFixed(2)}M`
+  return `${prefix}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
 function formatRevenueWhole(v: unknown): string {
@@ -150,7 +158,7 @@ export function Financials() {
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
   const { data: rawData, isFetching, isError, error } = useQuery({
-    queryKey: ["financials-v9", submittedTicker],
+    queryKey: ["financials-v10", submittedTicker],
     queryFn: () => runFinancials({ ticker: submittedTicker! }),
     enabled: Boolean(submittedTicker),
     staleTime: Infinity,
@@ -167,6 +175,9 @@ export function Financials() {
 
   const data = rawData as Record<string, unknown> | undefined
   const metrics = (data?.metrics ?? {}) as Record<string, unknown>
+  const dataSource = typeof data?.data_source === "string" ? data.data_source : "sec_edgar"
+  const financialCurrency = typeof data?.financial_currency === "string" ? data.financial_currency : "USD"
+  const revenueFormatter = (v: unknown) => formatRevenue(v, financialCurrency)
 
   const annual = (data?.annual ?? {}) as Record<string, unknown>
   const quarterly = (data?.quarterly ?? {}) as Record<string, unknown>
@@ -229,15 +240,23 @@ export function Financials() {
         </ActionButton>
       </form>
 
-      {isLoading && <LoadingSpinner message="Fetching SEC EDGAR financials..." />}
+      {isLoading && <LoadingSpinner message="Fetching live financials..." />}
       {isError && <ErrorMessage message={String(error)} />}
 
       {data && !isLoading && (
         <div className="space-y-6">
           <div>
             <p className="text-sm text-gray-500">
-              {(data.company_name as string) || "Company"} ({(data.ticker as string) || ""}) · CIK {(data.cik as string) || "N/A"}
+              {(data.company_name as string) || "Company"} ({(data.ticker as string) || ""}) ·{" "}
+              {dataSource === "yfinance"
+                ? `Yahoo Finance fallback · ${financialCurrency.toUpperCase()} financials`
+                : `CIK ${(data.cik as string) || "N/A"}`}
             </p>
+            {dataSource === "yfinance" ? (
+              <p className="mt-1 text-sm text-gray-500">
+                Quarterly YoY metrics and filing revenue breakdown are unavailable from this fallback.
+              </p>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -260,10 +279,11 @@ export function Financials() {
           </div>
 
           <div className="space-y-4">
-            <HistoryTable title="Revenue" rows={revenueRows ?? []} valueFormatter={formatRevenue} />
+            <HistoryTable title="Revenue" rows={revenueRows ?? []} valueFormatter={revenueFormatter} />
             <HistoryTable title="EPS" rows={epsRows ?? []} valueFormatter={formatEps} />
           </div>
 
+          {dataSource !== "yfinance" && (
           <div className="space-y-4">
             <h2 className="text-base font-semibold">Latest Filing Revenue Breakdown</h2>
             {sourceFiling ? (
@@ -306,6 +326,7 @@ export function Financials() {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
 

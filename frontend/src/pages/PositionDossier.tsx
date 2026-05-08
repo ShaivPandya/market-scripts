@@ -1321,6 +1321,15 @@ function valueRangeRequestFromDraft(draft: ValueRangeDraft): PositionValueRangeR
   return { metric: draft.metric, scenarios }
 }
 
+function valueRangeDraftsMatch(a: ValueRangeDraft, b: ValueRangeDraft): boolean {
+  if (a.metric !== b.metric) return false
+  return VALUE_RANGE_SCENARIOS.every(
+    scenario =>
+      a.scenarios[scenario].multiple === b.scenarios[scenario].multiple &&
+      a.scenarios[scenario].denominator === b.scenarios[scenario].denominator,
+  )
+}
+
 function valuationStatusClass(status?: string | null): string {
   if (status === "ok") return "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
   if (status === "degraded") return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
@@ -1370,6 +1379,7 @@ function ValueRangePanel({
   const metricLabel = valuation.metrics[draft.metric]?.label ?? draft.metric
   const currentPrice = formatSharePrice(valuation.market_data?.current_price)
   const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
+  const hasUnsavedChanges = !valueRangeDraftsMatch(draft, valueRangeDraftFromData(valuation))
 
   return (
     <section className="space-y-3">
@@ -1395,6 +1405,7 @@ function ValueRangePanel({
           />
           <ActionButton
             onClick={handleSave}
+            disabled={!hasUnsavedChanges}
             loading={isSaving}
             loadingText="Saving..."
             className="min-h-10 px-4 sm:self-end sm:w-auto"
