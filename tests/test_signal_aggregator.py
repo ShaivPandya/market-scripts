@@ -15,8 +15,8 @@ def test_regime_thresholds():
 
     assert _regime_label(39.99) == "risk-on"
     assert _regime_label(40.0) == "transitional"
-    assert _regime_label(64.99) == "transitional"
-    assert _regime_label(65.0) == "risk-off"
+    assert _regime_label(54.99) == "transitional"
+    assert _regime_label(55.0) == "risk-off"
 
 
 def test_vix_score_formula():

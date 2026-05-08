@@ -252,11 +252,11 @@ export function SignalAggregator() {
   ]
 
   const backtestRows: Record<string, unknown>[] = [
-    { factor: "VIX", direction: "Contrarian", weight: "20%", spread: -1.74, interpretation: "High fear → higher returns" },
-    { factor: "BREADTH", direction: "Contrarian", weight: "20%", spread: -1.83, interpretation: "Poor breadth → mean reversion" },
-    { factor: "LIQUIDITY", direction: "Same-Dir", weight: "35%", spread: 1.13, interpretation: "Tight liquidity → lower returns" },
-    { factor: "SECTOR", direction: "Contrarian", weight: "15%", spread: -0.55, interpretation: "Weak contrarian signal" },
-    { factor: "MOMENTUM", direction: "Contrarian", weight: "10%", spread: -1.23, interpretation: "Moderate contrarian signal" },
+    { factor: "VIX", direction: "Contrarian", weight: "20%", spread: -1.99, interpretation: "High fear → higher returns" },
+    { factor: "BREADTH", direction: "Contrarian", weight: "20%", spread: -1.97, interpretation: "Poor breadth → mean reversion" },
+    { factor: "LIQUIDITY", direction: "Same-Dir", weight: "35%", spread: 1.73, interpretation: "Tight liquidity → lower returns" },
+    { factor: "SECTOR", direction: "Contrarian", weight: "15%", spread: -0.90, interpretation: "Weak contrarian signal" },
+    { factor: "MOMENTUM", direction: "Contrarian", weight: "10%", spread: -1.54, interpretation: "Moderate contrarian signal" },
   ]
 
   const factorRows = factors.map(f => ({
@@ -498,30 +498,30 @@ export function SignalAggregator() {
               Backtest Evidence (10-Year)
             </h2>
             <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Based on 523 weekly observations (2016-2026). The composite score is a{" "}
-              <strong>contrarian</strong> indicator: &ldquo;risk-off&rdquo; (high stress) historically
-              precedes the highest 4-week forward returns. Liquidity is the exception &mdash;
-              tight conditions are directionally negative for returns.
+              Based on 531 weekly observations (2016-2026). The composite score is mostly a{" "}
+              <strong>contrarian</strong> indicator: elevated stress has tended to precede better
+              4-week forward returns. Liquidity is the exception &mdash; tight conditions are
+              directionally negative for returns.
             </div>
             <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <MetricCard
                 title="Risk-On (Score < 40)"
-                value="+1.07%"
-                subtitle="4-wk fwd return spread"
+                value="+1.03%"
+                subtitle="avg 4-wk fwd return"
                 signal="success"
                 signalLabel="LOW STRESS"
               />
               <MetricCard
-                title="Transitional (40-65)"
-                value="+2.45%"
-                subtitle="4-wk fwd return spread"
+                title="Transitional (40-55)"
+                value="+3.22%"
+                subtitle="avg 4-wk fwd return"
                 signal="warning"
                 signalLabel="MIXED"
               />
               <MetricCard
-                title="Risk-Off (Score ≥ 65)"
-                value="+10.70%"
-                subtitle="4-wk fwd return spread"
+                title="Risk-Off (Score ≥ 55)"
+                value="+1.39%"
+                subtitle="avg 4-wk fwd return"
                 signal="error"
                 signalLabel="HIGH STRESS"
               />

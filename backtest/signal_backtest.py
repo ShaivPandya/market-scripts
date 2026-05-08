@@ -53,7 +53,7 @@ CONFIGURED_WEIGHTS: dict[str, float] = {
     "momentum": 0.10,
 }
 
-DEFAULT_LO, DEFAULT_HI = 40.0, 65.0
+DEFAULT_LO, DEFAULT_HI = 40.0, 55.0
 
 FRED_LIQUIDITY = {
     "fed_assets": "WALCL",

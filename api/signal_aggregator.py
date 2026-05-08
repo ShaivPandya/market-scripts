@@ -8,35 +8,35 @@ The composite score (0-100) describes current market stress. Higher = more stres
 
 WEIGHT RATIONALE (validated via 10-year backtest: backtest/signal_backtest.py)
 =============================================================================
-Backtest period: 2016-03 to 2026-03, 523 weekly observations, all 6 factors.
+Backtest period: 2016-03 to 2026-05, 531 weekly observations, all 5 factors.
 
 Factor weights:
   vix        0.20  VIX term structure ratio (VIX3M/VIX). Threshold 18 ≈ 20-yr
                    median VIX; /12 ≈ 1σ above mean. Strong contrarian signal:
-                   4-week quintile spread -1.74 (high fear → higher fwd returns).
+                   4-week quintile spread -1.99 (high fear → higher fwd returns).
   breadth    0.20  % of SPX above 200d/20d MA + 20d lows. Strongest contrarian
-                   signal: 4-week spread -1.83. Poor breadth → mean reversion.
+                   signal: 4-week spread -1.97. Poor breadth → mean reversion.
   liquidity  0.35  US-only FRED composite (net liq, reserves, OAS, NFCI, M2/GDP).
-                   ONLY factor with directional predictive power: spread +1.13.
+                   ONLY factor with directional predictive power: spread +1.73.
                    Tight liquidity genuinely predicts lower forward returns.
                    Weight increased from 0.20 → 0.35 (absorbed positioning's 0.15).
   sector     0.15  SPDR sector ETF relative perf, 3M change, 200DMA distance.
-                   Weak contrarian signal: spread -0.55.
+                   Weak contrarian signal: spread -0.90.
   momentum   0.10  SPX constituent relative ROC bullish ratio. Moderate
-                   contrarian signal: spread -1.23.
+                   contrarian signal: spread -1.54.
 
 Regime thresholds:
-  The composite score has mean ~20, median ~18, std ~10 over the backtest
-  period. The thresholds are intentionally set high so that
-  "risk-off" flags are rare and meaningful (genuine stress events like
-  COVID-19 Mar 2020). For a more balanced split, use ~15/28 (≈40th/75th
-  percentile), but this dilutes the signal.
+  The composite score has mean ~25.9, median ~21.9, std ~10.6 over the
+  backtest period. Current thresholds are risk-on < 40, transitional < 55,
+  risk-off >= 55. This keeps "risk-off" rare but less crisis-only than the
+  prior 65 threshold: ~90% risk-on, ~7% transitional, ~3% risk-off.
 
 Predictive interpretation:
   The composite works as a CONTRARIAN indicator. Empirically, "risk-off"
-  periods (high composite) have *higher* subsequent SPX returns — classic
-  "buy the fear" mean reversion. 4-week forward return spread:
-    risk-on: +1.07%  |  transitional: +2.45%  |  risk-off: +10.70%
+  periods (high composite) generally have higher subsequent SPX returns —
+  classic "buy the fear" mean reversion, though the latest 40/55 split shows
+  the strongest 4-week mean in the transitional bucket:
+    risk-on: +1.03%  |  transitional: +3.22%  |  risk-off: +1.39%
   The `forward_outlook` field in the output flips this for predictive use:
     elevated composite → "opportunity" (higher expected fwd returns)
     low composite      → "complacent"  (average/lower expected fwd returns)
@@ -69,6 +69,8 @@ from utils.market_freshness import (
 
 DEFAULT_LOOKBACK_WEEKS = 156
 DEFAULT_POSITIONING_INSTRUMENTS = "SP500,NASDAQ,RUSSELL,US10Y,EUR"
+DEFAULT_REGIME_LO = 40.0
+DEFAULT_REGIME_HI = 55.0
 
 CONFIGURED_WEIGHTS: dict[str, float] = {
     "vix": 0.20,
@@ -441,14 +443,11 @@ def _score_momentum(momentum_data: dict[str, Any]) -> tuple[float | None, dict[s
 
 
 def _regime_label(score: float) -> str:
-    # Thresholds set high so "risk-off" flags are rare and meaningful.
-    # At 40/65, ~94% of weeks are risk-on, ~6% transitional, <1% risk-off
-    # over the 2016-2026 backtest. This is intentional: risk-off should only
-    # fire during genuine stress events (e.g. COVID Mar-2020).
-    # For a more balanced split, use ~15/28 (40th/75th percentile).
-    if score < 40.0:
+    # Latest 2016-2026 backtest favors 40/55 over the prior 40/65 split:
+    # ~90% risk-on, ~7% transitional, ~3% risk-off.
+    if score < DEFAULT_REGIME_LO:
         return "risk-on"
-    if score < 65.0:
+    if score < DEFAULT_REGIME_HI:
         return "transitional"
     return "risk-off"
 
