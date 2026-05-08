@@ -75,6 +75,10 @@ function analyzerDirection(idea: InvestmentIdea | null): IdeaAnalyzerDirection {
   return direction === "long" || direction === "short" ? direction : "inactive"
 }
 
+function portfolioContextEnabledForIdea(idea: InvestmentIdea | null): boolean {
+  return idea?.metadata?.use_portfolio_context !== false
+}
+
 export function IdeaDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -106,6 +110,7 @@ export function IdeaDetail() {
   const originalTagsString = (selectedIdea?.tags || []).join(", ")
   const originalStatus = (selectedIdea?.status as IdeaStatus) || "watching"
   const originalAnalyzerDirection = analyzerDirection(selectedIdea)
+  const originalUsePortfolioContext = portfolioContextEnabledForIdea(selectedIdea)
 
   const isDirty = useMemo(() => {
     if (!selectedIdea) return false
@@ -210,7 +215,10 @@ export function IdeaDetail() {
 
   const evaluateMutation = useMutation({
     mutationFn: ({ ideaId, forceRefresh }: { ideaId: string; forceRefresh?: boolean }) =>
-      startIdeaEvaluationJob(ideaId, { force_refresh: Boolean(forceRefresh) }),
+      startIdeaEvaluationJob(ideaId, {
+        force_refresh: Boolean(forceRefresh),
+        use_portfolio_context: portfolioContextEnabledForIdea(selectedIdea),
+      }),
     onSuccess: (job, variables) => {
       setJobError(null)
       setJobSnapshot(job)
@@ -222,6 +230,15 @@ export function IdeaDetail() {
       persistActiveJob(job.job_id)
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
+    },
+  })
+
+  const portfolioContextMutation = useMutation({
+    mutationFn: ({ ideaId, enabled }: { ideaId: string; enabled: boolean }) =>
+      updateIdea(ideaId, { use_portfolio_context: enabled }),
+    onSuccess: data => {
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+      void qc.invalidateQueries({ queryKey: ["idea", data.idea.id] })
     },
   })
 
@@ -332,14 +349,14 @@ export function IdeaDetail() {
                   <StatusPill status={selectedIdea.status} />
                 </div>
                 <p className="mt-1 text-sm text-subtle">{selectedIdea.company_name || "Company name not set"}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => evaluateMutation.mutate({ ideaId: selectedIdea.id, forceRefresh: true })}
-                  disabled={Boolean(activeJobId) || evaluateMutation.isPending}
-                  className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
-                >
+	              </div>
+	              <div className="flex flex-wrap gap-2">
+	                <button
+	                  type="button"
+	                  onClick={() => evaluateMutation.mutate({ ideaId: selectedIdea.id, forceRefresh: true })}
+	                  disabled={Boolean(activeJobId) || evaluateMutation.isPending || portfolioContextMutation.isPending}
+	                  className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+	                >
                   <Play size={16} aria-hidden="true" />
                   Run Evaluation
                 </button>
@@ -516,15 +533,21 @@ export function IdeaDetail() {
               </section>
             )}
 
-            {tab === "Evaluation" && (
-              <section className="space-y-5">
-                <EvaluationPanel
-                  evaluation={selectedEvaluation}
-                  onAccept={() => acceptMutation.mutate()}
-                  onReject={() => rejectMutation.mutate()}
-                  accepting={acceptMutation.isPending}
-                  rejecting={rejectMutation.isPending}
-                />
+	            {tab === "Evaluation" && (
+	              <section className="space-y-5">
+	                <EvaluationPanel
+	                  evaluation={selectedEvaluation}
+	                  onAccept={() => acceptMutation.mutate()}
+	                  onReject={() => rejectMutation.mutate()}
+	                  accepting={acceptMutation.isPending}
+	                  rejecting={rejectMutation.isPending}
+	                  portfolioContextEnabled={originalUsePortfolioContext}
+	                  onPortfolioContextChange={enabled => {
+	                    if (!selectedIdea) return
+	                    portfolioContextMutation.mutate({ ideaId: selectedIdea.id, enabled })
+	                  }}
+	                  portfolioContextUpdating={portfolioContextMutation.isPending}
+	                />
                 {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
 
                 {detail?.evaluations && detail.evaluations.length > 1 && (

@@ -208,6 +208,12 @@ export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "acce
 export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
 export type IdeaAnalyzerDirection = "inactive" | "long" | "short"
 
+export interface InvestmentIdeaMetadata {
+  analyzer_direction?: IdeaAnalyzerDirection | string
+  use_portfolio_context?: boolean
+  [key: string]: unknown
+}
+
 export interface InvestmentIdea {
   id: string
   legacy_id?: number | null
@@ -224,7 +230,7 @@ export interface InvestmentIdea {
   latest_evaluation_id: string | null
   latest_job_id: string | null
   accepted_recommendation_id: string | null
-  metadata?: Record<string, unknown>
+  metadata?: InvestmentIdeaMetadata
   latest_evaluation?: IdeaEvaluation | null
 }
 
@@ -293,6 +299,10 @@ export interface IdeaAnalyzerContext {
   [key: string]: unknown
 }
 
+export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
+  portfolio_context_used?: boolean
+}
+
 export interface IdeaEvaluation {
   id: string
   legacy_id?: number | null
@@ -308,7 +318,7 @@ export interface IdeaEvaluation {
   rationale: string
   factor_scores: Record<string, IdeaFactorScore>
   missing_information: IdeaMissingInformation[]
-  data_quality: Record<string, unknown>
+  data_quality: IdeaEvaluationDataQuality
   evidence: IdeaEvidenceItem[]
   disconfirming_evidence: IdeaEvidenceItem[]
   catalyst: string | null
@@ -2281,6 +2291,7 @@ export const createIdea = (body: {
   tags?: string[]
   status?: IdeaStatus
   analyzer_direction?: IdeaAnalyzerDirection
+  use_portfolio_context?: boolean
 }) => client.post("/ideas", body).then(r => r.data as IdeaDetailResponse)
 
 export const updateIdea = (id: string, body: {
@@ -2290,12 +2301,13 @@ export const updateIdea = (id: string, body: {
   tags?: string[]
   status?: IdeaStatus
   analyzer_direction?: IdeaAnalyzerDirection
+  use_portfolio_context?: boolean
 }) => client.put(`/ideas/${encodeURIComponent(id)}`, body).then(r => r.data as IdeaDetailResponse)
 
 export const deleteIdea = (id: string) =>
   client.delete(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as { status: string; deleted: boolean; idea_id: string })
 
-export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean }) =>
+export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean; use_portfolio_context?: boolean }) =>
   client
     .post(`/ideas/${encodeURIComponent(id)}/evaluate/async`, body ?? {}, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
@@ -2305,9 +2317,9 @@ export const fetchIdeaEvaluationJob = (jobId: string) =>
     .get(`/ideas/evaluate/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
 
-export const startIdeaComparisonEvaluationJob = () =>
+export const startIdeaComparisonEvaluationJob = (body?: { use_portfolio_context?: boolean }) =>
   client
-    .post("/ideas/evaluate-all/async", {}, { timeout: 30_000 })
+    .post("/ideas/evaluate-all/async", body ?? {}, { timeout: 30_000 })
     .then(r => r.data as IdeaComparisonJobResponse)
 
 export const fetchIdeaComparisonEvaluationJob = (jobId: string) =>

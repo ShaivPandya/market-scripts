@@ -69,6 +69,7 @@ import { ThesisUpload } from "@/components/ThesisUpload"
 import { OverviewUpload } from "@/components/OverviewUpload"
 import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
 import { cn } from "@/lib/utils"
+import { cleanDossierDisplayText } from "@/lib/dossierText"
 
 interface DossierData {
   ticker: string
@@ -850,7 +851,7 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
 }
 
 function ManagementRatingBadge({ value }: { value?: string | null }) {
-  const rating = (value || "Insufficient evidence").trim()
+  const rating = cleanDossierDisplayText(value) || "Insufficient evidence"
   const normalized = rating.toLowerCase()
   const className =
     normalized.includes("strong") || normalized.includes("handled well")
@@ -870,10 +871,21 @@ function ManagementRatingBadge({ value }: { value?: string | null }) {
 
 function cleanedManagementBullets(items?: ManagementQualityBullet[] | null): ManagementQualityBullet[] {
   return (items || [])
-    .map(item => ({
-      ...item,
-      text: item.text.replace(/\s*\*\*Response\*\*:\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[\u2014\u2013-]\s*.+)?$/i, "").trim(),
-    }))
+    .map(item => {
+      const textWithoutInlineResponse = item.text.replace(
+        /\s*(?:\*\*)?Response(?:\*\*)?:\s*(?:[*_`~]+)?\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[\u2014\u2013-]\s*.+)?$/i,
+        "",
+      )
+      const responseRating = cleanDossierDisplayText(item.response_rating)
+      const responseText = cleanDossierDisplayText(item.response_text)
+      return {
+        ...item,
+        title: cleanDossierDisplayText(item.title) || null,
+        text: cleanDossierDisplayText(textWithoutInlineResponse),
+        response_rating: responseRating || undefined,
+        response_text: responseText || null,
+      }
+    })
     .filter(item => {
       const title = (item.title || "").trim()
       const text = item.text.trim()
