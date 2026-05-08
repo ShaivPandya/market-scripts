@@ -1342,8 +1342,10 @@ export const fetchIndustryMonitor = (refresh = false) =>
 export const industryTranscriptPdfUrl = (ticker: string) =>
   `${client.defaults.baseURL}/industry-monitor/transcripts/${encodeURIComponent(ticker)}/pdf`
 
-export const fetchYieldCurve = (lookback_days = 90) =>
-  client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)
+export const fetchYieldCurve = (lookback_days = 90, country?: string | null) =>
+  client
+    .get("/yield-curve", { params: { lookback_days, country: country || undefined } })
+    .then(r => r.data)
 
 export const fetchBondDashboard = () =>
   client.get("/bond-dashboard").then(r => r.data)

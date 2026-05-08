@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   LineChart,
   Line,
@@ -58,6 +59,13 @@ interface YieldCurveResponse {
 }
 
 const DEFAULT_LOOKBACK_DAYS = 90
+const YIELD_CURVE_STALE_TIME_MS = 5 * 60 * 1000
+const YIELD_CURVE_COUNTRIES = [
+  { code: "US", name: "United States" },
+  { code: "UK", name: "United Kingdom" },
+  { code: "DE", name: "Germany" },
+  { code: "JP", name: "Japan" },
+] as const
 
 function fmtYield(v: unknown): string {
   if (v == null) return "N/A"
@@ -91,13 +99,57 @@ function slopeSignal(v: number | null): "success" | "warning" | "error" | "info"
 
 export function YieldCurve() {
   const [countryCode, setCountryCode] = useState("US")
+  const queryClient = useQueryClient()
+  const selectedCountryName = YIELD_CURVE_COUNTRIES.find(c => c.code === countryCode)?.name ?? countryCode
 
-  const { data, isLoading, error } = useApiQuery<YieldCurveResponse>(
-    ["yield-curve", DEFAULT_LOOKBACK_DAYS],
-    () => fetchYieldCurve(DEFAULT_LOOKBACK_DAYS),
+  const { data, isLoading, error, isSuccess } = useApiQuery<YieldCurveResponse>(
+    ["yield-curve", DEFAULT_LOOKBACK_DAYS, countryCode],
+    () => fetchYieldCurve(DEFAULT_LOOKBACK_DAYS, countryCode),
+    YIELD_CURVE_STALE_TIME_MS,
   )
 
-  if (isLoading) return <LoadingSpinner message="Fetching yield curve data..." />
+  useEffect(() => {
+    if (!isSuccess) return
+
+    let cancelled = false
+    let timeoutId: number | null = null
+    let idleId: number | null = null
+
+    const prefetchRemainingCountries = async () => {
+      for (const country of YIELD_CURVE_COUNTRIES) {
+        if (cancelled || country.code === countryCode) continue
+        try {
+          await queryClient.prefetchQuery({
+            queryKey: ["yield-curve", DEFAULT_LOOKBACK_DAYS, country.code],
+            queryFn: () => fetchYieldCurve(DEFAULT_LOOKBACK_DAYS, country.code),
+            staleTime: YIELD_CURVE_STALE_TIME_MS,
+          })
+        } catch {
+          // Background prefetch is opportunistic; the active query will surface errors when selected.
+        }
+      }
+    }
+
+    const startPrefetch = () => {
+      void prefetchRemainingCountries()
+    }
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(startPrefetch)
+    } else {
+      timeoutId = window.setTimeout(startPrefetch, 1000)
+    }
+
+    return () => {
+      cancelled = true
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId)
+      }
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
+  }, [countryCode, isSuccess, queryClient])
+
+  if (isLoading) return <LoadingSpinner message={`Fetching ${selectedCountryName} yield curve data...`} />
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load"} />
 
   const countries = Array.isArray(data.countries) ? data.countries : []
@@ -182,7 +234,7 @@ export function YieldCurve() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <RefreshButton queryKeys={[["yield-curve", DEFAULT_LOOKBACK_DAYS]]} />
+          <RefreshButton queryKeys={[["yield-curve", DEFAULT_LOOKBACK_DAYS, selectedCode]]} />
         </div>
       </div>
 
@@ -191,7 +243,7 @@ export function YieldCurve() {
           label="Country"
           value={selectedCode}
           onChange={setCountryCode}
-          options={countries.map(c => ({ value: c.code, label: c.name }))}
+          options={YIELD_CURVE_COUNTRIES.map(c => ({ value: c.code, label: c.name }))}
           className="w-full sm:w-64"
         />
         <div className="text-xs text-gray-400 sm:pb-2">

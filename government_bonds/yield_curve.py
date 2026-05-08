@@ -66,6 +66,7 @@ COUNTRIES = [
     ("DE", "Germany"),
     ("JP", "Japan"),
 ]
+COUNTRY_NAME_BY_CODE = dict(COUNTRIES)
 
 FRED_SERIES = {
     "US": {
@@ -132,6 +133,22 @@ _CLOSE_PROBE_TICKER = "SPY"
 
 def _cache_path(lookback_days: int) -> Path:
     return _CACHE_DIR / f"yield_curve_{lookback_days}d.json"
+
+
+def _country_cache_path(lookback_days: int, country_code: str) -> Path:
+    return _CACHE_DIR / f"yield_curve_{lookback_days}d_{country_code.lower()}.json"
+
+
+def _normalize_country_code(country: str | None) -> str | None:
+    if country is None:
+        return None
+    code = country.strip().upper()
+    if not code:
+        return None
+    if code not in COUNTRY_NAME_BY_CODE:
+        supported = ", ".join(COUNTRY_NAME_BY_CODE)
+        raise ValueError(f"Unsupported country code {code!r}; expected one of: {supported}")
+    return code
 
 
 def _load_cache(path: Path) -> dict | None:
@@ -607,18 +624,45 @@ def _build_country_curve(
     }
 
 
-def get_data(lookback_days: int = 90) -> dict:
+def _build_yield_curve_result(lookback_days: int, countries_to_fetch: list[tuple[str, str]]) -> dict:
+    fred_client, fred_warn = _build_fred_client()
+
+    countries: list[dict] = []
+    for code, name in countries_to_fetch:
+        countries.append(
+            _build_country_curve(
+                country_code=code,
+                country_name=name,
+                lookback_days=lookback_days,
+                fred_client=fred_client,
+                fred_unavailable_warning=fred_warn,
+            )
+        )
+
+    return {
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
+        "lookback_days": lookback_days,
+        "tenor_order": TENOR_ORDER,
+        "countries": countries,
+    }
+
+
+def get_data(lookback_days: int = 90, country: str | None = None) -> dict:
     """
-    Build yield curve snapshot for all supported countries.
+    Build yield curve snapshot for all supported countries, or one country.
 
     Returns:
         JSON-serializable dict with canonical tenor axis and country curve data.
     """
     if lookback_days < 1:
         raise ValueError("lookback_days must be >= 1")
+    country_code = _normalize_country_code(country)
+    countries_to_fetch = [(country_code, COUNTRY_NAME_BY_CODE[country_code])] if country_code is not None else COUNTRIES
 
     # --- cache check ---
-    cache_p = _cache_path(lookback_days)
+    cache_p = (
+        _country_cache_path(lookback_days, country_code) if country_code is not None else _cache_path(lookback_days)
+    )
     cached_record = _load_cache(cache_p)
     cached_payload = cached_record.get("payload") if cached_record else None
     cache_decision = None
@@ -653,26 +697,7 @@ def get_data(lookback_days: int = 90) -> dict:
 
     # --- fetch live ---
     try:
-        fred_client, fred_warn = _build_fred_client()
-
-        countries: list[dict] = []
-        for code, name in COUNTRIES:
-            countries.append(
-                _build_country_curve(
-                    country_code=code,
-                    country_name=name,
-                    lookback_days=lookback_days,
-                    fred_client=fred_client,
-                    fred_unavailable_warning=fred_warn,
-                )
-            )
-
-        result = {
-            "timestamp": pd.Timestamp.utcnow().isoformat(),
-            "lookback_days": lookback_days,
-            "tenor_order": TENOR_ORDER,
-            "countries": countries,
-        }
+        result = _build_yield_curve_result(lookback_days, countries_to_fetch)
     except Exception as exc:
         if isinstance(cached_payload, dict):
             if cache_decision is not None:
@@ -715,7 +740,11 @@ def get_data(lookback_days: int = 90) -> dict:
             cached_as_of=as_of_date,
             expected_market_date_value=expected_market_date().isoformat(),
             latest_close=cache_decision.latest_close if cache_decision is not None else None,
-            reason="refreshed yield curve cache",
+            reason=(
+                f"refreshed yield curve cache for {country_code}"
+                if country_code is not None
+                else "refreshed yield curve cache"
+            ),
             cache_ttl_seconds=_CACHE_TTL_SECONDS,
         ),
     )
