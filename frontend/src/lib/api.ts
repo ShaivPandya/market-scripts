@@ -1470,6 +1470,38 @@ export type AnalyzerScenarioRequest = {
   }
 }
 
+export type AnalyzerRecommendedScenarioResponse = {
+  status: string
+  preset: "ai_recommended"
+  scenario: AnalyzerScenarioRequest
+  metric_scores: NonNullable<AnalyzerScenarioRequest["metric_scores"]>
+  brakes: NonNullable<AnalyzerScenarioRequest["brakes"]>
+  regime?: {
+    label?: string | null
+    score?: number | null
+    confidence?: number | null
+    history_percentile?: number | null
+  }
+  source?: {
+    tool?: string
+    as_of?: string | null
+    status?: string | null
+    failed_modules?: string[]
+  }
+  factor_inputs?: Record<string, { score?: number | null; normalized?: number | null; status?: string }>
+  transforms?: Record<string, number>
+  drivers?: { key: string; detail: string; value: number }[]
+  rationale?: string
+  _meta?: {
+    snapshot?: {
+      as_of?: string | null
+      stale?: boolean
+      refresh_status?: string
+      error?: string | null
+    }
+  }
+}
+
 export interface AnalyzerFactorBreakdown {
   factor: string
   label: string
@@ -1632,6 +1664,16 @@ export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
 export const generatePortfolioAnalyzerBrief = (action: AnalyzerCourseAction) =>
   client
     .post("/portfolio-analyzer/course-of-action/brief", { action }, { timeout: 120_000 })
+    .then(r => r.data as { brief: string })
+
+export const fetchPortfolioAnalyzerRecommendedScenario = (params?: { force_refresh?: boolean }) =>
+  client
+    .get("/portfolio-analyzer/recommended-scenario", { params, timeout: 180_000 })
+    .then(r => r.data as AnalyzerRecommendedScenarioResponse)
+
+export const generatePortfolioAnalyzerRecommendedScenarioBrief = (recommendation: AnalyzerRecommendedScenarioResponse) =>
+  client
+    .post("/portfolio-analyzer/recommended-scenario/brief", { recommendation }, { timeout: 120_000 })
     .then(r => r.data as { brief: string })
 
 export const runHedgingTool = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>

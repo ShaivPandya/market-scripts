@@ -3,21 +3,27 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, cast
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.cache import get_or_set_cached, short_cache
+from api.exceptions import DataFetchError, SnapshotUnavailableError
 from api.job_queue import cancel_job, get_job
 from api.job_registry import get_job_spec
 from api.serializers import serialize_dataframe, serialize_value
+from api.snapshot_keys import SNAPSHOT_SIGNAL_AGGREGATOR
+from api.snapshot_store import snapshots_required
 from portfolio.portfolio_optimizer.analyzer_scenarios import (
+    AI_RECOMMENDED_PRESET,
+    REMOVED_SCENARIO_PRESETS,
     SCENARIO_BRAKE_DEFAULTS,
     SCENARIO_FACTOR_DEFAULTS,
     SCENARIO_FUNDAMENTAL_DEFAULTS,
     SCENARIO_METRIC_SCORE_DEFAULTS,
     SCENARIO_QUALITATIVE_DEFAULTS,
     SCENARIO_VALUATION_DEFAULTS,
+    build_ai_recommended_scenario,
     normalize_analyzer_scenario,
 )
 
@@ -140,6 +146,12 @@ class AnalyzerScenario(BaseModel):
     qualitative_weights: AnalyzerQualitativeWeights = Field(default_factory=AnalyzerQualitativeWeights)
     brakes: AnalyzerScenarioBrakes = Field(default_factory=AnalyzerScenarioBrakes)
 
+    @model_validator(mode="after")
+    def reject_removed_presets(self):
+        if self.preset in REMOVED_SCENARIO_PRESETS:
+            raise ValueError(f"Unsupported analyzer preset: {self.preset}")
+        return self
+
 
 class AnalyzerRequest(BaseModel):
     # Legacy optimizer fields are accepted for backward compatibility and ignored by analyzer logic.
@@ -152,6 +164,10 @@ class AnalyzerRequest(BaseModel):
 
 class AnalyzerBriefRequest(BaseModel):
     action: dict[str, Any]
+
+
+class AnalyzerRecommendedScenarioBriefRequest(BaseModel):
+    recommendation: dict[str, Any]
 
 
 def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
@@ -237,6 +253,107 @@ def _compute_analyzer_result(req: AnalyzerRequest, *, job_id: str | None = None)
     if _job_cancelled(job_id):
         raise RuntimeError("Portfolio analyzer job cancelled")
     return result
+
+
+def _snapshot_meta(payload: dict[str, Any]) -> dict[str, Any] | None:
+    meta = payload.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    snapshot = meta.get("snapshot")
+    return cast(dict[str, Any], snapshot) if isinstance(snapshot, dict) else None
+
+
+def _build_recommended_scenario_response(signal_payload: dict[str, Any]) -> dict[str, Any]:
+    recommendation = build_ai_recommended_scenario(signal_payload)
+    regime = signal_payload.get("regime") if isinstance(signal_payload.get("regime"), dict) else {}
+    snapshot = _snapshot_meta(signal_payload)
+    response: dict[str, Any] = {
+        "status": "ok",
+        "preset": AI_RECOMMENDED_PRESET,
+        **recommendation,
+        "regime": {
+            "label": regime.get("label"),
+            "score": regime.get("score"),
+            "confidence": regime.get("confidence"),
+            "history_percentile": regime.get("history_percentile"),
+        },
+        "source": {
+            "tool": "signal_aggregator",
+            "as_of": signal_payload.get("as_of"),
+            "status": signal_payload.get("status"),
+            "failed_modules": signal_payload.get("failed_modules") or [],
+        },
+    }
+    if snapshot is not None:
+        response["_meta"] = {"snapshot": snapshot}
+    return serialize_value(response)
+
+
+@router.get("/portfolio-analyzer/recommended-scenario")
+def get_recommended_analyzer_scenario(force_refresh: bool = Query(False)):
+    key = f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:recommended_scenario:v1"
+
+    def loader():
+        try:
+            if force_refresh:
+                from api.signal_aggregator import build_signal_aggregator
+
+                signal_payload = build_signal_aggregator(lookback_weeks=156, include_history=False)
+            else:
+                from api.signal_snapshot import get_signal_aggregator_snapshot_or_module_response
+
+                signal_payload = get_signal_aggregator_snapshot_or_module_response(
+                    lookback_weeks=156,
+                    include_raw_modules=False,
+                )
+                if signal_payload is None:
+                    if snapshots_required():
+                        raise SnapshotUnavailableError(SNAPSHOT_SIGNAL_AGGREGATOR)
+                    from api.signal_aggregator import build_signal_aggregator
+
+                    signal_payload = build_signal_aggregator(lookback_weeks=156, include_history=False)
+        except SnapshotUnavailableError:
+            raise
+        except Exception as exc:
+            raise DataFetchError(source="portfolio_analyzer_recommended_scenario", detail=str(exc)) from exc
+
+        if not isinstance(signal_payload, dict):
+            raise DataFetchError(source="portfolio_analyzer_recommended_scenario", detail="Invalid signal payload")
+        return _build_recommended_scenario_response(signal_payload)
+
+    return get_or_set_cached(short_cache, key, loader, force_refresh=force_refresh)
+
+
+@router.post("/portfolio-analyzer/recommended-scenario/brief")
+def generate_recommended_scenario_brief(req: AnalyzerRecommendedScenarioBriefRequest):
+    try:
+        from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key
+
+        if not has_llm_api_key():
+            raise HTTPException(status_code=424, detail="No configured LLM API key for analyzer briefs.")
+
+        evidence_json = json.dumps(req.recommendation, sort_keys=True, default=str)
+        prompt = (
+            "Summarize the deterministic AI Recommended Portfolio Analyzer preset below. "
+            "The slider values are already fixed by code; do not change, reinterpret, or propose alternative values. "
+            "Use 3 short bullets: regime input, score/brake changes, and watch-outs.\n\n"
+            f"Evidence:\n{evidence_json}"
+        )
+        text, _citations, _response = call_llm_text(
+            prompt=prompt,
+            model=MODEL_MID,
+            max_tokens=600,
+            system=(
+                "You explain deterministic portfolio-analysis settings. You never choose slider values, ticker scores, "
+                "or trade actions."
+            ),
+            max_web_search_uses=0,
+        )
+        return {"brief": text.strip()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate recommended scenario brief: {e}") from e
 
 
 @router.post("/portfolio-analyzer")

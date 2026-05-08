@@ -15,6 +15,8 @@ import {
   fetchOptimizationMissions,
   fetchOptimizationRuns,
   generatePortfolioAnalyzerBrief,
+  generatePortfolioAnalyzerRecommendedScenarioBrief,
+  fetchPortfolioAnalyzerRecommendedScenario,
   createAction,
   dismissOptimizationAlert,
   cancelPortfolioAnalyzerJob,
@@ -24,6 +26,7 @@ import {
   type AnalyzerCourseAction,
   type AnalyzerCourseOfAction,
   type AnalyzerFactorBreakdown,
+  type AnalyzerRecommendedScenarioResponse,
   type AnalyzerScenarioRequest,
   type AnalyzerUniverseMode,
   type LLMSettings,
@@ -40,12 +43,15 @@ interface AnalyzerResponse {
   [key: string]: unknown
 }
 
-type ScenarioPreset =
+type StaticScenarioPreset =
   | "balanced"
   | "capital_preservation"
   | "momentum_exploitation"
   | "value_dislocation"
-  | "short_defense"
+
+type ScenarioPreset =
+  | StaticScenarioPreset
+  | "ai_recommended"
   | "custom"
 
 interface AnalyzerScenarioState {
@@ -87,7 +93,7 @@ const OPTIMIZATION_MISSIONS_QUERY_KEY = ["optimization", "missions"] as const
 const OPTIMIZATION_ALERTS_QUERY_KEY = ["optimization", "alerts", "open"] as const
 const OPTIMIZATION_RUNS_QUERY_KEY = ["optimization", "runs"] as const
 
-const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenarioState> = {
+const SCENARIO_PRESETS: Record<StaticScenarioPreset, AnalyzerScenarioState> = {
   balanced: {
     preset: "balanced",
     metric_scores: {
@@ -160,32 +166,16 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
     },
     brakes: { drawdown_sensitivity: 20, contrarian_penalty: 20, short_squeeze_brake: 10 },
   },
-  short_defense: {
-    preset: "short_defense",
-    metric_scores: {
-      quality: 20,
-      price_momentum: 40,
-      revenue: 10,
-      eps: 10,
-      price_sales: 10,
-      price_operating_income: 0,
-      price_fcf: 10,
-      price_earnings: 10,
-      price_book: 10,
-      business_quality_qualitative: 10,
-      industry_quality: 10,
-      management_quality: 10,
-    },
-    brakes: { drawdown_sensitivity: 0, contrarian_penalty: 10, short_squeeze_brake: 50 },
-  },
 }
 
-const MISSION_OPTIONS: { value: Exclude<ScenarioPreset, "custom">; label: string; description: string }[] = [
+type MissionPreset = StaticScenarioPreset | "ai_recommended"
+
+const MISSION_OPTIONS: { value: MissionPreset; label: string; description: string }[] = [
   { value: "balanced", label: "Balanced", description: "Balanced alpha and risk evidence for current positions." },
   { value: "capital_preservation", label: "Capital Preservation", description: "Favor quality, valuation, and stronger risk brakes." },
   { value: "momentum_exploitation", label: "Momentum Exploitation", description: "Prioritize price and fundamental trend continuation." },
   { value: "value_dislocation", label: "Value Dislocation", description: "Elevate valuation signals while retaining risk checks." },
-  { value: "short_defense", label: "Short Defense", description: "Stress-test shorts and squeeze-prone exposures." },
+  { value: "ai_recommended", label: "AI Recommended", description: "Adapt metric scores from the latest Signal Aggregator factors." },
 ]
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
@@ -374,11 +364,12 @@ function cloneScenario(scenario: AnalyzerScenarioState): AnalyzerScenarioState {
 function normalizeScenarioState(value: AnalyzerScenarioState | undefined): AnalyzerScenarioState {
   if (!value) return cloneScenario(SCENARIO_PRESETS.balanced)
   const rawPreset = value.preset
-  const preset: ScenarioPreset = rawPreset === "custom" || rawPreset in SCENARIO_PRESETS ? rawPreset : "balanced"
-  const base = preset === "custom" ? SCENARIO_PRESETS.balanced : SCENARIO_PRESETS[preset]
+  const preset: ScenarioPreset =
+    rawPreset === "custom" || rawPreset === "ai_recommended" || rawPreset in SCENARIO_PRESETS ? rawPreset : "balanced"
+  const base = preset === "custom" || preset === "ai_recommended" ? SCENARIO_PRESETS.balanced : SCENARIO_PRESETS[preset]
   const legacyValue = value as LegacyScenarioState
   return {
-    preset: value.preset === "custom" ? "custom" : preset as ScenarioPreset,
+    preset: value.preset === "custom" ? "custom" : preset,
     metric_scores: value.metric_scores
       ? normalizeScoreMap(value.metric_scores, base.metric_scores)
       : legacyWeightsToMetricScores(legacyValue, base.metric_scores),
@@ -588,6 +579,25 @@ function toScenarioRequest(scenario: AnalyzerScenarioState): AnalyzerScenarioReq
     metric_scores: normalizeScoreMap(scenario.metric_scores, scenario.metric_scores),
     brakes: normalizeBrakeScores(scenario.brakes, scenario.brakes),
   }
+}
+
+function recommendedScenarioState(recommendation: AnalyzerRecommendedScenarioResponse): AnalyzerScenarioState {
+  return {
+    preset: "ai_recommended",
+    metric_scores: normalizeScoreMap(recommendation.metric_scores, SCENARIO_PRESETS.balanced.metric_scores),
+    brakes: normalizeBrakeScores(recommendation.brakes, SCENARIO_PRESETS.balanced.brakes),
+  }
+}
+
+function recommendationFreshnessText(recommendation: AnalyzerRecommendedScenarioResponse | null): string | null {
+  if (!recommendation) return null
+  const snapshot = recommendation._meta?.snapshot
+  const asOf = snapshot?.as_of ?? recommendation.source?.as_of
+  const parts = [`Signal Aggregator as of ${asOf ?? "unknown"}`]
+  if (snapshot?.stale) parts.push("stale")
+  if (snapshot?.refresh_status && snapshot.refresh_status !== "ok") parts.push(`refresh ${snapshot.refresh_status}`)
+  if (snapshot?.error) parts.push(snapshot.error)
+  return parts.join(" · ")
 }
 
 function missionLabel(value: string | undefined) {
@@ -1215,6 +1225,8 @@ export function AnalyzerWorkbench({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
   const [briefTicker, setBriefTicker] = useState<string | null>(null)
+  const [recommendedScenario, setRecommendedScenario] = useState<AnalyzerRecommendedScenarioResponse | null>(null)
+  const [recommendedError, setRecommendedError] = useState<string | null>(null)
   const [workspaceProposal, setWorkspaceProposal] = useState<{ ticker: string; response: StagedMutationResponse } | null>(null)
 
   const llmSettings = useApiQuery<LLMSettings>(LLM_SETTINGS_QUERY_KEY, fetchLLMSettings, 30_000)
@@ -1234,6 +1246,24 @@ export function AnalyzerWorkbench({
   const briefMutation = useMutation({
     mutationFn: generatePortfolioAnalyzerBrief,
     onSuccess: () => undefined,
+  })
+
+  const recommendedBriefMutation = useMutation({
+    mutationFn: generatePortfolioAnalyzerRecommendedScenarioBrief,
+    onSuccess: () => undefined,
+  })
+
+  const recommendedScenarioMutation = useMutation({
+    mutationFn: fetchPortfolioAnalyzerRecommendedScenario,
+    onSuccess: recommendation => {
+      setRecommendedScenario(recommendation)
+      setScenario(recommendedScenarioState(recommendation))
+      setRecommendedError(null)
+      recommendedBriefMutation.reset()
+    },
+    onError: err => {
+      setRecommendedError(analyzerJobErrorMessage(err, "Unable to fetch AI Recommended preset."))
+    },
   })
 
   const workspaceActionMutation = useMutation({
@@ -1363,8 +1393,25 @@ export function AnalyzerWorkbench({
     workspaceActionMutation.variables?.ticker === selectedActionTicker &&
     workspaceActionMutation.isPending
 
-  function applyPreset(preset: Exclude<ScenarioPreset, "custom">) {
+  function applyPreset(preset: MissionPreset) {
+    setRecommendedError(null)
+    if (preset === "ai_recommended") {
+      recommendedScenarioMutation.mutate({ force_refresh: false })
+      return
+    }
+    setRecommendedScenario(null)
+    recommendedBriefMutation.reset()
     setScenario(cloneScenario(SCENARIO_PRESETS[preset]))
+  }
+
+  function refreshRecommendedPreset() {
+    setRecommendedError(null)
+    recommendedScenarioMutation.mutate({ force_refresh: true })
+  }
+
+  function explainRecommendedPreset() {
+    if (!recommendedScenario) return
+    recommendedBriefMutation.mutate(recommendedScenario)
   }
 
   function setMetricScore(key: keyof AnalyzerScenarioState["metric_scores"], value: number) {
@@ -1529,20 +1576,63 @@ export function AnalyzerWorkbench({
             {missionStatusDetail}
           </p>
         )}
+        {scenario.preset === "ai_recommended" && (
+          <div className="mt-3 rounded-lg border border-app bg-card-muted px-3 py-2 text-xs text-subtle">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span>{recommendationFreshnessText(recommendedScenario) ?? "Fetching Signal Aggregator recommendation..."}</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={refreshRecommendedPreset}
+                  disabled={recommendedScenarioMutation.isPending}
+                  className="theme-button-base theme-button-secondary min-h-8 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {recommendedScenarioMutation.isPending ? "Refreshing..." : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={explainRecommendedPreset}
+                  disabled={!recommendedScenario || recommendedBriefMutation.isPending}
+                  className="theme-button-base theme-button-secondary min-h-8 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {recommendedBriefMutation.isPending ? "Explaining..." : "Explain"}
+                </button>
+              </div>
+            </div>
+            {recommendedScenario?.rationale && <p className="mt-2">{recommendedScenario.rationale}</p>}
+            {recommendedBriefMutation.data?.brief && (
+              <div className="mt-3 border-t border-app pt-3 text-sm text-app">
+                <MarkdownRenderer content={recommendedBriefMutation.data.brief} />
+              </div>
+            )}
+            {recommendedBriefMutation.isError && (
+              <p className="mt-2 text-xs text-red-600">
+                {analyzerJobErrorMessage(recommendedBriefMutation.error, "Unable to explain AI Recommended preset.")}
+              </p>
+            )}
+          </div>
+        )}
+        {recommendedError && (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {recommendedError}
+          </div>
+        )}
 
         <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-5">
           {MISSION_OPTIONS.map(option => {
             const active = scenario.preset === option.value
+            const loading = option.value === "ai_recommended" && recommendedScenarioMutation.isPending
             return (
               <button
                 key={option.value}
                 type="button"
                 onClick={() => applyPreset(option.value)}
+                disabled={loading}
                 className={`min-h-28 rounded-lg border p-4 text-left transition-colors ${
                   active ? "border-blue-200 bg-blue-50" : "border-app bg-card-muted hover:bg-hover"
-                }`}
+                } disabled:cursor-wait disabled:opacity-70`}
               >
-                <span className="text-sm font-semibold text-app">{option.label}</span>
+                <span className="text-sm font-semibold text-app">{loading ? "Loading..." : option.label}</span>
                 <span className="mt-2 block text-xs leading-5 text-subtle">{option.description}</span>
               </button>
             )
@@ -1651,7 +1741,11 @@ export function AnalyzerWorkbench({
       {data && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <SummaryCard title="Mission" value={missionLabel(summary?.mission ?? scenario.preset)} detail={scenario.preset === "custom" ? "Custom scores" : "Preset scores"} />
+            <SummaryCard
+              title="Mission"
+              value={missionLabel(summary?.mission ?? scenario.preset)}
+              detail={scenario.preset === "custom" ? "Custom scores" : scenario.preset === "ai_recommended" ? "Signal-adaptive scores" : "Preset scores"}
+            />
             <SummaryCard title="Actionable" value={String(actionableCount)} detail="Non-held pass-gated actions" />
             <SummaryCard title="Reviews" value={String(reviewCount)} detail="Gated or review actions" />
             <SummaryCard title="Data Warnings" value={String(dataWarnings)} detail={asOf} />

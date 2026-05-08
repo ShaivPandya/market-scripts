@@ -165,32 +165,10 @@ SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
             "short_squeeze_brake": 35,
         },
     },
-    "short_defense": {
-        "preset": "short_defense",
-        # This mission is a short-risk review mode: improving quality/momentum,
-        # squeeze pressure, and eligibility failures should push shorts toward
-        # review/cover instead of mechanically ranking them as better shorts.
-        "metric_scores": {
-            "quality": 20,
-            "price_momentum": 40,
-            "revenue": 8,
-            "eps": 4,
-            "price_sales": 0,
-            "price_operating_income": 2,
-            "price_fcf": 5,
-            "price_earnings": 0,
-            "price_book": 3,
-            "business_quality_qualitative": 6,
-            "industry_quality": 5,
-            "management_quality": 7,
-        },
-        "brakes": {
-            "drawdown_sensitivity": 35,
-            "contrarian_penalty": 25,
-            "short_squeeze_brake": 80,
-        },
-    },
 }
+
+AI_RECOMMENDED_PRESET = "ai_recommended"
+REMOVED_SCENARIO_PRESETS = {"short_defense"}
 
 LEGACY_BALANCED_FACTOR_WEIGHTS = {
     "quality": 0.30,
@@ -211,6 +189,171 @@ def _safe_float(value: Any) -> float:
     except (TypeError, ValueError):
         return float("nan")
     return out if isfinite(out) else float("nan")
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def quantize_slider(value: float) -> int:
+    return int(min(100, max(0, round(float(value) / 10.0) * 10)))
+
+
+def factor_score(payload: Mapping[str, Any], key: str) -> float | None:
+    factors = payload.get("factors")
+    if not isinstance(factors, list):
+        return None
+    for factor in factors:
+        if not isinstance(factor, Mapping):
+            continue
+        if factor.get("key") != key or factor.get("status") != "ok":
+            continue
+        value = _safe_float(factor.get("score"))
+        if not isfinite(value):
+            return None
+        return max(0.0, min(100.0, value))
+    return None
+
+
+def _ramp_up(value: float, low: float, high: float) -> float:
+    return clamp01((value - low) / (high - low))
+
+
+def _ramp_down(value: float, low: float, high: float) -> float:
+    return clamp01((high - value) / (high - low))
+
+
+def _normalized_factor(payload: Mapping[str, Any], key: str) -> float | None:
+    score = factor_score(payload, key)
+    if score is None:
+        return None
+    return clamp01(score / 100.0)
+
+
+def _factor_inputs(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for key in ("vix", "breadth", "liquidity", "sector", "momentum"):
+        score = factor_score(payload, key)
+        out[key] = {
+            "score": score,
+            "normalized": None if score is None else clamp01(score / 100.0),
+            "status": "ok" if score is not None else "unavailable",
+        }
+    return out
+
+
+def _regime_score(payload: Mapping[str, Any]) -> float | None:
+    regime = payload.get("regime")
+    if not isinstance(regime, Mapping):
+        return None
+    score = _safe_float(regime.get("score"))
+    if not isfinite(score):
+        return None
+    return max(0.0, min(100.0, score))
+
+
+def build_ai_recommended_scenario(signal_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a deterministic analyzer scenario from Signal Aggregator output.
+
+    Raw signal scores are first transformed into regime variables with ramps.
+    The raw 0-100 values are not treated as if 50 were a neutral point.
+    """
+    vix = _normalized_factor(signal_payload, "vix")
+    breadth_stress = _normalized_factor(signal_payload, "breadth")
+    liquidity_score = _normalized_factor(signal_payload, "liquidity")
+    sector_stress = _normalized_factor(signal_payload, "sector")
+    momentum_stress = _normalized_factor(signal_payload, "momentum")
+    regime_score = _regime_score(signal_payload)
+    composite = None if regime_score is None else clamp01(regime_score / 100.0)
+
+    risk_on = 0.0 if composite is None else _ramp_down(composite, 0.15, 0.40)
+    risk_off = 0.0 if composite is None else _ramp_up(composite, 0.40, 0.65)
+    vix_shock = 0.0 if vix is None else _ramp_up(vix, 0.35, 0.80)
+    breadth_damage = 0.0 if breadth_stress is None else _ramp_up(breadth_stress, 0.35, 0.75)
+    liquidity_tight = 0.0 if liquidity_score is None else _ramp_up(liquidity_score, 0.45, 0.75)
+    sector_damage = 0.0 if sector_stress is None else _ramp_up(sector_stress, 0.30, 0.70)
+    momentum_damage = 0.0 if momentum_stress is None else _ramp_up(momentum_stress, 0.35, 0.75)
+    momentum_health = 0.0 if momentum_stress is None else _ramp_down(momentum_stress, 0.25, 0.55)
+
+    market_damage = 0.30 * vix_shock + 0.30 * breadth_damage + 0.20 * momentum_damage + 0.20 * sector_damage
+
+    metric_scores = {
+        "quality": quantize_slider(20 + 25 * liquidity_tight + 15 * risk_off + 10 * market_damage),
+        "price_momentum": quantize_slider(
+            30 + 20 * momentum_health + 10 * risk_on - 20 * liquidity_tight - 10 * breadth_damage
+        ),
+        "revenue": quantize_slider(13 + 12 * risk_on + 8 * momentum_health - 8 * liquidity_tight),
+        "eps": quantize_slider(8 + 10 * risk_on + 6 * momentum_health - 6 * liquidity_tight),
+        "price_sales": quantize_slider(1 + 6 * breadth_damage + 4 * risk_off),
+        "price_operating_income": quantize_slider(2 + 10 * liquidity_tight + 6 * market_damage),
+        "price_fcf": quantize_slider(4 + 18 * liquidity_tight + 10 * risk_off + 8 * market_damage),
+        "price_earnings": quantize_slider(1 + 5 * market_damage + 3 * risk_off),
+        "price_book": quantize_slider(1 + 6 * breadth_damage + 5 * sector_damage),
+        "business_quality_qualitative": quantize_slider(8 + 10 * liquidity_tight + 6 * risk_off),
+        "industry_quality": quantize_slider(6 + 8 * sector_damage + 6 * breadth_damage),
+        "management_quality": quantize_slider(6 + 8 * liquidity_tight + 4 * risk_off),
+    }
+    brakes = {
+        "drawdown_sensitivity": quantize_slider(10 + 55 * liquidity_tight + 20 * vix_shock + 15 * risk_off),
+        "contrarian_penalty": quantize_slider(5 + 35 * breadth_damage + 20 * sector_damage + 15 * market_damage),
+        "short_squeeze_brake": quantize_slider(10 + 40 * momentum_health + 20 * risk_on + 10 * (1.0 - breadth_damage)),
+    }
+    scenario = {
+        "preset": AI_RECOMMENDED_PRESET,
+        "metric_scores": metric_scores,
+        "brakes": brakes,
+    }
+
+    transforms = {
+        "risk_on": round(risk_on, 4),
+        "risk_off": round(risk_off, 4),
+        "vix_shock": round(vix_shock, 4),
+        "breadth_damage": round(breadth_damage, 4),
+        "liquidity_tight": round(liquidity_tight, 4),
+        "sector_damage": round(sector_damage, 4),
+        "momentum_damage": round(momentum_damage, 4),
+        "momentum_health": round(momentum_health, 4),
+        "market_damage": round(market_damage, 4),
+    }
+    driver_candidates = [
+        (
+            "liquidity_tight",
+            "Tight liquidity increased quality, cash-flow valuation, and drawdown brakes.",
+            liquidity_tight,
+        ),
+        ("risk_off", "Elevated composite stress increased defensive quality and risk controls.", risk_off),
+        (
+            "market_damage",
+            "Broad market damage increased valuation discipline and contrarian penalties.",
+            market_damage,
+        ),
+        (
+            "momentum_health",
+            "Healthy momentum increased momentum/growth emphasis and short-squeeze awareness.",
+            momentum_health,
+        ),
+        ("risk_on", "Risk-on conditions increased growth and price-momentum emphasis.", risk_on),
+    ]
+    drivers = [
+        {"key": key, "detail": detail, "value": round(float(value), 4)}
+        for key, detail, value in sorted(driver_candidates, key=lambda item: item[2], reverse=True)
+        if value > 0
+    ][:3]
+    if drivers:
+        rationale = " ".join(driver["detail"] for driver in drivers)
+    else:
+        rationale = "Signal factors did not cross deterministic tilt thresholds, so the preset stays close to balanced."
+
+    return {
+        "preset": AI_RECOMMENDED_PRESET,
+        "scenario": scenario,
+        "metric_scores": metric_scores,
+        "brakes": brakes,
+        "factor_inputs": _factor_inputs(signal_payload),
+        "transforms": transforms,
+        "drivers": drivers,
+        "rationale": rationale,
+    }
 
 
 def _nonnegative_weight_group(
@@ -340,6 +483,8 @@ def _weights_from_metric_scores(values: Mapping[str, Any] | None) -> dict[str, d
 def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> dict[str, Any]:
     raw = dict(scenario or {})
     preset = str(raw.get("preset") or "balanced")
+    if preset in REMOVED_SCENARIO_PRESETS:
+        raise ValueError(f"Unsupported analyzer preset: {preset}")
     preset_config = SCENARIO_PRESETS.get(preset)
     legacy_balanced_default = _is_legacy_balanced_default(raw)
     has_explicit_weights = not legacy_balanced_default and any(

@@ -26,12 +26,17 @@ import argparse
 import logging
 import math
 import os
+import sys
 import time
 from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from load_env import load_env
 
@@ -296,11 +301,15 @@ def score_liquidity_series(fred_df: pd.DataFrame) -> pd.Series:
     if "rrp" in df.columns:
         df["rrp"] = df["rrp"] * 1000
 
-    # Derived series
-    df["net_liquidity"] = df["fed_assets"] - df["tga"] - df["rrp"]
-    df["net_liquidity_change_4w"] = df["net_liquidity"].diff(4)
-    df["reserves_change_4w"] = df["reserves"].diff(4)
-    df["m2_gdp"] = df["m2"] / df["gdp"]
+    # Derived series. FRED can occasionally return partial data; keep the
+    # backtest running with the components that are available.
+    if {"fed_assets", "tga", "rrp"}.issubset(df.columns):
+        df["net_liquidity"] = df["fed_assets"] - df["tga"] - df["rrp"]
+        df["net_liquidity_change_4w"] = df["net_liquidity"].diff(4)
+    if "reserves" in df.columns:
+        df["reserves_change_4w"] = df["reserves"].diff(4)
+    if {"m2", "gdp"}.issubset(df.columns):
+        df["m2_gdp"] = df["m2"] / df["gdp"]
 
     # Rolling z-scores → weighted composite (replicates liquidity.py)
     Z_WINDOW = 104

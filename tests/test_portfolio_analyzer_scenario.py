@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from api.routers import analyzer as analyzer_router
 from api.routers.analyzer import AnalyzerRequest, _cache_key, _compute_analyzer_result_cached
 from portfolio.portfolio_optimizer import portfolio_analyzer as analyzer_module
+from portfolio.portfolio_optimizer.analyzer_scenarios import build_ai_recommended_scenario
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
     INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
@@ -542,6 +543,126 @@ def test_preset_only_request_uses_named_mission_weights():
             }
         )
     )
+
+
+def _signal_payload(
+    *,
+    composite: float,
+    vix: float | None = None,
+    breadth: float | None = None,
+    liquidity: float | None = None,
+    sector: float | None = None,
+    momentum: float | None = None,
+) -> dict:
+    factors = []
+    for key, score in {
+        "vix": vix,
+        "breadth": breadth,
+        "liquidity": liquidity,
+        "sector": sector,
+        "momentum": momentum,
+    }.items():
+        if score is None:
+            factors.append({"key": key, "status": "error", "score": None})
+        else:
+            factors.append({"key": key, "status": "ok", "score": score})
+    return {
+        "status": "ok",
+        "as_of": "2026-05-07",
+        "regime": {"label": "transitional", "score": composite, "confidence": 1.0},
+        "factors": factors,
+        "_meta": {"snapshot": {"as_of": "2026-05-07", "stale": False, "refresh_status": "ok"}},
+    }
+
+
+def test_ai_recommended_scenario_uses_factor_mix_not_only_composite():
+    tight_liquidity = build_ai_recommended_scenario(
+        _signal_payload(composite=45, vix=30, breadth=30, liquidity=85, sector=30, momentum=30)
+    )
+    weak_breadth = build_ai_recommended_scenario(
+        _signal_payload(composite=45, vix=30, breadth=85, liquidity=30, sector=50, momentum=85)
+    )
+
+    assert tight_liquidity["metric_scores"]["quality"] > weak_breadth["metric_scores"]["quality"]
+    assert tight_liquidity["brakes"]["drawdown_sensitivity"] > weak_breadth["brakes"]["drawdown_sensitivity"]
+    assert weak_breadth["brakes"]["contrarian_penalty"] > tight_liquidity["brakes"]["contrarian_penalty"]
+    assert tight_liquidity["scenario"] != weak_breadth["scenario"]
+
+
+def test_ai_recommended_scenario_uses_transforms_and_quantized_sliders():
+    recommendation = build_ai_recommended_scenario(
+        _signal_payload(composite=45, vix=30, breadth=30, liquidity=85, sector=30, momentum=30)
+    )
+
+    assert recommendation["preset"] == "ai_recommended"
+    assert recommendation["transforms"]["liquidity_tight"] == 1.0
+    assert recommendation["transforms"]["risk_off"] == 0.2
+    assert all(value % 10 == 0 for value in recommendation["metric_scores"].values())
+    assert all(value % 10 == 0 for value in recommendation["brakes"].values())
+    assert recommendation["metric_scores"]["quality"] == 50
+    assert recommendation["brakes"]["drawdown_sensitivity"] == 70
+
+
+def test_ai_recommended_scenario_missing_factor_is_no_tilt_not_neutral_score():
+    recommendation = build_ai_recommended_scenario(
+        _signal_payload(composite=20, vix=None, breadth=None, liquidity=None, sector=None, momentum=None)
+    )
+
+    assert recommendation["factor_inputs"]["liquidity"]["status"] == "unavailable"
+    assert recommendation["transforms"]["liquidity_tight"] == 0.0
+    assert recommendation["transforms"]["momentum_health"] == 0.0
+    assert recommendation["brakes"]["drawdown_sensitivity"] == 10
+
+
+def test_short_defense_preset_is_removed():
+    with pytest.raises(ValueError):
+        normalize_analyzer_scenario({"preset": "short_defense"})
+
+    with pytest.raises(ValidationError):
+        AnalyzerRequest(scenario={"preset": "short_defense"})
+
+
+def test_recommended_scenario_endpoint_uses_signal_snapshot(auth_client, monkeypatch):
+    payload = _signal_payload(composite=45, vix=30, breadth=30, liquidity=85, sector=30, momentum=30)
+    monkeypatch.setattr(analyzer_router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
+    monkeypatch.setattr(
+        "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: payload,
+    )
+    monkeypatch.setattr(
+        "api.signal_aggregator.build_signal_aggregator",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("live build should not run")),
+    )
+
+    resp = auth_client.get("/api/v1/portfolio-analyzer/recommended-scenario")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["preset"] == "ai_recommended"
+    assert body["scenario"]["metric_scores"]["quality"] == 50
+    assert body["_meta"]["snapshot"]["as_of"] == "2026-05-07"
+
+
+def test_recommended_scenario_endpoint_force_refresh_builds_live(auth_client, monkeypatch):
+    payload = _signal_payload(composite=45, vix=30, breadth=85, liquidity=30, sector=50, momentum=85)
+    calls = {"live": 0}
+
+    def fake_live(**kwargs):
+        calls["live"] += 1
+        return payload
+
+    monkeypatch.setattr(analyzer_router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
+    monkeypatch.setattr(
+        "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("snapshot should not be read")),
+    )
+    monkeypatch.setattr("api.signal_aggregator.build_signal_aggregator", fake_live)
+
+    resp = auth_client.get("/api/v1/portfolio-analyzer/recommended-scenario", params={"force_refresh": "true"})
+
+    assert resp.status_code == 200
+    assert calls["live"] == 1
+    assert resp.json()["scenario"]["brakes"]["contrarian_penalty"] == 60
 
 
 def test_valuation_signal_ranks_lower_positive_multiples_higher():
