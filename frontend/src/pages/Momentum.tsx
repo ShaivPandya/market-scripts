@@ -24,6 +24,8 @@ export function Momentum() {
   }
 
   const HIDDEN_COLUMNS = new Set(["date", "close", "direction", "avg20_vol_roc63"])
+  const NEUTRAL_TEXT_COLUMNS = new Set(["ticker", "benchmark"])
+  const NUMERIC_TEXT_RE = /^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?\s*$/
 
   // Dynamically build columns from first row
   const buildColumns = (sample: Record<string, unknown>): ColumnDef[] =>
@@ -31,7 +33,8 @@ export function Momentum() {
       key: k,
       header: COLUMN_LABELS[k] ?? k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
       colorFn: (v: unknown) => {
-        if (typeof v === "number" || (typeof v === "string" && !isNaN(parseFloat(v)))) {
+        if (NEUTRAL_TEXT_COLUMNS.has(k)) return ""
+        if (typeof v === "number" || (typeof v === "string" && NUMERIC_TEXT_RE.test(v))) {
           return colorPositiveNegative(v)
         }
         return ""

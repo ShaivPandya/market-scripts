@@ -1,5 +1,6 @@
 import { CheckCircle2, XCircle } from "lucide-react"
 
+import { Toggle } from "@/components/shared/FormControls"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import type {
   AnalyzerRiskFlags,
@@ -238,21 +239,54 @@ function AnalyzerContextPanel({ context }: { context: IdeaAnalyzerContext }) {
   )
 }
 
+function portfolioContextUsage(evaluation: IdeaEvaluation): boolean | null {
+  const value = evaluation.data_quality?.portfolio_context_used
+  return typeof value === "boolean" ? value : null
+}
+
+function PortfolioContextBadge({ evaluation }: { evaluation: IdeaEvaluation }) {
+  const used = portfolioContextUsage(evaluation)
+  if (used === true) return <StatusBadge tone="info">Portfolio used</StatusBadge>
+  if (used === false) return <StatusBadge tone="neutral">Portfolio excluded</StatusBadge>
+  return <StatusBadge tone="neutral">Portfolio unknown</StatusBadge>
+}
+
 export function EvaluationPanel({
   evaluation,
   onAccept,
   onReject,
   accepting,
   rejecting,
+  portfolioContextEnabled,
+  onPortfolioContextChange,
+  portfolioContextUpdating,
 }: {
   evaluation: IdeaEvaluation | null
   onAccept: () => void
   onReject: () => void
   accepting: boolean
   rejecting: boolean
+  portfolioContextEnabled?: boolean
+  onPortfolioContextChange?: (checked: boolean) => void
+  portfolioContextUpdating?: boolean
 }) {
   if (!evaluation) {
-    return <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No evaluation yet.</p>
+    return (
+      <div className="space-y-3">
+        {typeof portfolioContextEnabled === "boolean" && onPortfolioContextChange && (
+          <div className="rounded-lg border border-app bg-card-muted px-3 py-2">
+            <Toggle
+              label="Portfolio Influence"
+              checked={portfolioContextEnabled}
+              onChange={onPortfolioContextChange}
+              disabled={portfolioContextUpdating}
+              description={portfolioContextEnabled ? "Used for future evaluations." : "Excluded from future evaluations."}
+            />
+          </div>
+        )}
+        <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No evaluation yet.</p>
+      </div>
+    )
   }
 
   const factors = CANONICAL_FACTORS
@@ -273,8 +307,21 @@ export function EvaluationPanel({
         <span className="font-mono text-sm font-semibold text-app">Score {scoreText(evaluation.score)}</span>
         <span className="text-sm text-subtle">Confidence {evaluation.confidence == null ? "N/A" : `${Math.round(Number(evaluation.confidence) * 100)}%`}</span>
         <span className="text-sm text-subtle">{formatDate(evaluation.evaluated_at)}</span>
+        <PortfolioContextBadge evaluation={evaluation} />
         {accepted && <StatusBadge tone="success">Accepted</StatusBadge>}
       </div>
+
+      {typeof portfolioContextEnabled === "boolean" && onPortfolioContextChange && (
+        <div className="rounded-lg border border-app bg-card-muted px-3 py-2">
+          <Toggle
+            label="Portfolio Influence"
+            checked={portfolioContextEnabled}
+            onChange={onPortfolioContextChange}
+            disabled={portfolioContextUpdating}
+            description={portfolioContextEnabled ? "Used for future evaluations." : "Excluded from future evaluations."}
+          />
+        </div>
+      )}
 
       {evaluation.thesis_statement && (
         <p className="text-base font-medium leading-7 text-app">{evaluation.thesis_statement}</p>

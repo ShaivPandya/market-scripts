@@ -69,6 +69,7 @@ import { ThesisUpload } from "@/components/ThesisUpload"
 import { OverviewUpload } from "@/components/OverviewUpload"
 import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
 import { cn } from "@/lib/utils"
+import { cleanDossierDisplayText } from "@/lib/dossierText"
 
 interface DossierData {
   ticker: string
@@ -850,7 +851,7 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
 }
 
 function ManagementRatingBadge({ value }: { value?: string | null }) {
-  const rating = (value || "Insufficient evidence").trim()
+  const rating = cleanDossierDisplayText(value) || "Insufficient evidence"
   const normalized = rating.toLowerCase()
   const className =
     normalized.includes("strong") || normalized.includes("handled well")
@@ -870,10 +871,21 @@ function ManagementRatingBadge({ value }: { value?: string | null }) {
 
 function cleanedManagementBullets(items?: ManagementQualityBullet[] | null): ManagementQualityBullet[] {
   return (items || [])
-    .map(item => ({
-      ...item,
-      text: item.text.replace(/\s*\*\*Response\*\*:\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[\u2014\u2013-]\s*.+)?$/i, "").trim(),
-    }))
+    .map(item => {
+      const textWithoutInlineResponse = item.text.replace(
+        /\s*(?:\*\*)?Response(?:\*\*)?:\s*(?:[*_`~]+)?\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[\u2014\u2013-]\s*.+)?$/i,
+        "",
+      )
+      const responseRating = cleanDossierDisplayText(item.response_rating)
+      const responseText = cleanDossierDisplayText(item.response_text)
+      return {
+        ...item,
+        title: cleanDossierDisplayText(item.title) || null,
+        text: cleanDossierDisplayText(textWithoutInlineResponse),
+        response_rating: responseRating || undefined,
+        response_text: responseText || null,
+      }
+    })
     .filter(item => {
       const title = (item.title || "").trim()
       const text = item.text.trim()
@@ -1096,6 +1108,7 @@ interface ValueRangeDraft {
 interface ComputedValueRangeScenario {
   multiple: number | null
   denominator: number | null
+  denominatorConverted: number | null
   expectedPrice: number | null
   percentChange: number | null
   status: string
@@ -1108,13 +1121,59 @@ function formatMultipleValue(value: unknown): string {
   return `${value.toFixed(1)}x`
 }
 
-function formatValuationMoney(value: unknown): string {
+function cleanCurrency(value: unknown): string | null {
+  const text = String(value ?? "").trim()
+  return text || null
+}
+
+function sameCurrency(a: unknown, b: unknown): boolean {
+  const left = cleanCurrency(a)
+  const right = cleanCurrency(b)
+  return Boolean(left && right && left.toUpperCase() === right.toUpperCase())
+}
+
+function currencyPrefix(currency: unknown): string {
+  const code = cleanCurrency(currency)
+  return code ? `${code} ` : ""
+}
+
+function priceCurrency(data: PositionValuation): string | null {
+  return cleanCurrency(data.currency_context?.price_currency ?? data.market_data?.price_currency ?? data.market_data?.currency ?? data.value_range?.output_currency)
+}
+
+function financialCurrency(data: PositionValuation): string | null {
+  return cleanCurrency(data.currency_context?.financial_currency ?? data.market_data?.financial_currency)
+}
+
+function valueRangeDenominatorCurrency(data: PositionValuation): string | null {
+  return cleanCurrency(data.value_range?.denominator_currency ?? financialCurrency(data) ?? priceCurrency(data))
+}
+
+function valueRangeOutputCurrency(data: PositionValuation): string | null {
+  return cleanCurrency(data.value_range?.output_currency ?? data.value_range?.currency ?? priceCurrency(data))
+}
+
+function valueRangeDenominatorToPriceRate(data: PositionValuation): number | null {
+  const explicit = positiveNumber(data.value_range?.denominator_to_price_fx_rate)
+  if (explicit != null) return explicit
+  const denominatorCurrency = valueRangeDenominatorCurrency(data)
+  const outputCurrency = valueRangeOutputCurrency(data)
+  if (sameCurrency(denominatorCurrency, outputCurrency)) return 1
+  const contextRate = positiveNumber(data.currency_context?.financial_to_price_fx_rate)
+  if (contextRate != null && sameCurrency(denominatorCurrency, financialCurrency(data)) && sameCurrency(outputCurrency, priceCurrency(data))) {
+    return contextRate
+  }
+  return null
+}
+
+function formatValuationMoney(value: unknown, currency?: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
   const abs = Math.abs(value)
-  if (abs >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
-  if (abs >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
-  if (abs >= 1e6) return `$${(value / 1e6).toFixed(1)}M`
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  const prefix = currencyPrefix(currency)
+  if (abs >= 1e12) return `${prefix}${(value / 1e12).toFixed(2)}T`
+  if (abs >= 1e9) return `${prefix}${(value / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `${prefix}${(value / 1e6).toFixed(1)}M`
+  return `${prefix}${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 
 function formatValuationPct(value: unknown): string {
@@ -1180,10 +1239,10 @@ function parseScaledNumberInput(value: string): number | null {
   return base * multiplier
 }
 
-function formatSharePrice(value: unknown): string {
+function formatSharePrice(value: unknown, currency?: unknown): string {
   const parsed = finiteNumber(value)
   if (parsed == null) return "N/A"
-  return `$${parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `${currencyPrefix(currency)}${parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatScenarioChange(value: unknown): string {
@@ -1274,28 +1333,31 @@ function computeDraftValueRangeScenario(
 ): ComputedValueRangeScenario {
   const multiple = parseMultipleInput(draft.multiple)
   const denominator = parseScaledNumberInput(draft.denominator)
+  const denominatorToPriceRate = valueRangeDenominatorToPriceRate(data)
+  const denominatorConverted = denominator != null && denominatorToPriceRate != null ? denominator * denominatorToPriceRate : null
   const shares = inferredShareCount(data)
   const currentPrice = positiveNumber(data.market_data?.current_price)
   const netDebt = finiteNumber(data.value_range?.net_debt ?? data.market_data?.net_debt)
 
-  if (multiple == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
-  if (denominator == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
-  if (shares == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+  if (multiple == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
+  if (denominator == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
+  if (denominatorToPriceRate == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing fx rate" }
+  if (shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
   if (ENTERPRISE_VALUE_METRICS.has(metric) && netDebt == null) {
-    return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
+    return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
   }
 
-  const grossValue = multiple * denominator
+  const grossValue = multiple * (denominatorConverted ?? 0)
   const equityValue = ENTERPRISE_VALUE_METRICS.has(metric) ? grossValue - (netDebt ?? 0) : grossValue
   if (!Number.isFinite(equityValue) || equityValue <= 0) {
-    return { multiple, denominator, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
+    return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
   }
   const expectedPrice = equityValue / shares
   const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
-  return { multiple, denominator, expectedPrice, percentChange, status: "ok", reason: null }
+  return { multiple, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
 }
 
-function valueRangeRequestFromDraft(draft: ValueRangeDraft): PositionValueRangeRequest {
+function valueRangeRequestFromDraft(draft: ValueRangeDraft, data: PositionValuation): PositionValueRangeRequest {
   const scenarios: PositionValueRangeRequest["scenarios"] = {}
   for (const scenario of VALUE_RANGE_SCENARIOS) {
     const row = draft.scenarios[scenario]
@@ -1306,7 +1368,16 @@ function valueRangeRequestFromDraft(draft: ValueRangeDraft): PositionValueRangeR
     }
     scenarios[scenario] = { multiple, denominator }
   }
-  return { metric: draft.metric, scenarios }
+  return { metric: draft.metric, denominator_currency: valueRangeDenominatorCurrency(data), scenarios }
+}
+
+function valueRangeDraftsMatch(a: ValueRangeDraft, b: ValueRangeDraft): boolean {
+  if (a.metric !== b.metric) return false
+  return VALUE_RANGE_SCENARIOS.every(
+    scenario =>
+      a.scenarios[scenario].multiple === b.scenarios[scenario].multiple &&
+      a.scenarios[scenario].denominator === b.scenarios[scenario].denominator,
+  )
 }
 
 function valuationStatusClass(status?: string | null): string {
@@ -1349,15 +1420,18 @@ function ValueRangePanel({
   function handleSave() {
     try {
       setValidationError(null)
-      onSave(valueRangeRequestFromDraft(draft))
+      onSave(valueRangeRequestFromDraft(draft, valuation))
     } catch (err) {
       setValidationError(err instanceof Error ? err.message : "Invalid value range.")
     }
   }
 
   const metricLabel = valuation.metrics[draft.metric]?.label ?? draft.metric
-  const currentPrice = formatSharePrice(valuation.market_data?.current_price)
+  const outputCurrency = valueRangeOutputCurrency(valuation)
+  const denominatorCurrency = valueRangeDenominatorCurrency(valuation)
+  const currentPrice = formatSharePrice(valuation.market_data?.current_price, outputCurrency)
   const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
+  const hasUnsavedChanges = !valueRangeDraftsMatch(draft, valueRangeDraftFromData(valuation))
 
   return (
     <section className="space-y-3">
@@ -1370,8 +1444,7 @@ function ValueRangePanel({
             </span>
           </div>
           <p className="mt-1 text-xs text-muted">
-            {metricLabel} scenarios from user assumptions. Current price {currentPrice}
-            {valuation.market_data?.currency ? ` ${valuation.market_data.currency}` : ""}.
+            {metricLabel} scenarios from user assumptions. Current price {currentPrice}.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_auto] lg:w-[430px]">
@@ -1383,6 +1456,7 @@ function ValueRangePanel({
           />
           <ActionButton
             onClick={handleSave}
+            disabled={!hasUnsavedChanges}
             loading={isSaving}
             loadingText="Saving..."
             className="min-h-10 px-4 sm:self-end sm:w-auto"
@@ -1406,7 +1480,7 @@ function ValueRangePanel({
                   {computed.status.replace(/_/g, " ")}
                 </span>
               </div>
-              <p className="mt-3 text-2xl font-semibold text-app">{formatSharePrice(computed.expectedPrice)}</p>
+              <p className="mt-3 text-2xl font-semibold text-app">{formatSharePrice(computed.expectedPrice, outputCurrency)}</p>
               <p className={cn("mt-0.5 text-xs font-medium", scenarioChangeClass(computed.percentChange))}>
                 {formatScenarioChange(computed.percentChange)} from current
               </p>
@@ -1418,7 +1492,7 @@ function ValueRangePanel({
                   placeholder="10x"
                 />
                 <TextInput
-                  label="Denominator"
+                  label={denominatorCurrency ? `Denominator (${denominatorCurrency})` : "Denominator"}
                   value={draft.scenarios[scenario].denominator}
                   onChange={value => updateScenario(scenario, { denominator: value })}
                   placeholder="1.5B"
@@ -1471,6 +1545,10 @@ function ValuationTab({ ticker }: { ticker: string }) {
     ...data.profile.options.map(option => ({ value: option.id, label: option.label })),
   ]
   const warnings = data.data_quality?.warnings ?? []
+  const priceCcy = priceCurrency(data)
+  const financialCcy = financialCurrency(data)
+  const mixedCurrencies = Boolean(priceCcy && financialCcy && !sameCurrency(priceCcy, financialCcy))
+  const fxRate = positiveNumber(data.currency_context?.financial_to_price_fx_rate)
 
   return (
     <div className="space-y-5">
@@ -1481,6 +1559,13 @@ function ValuationTab({ ticker }: { ticker: string }) {
             <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(data.data_quality?.status))}>
               {data.data_quality?.status?.replace(/_/g, " ") ?? "unknown"}
             </span>
+            {priceCcy && <span className="rounded border border-app px-2 py-0.5 text-xs font-semibold text-muted">Price: {priceCcy}</span>}
+            {financialCcy && <span className="rounded border border-app px-2 py-0.5 text-xs font-semibold text-muted">Financials: {financialCcy}</span>}
+            {mixedCurrencies && (
+              <span className="rounded border border-app px-2 py-0.5 text-xs font-semibold text-muted">
+                FX: {financialCcy} -&gt; {priceCcy}{fxRate != null ? ` ${fxRate.toFixed(4)}` : ""}
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted">
             {data.company_name || data.ticker}
@@ -1558,7 +1643,12 @@ function ValuationTab({ ticker }: { ticker: string }) {
                   </td>
                   <td className="px-3 py-2 font-mono text-app">{formatMultipleValue(metric?.value)}</td>
                   <td className="px-3 py-2">
-                    <div className="text-app">{formatValuationMoney(metric?.denominator)}</div>
+                    <div className="text-app">{formatValuationMoney(metric?.denominator, metric?.denominator_currency ?? financialCcy)}</div>
+                    {metric?.denominator_converted != null && !sameCurrency(metric.denominator_currency, metric.denominator_converted_currency) && (
+                      <div className="text-xs text-subtle">
+                        {formatValuationMoney(metric.denominator_converted, metric.denominator_converted_currency ?? priceCcy)}
+                      </div>
+                    )}
                     <div className="text-xs text-subtle">{metric?.denominator_label}</div>
                   </td>
                   <td className="px-3 py-2 text-app">{formatValuationPct(peer?.percentile)}</td>
@@ -1587,11 +1677,10 @@ function ValuationTab({ ticker }: { ticker: string }) {
         <div className="rounded-lg border border-app px-3 py-2">
           <h3 className="text-sm font-semibold text-app">Market Data</h3>
           <p className="mt-1 text-sm text-muted">
-            EV {formatValuationMoney(data.market_data?.enterprise_value)}
+            EV {formatValuationMoney(data.market_data?.enterprise_value, priceCcy)}
             {" - "}
-            Market cap {formatValuationMoney(data.market_data?.market_cap)}
-            {data.market_data?.current_price ? ` - Price ${formatValuationMoney(data.market_data.current_price)}` : ""}
-            {data.market_data?.currency ? ` - ${data.market_data.currency}` : ""}
+            Market cap {formatValuationMoney(data.market_data?.market_cap, priceCcy)}
+            {data.market_data?.current_price ? ` - Price ${formatSharePrice(data.market_data.current_price, priceCcy)}` : ""}
           </p>
         </div>
       </div>

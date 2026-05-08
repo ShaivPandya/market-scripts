@@ -13,7 +13,7 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: UP035
+from typing import Any, Dict, List, Optional, Set, SupportsFloat, SupportsIndex, Tuple  # noqa: UP035
 
 from llm_utils import MODEL_LOW, MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 from portfolio.momentum.fundamental_momentum._edgar_periods import (
@@ -55,6 +55,49 @@ REVENUE_CONCEPTS = (
 
 EPS_CONCEPTS = ("EarningsPerShareDiluted", "EarningsPerShareBasic")
 EPS_UNITS = ("USD/shares", "USD-per-shares")
+
+YF_REVENUE_KEYS = (
+    "Total Revenue",
+    "TotalRevenue",
+    "Revenue",
+    "Net Sales",
+    "NetSales",
+    "Sales",
+)
+YF_EPS_KEYS = (
+    "Diluted EPS",
+    "DilutedEPS",
+    "EPS Diluted",
+    "Earnings Per Share Diluted",
+    "Basic EPS",
+    "BasicEPS",
+    "EPS Basic",
+    "Earnings Per Share Basic",
+)
+YF_NET_INCOME_KEYS = (
+    "Net Income",
+    "NetIncome",
+    "Net Income Common Stockholders",
+    "NetIncomeCommonStockholders",
+    "Net Income Applicable To Common Shares",
+    "NetIncomeApplicableToCommonShares",
+)
+YF_DILUTED_SHARES_KEYS = (
+    "Diluted Average Shares",
+    "DilutedAverageShares",
+    "Weighted Average Shares Diluted",
+    "WeightedAverageSharesDiluted",
+    "Diluted Shares",
+    "DilutedShares",
+)
+YF_BASIC_SHARES_KEYS = (
+    "Basic Average Shares",
+    "BasicAverageShares",
+    "Weighted Average Shares Basic",
+    "WeightedAverageSharesBasic",
+    "Basic Shares",
+    "BasicShares",
+)
 
 ANNUAL_DISPLAY_LIMIT = 5
 QUARTERLY_DISPLAY_LIMIT = 20
@@ -308,6 +351,238 @@ def _calc_avg_3q_yoy(rows: list[dict], denom_abs: bool) -> float | None:
     if not changes:
         return None
     return sum(changes) / len(changes)
+
+
+def _yf_numeric(v: object) -> float | None:
+    if not isinstance(v, (str, bytes, SupportsFloat, SupportsIndex)):
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x != x or x in (float("inf"), float("-inf")):
+        return None
+    return x
+
+
+def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...]):
+    for attr in attrs:
+        try:
+            obj = getattr(ticker_obj, attr)
+        except Exception:
+            continue
+
+        try:
+            candidate = obj() if callable(obj) else obj
+        except TypeError:
+            try:
+                candidate = obj(freq="annual")
+            except Exception:
+                continue
+        except Exception:
+            continue
+
+        if candidate is not None and not getattr(candidate, "empty", True):
+            return candidate
+
+    for attr in ("get_income_stmt", "get_financials"):
+        try:
+            obj = getattr(ticker_obj, attr)
+        except Exception:
+            continue
+        if not callable(obj):
+            continue
+        for kwargs in ({"freq": "annual"}, {}):
+            try:
+                candidate = obj(**kwargs)
+            except Exception:
+                continue
+            if candidate is not None and not getattr(candidate, "empty", True):
+                return candidate
+    return None
+
+
+def _yf_info(ticker_obj: Any) -> dict:
+    for attr in ("info", "get_info"):
+        try:
+            obj = getattr(ticker_obj, attr)
+            candidate = obj() if callable(obj) else obj
+        except Exception:
+            continue
+        if isinstance(candidate, dict):
+            return candidate
+    return {}
+
+
+def _yf_index_lookup(statement: Any, names: tuple[str, ...]) -> object | None:
+    if statement is None or getattr(statement, "empty", True):
+        return None
+    index_values: list[object] = list(getattr(statement, "index", []))
+    exact = set(index_values)
+    for name in names:
+        if name in exact:
+            return name
+
+    normalized = {re.sub(r"[^a-z0-9]", "", str(idx).lower()): idx for idx in index_values}
+    for name in names:
+        found = normalized.get(re.sub(r"[^a-z0-9]", "", name.lower()))
+        if found is not None:
+            return found
+    return None
+
+
+def _yf_line_value(statement: Any, column: object, names: tuple[str, ...]) -> float | None:
+    row = _yf_index_lookup(statement, names)
+    if row is None:
+        return None
+    try:
+        return _yf_numeric(statement.at[row, column])
+    except Exception:
+        return None
+
+
+def _yf_eps_value(statement: Any, column: object) -> float | None:
+    direct = _yf_line_value(statement, column, YF_EPS_KEYS)
+    if direct is not None:
+        return direct
+
+    net_income = _yf_line_value(statement, column, YF_NET_INCOME_KEYS)
+    shares = _yf_line_value(statement, column, YF_DILUTED_SHARES_KEYS)
+    if shares is None:
+        shares = _yf_line_value(statement, column, YF_BASIC_SHARES_KEYS)
+    return _safe_growth(net_income, shares, denom_abs=False)
+
+
+def _yf_column_date(column: object) -> str:
+    try:
+        if hasattr(column, "date"):
+            return str(column.date().isoformat())
+    except Exception:
+        pass
+    raw = str(column or "")
+    return raw[:10] if len(raw) >= 10 else raw
+
+
+def _yf_column_sort_key(column: object) -> str:
+    return _yf_column_date(column)
+
+
+def _yf_period_label(column: object) -> str:
+    period_end = _yf_column_date(column)
+    if len(period_end) >= 4 and period_end[:4].isdigit():
+        return f"FY{period_end[:4]}"
+    return "FY"
+
+
+def _yf_rows_from_statement(
+    statement: Any,
+    *,
+    value_getter: Any,
+    yoy_abs_denom: bool,
+) -> list[dict]:
+    if statement is None or getattr(statement, "empty", True):
+        return []
+
+    columns = sorted(list(getattr(statement, "columns", [])), key=_yf_column_sort_key, reverse=True)
+    rows: list[dict] = []
+    for column in columns[: ANNUAL_DISPLAY_LIMIT + ANNUAL_YOY_STEP]:
+        value = value_getter(statement, column)
+        if value is None:
+            continue
+        rows.append(
+            {
+                "period_label": _yf_period_label(column),
+                "period_end": _yf_column_date(column),
+                "value": value,
+                "yoy_growth": None,
+                "form": "Yahoo Finance",
+                "filed": "",
+                "accn": "",
+                "filing_url": "",
+                "source": "yfinance",
+            }
+        )
+
+    for i, row in enumerate(rows):
+        j = i + ANNUAL_YOY_STEP
+        if j >= len(rows):
+            continue
+        curr = _yf_numeric(row.get("value"))
+        prev = _yf_numeric(rows[j].get("value"))
+        if curr is None or prev is None:
+            continue
+        row["yoy_growth"] = _safe_growth(curr - prev, prev, denom_abs=yoy_abs_denom)
+
+    return rows[:ANNUAL_DISPLAY_LIMIT]
+
+
+def _empty_breakdown() -> dict:
+    return {
+        "source_filing": None,
+        "by_segment": [],
+        "by_region": [],
+        "extraction_meta": {
+            "segment": {"status": "unavailable", "source": "none"},
+            "region": {"status": "unavailable", "source": "none"},
+            "ai_fallback_attempted": False,
+        },
+    }
+
+
+def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
+    try:
+        import yfinance as yf
+    except ImportError as exc:
+        raise ValueError("Yahoo Finance fallback unavailable: missing yfinance dependency") from exc
+
+    ticker_obj = yf.Ticker(ticker)
+    info = _yf_info(ticker_obj)
+    annual_income = _yf_statement(ticker_obj, ("income_stmt", "financials"))
+
+    annual_revenue = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_REVENUE_KEYS),
+        yoy_abs_denom=False,
+    )
+    annual_eps = _yf_rows_from_statement(
+        annual_income,
+        value_getter=_yf_eps_value,
+        yoy_abs_denom=True,
+    )
+
+    if not annual_revenue and not annual_eps:
+        raise ValueError(f"No Revenue or EPS history found in Yahoo Finance for ticker: {ticker}")
+
+    return {
+        "ticker": ticker,
+        "company_name": str(info.get("longName") or info.get("shortName") or ticker),
+        "cik": None,
+        "data_source": "yfinance",
+        "fallback_reason": reason,
+        "financial_currency": str(info.get("financialCurrency") or info.get("currency") or "USD"),
+        "metrics": {
+            "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3, abs_fallback=False),
+            "eps_cagr_3y": _calc_cagr(annual_eps, years=3, abs_fallback=True),
+            "avg_yoy_eps_growth_3q": None,
+            "avg_yoy_revenue_growth_3q": None,
+        },
+        "annual": {
+            "revenue": annual_revenue,
+            "eps": annual_eps,
+        },
+        "quarterly": {
+            "revenue": [],
+            "eps": [],
+        },
+        "breakdown": _empty_breakdown(),
+    }
+
+
+def _yfinance_fallback_or_raise(ticker: str, reason: str) -> dict:
+    try:
+        return _build_yfinance_fallback(ticker, reason)
+    except Exception as exc:
+        raise ValueError(f"{reason}; yfinance fallback failed: {exc}") from exc
 
 
 def _iter_segment_pairs(segment_obj: object) -> list[tuple[str, str]]:
@@ -1158,11 +1433,11 @@ def get_data(ticker: str) -> dict:
 
     cik_str = get_cik_for_ticker(tk)
     if not cik_str:
-        raise ValueError(f"CIK not found for ticker: {tk}")
+        return _yfinance_fallback_or_raise(tk, f"CIK not found for ticker: {tk}")
 
     facts = fetch_companyfacts_by_cik(cik_str)
     if facts is None:
-        raise ValueError(f"No SEC EDGAR companyfacts available for ticker: {tk}")
+        return _yfinance_fallback_or_raise(tk, f"No SEC EDGAR companyfacts available for ticker: {tk}")
 
     submissions = fetch_submissions_by_cik(cik_str)
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
@@ -1171,7 +1446,10 @@ def get_data(ticker: str) -> dict:
     annual_eps, quarterly_eps = _build_eps_rows(us_gaap, cik_str, submissions)
 
     if not annual_revenue and not quarterly_revenue and not annual_eps and not quarterly_eps:
-        raise ValueError(f"No Revenue or EPS history found in EDGAR companyfacts for ticker: {tk}")
+        return _yfinance_fallback_or_raise(
+            tk,
+            f"No Revenue or EPS history found in EDGAR companyfacts for ticker: {tk}",
+        )
 
     metrics = {
         "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3, abs_fallback=False),
@@ -1186,6 +1464,9 @@ def get_data(ticker: str) -> dict:
         "ticker": tk,
         "company_name": str(facts.get("entityName") or tk),
         "cik": cik_str,
+        "data_source": "sec_edgar",
+        "fallback_reason": None,
+        "financial_currency": "USD",
         "metrics": metrics,
         "annual": {
             "revenue": annual_revenue,

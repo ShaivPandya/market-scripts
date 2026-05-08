@@ -20,11 +20,14 @@ from typing import Any, cast
 import pandas as pd
 import yfinance as yf
 
+from utils.fx import clean_currency as _clean_currency
+from utils.fx import currency_lookup_and_unit_scale as _currency_lookup_and_unit_scale
+from utils.fx import fx_rate_to_base
 from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
-VALUATION_CURRENT_CACHE_VERSION = "v1"
-VALUATION_PEER_ROW_CACHE_VERSION = "v1"
+VALUATION_CURRENT_CACHE_VERSION = "v2"
+VALUATION_PEER_ROW_CACHE_VERSION = "v2"
 VALUATION_COLUMNS = (
     "price_sales",
     "price_operating_income",
@@ -265,6 +268,97 @@ CASH_KEYS = (
 )
 
 
+def currency_context_from_info(info: Mapping[str, Any]) -> dict[str, Any]:
+    price_currency = _clean_currency(info.get("currency")) or "USD"
+    financial_currency = _clean_currency(info.get("financialCurrency")) or price_currency
+
+    if _same_currency(financial_currency, price_currency):
+        return {
+            "price_currency": price_currency,
+            "financial_currency": financial_currency,
+            "financial_to_price_fx_rate": 1.0,
+            "fx_rate_as_of": None,
+            "conversion_status": "same_currency",
+        }
+
+    fx = fx_rate_to_base(financial_currency, price_currency)
+    if not isinstance(fx, Mapping):
+        return {
+            "price_currency": price_currency,
+            "financial_currency": financial_currency,
+            "financial_to_price_fx_rate": None,
+            "fx_rate_as_of": None,
+            "conversion_status": "missing_fx_rate",
+        }
+    rate = _positive_float(fx.get("rate"))
+    if rate is None:
+        return {
+            "price_currency": price_currency,
+            "financial_currency": financial_currency,
+            "financial_to_price_fx_rate": None,
+            "fx_rate_as_of": None,
+            "conversion_status": "missing_fx_rate",
+        }
+    return {
+        "price_currency": price_currency,
+        "financial_currency": financial_currency,
+        "financial_to_price_fx_rate": rate,
+        "fx_rate_as_of": fx.get("as_of"),
+        "conversion_status": "ok",
+    }
+
+
+def _same_currency(a: Any, b: Any) -> bool:
+    left = _currency_lookup_and_unit_scale(a)
+    right = _currency_lookup_and_unit_scale(b)
+    return bool(left and right and left == right)
+
+
+def _financial_to_price_rate(currency_context: Mapping[str, Any]) -> float | None:
+    return _positive_float(currency_context.get("financial_to_price_fx_rate"))
+
+
+def _convert_financial_value(value: Any, currency_context: Mapping[str, Any]) -> float | None:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return None
+    rate = _financial_to_price_rate(currency_context)
+    if rate is None:
+        return None
+    converted = parsed * rate
+    return converted if math.isfinite(converted) else None
+
+
+def _conversion_rate(
+    source_currency: Any,
+    target_currency: Any,
+    currency_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    source = _clean_currency(source_currency)
+    target = _clean_currency(target_currency)
+    if not source or not target:
+        return {"rate": None, "as_of": None, "status": "missing_currency"}
+    if _same_currency(source, target):
+        return {"rate": 1.0, "as_of": None, "status": "same_currency"}
+
+    if isinstance(currency_context, Mapping):
+        financial = currency_context.get("financial_currency")
+        price = currency_context.get("price_currency")
+        context_rate = _financial_to_price_rate(currency_context)
+        if context_rate is not None and _same_currency(source, financial) and _same_currency(target, price):
+            return {"rate": context_rate, "as_of": currency_context.get("fx_rate_as_of"), "status": "ok"}
+        if context_rate is not None and _same_currency(source, price) and _same_currency(target, financial):
+            return {"rate": 1.0 / context_rate, "as_of": currency_context.get("fx_rate_as_of"), "status": "ok"}
+
+    fx = fx_rate_to_base(source, target)
+    if not isinstance(fx, Mapping):
+        return {"rate": None, "as_of": None, "status": "missing_fx_rate"}
+    rate = _positive_float(fx.get("rate"))
+    if rate is None:
+        return {"rate": None, "as_of": None, "status": "missing_fx_rate"}
+    return {"rate": rate, "as_of": fx.get("as_of"), "status": "ok"}
+
+
 def profile_options() -> list[dict[str, str]]:
     return [{"id": key, "label": value.label} for key, value in VALUATION_PROFILES.items()]
 
@@ -417,6 +511,7 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
         raise ValueError("Value range payload is required")
 
     metric = normalize_value_range_metric(payload.get("metric"))
+    denominator_currency = _clean_currency(payload.get("denominator_currency"))
     raw_scenarios = payload.get("scenarios")
     if not isinstance(raw_scenarios, Mapping):
         raise ValueError("Value range scenarios are required")
@@ -438,7 +533,10 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
 
     if require_complete and set(scenarios) != set(VALUE_RANGE_SCENARIOS):
         raise ValueError("Bear, base, and bull scenarios are required")
-    return {"metric": metric, "scenarios": scenarios}
+    out: dict[str, Any] = {"metric": metric, "scenarios": scenarios}
+    if denominator_currency:
+        out["denominator_currency"] = denominator_currency
+    return out
 
 
 def _read_value_ranges() -> dict[str, dict[str, Any]]:
@@ -500,6 +598,10 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[s
     info = _fetch_info(normalized)
     override = read_profile_override(normalized)
     current = fetch_current_valuation(normalized, info=info)
+    raw_currency_context = current.get("currency_context")
+    currency_context: Mapping[str, Any] = (
+        raw_currency_context if isinstance(raw_currency_context, Mapping) else currency_context_from_info(info)
+    )
     market_cap = _safe_float(current.get("market_cap"))
     enterprise_value = _safe_float(current.get("enterprise_value"))
     current_price = _current_price(info)
@@ -514,13 +616,14 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[s
         metrics=current["metrics"],
         peers=peers,
         effective_weights=effective_weights,
+        currency_context=currency_context,
         market_data={
             "market_cap": market_cap,
             "enterprise_value": enterprise_value,
             "net_debt": net_debt,
             "current_price": current_price,
             "shares": shares,
-            "currency": info.get("currency"),
+            "currency": currency_context.get("price_currency"),
         },
     )
 
@@ -529,16 +632,23 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[s
         "company_name": info.get("longName") or info.get("shortName") or normalized,
         "as_of": datetime.now(UTC).isoformat(),
         "source_policy": "free_providers",
+        "currency_context": currency_context,
         "market_data": {
             "market_cap": market_cap,
             "enterprise_value": enterprise_value,
             "net_debt": net_debt,
+            "net_debt_financial": (current.get("financial_data") or {}).get("net_debt")
+            if isinstance(current.get("financial_data"), Mapping)
+            else None,
             "shares_outstanding": shares,
-            "currency": info.get("currency"),
+            "currency": currency_context.get("price_currency"),
+            "price_currency": currency_context.get("price_currency"),
+            "financial_currency": currency_context.get("financial_currency"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "current_price": current_price,
         },
+        "financial_data": current.get("financial_data") if isinstance(current.get("financial_data"), Mapping) else {},
         "profile": {
             **profile,
             "override_profile_id": override,
@@ -559,6 +669,7 @@ def value_range_payload(
     metrics: Mapping[str, Mapping[str, Any]],
     peers: Mapping[str, Any],
     effective_weights: Mapping[str, Any],
+    currency_context: Mapping[str, Any],
     market_data: Mapping[str, Any],
 ) -> dict[str, Any]:
     saved = saved_assumption is not None
@@ -568,13 +679,44 @@ def value_range_payload(
         else default_value_range_assumption(metrics, peers=peers, effective_weights=effective_weights)
     )
     metric = normalize_value_range_metric(assumption.get("metric"))
+    price_currency = (
+        _clean_currency(currency_context.get("price_currency")) or _clean_currency(market_data.get("currency")) or "USD"
+    )
+    financial_currency = _clean_currency(currency_context.get("financial_currency")) or price_currency
+    assumption_currency = _clean_currency(assumption.get("denominator_currency"))
+    legacy_denominator_currency = saved and not assumption_currency
+    stored_denominator_currency = assumption_currency or (
+        price_currency if legacy_denominator_currency else financial_currency
+    )
+    display_denominator_currency = financial_currency
+
+    display_conversion = _conversion_rate(stored_denominator_currency, display_denominator_currency, currency_context)
+    display_rate = _positive_float(display_conversion.get("rate"))
+    if display_rate is None:
+        display_denominator_currency = stored_denominator_currency
+        display_rate = 1.0
+
+    denominator_to_price = _conversion_rate(display_denominator_currency, price_currency, currency_context)
+    denominator_to_price_rate = _positive_float(denominator_to_price.get("rate"))
+
+    def _display_scenario(row: Mapping[str, Any]) -> dict[str, Any]:
+        out = dict(row)
+        denominator = _safe_float(out.get("denominator"))
+        if denominator is not None:
+            out["denominator"] = denominator * display_rate
+        return out
+
     scenarios = {
         scenario: compute_value_range_scenario(
             metric,
-            row,
+            _display_scenario(row),
             current_price=market_data.get("current_price"),
             shares=market_data.get("shares"),
             net_debt=market_data.get("net_debt"),
+            denominator_currency=display_denominator_currency,
+            output_currency=price_currency,
+            denominator_to_output_fx_rate=denominator_to_price_rate,
+            fx_rate_as_of=denominator_to_price.get("as_of"),
         )
         for scenario, row in (assumption.get("scenarios") or {}).items()
         if scenario in VALUE_RANGE_SCENARIOS and isinstance(row, Mapping)
@@ -589,6 +731,10 @@ def value_range_payload(
                 current_price=market_data.get("current_price"),
                 shares=market_data.get("shares"),
                 net_debt=market_data.get("net_debt"),
+                denominator_currency=display_denominator_currency,
+                output_currency=price_currency,
+                denominator_to_output_fx_rate=denominator_to_price_rate,
+                fx_rate_as_of=denominator_to_price.get("as_of"),
             ),
         )
 
@@ -598,11 +744,17 @@ def value_range_payload(
         "metric": metric,
         "metric_label": VALUATION_LABELS[metric],
         "denominator_label": DENOMINATOR_LABELS[metric],
+        "denominator_currency": display_denominator_currency,
+        "stored_denominator_currency": stored_denominator_currency,
+        "legacy_denominator_currency": legacy_denominator_currency,
+        "denominator_to_price_fx_rate": denominator_to_price_rate,
+        "fx_rate_as_of": denominator_to_price.get("as_of"),
         "calculation_method": "enterprise_value_to_equity" if metric in ENTERPRISE_VALUE_METRICS else "equity_value",
         "current_price": _safe_float(market_data.get("current_price")),
         "shares": _safe_float(market_data.get("shares")),
         "net_debt": _safe_float(market_data.get("net_debt")),
-        "currency": market_data.get("currency"),
+        "currency": price_currency,
+        "output_currency": price_currency,
         "scenarios": {scenario: scenarios[scenario] for scenario in VALUE_RANGE_SCENARIOS},
     }
 
@@ -633,10 +785,18 @@ def compute_value_range_scenario(
     current_price: Any,
     shares: Any,
     net_debt: Any,
+    denominator_currency: Any = None,
+    output_currency: Any = None,
+    denominator_to_output_fx_rate: Any = 1.0,
+    fx_rate_as_of: Any = None,
 ) -> dict[str, Any]:
     normalized_metric = normalize_value_range_metric(metric)
     multiple = _positive_float(scenario.get("multiple"))
     denominator = _positive_float(scenario.get("denominator"))
+    denominator_fx_rate = _positive_float(denominator_to_output_fx_rate)
+    denominator_converted = (
+        denominator * denominator_fx_rate if denominator is not None and denominator_fx_rate is not None else None
+    )
     current_price_value = _positive_float(current_price)
     share_count = _positive_float(shares)
     net_debt_value = _safe_float(net_debt)
@@ -653,6 +813,9 @@ def compute_value_range_scenario(
     elif denominator is None:
         status = "missing"
         reason = "missing_denominator"
+    elif denominator_fx_rate is None:
+        status = "missing"
+        reason = "missing_fx_rate"
     elif share_count is None:
         status = "missing"
         reason = "missing_shares"
@@ -660,7 +823,7 @@ def compute_value_range_scenario(
         status = "missing"
         reason = "missing_net_debt"
     else:
-        enterprise_or_equity_value = multiple * denominator
+        enterprise_or_equity_value = multiple * (denominator_converted or 0.0)
         equity_value = (
             enterprise_or_equity_value - (net_debt_value or 0.0)
             if normalized_metric in ENTERPRISE_VALUE_METRICS
@@ -677,9 +840,15 @@ def compute_value_range_scenario(
     return {
         "multiple": multiple,
         "denominator": denominator,
+        "denominator_currency": _clean_currency(denominator_currency),
+        "denominator_converted": _round_float(denominator_converted),
+        "denominator_converted_currency": _clean_currency(output_currency),
+        "denominator_to_output_fx_rate": _round_float(denominator_fx_rate, 10),
+        "fx_rate_as_of": fx_rate_as_of,
         "equity_value": _round_float(equity_value),
         "expected_price": _round_float(expected_price, 4),
         "percent_change": _round_float(percent_change, 2),
+        "output_currency": _clean_currency(output_currency),
         "status": status,
         "reason": reason,
     }
@@ -771,14 +940,8 @@ def compute_current_multiples_from_statements(
     quarterly_balance: pd.DataFrame | None = None,
     annual_balance: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
+    currency_context = currency_context_from_info(info)
     market_cap = _market_cap(info)
-    enterprise_value_payload = _enterprise_value(
-        info,
-        market_cap=market_cap,
-        quarterly_balance=quarterly_balance,
-        annual_balance=annual_balance,
-    )
-    enterprise_value = enterprise_value_payload["value"]
     revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, REVENUE_KEYS)
     operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, OPERATING_INCOME_KEYS)
     net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, NET_INCOME_KEYS)
@@ -788,41 +951,76 @@ def compute_current_multiples_from_statements(
     book_value = _latest_statement_value(quarterly_balance, BOOK_VALUE_KEYS)
     if book_value is None:
         book_value = _latest_statement_value(annual_balance, BOOK_VALUE_KEYS)
+    debt = _first_not_none(
+        _non_negative_float(info.get("totalDebt")),
+        _non_negative_float(_latest_statement_value(quarterly_balance, TOTAL_DEBT_KEYS)),
+        _non_negative_float(_latest_statement_value(annual_balance, TOTAL_DEBT_KEYS)),
+    )
+    cash = _first_not_none(
+        _non_negative_float(info.get("totalCash")),
+        _non_negative_float(_latest_statement_value(quarterly_balance, CASH_KEYS)),
+        _non_negative_float(_latest_statement_value(annual_balance, CASH_KEYS)),
+    )
+    net_debt_financial = debt - cash if debt is not None and cash is not None else None
+    debt_converted = _convert_financial_value(debt, currency_context)
+    cash_converted = _convert_financial_value(cash, currency_context)
+    net_debt_converted = _convert_financial_value(net_debt_financial, currency_context)
+    enterprise_value_payload = _enterprise_value(
+        info,
+        market_cap=market_cap,
+        debt=debt_converted,
+        cash=cash_converted,
+        net_debt=net_debt_converted,
+        conversion_status=str(currency_context.get("conversion_status") or ""),
+    )
+    enterprise_value = enterprise_value_payload["value"]
 
     metrics = {
         "price_sales": _metric_payload(
             "price_sales",
             enterprise_value,
             revenue_ttm,
+            _convert_financial_value(revenue_ttm, currency_context),
             source="yfinance_statements",
             numerator_source=enterprise_value_payload["source"],
             numerator_degraded=enterprise_value_payload["degraded"],
             numerator_reason=enterprise_value_payload["reason"],
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
         ),
         "price_operating_income": _metric_payload(
             "price_operating_income",
             enterprise_value,
             operating_income_ttm,
+            _convert_financial_value(operating_income_ttm, currency_context),
             source="yfinance_statements",
             numerator_source=enterprise_value_payload["source"],
             numerator_degraded=enterprise_value_payload["degraded"],
             numerator_reason=enterprise_value_payload["reason"],
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
         ),
         "price_fcf": _metric_payload(
             "price_fcf",
             enterprise_value,
             fcf_ttm,
+            _convert_financial_value(fcf_ttm, currency_context),
             source="yfinance_statements",
             numerator_source=enterprise_value_payload["source"],
             numerator_degraded=enterprise_value_payload["degraded"],
             numerator_reason=enterprise_value_payload["reason"],
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
         ),
         "price_earnings": _metric_payload(
             "price_earnings",
             market_cap,
             net_income_ttm,
+            _convert_financial_value(net_income_ttm, currency_context),
             source="yfinance_statements",
             numerator_source="market_cap",
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
             fallback_value=_positive_float(info.get("trailingPE")),
             fallback_source="yfinance_info.trailingPE",
         ),
@@ -830,8 +1028,11 @@ def compute_current_multiples_from_statements(
             "price_book",
             market_cap,
             book_value,
+            _convert_financial_value(book_value, currency_context),
             source="yfinance_balance_sheet",
             numerator_source="market_cap",
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
             fallback_value=_positive_float(info.get("priceToBook")),
             fallback_source="yfinance_info.priceToBook",
         ),
@@ -840,6 +1041,20 @@ def compute_current_multiples_from_statements(
         "market_cap": market_cap,
         "enterprise_value": enterprise_value,
         "net_debt": enterprise_value_payload["net_debt"],
+        "currency_context": currency_context,
+        "financial_data": {
+            "revenue_ttm": revenue_ttm,
+            "operating_income_ttm": operating_income_ttm,
+            "net_income_ttm": net_income_ttm,
+            "operating_cash_flow_ttm": operating_cash_flow_ttm,
+            "capex_ttm": capex_ttm,
+            "fcf_ttm": fcf_ttm,
+            "book_value": book_value,
+            "debt": debt,
+            "cash": cash,
+            "net_debt": net_debt_financial,
+            "currency": currency_context.get("financial_currency"),
+        },
         "metrics": metrics,
     }
 
@@ -848,15 +1063,18 @@ def _metric_payload(
     key: str,
     numerator: float | None,
     denominator: float | None,
+    denominator_converted: float | None,
     *,
     source: str,
     numerator_source: str | None = None,
     numerator_degraded: bool = False,
     numerator_reason: str | None = None,
+    denominator_currency: Any = None,
+    denominator_converted_currency: Any = None,
     fallback_value: float | None = None,
     fallback_source: str | None = None,
 ) -> dict[str, Any]:
-    value = _multiple(numerator, denominator)
+    value = _multiple(numerator, denominator_converted)
     status = "ok" if value is not None else "missing"
     reason = None
 
@@ -867,6 +1085,12 @@ def _metric_payload(
         status = "missing"
         reason = "missing_denominator"
     elif denominator <= 0:
+        status = "not_meaningful"
+        reason = "non_positive_denominator"
+    elif denominator_converted is None:
+        status = "missing"
+        reason = "missing_fx_rate"
+    elif denominator_converted <= 0:
         status = "not_meaningful"
         reason = "non_positive_denominator"
     elif numerator_degraded:
@@ -888,6 +1112,9 @@ def _metric_payload(
         "numerator_label": NUMERATOR_LABELS[key],
         "numerator_source": numerator_source,
         "denominator": denominator,
+        "denominator_currency": _clean_currency(denominator_currency),
+        "denominator_converted": denominator_converted,
+        "denominator_converted_currency": _clean_currency(denominator_converted_currency),
         "denominator_label": DENOMINATOR_LABELS[key],
         "status": status,
         "reason": reason,
@@ -1123,6 +1350,8 @@ def valuation_data_quality(
         warnings.append("Peer-relative valuation context is unavailable or thin.")
     if any(status == "degraded" for status in metric_statuses.values()):
         warnings.append("Some multiples rely on fallback or partial provider data.")
+    if any((metric or {}).get("reason") == "missing_fx_rate" for metric in metrics.values()):
+        warnings.append("FX conversion is unavailable for mixed-currency valuation inputs.")
     return {
         "status": "ok" if not warnings else "degraded",
         "usable_metric_count": len(usable),
@@ -1211,21 +1440,11 @@ def _enterprise_value(
     info: Mapping[str, Any],
     *,
     market_cap: float | None,
-    quarterly_balance: pd.DataFrame | None,
-    annual_balance: pd.DataFrame | None,
+    debt: float | None,
+    cash: float | None,
+    net_debt: float | None,
+    conversion_status: str,
 ) -> dict[str, Any]:
-    debt = _first_not_none(
-        _non_negative_float(info.get("totalDebt")),
-        _non_negative_float(_latest_statement_value(quarterly_balance, TOTAL_DEBT_KEYS)),
-        _non_negative_float(_latest_statement_value(annual_balance, TOTAL_DEBT_KEYS)),
-    )
-    cash = _first_not_none(
-        _non_negative_float(info.get("totalCash")),
-        _non_negative_float(_latest_statement_value(quarterly_balance, CASH_KEYS)),
-        _non_negative_float(_latest_statement_value(annual_balance, CASH_KEYS)),
-    )
-    net_debt = debt - cash if debt is not None and cash is not None else None
-
     provider_ev = _positive_float(info.get("enterpriseValue"))
     if provider_ev is not None:
         return {
@@ -1236,7 +1455,9 @@ def _enterprise_value(
             "net_debt": net_debt,
         }
 
-    from_parts = _enterprise_value_from_parts(market_cap, debt, cash)
+    from_parts = (
+        None if conversion_status == "missing_fx_rate" else _enterprise_value_from_parts(market_cap, debt, cash)
+    )
     if from_parts is not None:
         complete = debt is not None and cash is not None
         return {
@@ -1248,11 +1469,14 @@ def _enterprise_value(
         }
 
     if market_cap is not None and market_cap > 0:
+        reason = "using_market_cap_enterprise_value_proxy"
+        if conversion_status == "missing_fx_rate":
+            reason = "missing_fx_rate"
         return {
             "value": market_cap,
             "source": "market_cap_proxy",
             "degraded": True,
-            "reason": "using_market_cap_enterprise_value_proxy",
+            "reason": reason,
             "net_debt": net_debt,
         }
 

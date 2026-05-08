@@ -40,6 +40,34 @@ def test_yield_curve_cache_refreshes_when_latest_close_advanced_under_ttl(monkey
     assert stored["as_of_date"] == "2099-01-01"
 
 
+def test_yield_curve_country_fetch_builds_only_requested_country(monkeypatch, tmp_path):
+    from government_bonds import yield_curve as yc
+
+    cache_path = tmp_path / "yield_curve_90_de.json"
+    built: list[str] = []
+
+    monkeypatch.setattr(yc, "_country_cache_path", lambda _lookback_days, _country_code: cache_path)
+    monkeypatch.setattr(yc, "_build_fred_client", lambda: (None, None))
+
+    def fake_build_country_curve(country_code, country_name, **_kwargs):
+        built.append(country_code)
+        return {
+            "code": country_code,
+            "name": country_name,
+            "as_of_date": "2099-01-01",
+            "current": [],
+        }
+
+    monkeypatch.setattr(yc, "_build_country_curve", fake_build_country_curve)
+
+    out = yc.get_data(lookback_days=90, country="de")
+
+    assert built == ["DE"]
+    assert [row["code"] for row in out["countries"]] == ["DE"]
+    stored = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert [row["code"] for row in stored["payload"]["countries"]] == ["DE"]
+
+
 def test_bond_dashboard_returns_stale_fallback_when_refresh_fails(monkeypatch, tmp_path):
     from government_bonds import bond_dashboard as bd
 

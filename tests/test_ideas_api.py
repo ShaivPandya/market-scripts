@@ -166,6 +166,7 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     created_payload = created.json()
     idea = created_payload["idea"]
     assert idea["ticker"] == "AAPL"
+    assert idea["metadata"]["use_portfolio_context"] is True
     assert created_payload["documents"]["overview_parsed"]["financials"]["revenue_growth"]["value"] == "+8.0%"
     assert created_payload["documents"]["overview_parsed"]["porters_five_forces"][0]["rating"] == "Low"
     assert created_payload["documents"]["management_quality_parsed"]["summary"]["overall_rating"] == "Strong"
@@ -284,10 +285,39 @@ def test_create_update_defaults_analyzer_direction(auth_client):
     assert created.status_code == 200
     idea = created.json()["idea"]
     assert idea["metadata"]["analyzer_direction"] == "inactive"
+    assert idea["metadata"]["use_portfolio_context"] is True
 
     updated = auth_client.put(f"/api/v1/ideas/{idea['id']}", json={"analyzer_direction": "long"})
     assert updated.status_code == 200
     assert updated.json()["idea"]["metadata"]["analyzer_direction"] == "long"
+    assert updated.json()["idea"]["metadata"]["use_portfolio_context"] is True
+
+    updated = auth_client.put(f"/api/v1/ideas/{idea['id']}", json={"use_portfolio_context": False})
+    assert updated.status_code == 200
+    assert updated.json()["idea"]["metadata"]["analyzer_direction"] == "long"
+    assert updated.json()["idea"]["metadata"]["use_portfolio_context"] is False
+
+
+def test_idea_evaluation_cache_key_includes_portfolio_context_toggle(auth_client):
+    from api.routers import ideas as ideas_router
+
+    created = auth_client.post(
+        "/api/v1/ideas",
+        json={"ticker": "CACHE", "company_name": "Cache Test", "user_notes": "Cache key.", "tags": []},
+    )
+    assert created.status_code == 200
+    idea_id = created.json()["idea"]["id"]
+
+    enabled = ideas_router._cache_key(
+        ideas_router.IdeaEvaluationRequest(idea_id=str(idea_id), use_portfolio_context=True)
+    )
+    disabled = ideas_router._cache_key(
+        ideas_router.IdeaEvaluationRequest(idea_id=str(idea_id), use_portfolio_context=False)
+    )
+
+    assert ideas_router.IDEA_EVALUATION_VERSION == "v3_portfolio_context_toggle"
+    assert "v3_portfolio_context_toggle" in enabled
+    assert enabled != disabled
 
 
 def test_analyzer_context_overrides_canonical_scores_and_preserves_six_factor_average():
@@ -340,6 +370,59 @@ def test_analyzer_context_overrides_canonical_scores_and_preserves_six_factor_av
     assert result["score"] == 69.2
     assert "fundamental_momentum" not in result["factor_scores"]
     assert "price_momentum" not in result["factor_scores"]
+
+
+def test_disabled_portfolio_context_neutralizes_fit_skips_overrides_and_preserves_confidence():
+    from api.routers import ideas as ideas_router
+
+    context = {
+        "idea": {"id": "idea:1", "ticker": "AAPL", "metadata": {"analyzer_direction": "long"}},
+        "ticker": "AAPL",
+        "tool_errors": [],
+        "evaluated_at": "2026-05-05T12:00:00+00:00",
+        "use_portfolio_context": False,
+        "analyzer_context": {
+            "status": "available",
+            "row": {
+                "industry_quality_score": 80,
+                "business_quality_qual_score": 70,
+                "management_quality_score": 90,
+                "valuation_signal": 1.5,
+            },
+        },
+    }
+    result = ideas_router._normalize_llm_result(
+        context,
+        {
+            "action": "buy",
+            "recommendation_status": "clear",
+            "score": 10,
+            "confidence": 0.8,
+            "rationale": "Test result.",
+            "factor_scores": {
+                "macro_support": {"score": 60},
+                "industry_attractiveness": {"score": 10},
+                "business_quality": {"score": 10},
+                "management_quality": {"score": 10},
+                "valuation_asymmetry": {"score": 10},
+                "portfolio_fit": {"score": 90},
+            },
+            "data_quality": {"critical_data_quality": "ok", "source_quality": "ok", "quality": "ok"},
+        },
+    )
+
+    assert result["data_quality"]["portfolio_context_used"] is False
+    assert result["analyzer_context"]["status"] == "disabled"
+    assert result["factor_scores"]["industry_attractiveness"]["score"] == 10
+    assert result["factor_scores"]["business_quality"]["score"] == 10
+    assert result["factor_scores"]["management_quality"]["score"] == 10
+    assert result["factor_scores"]["valuation_asymmetry"]["score"] == 10
+    assert result["factor_scores"]["portfolio_fit"]["score"] == 50
+    assert result["factor_scores"]["portfolio_fit"]["status"] == "disabled"
+    assert result["portfolio_fit"]["status"] == "disabled"
+    assert result["score"] == 25
+    assert result["confidence"] == 0.8
+    assert result["recommendation_record"].get("policy_gate_status") != "blocked"
 
 
 def test_analyzer_context_forwards_structured_short_squeeze_risk():
@@ -555,6 +638,260 @@ def test_evaluate_all_computes_one_analyzer_result_for_enabled_ideas(auth_client
     assert job["status"] == "done"
     assert calls["analyzer"] == 1
     assert {row["analyzer_context"]["status"] for row in job["result"]["evaluations"]} == {"available"}
+
+
+def test_evaluate_all_respects_per_idea_portfolio_context_opt_out(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls = {"analyzer": 0}
+
+    def fake_analyzer_result():
+        calls["analyzer"] += 1
+        return {"status": "ok", "raw_result": {"weights_df": []}}
+
+    monkeypatch.setattr(ideas_router, "_compute_portfolio_plus_ideas_analyzer_result", fake_analyzer_result)
+    monkeypatch.setattr(
+        ideas_router,
+        "_analyzer_contexts_from_result",
+        lambda _result: {
+            "ONCTX": {
+                "status": "available",
+                "ticker": "ONCTX",
+                "row": {
+                    "industry_quality_score": 80,
+                    "business_quality_qual_score": 80,
+                    "management_quality_score": 80,
+                    "valuation_signal": 0,
+                },
+            },
+            "OFFCTX": {
+                "status": "available",
+                "ticker": "OFFCTX",
+                "row": {
+                    "industry_quality_score": 20,
+                    "business_quality_qual_score": 20,
+                    "management_quality_score": 20,
+                    "valuation_signal": -1,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: ideas_router._deterministic_comparison_result(evaluations),
+    )
+
+    for ticker, use_portfolio_context in [("ONCTX", True), ("OFFCTX", False)]:
+        created = auth_client.post(
+            "/api/v1/ideas",
+            json={
+                "ticker": ticker,
+                "company_name": ticker,
+                "user_notes": f"Review {ticker}.",
+                "tags": ["test"],
+                "status": "watching",
+                "analyzer_direction": "long",
+                "use_portfolio_context": use_portfolio_context,
+            },
+        )
+        assert created.status_code == 200
+
+    started = auth_client.post("/api/v1/ideas/evaluate-all/async", json={"use_portfolio_context": True})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    assert calls["analyzer"] == 1
+    evaluations = {row["ticker"]: row for row in job["result"]["evaluations"]}
+    assert evaluations["ONCTX"]["data_quality"]["portfolio_context_used"] is True
+    assert evaluations["ONCTX"]["analyzer_context"]["status"] == "available"
+    assert evaluations["OFFCTX"]["data_quality"]["portfolio_context_used"] is False
+    assert evaluations["OFFCTX"]["analyzer_context"]["status"] == "disabled"
+    assert evaluations["OFFCTX"]["factor_scores"]["portfolio_fit"]["score"] == 50
+
+
+def test_single_evaluation_disabled_portfolio_context_skips_analyzer_and_portfolio_payload(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls = {"analyzer": 0}
+    captured: dict[str, object] = {}
+
+    def fail_analyzer_result():
+        calls["analyzer"] += 1
+        raise AssertionError("analyzer should not run when portfolio context is disabled")
+
+    def context_without_portfolio(
+        idea: dict,
+        analyzer_context: dict | None = None,
+        *,
+        use_portfolio_context: bool = True,
+    ):
+        captured["use_portfolio_context"] = use_portfolio_context
+        captured["analyzer_context"] = analyzer_context
+        return {
+            "idea": idea,
+            "ticker": idea["ticker"],
+            "overview_content": OVERVIEW_MARKDOWN,
+            "thesis_content": None,
+            "management_quality_content": MANAGEMENT_QUALITY_MARKDOWN,
+            "signal_aggregator": {"ok": True, "data": {"regime": "risk-on"}},
+            "industry_monitor": {"ok": True, "data": {}},
+            "dossier": {"ok": True, "data": {}},
+            "tool_errors": [],
+            "evaluated_at": "2026-05-05T12:00:00+00:00",
+            "use_portfolio_context": use_portfolio_context,
+            "analyzer_context": analyzer_context or {},
+        }
+
+    def assert_no_portfolio_evaluation(context: dict):
+        assert "portfolio" not in context
+        assert context["use_portfolio_context"] is False
+        return {
+            "idea_id": context["idea"]["id"],
+            "ticker": context["ticker"],
+            "evaluated_at": context["evaluated_at"],
+            "action": "watch",
+            "recommendation_status": "clear",
+            "score": 70,
+            "confidence": 0.7,
+            "rationale": "No portfolio context.",
+            "factor_scores": {
+                "macro_support": {"score": 60},
+                "industry_attractiveness": {"score": 60},
+                "business_quality": {"score": 60},
+                "management_quality": {"score": 60},
+                "valuation_asymmetry": {"score": 60},
+                "portfolio_fit": {"score": 90},
+            },
+            "missing_information": [],
+            "data_quality": {"critical_data_quality": "ok", "source_quality": "ok", "quality": "ok"},
+            "evidence": [],
+            "disconfirming_evidence": [],
+            "portfolio_fit": {"status": "available"},
+        }
+
+    monkeypatch.setattr(ideas_router, "_compute_portfolio_plus_ideas_analyzer_result", fail_analyzer_result)
+    monkeypatch.setattr(ideas_router, "_build_context", context_without_portfolio)
+    monkeypatch.setattr(ideas_router, "_call_llm_evaluator", assert_no_portfolio_evaluation)
+
+    created = auth_client.post(
+        "/api/v1/ideas",
+        json={
+            "ticker": "NOPF",
+            "company_name": "No Portfolio",
+            "user_notes": "Review without portfolio.",
+            "tags": [],
+            "analyzer_direction": "long",
+            "use_portfolio_context": False,
+        },
+    )
+    assert created.status_code == 200
+    idea = created.json()["idea"]
+
+    started = auth_client.post(f"/api/v1/ideas/{idea['id']}/evaluate/async", json={"force_refresh": True})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    assert calls["analyzer"] == 0
+    assert captured["use_portfolio_context"] is False
+    assert captured["analyzer_context"]["status"] == "disabled"
+    evaluation = job["result"]["evaluation"]
+    assert evaluation["data_quality"]["portfolio_context_used"] is False
+    assert evaluation["analyzer_context"]["status"] == "disabled"
+    assert evaluation["factor_scores"]["portfolio_fit"]["score"] == 50
+
+
+def test_evaluate_all_disabled_portfolio_context_applies_to_all_and_skips_analyzer(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls = {"analyzer": 0}
+
+    def fail_analyzer_result():
+        calls["analyzer"] += 1
+        raise AssertionError("analyzer should not run when portfolio context is disabled")
+
+    def context_without_portfolio(
+        idea: dict,
+        analyzer_context: dict | None = None,
+        *,
+        use_portfolio_context: bool = True,
+    ):
+        return {
+            "idea": idea,
+            "ticker": idea["ticker"],
+            "overview_content": OVERVIEW_MARKDOWN,
+            "thesis_content": None,
+            "management_quality_content": MANAGEMENT_QUALITY_MARKDOWN,
+            "signal_aggregator": {"ok": True, "data": {"regime": "risk-on"}},
+            "industry_monitor": {"ok": True, "data": {}},
+            "dossier": {"ok": True, "data": {}},
+            "tool_errors": [],
+            "evaluated_at": "2026-05-05T12:00:00+00:00",
+            "use_portfolio_context": use_portfolio_context,
+            "analyzer_context": analyzer_context or {},
+        }
+
+    def assert_no_portfolio_evaluation(context: dict):
+        assert "portfolio" not in context
+        assert context["use_portfolio_context"] is False
+        return {
+            "idea_id": context["idea"]["id"],
+            "ticker": context["ticker"],
+            "evaluated_at": context["evaluated_at"],
+            "action": "watch",
+            "recommendation_status": "clear",
+            "score": 70,
+            "confidence": 0.7,
+            "rationale": "No portfolio context.",
+            "factor_scores": {
+                "macro_support": {"score": 60},
+                "industry_attractiveness": {"score": 60},
+                "business_quality": {"score": 60},
+                "management_quality": {"score": 60},
+                "valuation_asymmetry": {"score": 60},
+                "portfolio_fit": {"score": 90},
+            },
+            "missing_information": [],
+            "data_quality": {"critical_data_quality": "ok", "source_quality": "ok", "quality": "ok"},
+            "evidence": [],
+            "disconfirming_evidence": [],
+            "portfolio_fit": {"status": "available"},
+        }
+
+    monkeypatch.setattr(ideas_router, "_compute_portfolio_plus_ideas_analyzer_result", fail_analyzer_result)
+    monkeypatch.setattr(ideas_router, "_build_context", context_without_portfolio)
+    monkeypatch.setattr(ideas_router, "_call_llm_evaluator", assert_no_portfolio_evaluation)
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: ideas_router._deterministic_comparison_result(evaluations),
+    )
+
+    for ticker, direction in [("BULK1", "long"), ("BULK2", "short")]:
+        created = auth_client.post(
+            "/api/v1/ideas",
+            json={
+                "ticker": ticker,
+                "company_name": ticker,
+                "user_notes": f"Review {ticker}.",
+                "tags": ["test"],
+                "status": "watching",
+                "analyzer_direction": direction,
+            },
+        )
+        assert created.status_code == 200
+
+    started = auth_client.post("/api/v1/ideas/evaluate-all/async", json={"use_portfolio_context": False})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    assert calls["analyzer"] == 0
+    assert len(job["result"]["evaluations"]) == 2
+    assert {row["data_quality"]["portfolio_context_used"] for row in job["result"]["evaluations"]} == {False}
+    assert {row["analyzer_context"]["status"] for row in job["result"]["evaluations"]} == {"disabled"}
 
 
 def test_critical_missing_information_forces_watch():

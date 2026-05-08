@@ -18,6 +18,9 @@ import { SegmentedControl } from "@/components/shared/FormControls"
 
 type Tab = "Put/Call" | "Surveys" | "Volatility"
 const TABS: Tab[] = ["Put/Call", "Surveys", "Volatility"]
+const SENTIMENT_PUT_CALL_STALE_TIME_MS = 5 * 60 * 1000
+const SENTIMENT_SURVEYS_STALE_TIME_MS = 60 * 60 * 1000
+const SENTIMENT_VOLATILITY_STALE_TIME_MS = 5 * 60 * 1000
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -136,7 +139,7 @@ function PutCallTab() {
   const { data, isLoading, error } = useApiQuery(
     ["sentiment-put-call"],
     () => fetchSentimentPutCall(180),
-    5 * 60 * 1000,
+    SENTIMENT_PUT_CALL_STALE_TIME_MS,
   )
 
   const payload = isRecord(data) ? data : {}
@@ -282,7 +285,7 @@ function SurveysTab() {
   const { data, isLoading, error } = useApiQuery(
     ["sentiment-surveys"],
     fetchSentimentSurveys,
-    60 * 60 * 1000,
+    SENTIMENT_SURVEYS_STALE_TIME_MS,
   )
 
   useEffect(() => {
@@ -470,7 +473,7 @@ function VolatilityTab() {
   const { data, isLoading, error } = useApiQuery(
     ["sentiment-volatility"],
     () => fetchSentimentVolatility(365),
-    5 * 60 * 1000,
+    SENTIMENT_VOLATILITY_STALE_TIME_MS,
   )
 
   if (isLoading) return <LoadingSpinner message="Fetching VIX, VXN, VVIX..." />
@@ -551,6 +554,56 @@ export function Sentiment() {
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError || isPreparingOverview || prepError)
 
+  useEffect(() => {
+    let cancelled = false
+    let timeoutId: number | null = null
+    let idleId: number | null = null
+
+    const prefetchBackgroundTabs = async () => {
+      if (!cancelled && tab !== "Surveys") {
+        try {
+          await queryClient.prefetchQuery({
+            queryKey: ["sentiment-surveys"],
+            queryFn: fetchSentimentSurveys,
+            staleTime: SENTIMENT_SURVEYS_STALE_TIME_MS,
+          })
+        } catch {
+          // Background prefetch is opportunistic; the active tab will surface errors when selected.
+        }
+      }
+
+      if (!cancelled && tab !== "Volatility") {
+        try {
+          await queryClient.prefetchQuery({
+            queryKey: ["sentiment-volatility"],
+            queryFn: () => fetchSentimentVolatility(365),
+            staleTime: SENTIMENT_VOLATILITY_STALE_TIME_MS,
+          })
+        } catch {
+          // Background prefetch is opportunistic; the active tab will surface errors when selected.
+        }
+      }
+    }
+
+    const startPrefetch = () => {
+      void prefetchBackgroundTabs()
+    }
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(startPrefetch)
+    } else {
+      timeoutId = window.setTimeout(startPrefetch, 1000)
+    }
+
+    return () => {
+      cancelled = true
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId)
+      }
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
+  }, [queryClient, tab])
+
   // Register screen context for agent chat
   const screenCtx = useMemo(() => ({
     pageName: "Sentiment",
@@ -568,9 +621,9 @@ export function Sentiment() {
 
     try {
       const [putCall, surveys, volatility] = await Promise.all([
-        queryClient.fetchQuery({ queryKey: ["sentiment-put-call"], queryFn: () => fetchSentimentPutCall(180), staleTime: 5 * 60 * 1000 }),
-        queryClient.fetchQuery({ queryKey: ["sentiment-surveys"], queryFn: fetchSentimentSurveys, staleTime: 60 * 60 * 1000 }),
-        queryClient.fetchQuery({ queryKey: ["sentiment-volatility"], queryFn: () => fetchSentimentVolatility(365), staleTime: 5 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["sentiment-put-call"], queryFn: () => fetchSentimentPutCall(180), staleTime: SENTIMENT_PUT_CALL_STALE_TIME_MS }),
+        queryClient.fetchQuery({ queryKey: ["sentiment-surveys"], queryFn: fetchSentimentSurveys, staleTime: SENTIMENT_SURVEYS_STALE_TIME_MS }),
+        queryClient.fetchQuery({ queryKey: ["sentiment-volatility"], queryFn: () => fetchSentimentVolatility(365), staleTime: SENTIMENT_VOLATILITY_STALE_TIME_MS }),
       ])
 
       mutation.mutate({

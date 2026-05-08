@@ -6,7 +6,7 @@ import { Play, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { ActionPill, AnalyzerRiskBadges, ConfidencePill } from "@/components/idea/EvaluationPanel"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
-import { ActionButton, TextInput } from "@/components/shared/FormControls"
+import { ActionButton, TextInput, Toggle } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   createIdea,
@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils"
 
 const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
+const EVALUATE_ALL_USE_PORTFOLIO_CONTEXT_KEY = "idea-watchlist-evaluate-all-use-portfolio-context-v1"
 const IDEA_WATCHLIST_ANALYZER_STATE_KEY = ["idea-watchlist", "analyzer", "state-v3"] as const
 const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
 const ANALYZER_DIRECTIONS: { value: IdeaAnalyzerDirection; label: string }[] = [
@@ -71,6 +72,23 @@ function writeActiveComparisonJob(jobId: string | null) {
   }
 }
 
+function readEvaluateAllUsePortfolioContext(): boolean {
+  try {
+    const value = window.localStorage.getItem(EVALUATE_ALL_USE_PORTFOLIO_CONTEXT_KEY)
+    return value == null ? true : value !== "false"
+  } catch {
+    return true
+  }
+}
+
+function writeEvaluateAllUsePortfolioContext(enabled: boolean) {
+  try {
+    window.localStorage.setItem(EVALUATE_ALL_USE_PORTFOLIO_CONTEXT_KEY, enabled ? "true" : "false")
+  } catch {
+    // localStorage can be unavailable in private or test contexts.
+  }
+}
+
 function StatusPill({ status }: { status: string }) {
   return <StatusBadge tone={STATUS_TONE[status] ?? "neutral"}>{formatLabel(status)}</StatusBadge>
 }
@@ -78,6 +96,17 @@ function StatusPill({ status }: { status: string }) {
 function analyzerDirection(idea: { metadata?: Record<string, unknown> }): IdeaAnalyzerDirection {
   const direction = String(idea.metadata?.analyzer_direction || "inactive").toLowerCase()
   return direction === "long" || direction === "short" ? direction : "inactive"
+}
+
+function portfolioContextEnabledForIdea(idea: { metadata?: Record<string, unknown> }): boolean {
+  return idea.metadata?.use_portfolio_context !== false
+}
+
+function portfolioContextUsageLabel(evaluation: { data_quality?: Record<string, unknown> } | null | undefined): string {
+  const used = evaluation?.data_quality?.portfolio_context_used
+  if (used === true) return "Used"
+  if (used === false) return "Excluded"
+  return "Unknown"
 }
 
 function ComparativeRankingPanel({
@@ -147,6 +176,7 @@ export function IdeaWatchlist() {
   const [notes, setNotes] = useState("")
   const [deletingIdeaIds, setDeletingIdeaIds] = useState<Set<string>>(() => new Set())
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [evaluateAllUsePortfolioContext, setEvaluateAllUsePortfolioContext] = useState<boolean>(() => readEvaluateAllUsePortfolioContext())
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
   const ideas = useMemo(() => ideasQuery.data?.ideas ?? [], [ideasQuery.data?.ideas])
@@ -254,7 +284,7 @@ export function IdeaWatchlist() {
   })
 
   const evaluateAllMutation = useMutation({
-    mutationFn: () => startIdeaComparisonEvaluationJob(),
+    mutationFn: () => startIdeaComparisonEvaluationJob({ use_portfolio_context: evaluateAllUsePortfolioContext }),
     onSuccess: job => {
       setComparisonJobError(null)
       setComparisonJobSnapshot(job)
@@ -311,6 +341,20 @@ export function IdeaWatchlist() {
     },
   })
 
+  const portfolioContextMutation = useMutation({
+    mutationFn: ({ ideaId, enabled }: { ideaId: string; enabled: boolean }) =>
+      updateIdea(ideaId, { use_portfolio_context: enabled }),
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+      void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
+    },
+  })
+
+  function setEvaluateAllPortfolioContext(enabled: boolean) {
+    setEvaluateAllUsePortfolioContext(enabled)
+    writeEvaluateAllUsePortfolioContext(enabled)
+  }
+
   const rows = useMemo(() => ideas.map(idea => {
     const evaluation = latestEvaluation(idea, null)
     const activeJob = activeJobs[String(idea.id)]
@@ -341,6 +385,15 @@ export function IdeaWatchlist() {
           <p className="mt-1 text-sm text-subtle">{ideas.length} active ideas / {actionableIdeas.length} actionable</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <div className="rounded-lg border border-app bg-card-muted px-3 py-1">
+            <Toggle
+              label="Portfolio Context"
+              checked={evaluateAllUsePortfolioContext}
+              onChange={setEvaluateAllPortfolioContext}
+              disabled={Boolean(activeComparisonJob) || evaluateAllMutation.isPending}
+              description={evaluateAllUsePortfolioContext ? "Included in Evaluate All." : "Excluded from Evaluate All."}
+            />
+          </div>
           <button
             type="button"
             onClick={() => evaluateAllMutation.mutate()}
@@ -418,10 +471,10 @@ export function IdeaWatchlist() {
           <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
         ) : (
           <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-            <table className="w-full min-w-[1080px] border-collapse text-sm">
+            <table className="w-full min-w-[1220px] border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-card-muted">
                 <tr>
-                  {["Ticker", "Status", "Analyzer", "Latest Action", "Risk", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
+                  {["Ticker", "Status", "Analyzer", "Portfolio", "Latest Action", "Risk", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
                     <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                       {label}
                     </th>
@@ -464,6 +517,17 @@ export function IdeaWatchlist() {
                             ))}
                           </select>
                         </td>
+                        <td className="px-3 py-3">
+                          <div onClick={event => event.stopPropagation()} className="min-w-[8.5rem]">
+                            <Toggle
+                              label="Influence"
+                              checked={portfolioContextEnabledForIdea(idea)}
+                              onChange={enabled => portfolioContextMutation.mutate({ ideaId, enabled })}
+                              disabled={portfolioContextMutation.isPending && portfolioContextMutation.variables?.ideaId === ideaId}
+                              description={portfolioContextUsageLabel(evaluation)}
+                            />
+                          </div>
+                        </td>
                         <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
                         <td className="px-3 py-3"><AnalyzerRiskBadges context={evaluation?.analyzer_context ?? null} /></td>
                         <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
@@ -500,6 +564,11 @@ export function IdeaWatchlist() {
       {directionMutation.error && (
         <div className="mt-4">
           <ErrorMessage message={directionMutation.error instanceof Error ? directionMutation.error.message : "Could not update analyzer direction."} />
+        </div>
+      )}
+      {portfolioContextMutation.error && (
+        <div className="mt-4">
+          <ErrorMessage message={portfolioContextMutation.error instanceof Error ? portfolioContextMutation.error.message : "Could not update portfolio influence."} />
         </div>
       )}
 

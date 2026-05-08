@@ -208,6 +208,12 @@ export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "acce
 export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
 export type IdeaAnalyzerDirection = "inactive" | "long" | "short"
 
+export interface InvestmentIdeaMetadata {
+  analyzer_direction?: IdeaAnalyzerDirection | string
+  use_portfolio_context?: boolean
+  [key: string]: unknown
+}
+
 export interface InvestmentIdea {
   id: string
   legacy_id?: number | null
@@ -224,7 +230,7 @@ export interface InvestmentIdea {
   latest_evaluation_id: string | null
   latest_job_id: string | null
   accepted_recommendation_id: string | null
-  metadata?: Record<string, unknown>
+  metadata?: InvestmentIdeaMetadata
   latest_evaluation?: IdeaEvaluation | null
 }
 
@@ -293,6 +299,10 @@ export interface IdeaAnalyzerContext {
   [key: string]: unknown
 }
 
+export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
+  portfolio_context_used?: boolean
+}
+
 export interface IdeaEvaluation {
   id: string
   legacy_id?: number | null
@@ -308,7 +318,7 @@ export interface IdeaEvaluation {
   rationale: string
   factor_scores: Record<string, IdeaFactorScore>
   missing_information: IdeaMissingInformation[]
-  data_quality: Record<string, unknown>
+  data_quality: IdeaEvaluationDataQuality
   evidence: IdeaEvidenceItem[]
   disconfirming_evidence: IdeaEvidenceItem[]
   catalyst: string | null
@@ -1332,8 +1342,10 @@ export const fetchIndustryMonitor = (refresh = false) =>
 export const industryTranscriptPdfUrl = (ticker: string) =>
   `${client.defaults.baseURL}/industry-monitor/transcripts/${encodeURIComponent(ticker)}/pdf`
 
-export const fetchYieldCurve = (lookback_days = 90) =>
-  client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)
+export const fetchYieldCurve = (lookback_days = 90, country?: string | null) =>
+  client
+    .get("/yield-curve", { params: { lookback_days, country: country || undefined } })
+    .then(r => r.data)
 
 export const fetchBondDashboard = () =>
   client.get("/bond-dashboard").then(r => r.data)
@@ -1992,6 +2004,9 @@ export interface ValuationMetric {
   numerator_label?: string | null
   numerator_source?: string | null
   denominator: number | null
+  denominator_currency?: string | null
+  denominator_converted?: number | null
+  denominator_converted_currency?: string | null
   denominator_label: string
   status: "ok" | "missing" | "not_meaningful" | "degraded" | string
   reason?: string | null
@@ -2003,16 +2018,27 @@ export interface PositionValuation {
   company_name?: string
   as_of?: string
   source_policy?: string
+  currency_context?: {
+    price_currency?: string | null
+    financial_currency?: string | null
+    financial_to_price_fx_rate?: number | null
+    fx_rate_as_of?: string | null
+    conversion_status?: string | null
+  }
   market_data: {
     market_cap?: number | null
     enterprise_value?: number | null
     net_debt?: number | null
+    net_debt_financial?: number | null
     currency?: string | null
+    price_currency?: string | null
+    financial_currency?: string | null
     sector?: string | null
     industry?: string | null
     current_price?: number | null
     shares_outstanding?: number | null
   }
+  financial_data?: Record<string, unknown>
   profile: {
     id: string
     label: string
@@ -2046,9 +2072,15 @@ export interface PositionValuation {
 export interface PositionValueRangeScenario {
   multiple?: number | null
   denominator?: number | null
+  denominator_currency?: string | null
+  denominator_converted?: number | null
+  denominator_converted_currency?: string | null
+  denominator_to_output_fx_rate?: number | null
+  fx_rate_as_of?: string | null
   equity_value?: number | null
   expected_price?: number | null
   percent_change?: number | null
+  output_currency?: string | null
   status?: string
   reason?: string | null
 }
@@ -2059,16 +2091,23 @@ export interface PositionValueRange {
   metric: string
   metric_label: string
   denominator_label: string
+  denominator_currency?: string | null
+  stored_denominator_currency?: string | null
+  legacy_denominator_currency?: boolean
+  denominator_to_price_fx_rate?: number | null
+  fx_rate_as_of?: string | null
   calculation_method: string
   current_price?: number | null
   shares?: number | null
   net_debt?: number | null
   currency?: string | null
+  output_currency?: string | null
   scenarios: Record<string, PositionValueRangeScenario>
 }
 
 export interface PositionValueRangeRequest {
   metric: string
+  denominator_currency?: string | null
   scenarios: Record<string, { multiple: number; denominator: number }>
 }
 
@@ -2281,6 +2320,7 @@ export const createIdea = (body: {
   tags?: string[]
   status?: IdeaStatus
   analyzer_direction?: IdeaAnalyzerDirection
+  use_portfolio_context?: boolean
 }) => client.post("/ideas", body).then(r => r.data as IdeaDetailResponse)
 
 export const updateIdea = (id: string, body: {
@@ -2290,12 +2330,13 @@ export const updateIdea = (id: string, body: {
   tags?: string[]
   status?: IdeaStatus
   analyzer_direction?: IdeaAnalyzerDirection
+  use_portfolio_context?: boolean
 }) => client.put(`/ideas/${encodeURIComponent(id)}`, body).then(r => r.data as IdeaDetailResponse)
 
 export const deleteIdea = (id: string) =>
   client.delete(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as { status: string; deleted: boolean; idea_id: string })
 
-export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean }) =>
+export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean; use_portfolio_context?: boolean }) =>
   client
     .post(`/ideas/${encodeURIComponent(id)}/evaluate/async`, body ?? {}, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
@@ -2305,9 +2346,9 @@ export const fetchIdeaEvaluationJob = (jobId: string) =>
     .get(`/ideas/evaluate/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
 
-export const startIdeaComparisonEvaluationJob = () =>
+export const startIdeaComparisonEvaluationJob = (body?: { use_portfolio_context?: boolean }) =>
   client
-    .post("/ideas/evaluate-all/async", {}, { timeout: 30_000 })
+    .post("/ideas/evaluate-all/async", body ?? {}, { timeout: 30_000 })
     .then(r => r.data as IdeaComparisonJobResponse)
 
 export const fetchIdeaComparisonEvaluationJob = (jobId: string) =>

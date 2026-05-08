@@ -70,6 +70,12 @@ function proposalSubjectLabel(entityType?: string | null): string {
   return String(entityType || "proposal").replace(/_/g, " ")
 }
 
+function proposalNoticeLabel(proposal: StagedMutationResponse): string {
+  const approvalId = String(proposal.approval_id ?? "").trim()
+  if (!approvalId || approvalId.startsWith("approval:")) return "Proposal"
+  return `Proposal #${approvalId}`
+}
+
 function canonicalSpotFxSymbol(value?: string | null) {
   let symbol = (value ?? "").trim().toUpperCase()
   if (!symbol) return null
@@ -553,7 +559,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                 <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
                 <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
                 <span>
-                  Proposal #{lastProposal.approval_id} staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
+                  {proposalNoticeLabel(lastProposal)} staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
                 </span>
               </div>
             </div>

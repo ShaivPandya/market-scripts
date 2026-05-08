@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import delete_cached, get_or_set_cached, long_cache, stamp_fresh
+from api.cache import delete_cached, get_cached, get_or_set_cached, long_cache, stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 
@@ -23,17 +23,27 @@ class ValuationValueRangeScenarioRequest(BaseModel):
 
 class ValuationValueRangeRequest(BaseModel):
     metric: str
+    denominator_currency: str | None = None
     scenarios: dict[str, ValuationValueRangeScenarioRequest]
 
 
 def valuation_cache_key(ticker: str, profile_override: str | None = None) -> str:
     profile = profile_override or "auto"
-    return f"position_valuation:v3:{ticker.strip().upper()}:profile={profile}"
+    return f"position_valuation:v4:{ticker.strip().upper()}:profile={profile}"
 
 
 def delete_valuation_cache_variants(ticker: str, profile_overrides: list[str | None]) -> None:
     for profile_override in {None, *profile_overrides}:
         delete_cached(long_cache, valuation_cache_key(ticker, profile_override))
+
+
+def _valid_valuation_payload(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    currency_context = value.get("currency_context")
+    if not isinstance(currency_context, dict):
+        return False
+    return bool(currency_context.get("price_currency") and currency_context.get("financial_currency"))
 
 
 @router.get("/valuation/{ticker}")
@@ -50,6 +60,12 @@ def get_position_valuation_endpoint(ticker: str):
 
         def loader():
             return serialize_value(get_position_valuation(normalized))
+
+        cached = get_cached(long_cache, key)
+        if cached is not None:
+            if _valid_valuation_payload(cached):
+                return cached
+            delete_cached(long_cache, key)
 
         return get_or_set_cached(long_cache, key, loader)
     except ValueError as exc:

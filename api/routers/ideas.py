@@ -23,8 +23,8 @@ from ontology.runtime_read_service import OntologyRuntimeReadService
 router = APIRouter()
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
-IDEA_EVALUATION_VERSION = "v2_analyzer_context"
-IDEA_EVALUATION_SCHEMA_VERSION = "idea_evaluator_v2_analyzer_context"
+IDEA_EVALUATION_VERSION = "v3_portfolio_context_toggle"
+IDEA_EVALUATION_SCHEMA_VERSION = "idea_evaluator_v3_portfolio_context_toggle"
 IDEA_ACTIONS = {"buy", "watch", "avoid", "do_nothing"}
 IDEA_ANALYZER_DIRECTIONS = {"inactive", "long", "short"}
 CANONICAL_IDEA_FACTORS = (
@@ -58,6 +58,7 @@ class IdeaCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     status: IdeaStatus = "watching"
     analyzer_direction: Literal["inactive", "long", "short"] = "inactive"
+    use_portfolio_context: bool = True
 
     @field_validator("ticker")
     @classmethod
@@ -75,6 +76,7 @@ class IdeaUpdateRequest(BaseModel):
     tags: list[str] | None = None
     status: IdeaStatus | None = None
     analyzer_direction: Literal["inactive", "long", "short"] | None = None
+    use_portfolio_context: bool | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -90,10 +92,12 @@ class IdeaUpdateRequest(BaseModel):
 class IdeaEvaluationRequest(BaseModel):
     idea_id: str
     force_refresh: bool = False
+    use_portfolio_context: bool = True
 
 
 class IdeaComparisonEvaluationRequest(BaseModel):
     scope_statuses: list[IdeaComparisonStatus] = Field(default_factory=lambda: list(ACTIONABLE_IDEA_STATUSES))
+    use_portfolio_context: bool = True
 
     @field_validator("scope_statuses")
     @classmethod
@@ -131,6 +135,20 @@ def _normalize_analyzer_direction(value: Any) -> str:
     return direction if direction in IDEA_ANALYZER_DIRECTIONS else "inactive"
 
 
+def _normalize_use_portfolio_context(value: Any, *, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
@@ -144,10 +162,20 @@ def _idea_analyzer_direction(idea: dict[str, Any]) -> str:
     return _normalize_analyzer_direction(cast(dict[str, Any], metadata).get("analyzer_direction"))
 
 
+def _idea_uses_portfolio_context(idea: dict[str, Any]) -> bool:
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    return _normalize_use_portfolio_context(cast(dict[str, Any], metadata).get("use_portfolio_context"), default=True)
+
+
 def _with_analyzer_direction_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     direction = _normalize_analyzer_direction(payload.pop("analyzer_direction", "inactive"))
+    use_portfolio_context = _normalize_use_portfolio_context(payload.pop("use_portfolio_context", True), default=True)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    payload["metadata"] = {**cast(dict[str, Any], metadata), "analyzer_direction": direction}
+    payload["metadata"] = {
+        **cast(dict[str, Any], metadata),
+        "analyzer_direction": direction,
+        "use_portfolio_context": use_portfolio_context,
+    }
     return payload
 
 
@@ -1036,26 +1064,40 @@ def _analyzer_context_for_idea(
     return context
 
 
-def _build_context(idea: dict[str, Any], analyzer_context: dict[str, Any] | None = None) -> dict[str, Any]:
+def _disabled_analyzer_context_for_idea(idea: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "disabled",
+        "ticker": str(idea.get("ticker") or "").strip().upper(),
+        "direction": _idea_analyzer_direction(idea),
+        "reason": "Portfolio context excluded by evaluation setting.",
+    }
+
+
+def _build_context(
+    idea: dict[str, Any],
+    analyzer_context: dict[str, Any] | None = None,
+    *,
+    use_portfolio_context: bool = True,
+) -> dict[str, Any]:
     ticker = str(idea["ticker"]).upper()
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
     management_quality, management_quality_error = _read_management_quality_text(ticker)
 
-    portfolio = _safe_tool("get_portfolio", {"include_hedges": True})
+    portfolio = _safe_tool("get_portfolio", {"include_hedges": True}) if use_portfolio_context else None
     signal_aggregator = _safe_tool("get_signal_aggregator", {"include_history": False, "lookback_weeks": 156})
     industry_monitor = _safe_tool("get_industry_monitor", {"refresh": False})
     dossier = _safe_tool("get_dossier", {"ticker": ticker})
 
+    tool_payloads = {
+        "signal_aggregator": signal_aggregator,
+        "industry_monitor": industry_monitor,
+        "dossier": dossier,
+    }
+    if use_portfolio_context and isinstance(portfolio, dict):
+        tool_payloads["portfolio"] = portfolio
     tool_errors = [
-        f"{label}: {payload.get('error')}"
-        for label, payload in {
-            "portfolio": portfolio,
-            "signal_aggregator": signal_aggregator,
-            "industry_monitor": industry_monitor,
-            "dossier": dossier,
-        }.items()
-        if not payload.get("ok")
+        f"{label}: {payload.get('error')}" for label, payload in tool_payloads.items() if not payload.get("ok")
     ]
     if overview_error:
         tool_errors.append(overview_error)
@@ -1063,35 +1105,59 @@ def _build_context(idea: dict[str, Any], analyzer_context: dict[str, Any] | None
         tool_errors.append(thesis_error)
     if management_quality_error:
         tool_errors.append(management_quality_error)
-    analyzer_payload = analyzer_context if isinstance(analyzer_context, dict) else _analyzer_context_for_idea(idea)
+    if isinstance(analyzer_context, dict):
+        analyzer_payload = analyzer_context
+    elif not use_portfolio_context:
+        analyzer_payload = _disabled_analyzer_context_for_idea(idea)
+    else:
+        analyzer_payload = _analyzer_context_for_idea(idea)
     analyzer_status = str(analyzer_payload.get("status") or "")
     if analyzer_status in {"error", "missing"}:
         tool_errors.append(f"analyzer_context: {analyzer_payload.get('error') or analyzer_payload.get('reason')}")
 
-    return {
+    context = {
         "idea": idea,
         "ticker": ticker,
         "analyzer_context": analyzer_payload,
+        "use_portfolio_context": bool(use_portfolio_context),
         "overview_content": _safe_text(overview),
         "thesis_content": _safe_text(thesis),
         "management_quality_content": _safe_text(management_quality),
-        "portfolio": portfolio,
         "signal_aggregator": signal_aggregator,
         "industry_monitor": industry_monitor,
         "dossier": dossier,
         "tool_errors": tool_errors,
         "evaluated_at": _now(),
     }
+    if use_portfolio_context and portfolio is not None:
+        context["portfolio"] = portfolio
+    return context
 
 
 def _build_context_for_evaluation(
-    idea: dict[str, Any], analyzer_context: dict[str, Any] | None = None
+    idea: dict[str, Any],
+    analyzer_context: dict[str, Any] | None = None,
+    *,
+    use_portfolio_context: bool = True,
 ) -> dict[str, Any]:
     import inspect
 
-    if "analyzer_context" in inspect.signature(_build_context).parameters:
-        return _build_context(idea, analyzer_context=analyzer_context)
-    context = _build_context(idea)
+    params = inspect.signature(_build_context).parameters
+    if "analyzer_context" in params and "use_portfolio_context" in params:
+        return _build_context(
+            idea,
+            analyzer_context=analyzer_context,
+            use_portfolio_context=use_portfolio_context,
+        )
+    if "analyzer_context" in params:
+        context = _build_context(idea, analyzer_context=analyzer_context)
+    else:
+        context = _build_context(idea)
+    context["use_portfolio_context"] = bool(use_portfolio_context)
+    if not use_portfolio_context:
+        context.pop("portfolio", None)
+        context["analyzer_context"] = analyzer_context or _disabled_analyzer_context_for_idea(idea)
+        return context
     context["analyzer_context"] = analyzer_context or {"status": "inactive", "ticker": context.get("ticker")}
     return context
 
@@ -1177,15 +1243,32 @@ def _append_analyzer_evidence(result: dict[str, Any], analyzer_context: dict[str
 
 
 def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    use_portfolio_context = _normalize_use_portfolio_context(context.get("use_portfolio_context"), default=True)
     analyzer_context = _as_dict(context.get("analyzer_context"))
+    if not use_portfolio_context:
+        analyzer_context = _disabled_analyzer_context_for_idea(_as_dict(context.get("idea")))
     result["evaluation_schema_version"] = IDEA_EVALUATION_SCHEMA_VERSION
     result["analyzer_context"] = analyzer_context
+    data_quality = _as_dict(result.get("data_quality"))
+    result["data_quality"] = {**data_quality, "portfolio_context_used": use_portfolio_context}
 
     factor_scores_raw = result.get("factor_scores")
     factor_scores = _ensure_canonical_factor_rows(
         cast(dict[str, Any], factor_scores_raw) if isinstance(factor_scores_raw, dict) else {}
     )
-    if analyzer_context.get("status") == "available":
+    if not use_portfolio_context:
+        factor_scores["portfolio_fit"] = _factor(
+            50,
+            "disabled",
+            "Portfolio context excluded by evaluation setting; neutral score used for canonical average.",
+        )
+        portfolio_fit = _as_dict(result.get("portfolio_fit"))
+        result["portfolio_fit"] = {
+            **portfolio_fit,
+            "status": "disabled",
+            "note": "Portfolio context excluded by evaluation setting.",
+        }
+    elif analyzer_context.get("status") == "available":
         row = _as_dict(analyzer_context.get("row"))
         analyzer_factor_specs = {
             "industry_attractiveness": ("industry_quality_score", "Analyzer raw industry_quality_score"),
@@ -1224,9 +1307,8 @@ def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[st
             )
         confidence = _numeric_or_none(result.get("confidence"), minimum=0, maximum=1)
         result["confidence"] = min(confidence if confidence is not None else 0.45, 0.49)
-        data_quality = _as_dict(result.get("data_quality"))
         result["data_quality"] = {
-            **data_quality,
+            **_as_dict(result.get("data_quality")),
             "source_quality": "degraded",
             "quality": "degraded",
             "analyzer_context_quality": "failed",
@@ -1587,6 +1669,7 @@ def _cache_key(req: IdeaEvaluationRequest) -> str:
     idea = _get_idea(req.idea_id)
     if not idea:
         return f"idea_evaluation:{IDEA_EVALUATION_VERSION}:missing:{req.idea_id}"
+    use_portfolio_context = bool(req.use_portfolio_context)
     token = {
         "id": idea.get("id"),
         "ticker": idea.get("ticker"),
@@ -1594,8 +1677,12 @@ def _cache_key(req: IdeaEvaluationRequest) -> str:
         "user_notes": idea.get("user_notes"),
         "tags": idea.get("tags"),
         "metadata": idea.get("metadata"),
+        "use_portfolio_context": use_portfolio_context,
         "version": IDEA_EVALUATION_VERSION,
     }
+    if not use_portfolio_context:
+        token["analyzer_source"] = {"status": "disabled", "reason": "portfolio_context_disabled"}
+        return f"idea_evaluation:{IDEA_EVALUATION_VERSION}:{_stable_hash(token)}"
     try:
         from portfolio.portfolio_optimizer.portfolio_analyzer import analyzer_source_cache_token
 
@@ -1800,21 +1887,32 @@ def _compute_idea_evaluation_result(
     idea = _get_idea(req.idea_id)
     if not idea:
         raise RuntimeError(f"No investment idea with id {req.idea_id}")
+    use_portfolio_context = bool(req.use_portfolio_context)
     total = 5
     if callable(progress_callback):
         progress_callback("analyzer", 1, total)
     analyzer_result = (
-        _compute_portfolio_plus_ideas_analyzer_result() if _idea_analyzer_direction(idea) != "inactive" else None
+        _compute_portfolio_plus_ideas_analyzer_result()
+        if use_portfolio_context and _idea_analyzer_direction(idea) != "inactive"
+        else None
     )
     analyzer_contexts = _analyzer_contexts_from_result(analyzer_result) if analyzer_result else {}
-    analyzer_context = _analyzer_context_for_idea(
-        idea,
-        analyzer_result=analyzer_result,
-        analyzer_contexts=analyzer_contexts,
+    analyzer_context = (
+        _analyzer_context_for_idea(
+            idea,
+            analyzer_result=analyzer_result,
+            analyzer_contexts=analyzer_contexts,
+        )
+        if use_portfolio_context
+        else _disabled_analyzer_context_for_idea(idea)
     )
     if callable(progress_callback):
         progress_callback("context", 2, total)
-    context = _build_context_for_evaluation(idea, analyzer_context=analyzer_context)
+    context = _build_context_for_evaluation(
+        idea,
+        analyzer_context=analyzer_context,
+        use_portfolio_context=use_portfolio_context,
+    )
     if callable(progress_callback):
         progress_callback("evaluation", 3, total)
     result = _call_llm_evaluator(context)
@@ -1851,7 +1949,10 @@ def _compute_idea_comparison_evaluation_result(
         progress_callback("selecting", 0, total)
     if callable(progress_callback):
         progress_callback("analyzer", 1, total)
-    has_analyzer_ideas = any(_idea_analyzer_direction(idea) != "inactive" for idea in ideas)
+    use_portfolio_context = bool(req.use_portfolio_context)
+    has_analyzer_ideas = use_portfolio_context and any(
+        _idea_uses_portfolio_context(idea) and _idea_analyzer_direction(idea) != "inactive" for idea in ideas
+    )
     analyzer_result = _compute_portfolio_plus_ideas_analyzer_result() if has_analyzer_ideas else None
     analyzer_contexts = _analyzer_contexts_from_result(analyzer_result) if analyzer_result else {}
 
@@ -1859,12 +1960,21 @@ def _compute_idea_comparison_evaluation_result(
     for index, idea in enumerate(ideas, start=1):
         if callable(progress_callback):
             progress_callback("evaluating", index + 1, total)
-        analyzer_context = _analyzer_context_for_idea(
-            idea,
-            analyzer_result=analyzer_result,
-            analyzer_contexts=analyzer_contexts,
+        idea_use_portfolio_context = use_portfolio_context and _idea_uses_portfolio_context(idea)
+        analyzer_context = (
+            _analyzer_context_for_idea(
+                idea,
+                analyzer_result=analyzer_result,
+                analyzer_contexts=analyzer_contexts,
+            )
+            if idea_use_portfolio_context
+            else _disabled_analyzer_context_for_idea(idea)
         )
-        context = _build_context_for_evaluation(idea, analyzer_context=analyzer_context)
+        context = _build_context_for_evaluation(
+            idea,
+            analyzer_context=analyzer_context,
+            use_portfolio_context=idea_use_portfolio_context,
+        )
         result = _call_llm_evaluator(context)
         if result.get("evaluation_schema_version") != IDEA_EVALUATION_SCHEMA_VERSION:
             result = _merge_analyzer_context_into_result(context, result)
@@ -2013,12 +2123,17 @@ def update_idea(idea_id: str, body: IdeaUpdateRequest):
     if not current:
         raise NotFoundError("Investment idea", str(idea_id))
     updates = body.model_dump(exclude_unset=True)
-    if "analyzer_direction" in updates:
+    if "analyzer_direction" in updates or "use_portfolio_context" in updates:
         metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
-        current["metadata"] = {
-            **cast(dict[str, Any], metadata),
-            "analyzer_direction": _normalize_analyzer_direction(updates.pop("analyzer_direction")),
-        }
+        next_metadata = {**cast(dict[str, Any], metadata)}
+        if "analyzer_direction" in updates:
+            next_metadata["analyzer_direction"] = _normalize_analyzer_direction(updates.pop("analyzer_direction"))
+        if "use_portfolio_context" in updates:
+            next_metadata["use_portfolio_context"] = _normalize_use_portfolio_context(
+                updates.pop("use_portfolio_context"),
+                default=_idea_uses_portfolio_context(current),
+            )
+        current["metadata"] = next_metadata
     current.update(updates)
     current["updated_at"] = _now()
     current.pop("_meta", None)
@@ -2047,8 +2162,17 @@ def start_idea_evaluation(idea_id: str, body: dict[str, Any] | None = OPTIONAL_J
     idea = _get_idea(idea_id)
     if not idea:
         raise NotFoundError("Investment idea", str(idea_id))
-    force_refresh = bool((body or {}).get("force_refresh", False))
-    req = IdeaEvaluationRequest(idea_id=idea_id, force_refresh=force_refresh)
+    payload = body or {}
+    force_refresh = bool(payload.get("force_refresh", False))
+    use_portfolio_context = _normalize_use_portfolio_context(
+        payload.get("use_portfolio_context") if "use_portfolio_context" in payload else None,
+        default=_idea_uses_portfolio_context(idea),
+    )
+    req = IdeaEvaluationRequest(
+        idea_id=idea_id,
+        force_refresh=force_refresh,
+        use_portfolio_context=use_portfolio_context,
+    )
     row, _disposition = enqueue_registered_job(
         "idea_evaluation",
         req.model_dump(),

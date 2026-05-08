@@ -78,6 +78,99 @@ def test_compute_current_multiples_uses_provider_fallbacks_for_pe_and_pb():
     assert result["metrics"]["price_book"]["status"] == "degraded"
 
 
+def test_mixed_currency_multiples_convert_financial_denominators(monkeypatch):
+    monkeypatch.setattr(multiples, "fx_rate_to_base", lambda currency, base: {"rate": 0.03125, "as_of": "2026-05-08"})
+    income = _stmt({"Total Revenue": [8000, 8000, 8000, 8000], "Net Income": [800, 800, 800, 800]})
+    cashflow = _stmt({"Operating Cash Flow": [1000, 1000, 1000, 1000], "Capital Expenditure": [-200, -200, -200, -200]})
+    balance = _stmt({"Stockholders Equity": [16000, 15000, 14000, 13000]})
+
+    result = multiples.compute_current_multiples_from_statements(
+        {
+            "currency": "USD",
+            "financialCurrency": "TWD",
+            "marketCap": 1000,
+            "enterpriseValue": 1200,
+            "totalDebt": 3000,
+            "totalCash": 1000,
+        },
+        quarterly_income=income,
+        quarterly_cashflow=cashflow,
+        quarterly_balance=balance,
+    )
+
+    assert result["currency_context"]["price_currency"] == "USD"
+    assert result["currency_context"]["financial_currency"] == "TWD"
+    assert result["enterprise_value"] == 1200
+    assert result["net_debt"] == 62.5
+    assert result["financial_data"]["net_debt"] == 2000
+    assert math.isclose(result["metrics"]["price_sales"]["denominator"], 32000)
+    assert math.isclose(result["metrics"]["price_sales"]["denominator_converted"], 1000)
+    assert math.isclose(result["metrics"]["price_sales"]["value"], 1.2)
+    assert result["metrics"]["price_sales"]["denominator_currency"] == "TWD"
+    assert result["metrics"]["price_sales"]["denominator_converted_currency"] == "USD"
+
+
+def test_minor_unit_quote_currency_scales_financial_denominators():
+    income = _stmt({"Total Revenue": [10, 10, 10, 10]})
+
+    for price_currency in ("GBp", "GBX"):
+        result = multiples.compute_current_multiples_from_statements(
+            {
+                "currency": price_currency,
+                "financialCurrency": "GBP",
+                "marketCap": 10_000,
+                "enterpriseValue": 12_000,
+            },
+            quarterly_income=income,
+        )
+
+        assert result["currency_context"]["price_currency"] == price_currency
+        assert result["currency_context"]["financial_currency"] == "GBP"
+        assert result["currency_context"]["financial_to_price_fx_rate"] == 100.0
+        assert result["currency_context"]["conversion_status"] == "ok"
+        assert math.isclose(result["metrics"]["price_sales"]["denominator"], 40.0)
+        assert math.isclose(result["metrics"]["price_sales"]["denominator_converted"], 4000.0)
+        assert math.isclose(result["metrics"]["price_sales"]["value"], 3.0)
+        assert result["metrics"]["price_sales"]["denominator_currency"] == "GBP"
+        assert result["metrics"]["price_sales"]["denominator_converted_currency"] == price_currency
+
+
+def test_recomputed_enterprise_value_uses_converted_debt_and_cash(monkeypatch):
+    monkeypatch.setattr(multiples, "fx_rate_to_base", lambda currency, base: {"rate": 0.03125, "as_of": "2026-05-08"})
+    income = _stmt({"Total Revenue": [8000, 8000, 8000, 8000]})
+
+    result = multiples.compute_current_multiples_from_statements(
+        {
+            "currency": "USD",
+            "financialCurrency": "TWD",
+            "marketCap": 1000,
+            "totalDebt": 6400,
+            "totalCash": 3200,
+        },
+        quarterly_income=income,
+    )
+
+    assert result["enterprise_value"] == 1100
+    assert result["net_debt"] == 100
+    assert math.isclose(result["metrics"]["price_sales"]["value"], 1100 / 1000)
+
+
+def test_missing_fx_blocks_mixed_currency_statement_multiples(monkeypatch):
+    monkeypatch.setattr(multiples, "fx_rate_to_base", lambda currency, base: None)
+    income = _stmt({"Total Revenue": [8000, 8000, 8000, 8000]})
+
+    result = multiples.compute_current_multiples_from_statements(
+        {"currency": "USD", "financialCurrency": "TWD", "marketCap": 1000},
+        quarterly_income=income,
+    )
+
+    assert result["currency_context"]["conversion_status"] == "missing_fx_rate"
+    assert result["metrics"]["price_sales"]["status"] == "missing"
+    assert result["metrics"]["price_sales"]["reason"] == "missing_fx_rate"
+    quality = multiples.valuation_data_quality(result["metrics"], multiples._empty_peer_context())
+    assert "FX conversion is unavailable for mixed-currency valuation inputs." in quality["warnings"]
+
+
 def test_fetch_current_valuation_uses_daily_cache(monkeypatch):
     ticker = f"ZZCUR{uuid.uuid4().hex[:8]}".upper()
     calls = 0
@@ -307,3 +400,126 @@ def test_value_range_assumption_persists_and_updates(tmp_path, monkeypatch):
 
     multiples.write_value_range_assumption("ZZRANGE", second)
     assert multiples.read_value_range_assumption("zzrange") == second
+
+
+def test_value_range_assumption_preserves_denominator_currency(tmp_path, monkeypatch):
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+
+    legacy = {
+        "metric": "price_sales",
+        "scenarios": {
+            "bear": {"multiple": 4.0, "denominator": 100.0},
+            "base": {"multiple": 5.0, "denominator": 110.0},
+            "bull": {"multiple": 6.0, "denominator": 120.0},
+        },
+    }
+    stamped = {**legacy, "denominator_currency": "TWD"}
+
+    multiples.write_value_range_assumption("zzlegacy", legacy)
+    assert "denominator_currency" not in multiples.read_value_range_assumption("zzlegacy")
+
+    multiples.write_value_range_assumption("zzlegacy", stamped)
+    assert multiples.read_value_range_assumption("zzlegacy")["denominator_currency"] == "TWD"
+
+
+def test_legacy_value_range_without_currency_is_computed_as_price_currency(monkeypatch):
+    monkeypatch.setattr(multiples, "fx_rate_to_base", lambda currency, base: {"rate": 0.03125, "as_of": "2026-05-08"})
+    metrics = {
+        "price_sales": {
+            "value": 4.0,
+            "denominator": 32000.0,
+            "denominator_currency": "TWD",
+            "denominator_converted": 1000.0,
+            "status": "ok",
+        }
+    }
+    currency_context = {
+        "price_currency": "USD",
+        "financial_currency": "TWD",
+        "financial_to_price_fx_rate": 0.03125,
+        "fx_rate_as_of": "2026-05-08",
+        "conversion_status": "ok",
+    }
+
+    payload = multiples.value_range_payload(
+        saved_assumption={
+            "metric": "price_sales",
+            "scenarios": {
+                "bear": {"multiple": 4.0, "denominator": 1000.0},
+                "base": {"multiple": 5.0, "denominator": 1000.0},
+                "bull": {"multiple": 6.0, "denominator": 1000.0},
+            },
+        },
+        metrics=metrics,
+        peers=multiples._empty_peer_context(),
+        effective_weights={"price_sales": 1.0},
+        currency_context=currency_context,
+        market_data={"current_price": 10.0, "shares": 100.0, "net_debt": 0.0, "currency": "USD"},
+    )
+
+    assert payload["legacy_denominator_currency"] is True
+    assert payload["stored_denominator_currency"] == "USD"
+    assert payload["denominator_currency"] == "TWD"
+    assert payload["scenarios"]["base"]["denominator"] == 32000.0
+    assert payload["scenarios"]["base"]["denominator_converted"] == 1000.0
+    assert payload["scenarios"]["base"]["expected_price"] == 50.0
+
+
+def test_value_range_payload_converts_major_denominator_to_minor_quote_currency():
+    currency_context = multiples.currency_context_from_info({"currency": "GBp", "financialCurrency": "GBP"})
+
+    payload = multiples.value_range_payload(
+        saved_assumption={
+            "metric": "price_earnings",
+            "denominator_currency": "GBP",
+            "scenarios": {
+                "bear": {"multiple": 8.0, "denominator": 50.0},
+                "base": {"multiple": 10.0, "denominator": 50.0},
+                "bull": {"multiple": 12.0, "denominator": 50.0},
+            },
+        },
+        metrics={},
+        peers=multiples._empty_peer_context(),
+        effective_weights={"price_earnings": 1.0},
+        currency_context=currency_context,
+        market_data={"current_price": 1000.0, "shares": 100.0, "net_debt": 0.0, "currency": "GBp"},
+    )
+
+    assert payload["denominator_currency"] == "GBP"
+    assert payload["currency"] == "GBp"
+    assert payload["denominator_to_price_fx_rate"] == 100.0
+    assert payload["scenarios"]["base"]["denominator"] == 50.0
+    assert payload["scenarios"]["base"]["denominator_converted"] == 5000.0
+    assert payload["scenarios"]["base"]["expected_price"] == 500.0
+    assert payload["scenarios"]["base"]["percent_change"] == -50.0
+
+
+def test_stale_route_cache_without_currency_context_is_recomputed(monkeypatch):
+    from api.cache import delete_cached, long_cache, set_cached
+    from api.routers import valuation as valuation_router
+
+    ticker = f"ZZCACHE{uuid.uuid4().hex[:8]}".upper()
+    key = valuation_router.valuation_cache_key(ticker, None)
+    delete_cached(long_cache, key)
+    set_cached(long_cache, key, {"ticker": ticker, "metrics": {}})
+    calls = 0
+
+    def _fresh(symbol):
+        nonlocal calls
+        calls += 1
+        return {
+            "ticker": symbol,
+            "currency_context": {"price_currency": "USD", "financial_currency": "USD"},
+            "metrics": {},
+        }
+
+    monkeypatch.setattr(multiples, "read_profile_override", lambda symbol: None)
+    monkeypatch.setattr(multiples, "get_position_valuation", _fresh)
+
+    try:
+        result = valuation_router.get_position_valuation_endpoint(ticker)
+        assert calls == 1
+        assert result["currency_context"]["price_currency"] == "USD"
+    finally:
+        delete_cached(long_cache, key)
