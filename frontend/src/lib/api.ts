@@ -2004,6 +2004,9 @@ export interface ValuationMetric {
   numerator_label?: string | null
   numerator_source?: string | null
   denominator: number | null
+  denominator_currency?: string | null
+  denominator_converted?: number | null
+  denominator_converted_currency?: string | null
   denominator_label: string
   status: "ok" | "missing" | "not_meaningful" | "degraded" | string
   reason?: string | null
@@ -2015,16 +2018,27 @@ export interface PositionValuation {
   company_name?: string
   as_of?: string
   source_policy?: string
+  currency_context?: {
+    price_currency?: string | null
+    financial_currency?: string | null
+    financial_to_price_fx_rate?: number | null
+    fx_rate_as_of?: string | null
+    conversion_status?: string | null
+  }
   market_data: {
     market_cap?: number | null
     enterprise_value?: number | null
     net_debt?: number | null
+    net_debt_financial?: number | null
     currency?: string | null
+    price_currency?: string | null
+    financial_currency?: string | null
     sector?: string | null
     industry?: string | null
     current_price?: number | null
     shares_outstanding?: number | null
   }
+  financial_data?: Record<string, unknown>
   profile: {
     id: string
     label: string
@@ -2058,9 +2072,15 @@ export interface PositionValuation {
 export interface PositionValueRangeScenario {
   multiple?: number | null
   denominator?: number | null
+  denominator_currency?: string | null
+  denominator_converted?: number | null
+  denominator_converted_currency?: string | null
+  denominator_to_output_fx_rate?: number | null
+  fx_rate_as_of?: string | null
   equity_value?: number | null
   expected_price?: number | null
   percent_change?: number | null
+  output_currency?: string | null
   status?: string
   reason?: string | null
 }
@@ -2071,16 +2091,23 @@ export interface PositionValueRange {
   metric: string
   metric_label: string
   denominator_label: string
+  denominator_currency?: string | null
+  stored_denominator_currency?: string | null
+  legacy_denominator_currency?: boolean
+  denominator_to_price_fx_rate?: number | null
+  fx_rate_as_of?: string | null
   calculation_method: string
   current_price?: number | null
   shares?: number | null
   net_debt?: number | null
   currency?: string | null
+  output_currency?: string | null
   scenarios: Record<string, PositionValueRangeScenario>
 }
 
 export interface PositionValueRangeRequest {
   metric: string
+  denominator_currency?: string | null
   scenarios: Record<string, { multiple: number; denominator: number }>
 }
 
