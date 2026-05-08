@@ -329,7 +329,7 @@ export function PortfolioSizer() {
           if (prefilled.length > 0) setRows(prefilled)
         }
       })
-      .catch(() => {})
+      .catch(() => { })
 
     return () => { canceled = true }
   }, [hasCachedBookSize, hasCachedRows])
@@ -344,7 +344,7 @@ export function PortfolioSizer() {
         }
         setCurrentHoldings(map)
       })
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
   const handleSizerResult = useCallback((result: unknown) => {
@@ -470,10 +470,10 @@ export function PortfolioSizer() {
   const weightsRows = toRows(data?.weights_df)
   const weightsHiddenKeys = weightsViewMode === "basic"
     ? (weightsRows.length === 0
-        ? []
-        : Object.keys(weightsRows[0]).filter(
-            k => !BASIC_COLUMNS.has(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
-          ))
+      ? []
+      : Object.keys(weightsRows[0]).filter(
+        k => !BASIC_COLUMNS.has(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
+      ))
     : [...ALWAYS_HIDDEN_COLUMNS]
   const hedgesRows = toRows(data?.hedges_df)
   const exposures = data?.exposures ?? {}
@@ -617,7 +617,7 @@ export function PortfolioSizer() {
             />
             <p className="text-xs text-gray-400">
               {betaHedgeMode === "spy"
-                ? "Neutralizes SPY beta; IWM beta remains a residual diagnostic."
+                ? "Neutralizes SPY beta; IWM beta remains a diagnostic."
                 : "Neutralizes SPY and IWM beta with both hedge legs."}
             </p>
           </div>
@@ -650,21 +650,21 @@ export function PortfolioSizer() {
                     style={
                       row.direction === "long"
                         ? {
-                            backgroundColor: "hsl(var(--success-muted))",
-                            color: "hsl(var(--success))",
-                            borderColor: "hsl(var(--success) / 0.25)",
-                          }
+                          backgroundColor: "hsl(var(--success-muted))",
+                          color: "hsl(var(--success))",
+                          borderColor: "hsl(var(--success) / 0.25)",
+                        }
                         : row.direction === "short"
                           ? {
-                              backgroundColor: "hsl(var(--destructive-muted))",
-                              color: "hsl(var(--destructive))",
-                              borderColor: "hsl(var(--destructive) / 0.25)",
-                            }
+                            backgroundColor: "hsl(var(--destructive-muted))",
+                            color: "hsl(var(--destructive))",
+                            borderColor: "hsl(var(--destructive) / 0.25)",
+                          }
                           : {
-                              backgroundColor: "hsl(var(--background-card-muted))",
-                              color: "hsl(var(--foreground-secondary))",
-                              borderColor: "hsl(var(--border))",
-                            }
+                            backgroundColor: "hsl(var(--background-card-muted))",
+                            color: "hsl(var(--foreground-secondary))",
+                            borderColor: "hsl(var(--border))",
+                          }
                     }
                   >
                     {row.direction || "—"}

@@ -589,17 +589,6 @@ function recommendedScenarioState(recommendation: AnalyzerRecommendedScenarioRes
   }
 }
 
-function recommendationFreshnessText(recommendation: AnalyzerRecommendedScenarioResponse | null): string | null {
-  if (!recommendation) return null
-  const snapshot = recommendation._meta?.snapshot
-  const asOf = snapshot?.as_of ?? recommendation.source?.as_of
-  const parts = [`Signal Aggregator as of ${asOf ?? "unknown"}`]
-  if (snapshot?.stale) parts.push("stale")
-  if (snapshot?.refresh_status && snapshot.refresh_status !== "ok") parts.push(`refresh ${snapshot.refresh_status}`)
-  if (snapshot?.error) parts.push(snapshot.error)
-  return parts.join(" · ")
-}
-
 function missionLabel(value: string | undefined) {
   return MISSION_OPTIONS.find(option => option.value === value)?.label ?? "Custom"
 }
@@ -729,11 +718,33 @@ function toWorkspaceActionRequest(action: AnalyzerCourseAction) {
   }
 }
 
-function formatDateTime(value: string | undefined | null) {
-  if (!value) return "Not run"
+function formatDateTime(value: string | undefined | null, fallback = "Not run") {
+  if (!value) return fallback
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString()
+  const parts = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(parsed)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? ""
+  const hour = part("hour") === "24" ? "00" : part("hour")
+  return `${part("month")} ${part("day")}, ${part("year")} ${hour}:${part("minute")}:${part("second")}`
+}
+
+function recommendationFreshnessText(recommendation: AnalyzerRecommendedScenarioResponse | null): string | null {
+  if (!recommendation) return null
+  const snapshot = recommendation._meta?.snapshot
+  const asOf = snapshot?.as_of ?? recommendation.source?.as_of
+  const parts = [`Signal Aggregator as of ${formatDateTime(asOf, "unknown")}`]
+  if (snapshot?.stale) parts.push("stale")
+  if (snapshot?.refresh_status && snapshot.refresh_status !== "ok") parts.push(`refresh ${snapshot.refresh_status}`)
+  if (snapshot?.error) parts.push(snapshot.error)
+  return parts.join(" · ")
 }
 
 function SummaryCard({ title, value, detail }: { title: string; value: string; detail?: string }) {
