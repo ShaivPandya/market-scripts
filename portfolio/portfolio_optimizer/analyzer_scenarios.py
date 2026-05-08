@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from math import isfinite
-from typing import Any
+from typing import Any, TypedDict
+
+
+class _ScenarioDriver(TypedDict):
+    key: str
+    detail: str
+    value: float
+
 
 SCENARIO_FACTOR_DEFAULTS = {
     "quality": 0.20,
@@ -334,8 +341,8 @@ def build_ai_recommended_scenario(signal_payload: Mapping[str, Any]) -> dict[str
         ),
         ("risk_on", "Risk-on conditions increased growth and price-momentum emphasis.", risk_on),
     ]
-    drivers = [
-        {"key": key, "detail": detail, "value": round(float(value), 4)}
+    drivers: list[_ScenarioDriver] = [
+        _ScenarioDriver(key=key, detail=detail, value=round(float(value), 4))
         for key, detail, value in sorted(driver_candidates, key=lambda item: item[2], reverse=True)
         if value > 0
     ][:3]

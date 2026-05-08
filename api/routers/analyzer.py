@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -265,7 +266,8 @@ def _snapshot_meta(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 def _build_recommended_scenario_response(signal_payload: dict[str, Any]) -> dict[str, Any]:
     recommendation = build_ai_recommended_scenario(signal_payload)
-    regime = signal_payload.get("regime") if isinstance(signal_payload.get("regime"), dict) else {}
+    raw_regime = signal_payload.get("regime")
+    regime = cast(Mapping[str, Any], raw_regime) if isinstance(raw_regime, dict) else {}
     snapshot = _snapshot_meta(signal_payload)
     response: dict[str, Any] = {
         "status": "ok",
@@ -286,7 +288,7 @@ def _build_recommended_scenario_response(signal_payload: dict[str, Any]) -> dict
     }
     if snapshot is not None:
         response["_meta"] = {"snapshot": snapshot}
-    return serialize_value(response)
+    return cast(dict[str, Any], serialize_value(response))
 
 
 @router.get("/portfolio-analyzer/recommended-scenario")
