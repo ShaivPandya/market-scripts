@@ -640,6 +640,77 @@ def test_evaluate_all_computes_one_analyzer_result_for_enabled_ideas(auth_client
     assert {row["analyzer_context"]["status"] for row in job["result"]["evaluations"]} == {"available"}
 
 
+def test_evaluate_all_respects_per_idea_portfolio_context_opt_out(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls = {"analyzer": 0}
+
+    def fake_analyzer_result():
+        calls["analyzer"] += 1
+        return {"status": "ok", "raw_result": {"weights_df": []}}
+
+    monkeypatch.setattr(ideas_router, "_compute_portfolio_plus_ideas_analyzer_result", fake_analyzer_result)
+    monkeypatch.setattr(
+        ideas_router,
+        "_analyzer_contexts_from_result",
+        lambda _result: {
+            "ONCTX": {
+                "status": "available",
+                "ticker": "ONCTX",
+                "row": {
+                    "industry_quality_score": 80,
+                    "business_quality_qual_score": 80,
+                    "management_quality_score": 80,
+                    "valuation_signal": 0,
+                },
+            },
+            "OFFCTX": {
+                "status": "available",
+                "ticker": "OFFCTX",
+                "row": {
+                    "industry_quality_score": 20,
+                    "business_quality_qual_score": 20,
+                    "management_quality_score": 20,
+                    "valuation_signal": -1,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: ideas_router._deterministic_comparison_result(evaluations),
+    )
+
+    for ticker, use_portfolio_context in [("ONCTX", True), ("OFFCTX", False)]:
+        created = auth_client.post(
+            "/api/v1/ideas",
+            json={
+                "ticker": ticker,
+                "company_name": ticker,
+                "user_notes": f"Review {ticker}.",
+                "tags": ["test"],
+                "status": "watching",
+                "analyzer_direction": "long",
+                "use_portfolio_context": use_portfolio_context,
+            },
+        )
+        assert created.status_code == 200
+
+    started = auth_client.post("/api/v1/ideas/evaluate-all/async", json={"use_portfolio_context": True})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    assert calls["analyzer"] == 1
+    evaluations = {row["ticker"]: row for row in job["result"]["evaluations"]}
+    assert evaluations["ONCTX"]["data_quality"]["portfolio_context_used"] is True
+    assert evaluations["ONCTX"]["analyzer_context"]["status"] == "available"
+    assert evaluations["OFFCTX"]["data_quality"]["portfolio_context_used"] is False
+    assert evaluations["OFFCTX"]["analyzer_context"]["status"] == "disabled"
+    assert evaluations["OFFCTX"]["factor_scores"]["portfolio_fit"]["score"] == 50
+
+
 def test_single_evaluation_disabled_portfolio_context_skips_analyzer_and_portfolio_payload(auth_client, monkeypatch):
     from api.routers import ideas as ideas_router
 

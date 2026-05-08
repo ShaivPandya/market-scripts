@@ -1950,7 +1950,9 @@ def _compute_idea_comparison_evaluation_result(
     if callable(progress_callback):
         progress_callback("analyzer", 1, total)
     use_portfolio_context = bool(req.use_portfolio_context)
-    has_analyzer_ideas = use_portfolio_context and any(_idea_analyzer_direction(idea) != "inactive" for idea in ideas)
+    has_analyzer_ideas = use_portfolio_context and any(
+        _idea_uses_portfolio_context(idea) and _idea_analyzer_direction(idea) != "inactive" for idea in ideas
+    )
     analyzer_result = _compute_portfolio_plus_ideas_analyzer_result() if has_analyzer_ideas else None
     analyzer_contexts = _analyzer_contexts_from_result(analyzer_result) if analyzer_result else {}
 
@@ -1958,19 +1960,20 @@ def _compute_idea_comparison_evaluation_result(
     for index, idea in enumerate(ideas, start=1):
         if callable(progress_callback):
             progress_callback("evaluating", index + 1, total)
+        idea_use_portfolio_context = use_portfolio_context and _idea_uses_portfolio_context(idea)
         analyzer_context = (
             _analyzer_context_for_idea(
                 idea,
                 analyzer_result=analyzer_result,
                 analyzer_contexts=analyzer_contexts,
             )
-            if use_portfolio_context
+            if idea_use_portfolio_context
             else _disabled_analyzer_context_for_idea(idea)
         )
         context = _build_context_for_evaluation(
             idea,
             analyzer_context=analyzer_context,
-            use_portfolio_context=use_portfolio_context,
+            use_portfolio_context=idea_use_portfolio_context,
         )
         result = _call_llm_evaluator(context)
         if result.get("evaluation_schema_version") != IDEA_EVALUATION_SCHEMA_VERSION:

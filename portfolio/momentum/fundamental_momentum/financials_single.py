@@ -13,7 +13,7 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: UP035
+from typing import Any, Dict, List, Optional, Set, SupportsFloat, SupportsIndex, Tuple  # noqa: UP035
 
 from llm_utils import MODEL_LOW, MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 from portfolio.momentum.fundamental_momentum._edgar_periods import (
@@ -354,7 +354,7 @@ def _calc_avg_3q_yoy(rows: list[dict], denom_abs: bool) -> float | None:
 
 
 def _yf_numeric(v: object) -> float | None:
-    if v is None:
+    if not isinstance(v, (str, bytes, SupportsFloat, SupportsIndex)):
         return None
     try:
         x = float(v)
@@ -417,7 +417,7 @@ def _yf_info(ticker_obj: Any) -> dict:
 def _yf_index_lookup(statement: Any, names: tuple[str, ...]) -> object | None:
     if statement is None or getattr(statement, "empty", True):
         return None
-    index_values = list(getattr(statement, "index", []))
+    index_values: list[object] = list(getattr(statement, "index", []))
     exact = set(index_values)
     for name in names:
         if name in exact:
@@ -456,7 +456,7 @@ def _yf_eps_value(statement: Any, column: object) -> float | None:
 def _yf_column_date(column: object) -> str:
     try:
         if hasattr(column, "date"):
-            return column.date().isoformat()
+            return str(column.date().isoformat())
     except Exception:
         pass
     raw = str(column or "")

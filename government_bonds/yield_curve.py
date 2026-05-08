@@ -16,7 +16,7 @@ import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import pandas as pd
 import requests  # type: ignore[import-untyped]
@@ -624,10 +624,10 @@ def _build_country_curve(
     }
 
 
-def _build_yield_curve_result(lookback_days: int, countries_to_fetch: list[tuple[str, str]]) -> dict:
+def _build_yield_curve_result(lookback_days: int, countries_to_fetch: list[tuple[str, str]]) -> dict[str, Any]:
     fred_client, fred_warn = _build_fred_client()
 
-    countries: list[dict] = []
+    countries: list[dict[str, Any]] = []
     for code, name in countries_to_fetch:
         countries.append(
             _build_country_curve(
@@ -720,10 +720,14 @@ def get_data(lookback_days: int = 90, country: str | None = None) -> dict:
 
     # Determine as_of_date from country curves (latest across all)
     as_of_date = None
-    for country in result["countries"]:
-        d = country.get("as_of_date")
-        if isinstance(d, str) and (as_of_date is None or d > as_of_date):
-            as_of_date = d
+    country_rows = result.get("countries", [])
+    if isinstance(country_rows, list):
+        for country in country_rows:
+            if not isinstance(country, dict):
+                continue
+            d = country.get("as_of_date")
+            if isinstance(d, str) and (as_of_date is None or d > as_of_date):
+                as_of_date = d
 
     _write_cache(
         path=cache_p,

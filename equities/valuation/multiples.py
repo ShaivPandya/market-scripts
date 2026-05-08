@@ -281,7 +281,15 @@ def currency_context_from_info(info: Mapping[str, Any]) -> dict[str, Any]:
         }
 
     fx = fx_rate_to_base(financial_currency, price_currency)
-    rate = _positive_float((fx or {}).get("rate")) if isinstance(fx, Mapping) else None
+    if not isinstance(fx, Mapping):
+        return {
+            "price_currency": price_currency,
+            "financial_currency": financial_currency,
+            "financial_to_price_fx_rate": None,
+            "fx_rate_as_of": None,
+            "conversion_status": "missing_fx_rate",
+        }
+    rate = _positive_float(fx.get("rate"))
     if rate is None:
         return {
             "price_currency": price_currency,
@@ -342,7 +350,9 @@ def _conversion_rate(
             return {"rate": 1.0 / context_rate, "as_of": currency_context.get("fx_rate_as_of"), "status": "ok"}
 
     fx = fx_rate_to_base(source, target)
-    rate = _positive_float((fx or {}).get("rate")) if isinstance(fx, Mapping) else None
+    if not isinstance(fx, Mapping):
+        return {"rate": None, "as_of": None, "status": "missing_fx_rate"}
+    rate = _positive_float(fx.get("rate"))
     if rate is None:
         return {"rate": None, "as_of": None, "status": "missing_fx_rate"}
     return {"rate": rate, "as_of": fx.get("as_of"), "status": "ok"}
@@ -587,10 +597,9 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[s
     info = _fetch_info(normalized)
     override = read_profile_override(normalized)
     current = fetch_current_valuation(normalized, info=info)
-    currency_context = (
-        current.get("currency_context")
-        if isinstance(current.get("currency_context"), Mapping)
-        else currency_context_from_info(info)
+    raw_currency_context = current.get("currency_context")
+    currency_context: Mapping[str, Any] = (
+        raw_currency_context if isinstance(raw_currency_context, Mapping) else currency_context_from_info(info)
     )
     market_cap = _safe_float(current.get("market_cap"))
     enterprise_value = _safe_float(current.get("enterprise_value"))
