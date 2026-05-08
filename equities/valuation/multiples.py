@@ -21,6 +21,7 @@ import pandas as pd
 import yfinance as yf
 
 from utils.fx import clean_currency as _clean_currency
+from utils.fx import currency_lookup_and_unit_scale as _currency_lookup_and_unit_scale
 from utils.fx import fx_rate_to_base
 from utils.retry import yf_ticker_info
 
@@ -308,9 +309,9 @@ def currency_context_from_info(info: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _same_currency(a: Any, b: Any) -> bool:
-    left = _clean_currency(a)
-    right = _clean_currency(b)
-    return bool(left and right and left.upper() == right.upper())
+    left = _currency_lookup_and_unit_scale(a)
+    right = _currency_lookup_and_unit_scale(b)
+    return bool(left and right and left == right)
 
 
 def _financial_to_price_rate(currency_context: Mapping[str, Any]) -> float | None:

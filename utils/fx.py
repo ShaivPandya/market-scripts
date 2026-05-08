@@ -30,18 +30,20 @@ def clean_currency(value: Any) -> str | None:
 
 def fx_rate_to_base(currency: str, base_currency: str = DEFAULT_BASE_CURRENCY) -> dict[str, Any] | None:
     raw = clean_currency(currency)
-    base = clean_currency(base_currency) or DEFAULT_BASE_CURRENCY
+    base_raw = clean_currency(base_currency) or DEFAULT_BASE_CURRENCY
     if not raw:
         return None
 
     lookup, unit_scale = _currency_lookup_and_unit_scale(raw)
-    if lookup == base:
-        return {"rate": unit_scale, "as_of": date.today().isoformat()}
+    base_lookup, base_unit_scale = _currency_lookup_and_unit_scale(base_raw)
+    unit_conversion = unit_scale / base_unit_scale
+    if lookup == base_lookup:
+        return {"rate": unit_conversion, "as_of": date.today().isoformat()}
 
-    key = f"portfolio_fx_rate:{lookup}:{base}"
+    key = f"portfolio_fx_rate:{lookup}:{base_lookup}"
 
     def _loader() -> dict[str, Any] | None:
-        return _fetch_fx_rate_uncached(lookup, base)
+        return _fetch_fx_rate_uncached(lookup, base_lookup)
 
     try:
         from api.cache import get_or_set_cached, short_cache
@@ -54,7 +56,14 @@ def fx_rate_to_base(currency: str, base_currency: str = DEFAULT_BASE_CURRENCY) -
     rate = _to_float(quote.get("rate"))
     if rate is None:
         return None
-    return {"rate": rate * unit_scale, "as_of": quote.get("as_of")}
+    return {"rate": rate * unit_conversion, "as_of": quote.get("as_of")}
+
+
+def currency_lookup_and_unit_scale(currency: Any) -> tuple[str, float] | None:
+    raw = clean_currency(currency)
+    if not raw:
+        return None
+    return _currency_lookup_and_unit_scale(raw)
 
 
 def _fetch_fx_rate_uncached(currency: str, base_currency: str) -> dict[str, Any] | None:

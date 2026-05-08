@@ -110,6 +110,31 @@ def test_mixed_currency_multiples_convert_financial_denominators(monkeypatch):
     assert result["metrics"]["price_sales"]["denominator_converted_currency"] == "USD"
 
 
+def test_minor_unit_quote_currency_scales_financial_denominators():
+    income = _stmt({"Total Revenue": [10, 10, 10, 10]})
+
+    for price_currency in ("GBp", "GBX"):
+        result = multiples.compute_current_multiples_from_statements(
+            {
+                "currency": price_currency,
+                "financialCurrency": "GBP",
+                "marketCap": 10_000,
+                "enterpriseValue": 12_000,
+            },
+            quarterly_income=income,
+        )
+
+        assert result["currency_context"]["price_currency"] == price_currency
+        assert result["currency_context"]["financial_currency"] == "GBP"
+        assert result["currency_context"]["financial_to_price_fx_rate"] == 100.0
+        assert result["currency_context"]["conversion_status"] == "ok"
+        assert math.isclose(result["metrics"]["price_sales"]["denominator"], 40.0)
+        assert math.isclose(result["metrics"]["price_sales"]["denominator_converted"], 4000.0)
+        assert math.isclose(result["metrics"]["price_sales"]["value"], 3.0)
+        assert result["metrics"]["price_sales"]["denominator_currency"] == "GBP"
+        assert result["metrics"]["price_sales"]["denominator_converted_currency"] == price_currency
+
+
 def test_recomputed_enterprise_value_uses_converted_debt_and_cash(monkeypatch):
     monkeypatch.setattr(multiples, "fx_rate_to_base", lambda currency, base: {"rate": 0.03125, "as_of": "2026-05-08"})
     income = _stmt({"Total Revenue": [8000, 8000, 8000, 8000]})
@@ -439,6 +464,35 @@ def test_legacy_value_range_without_currency_is_computed_as_price_currency(monke
     assert payload["scenarios"]["base"]["denominator"] == 32000.0
     assert payload["scenarios"]["base"]["denominator_converted"] == 1000.0
     assert payload["scenarios"]["base"]["expected_price"] == 50.0
+
+
+def test_value_range_payload_converts_major_denominator_to_minor_quote_currency():
+    currency_context = multiples.currency_context_from_info({"currency": "GBp", "financialCurrency": "GBP"})
+
+    payload = multiples.value_range_payload(
+        saved_assumption={
+            "metric": "price_earnings",
+            "denominator_currency": "GBP",
+            "scenarios": {
+                "bear": {"multiple": 8.0, "denominator": 50.0},
+                "base": {"multiple": 10.0, "denominator": 50.0},
+                "bull": {"multiple": 12.0, "denominator": 50.0},
+            },
+        },
+        metrics={},
+        peers=multiples._empty_peer_context(),
+        effective_weights={"price_earnings": 1.0},
+        currency_context=currency_context,
+        market_data={"current_price": 1000.0, "shares": 100.0, "net_debt": 0.0, "currency": "GBp"},
+    )
+
+    assert payload["denominator_currency"] == "GBP"
+    assert payload["currency"] == "GBp"
+    assert payload["denominator_to_price_fx_rate"] == 100.0
+    assert payload["scenarios"]["base"]["denominator"] == 50.0
+    assert payload["scenarios"]["base"]["denominator_converted"] == 5000.0
+    assert payload["scenarios"]["base"]["expected_price"] == 500.0
+    assert payload["scenarios"]["base"]["percent_change"] == -50.0
 
 
 def test_stale_route_cache_without_currency_context_is_recomputed(monkeypatch):
