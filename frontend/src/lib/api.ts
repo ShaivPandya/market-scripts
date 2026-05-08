@@ -2085,9 +2085,17 @@ export interface PositionValueRangeScenario {
   reason?: string | null
 }
 
+export interface PositionValueRangeAssumption {
+  denominator_currency?: string | null
+  legacy_denominator_currency?: boolean
+  scenarios: Record<string, { multiple?: number | null; denominator?: number | null }>
+}
+
 export interface PositionValueRange {
   saved: boolean
   source: string
+  selected_metric?: string | null
+  metric_assumptions?: Record<string, PositionValueRangeAssumption>
   metric: string
   metric_label: string
   denominator_label: string
@@ -2119,6 +2127,9 @@ export const updatePositionValuationProfileOverride = (ticker: string, profile_i
 
 export const updatePositionValueRange = (ticker: string, body: PositionValueRangeRequest) =>
   client.put(`/valuation/${encodeURIComponent(ticker)}/value-range`, body).then(r => r.data)
+
+export const deletePositionValueRange = (ticker: string, metric: string) =>
+  client.delete(`/valuation/${encodeURIComponent(ticker)}/value-range/${encodeURIComponent(metric)}`).then(r => r.data)
 
 // DCF Model
 export const fetchDCFHistorical = (ticker: string) =>

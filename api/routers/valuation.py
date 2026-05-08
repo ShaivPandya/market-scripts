@@ -29,7 +29,7 @@ class ValuationValueRangeRequest(BaseModel):
 
 def valuation_cache_key(ticker: str, profile_override: str | None = None) -> str:
     profile = profile_override or "auto"
-    return f"position_valuation:v4:{ticker.strip().upper()}:profile={profile}"
+    return f"position_valuation:v5:{ticker.strip().upper()}:profile={profile}"
 
 
 def delete_valuation_cache_variants(ticker: str, profile_overrides: list[str | None]) -> None:
@@ -111,3 +111,27 @@ def update_position_valuation_value_range(ticker: str, req: ValuationValueRangeR
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise DataFetchError(source="position_valuation_value_range", detail=str(exc)) from exc
+
+
+@router.delete("/valuation/{ticker}/value-range/{metric}")
+def delete_position_valuation_value_range(ticker: str, metric: str):
+    normalized = ticker.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Ticker is required")
+
+    try:
+        from equities.valuation.multiples import (
+            delete_value_range_assumption,
+            profile_options,
+            read_profile_override,
+        )
+
+        profile_override = read_profile_override(normalized)
+        result = delete_value_range_assumption(normalized, metric)
+        profile_ids = [option["id"] for option in profile_options()]
+        delete_valuation_cache_variants(normalized, [profile_override, *profile_ids])
+        return stamp_fresh(serialize_value(result))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise DataFetchError(source="position_valuation_value_range_delete", detail=str(exc)) from exc

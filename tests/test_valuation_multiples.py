@@ -1,3 +1,4 @@
+import json
 import math
 import uuid
 
@@ -374,12 +375,13 @@ def test_value_range_scenario_uses_equity_value_for_pe_and_pb():
     assert row["percent_change"] == 50.0
 
 
-def test_value_range_assumption_persists_and_updates(tmp_path, monkeypatch):
+def test_value_range_assumption_persists_per_metric_and_updates_selected(tmp_path, monkeypatch):
     monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
     monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
 
     first = {
         "metric": "price_sales",
+        "denominator_currency": "USD",
         "scenarios": {
             "bear": {"multiple": 4.0, "denominator": 100.0},
             "base": {"multiple": 5.0, "denominator": 110.0},
@@ -388,6 +390,7 @@ def test_value_range_assumption_persists_and_updates(tmp_path, monkeypatch):
     }
     second = {
         "metric": "price_earnings",
+        "denominator_currency": "TWD",
         "scenarios": {
             "bear": {"multiple": 12.0, "denominator": 50.0},
             "base": {"multiple": 15.0, "denominator": 55.0},
@@ -396,10 +399,58 @@ def test_value_range_assumption_persists_and_updates(tmp_path, monkeypatch):
     }
 
     multiples.write_value_range_assumption("zzrange", first)
-    assert multiples.read_value_range_assumption("ZZRANGE") == first
+    saved = multiples.read_value_range_assumption("ZZRANGE")
+    assert saved["selected_metric"] == "price_sales"
+    assert saved["metric_assumptions"]["price_sales"]["scenarios"] == first["scenarios"]
+    assert saved["metric_assumptions"]["price_sales"]["denominator_currency"] == "USD"
+    assert saved["metric_assumptions"]["price_sales"]["legacy_denominator_currency"] is False
 
     multiples.write_value_range_assumption("ZZRANGE", second)
-    assert multiples.read_value_range_assumption("zzrange") == second
+    saved = multiples.read_value_range_assumption("zzrange")
+    assert saved["selected_metric"] == "price_earnings"
+    assert saved["metric_assumptions"]["price_sales"]["scenarios"] == first["scenarios"]
+    assert saved["metric_assumptions"]["price_earnings"]["scenarios"] == second["scenarios"]
+    assert saved["metric_assumptions"]["price_earnings"]["denominator_currency"] == "TWD"
+
+
+def test_value_range_assumption_update_preserves_other_metric_currency_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+
+    preserved = {
+        "scenarios": {
+            "bear": {"multiple": 8.0, "denominator": 50.0},
+            "base": {"multiple": 10.0, "denominator": 55.0},
+            "bull": {"multiple": 12.0, "denominator": 60.0},
+        },
+        "denominator_currency": "USD",
+        "legacy_denominator_currency": True,
+    }
+    multiples._write_value_ranges(
+        {
+            "ZZMETA": {
+                "selected_metric": "price_earnings",
+                "metric_assumptions": {"price_earnings": preserved},
+            }
+        }
+    )
+
+    multiples.write_value_range_assumption(
+        "ZZMETA",
+        {
+            "metric": "price_sales",
+            "denominator_currency": "TWD",
+            "scenarios": {
+                "bear": {"multiple": 4.0, "denominator": 100.0},
+                "base": {"multiple": 5.0, "denominator": 110.0},
+                "bull": {"multiple": 6.0, "denominator": 120.0},
+            },
+        },
+    )
+
+    saved = multiples.read_value_range_assumption("ZZMETA")
+    assert saved["selected_metric"] == "price_sales"
+    assert saved["metric_assumptions"]["price_earnings"] == preserved
 
 
 def test_value_range_assumption_preserves_denominator_currency(tmp_path, monkeypatch):
@@ -417,10 +468,116 @@ def test_value_range_assumption_preserves_denominator_currency(tmp_path, monkeyp
     stamped = {**legacy, "denominator_currency": "TWD"}
 
     multiples.write_value_range_assumption("zzlegacy", legacy)
-    assert "denominator_currency" not in multiples.read_value_range_assumption("zzlegacy")
+    saved = multiples.read_value_range_assumption("zzlegacy")
+    assert "denominator_currency" not in saved["metric_assumptions"]["price_sales"]
+    assert saved["metric_assumptions"]["price_sales"]["legacy_denominator_currency"] is False
 
     multiples.write_value_range_assumption("zzlegacy", stamped)
-    assert multiples.read_value_range_assumption("zzlegacy")["denominator_currency"] == "TWD"
+    saved = multiples.read_value_range_assumption("zzlegacy")
+    assert saved["metric_assumptions"]["price_sales"]["denominator_currency"] == "TWD"
+    assert saved["metric_assumptions"]["price_sales"]["legacy_denominator_currency"] is False
+
+
+def test_legacy_flat_value_range_record_loads_as_single_legacy_metric(tmp_path, monkeypatch):
+    path = tmp_path / "value_ranges.json"
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", path)
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+    legacy = {
+        "metric": "price_sales",
+        "scenarios": {
+            "bear": {"multiple": 4.0, "denominator": 100.0},
+            "base": {"multiple": 5.0, "denominator": 110.0},
+            "bull": {"multiple": 6.0, "denominator": 120.0},
+        },
+    }
+    path.write_text(json.dumps({"ZZLEGACY": legacy}), encoding="utf-8")
+
+    saved = multiples.read_value_range_assumption("ZZLEGACY")
+    assert saved["selected_metric"] == "price_sales"
+    assert list(saved["metric_assumptions"]) == ["price_sales"]
+    assert saved["metric_assumptions"]["price_sales"]["legacy_denominator_currency"] is True
+
+
+def test_delete_value_range_assumption_is_idempotent_and_metric_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+
+    sales = {
+        "metric": "price_sales",
+        "denominator_currency": "USD",
+        "scenarios": {
+            "bear": {"multiple": 4.0, "denominator": 100.0},
+            "base": {"multiple": 5.0, "denominator": 110.0},
+            "bull": {"multiple": 6.0, "denominator": 120.0},
+        },
+    }
+    earnings = {
+        "metric": "price_earnings",
+        "denominator_currency": "USD",
+        "scenarios": {
+            "bear": {"multiple": 12.0, "denominator": 50.0},
+            "base": {"multiple": 15.0, "denominator": 55.0},
+            "bull": {"multiple": 18.0, "denominator": 60.0},
+        },
+    }
+    multiples.write_value_range_assumption("zzdelete", sales)
+    multiples.write_value_range_assumption("zzdelete", earnings)
+
+    result = multiples.delete_value_range_assumption("zzdelete", "price_sales")
+    assert result["value_range"]["selected_metric"] == "price_earnings"
+    assert "price_sales" not in result["value_range"]["metric_assumptions"]
+    assert "price_earnings" in result["value_range"]["metric_assumptions"]
+
+    result = multiples.delete_value_range_assumption("zzdelete", "price_sales")
+    assert result["value_range"]["selected_metric"] == "price_earnings"
+    assert "price_earnings" in result["value_range"]["metric_assumptions"]
+
+
+def test_delete_value_range_assumption_removes_legacy_flat_record(tmp_path, monkeypatch):
+    path = tmp_path / "value_ranges.json"
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", path)
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+    path.write_text(
+        json.dumps(
+            {
+                "ZZFLAT": {
+                    "metric": "price_sales",
+                    "scenarios": {
+                        "bear": {"multiple": 4.0, "denominator": 100.0},
+                        "base": {"multiple": 5.0, "denominator": 110.0},
+                        "bull": {"multiple": 6.0, "denominator": 120.0},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = multiples.delete_value_range_assumption("zzflat", "price_sales")
+    assert result["value_range"]["metric_assumptions"] == {}
+    assert multiples.read_value_range_assumption("zzflat") is None
+
+
+def test_value_range_payload_without_saved_assumptions_uses_default_metric_with_blank_scenarios():
+    payload = multiples.value_range_payload(
+        saved_assumption=None,
+        metrics={
+            "price_sales": {"value": 4.0, "denominator": 100.0},
+            "price_fcf": {"value": 20.0, "denominator": 25.0},
+        },
+        peers=multiples._empty_peer_context(),
+        effective_weights={"price_sales": 0.1, "price_fcf": 0.9},
+        currency_context={"price_currency": "USD", "financial_currency": "USD"},
+        market_data={"current_price": 10.0, "shares": 100.0, "net_debt": 0.0, "currency": "USD"},
+    )
+
+    assert payload["saved"] is False
+    assert payload["source"] == "blank"
+    assert payload["selected_metric"] == "price_fcf"
+    assert payload["metric_assumptions"] == {}
+    assert payload["scenarios"]["base"]["status"] == "missing"
+    assert payload["scenarios"]["base"]["multiple"] is None
+    assert payload["scenarios"]["base"]["denominator"] is None
 
 
 def test_legacy_value_range_without_currency_is_computed_as_price_currency(monkeypatch):

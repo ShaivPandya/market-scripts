@@ -40,6 +40,13 @@ def _buy_payload() -> dict:
 
 def _obsolete_policy_fragments() -> tuple[str, ...]:
     return (
+        "missing investor/account constraint",
+        "investor/account constraint",
+        "suitability_profile",
+        "account_type",
+        "tax_status",
+        "min_cash_reserve_pct",
+        "taxable_account_rules",
         "_".join(("tax", "lot", "data", "available")),
         ".".join(("tax", "_".join(("tax", "lots")))),
         " ".join(("tax", "lots")),
@@ -54,20 +61,23 @@ def _gate_text(gate: dict) -> str:
     return str(gate).lower()
 
 
-def test_missing_constraints_warn_without_blocking_actionable_recommendation():
+def test_actionable_recommendation_does_not_generate_missing_constraint_warnings():
     gate = evaluate_policy_gate(
         "create_recommendation",
         {"record": _buy_payload()["recommended_actions"][0] | {"critical_data_quality": "ok"}},
     )
 
-    assert gate["decision"] == "warn"
+    assert gate["decision"] == "pass"
     assert gate["review_required"] is False
-    assert any(reason["code"] == "missing_constraint" for reason in gate["warnings"])
+    assert not gate["warnings"]
+    assert "missing_constraint_count" not in gate["uncertainty"]
+    assert "min_cash_reserve_pct" not in _gate_text(gate)
+    assert "taxable_account_rules" not in _gate_text(gate)
     assert any("Decision support only" in disclosure for disclosure in gate["disclosures"])
     assert not any(fragment in _gate_text(gate) for fragment in _obsolete_policy_fragments())
 
 
-def test_tax_impact_warning_keeps_supported_language_only():
+def test_reduce_recommendation_does_not_invent_tax_status_warning():
     action = _buy_payload()["recommended_actions"][0] | {
         "action": "reduce",
         "critical_data_quality": "ok",
@@ -75,7 +85,10 @@ def test_tax_impact_warning_keeps_supported_language_only():
 
     gate = evaluate_policy_gate("create_recommendation", {"record": action})
 
-    assert any("Tax impact must be reviewed" in reason["message"] for reason in gate["warnings"])
+    assert gate["decision"] == "pass"
+    assert not gate["warnings"]
+    assert "tax_status" not in _gate_text(gate)
+    assert "tax_flag" not in _gate_text(gate)
     assert not any(fragment in _gate_text(gate) for fragment in _obsolete_policy_fragments())
 
 
@@ -214,19 +227,19 @@ def test_persisted_recommendation_stores_policy_gate_result(tmp_path, monkeypatc
         approval = core_db.get_pending_approval(rows[0]["approval_id"])
         assert approval is not None
         record = approval["proposed_change"]["record"]
-        assert record["policy_gate_decision"] == "warn"
-        assert record["policy_gate_warnings"]
+        assert record["policy_gate_decision"] == "pass"
+        assert record["policy_gate_warnings"] == []
 
-        core_db.resolve_approval(approval["id"], "approved", "Reviewed policy gate warnings")
+        core_db.resolve_approval(approval["id"], "approved", "Reviewed policy gate")
         recommendation = core_db.get_recommendations(report_type="daily")[0]
         assert recommendation["policy_gate_result_id"] is not None
-        assert recommendation["policy_gate_decision"] == "warn"
-        assert recommendation["policy_gate_warnings_json"]
+        assert recommendation["policy_gate_decision"] == "pass"
+        assert recommendation["policy_gate_warnings_json"] == []
 
         stored_gate = core_db.get_policy_gate_result(int(recommendation["policy_gate_result_id"]))
         assert stored_gate is not None
-        assert stored_gate["decision"] == "warn"
-        assert stored_gate["result_json"]["decision"] == "warn"
+        assert stored_gate["decision"] == "pass"
+        assert stored_gate["result_json"]["decision"] == "pass"
     finally:
         if core_db._conn:
             core_db._conn.close()
@@ -242,8 +255,9 @@ def test_policy_gate_evaluate_api(auth_client):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["decision"] == "warn"
+    assert body["decision"] == "pass"
     assert body["account_id"] == "default-account"
+    assert not any(fragment in _gate_text(body) for fragment in _obsolete_policy_fragments())
 
 
 def test_policy_gate_blocks_actionable_recommendation_without_risk_score(monkeypatch):

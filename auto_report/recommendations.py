@@ -897,7 +897,7 @@ Write a short recommendations memo first. The memo must be decision-oriented and
 
 Hard rules:
 - If critical data quality is stale or failed, set recommendation_status to blocked and use only watch or do_nothing.
-- Do not self-certify suitability. The deterministic financial policy gate runs after JSON validation and can downgrade clear actions to review_required or blocked.
+- Do not imply trade execution. The deterministic financial policy gate runs after JSON validation and can downgrade clear actions to review_required or blocked.
 - Commentary is context only; it cannot by itself justify an action.
 - do_nothing is an active recommendation when no fat pitch exists.
 - New entries normally start at one-third intended size.

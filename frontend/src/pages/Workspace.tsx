@@ -147,6 +147,7 @@ const URGENCY_COLORS: Record<string, string> = {
 
 const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exit", "rebalance", "hedge"])
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
+const WORKSPACE_APPROVAL_LIMIT = 50
 
 function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
@@ -283,6 +284,67 @@ function approvalSubjectLabel(approval: ApprovalRecord): string {
   return String(approval.entity_type || "proposal").replace(/_/g, " ")
 }
 
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function cleanText(value: unknown): string | null {
+  const text = String(value ?? "").trim()
+  return text ? text.replace(/_/g, " ") : null
+}
+
+function cleanTicker(value: unknown): string | null {
+  const text = String(value ?? "").trim()
+  return text ? text.toUpperCase() : null
+}
+
+function titleCase(value: string): string {
+  return value.replace(/\b\w/g, char => char.toUpperCase())
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function approvalTickerLabel(approval: ApprovalRecord): string | null {
+  const change = approval.proposed_change
+  const record = asPlainRecord(change.record)
+  return cleanTicker(approval.ticker) ?? cleanTicker(change.ticker) ?? cleanTicker(record?.ticker)
+}
+
+function recommendationTargetLabel(approval: ApprovalRecord): string | null {
+  const change = approval.proposed_change
+  const record = asPlainRecord(change.record)
+  const ticker = approvalTickerLabel(approval)
+  const instrument = cleanText(record?.instrument ?? change.instrument)
+  if (ticker && instrument && instrument.toUpperCase() !== ticker) return `${ticker} ${instrument}`
+  return ticker ?? instrument
+}
+
+function approvalReasonLabel(approval: ApprovalRecord): string | null {
+  const reason = cleanText(approval.reason)
+  if (approval.action_id !== "create_recommendation") return reason
+
+  const target = recommendationTargetLabel(approval)
+  const ticker = approvalTickerLabel(approval)
+  if (!target) return reason
+  if (reason) {
+    if (ticker && reason.toUpperCase().includes(ticker)) return reason
+
+    const record = asPlainRecord(approval.proposed_change.record)
+    const instrument = cleanText(record?.instrument ?? approval.proposed_change.instrument)
+    if (instrument) {
+      const instrumentPattern = new RegExp(`(recommendation\\s+for\\s+)${escapeRegExp(instrument)}\\b`, "i")
+      if (instrumentPattern.test(reason)) return reason.replace(instrumentPattern, `$1${target}`)
+    }
+    return `${reason} (${ticker ?? target})`
+  }
+
+  const record = asPlainRecord(approval.proposed_change.record)
+  const reportType = cleanText(record?.report_type)
+  return `${reportType ? `${titleCase(reportType)} ` : ""}recommendation for ${target}`
+}
+
 function reasonText(reason: PolicyGateReason): string {
   return reason.message || reason.code || reason.check || "Policy gate issue"
 }
@@ -338,8 +400,8 @@ export function Workspace() {
     60_000,
   )
   const approvalSummary = useApiQuery(
-    approvalSummaryQueryKey({ status: "pending", limit: 5 }),
-    () => fetchApprovalSummary({ status: "pending", limit: 5 }),
+    approvalSummaryQueryKey({ status: "pending", limit: WORKSPACE_APPROVAL_LIMIT }),
+    () => fetchApprovalSummary({ status: "pending", limit: WORKSPACE_APPROVAL_LIMIT }),
     30_000,
   )
 
@@ -434,11 +496,17 @@ export function Workspace() {
   if (!data) return null
 
   const approvalSummaryData = approvalSummary.data
-  const approvalCount = approvalSummaryData?.count ?? 0
-  const approvalItems = approvalSummaryData?.items ?? []
+  const approvalCount = approvalSummaryData?.count ?? data.pending_approvals.count
+  const approvalItems = approvalSummaryData?.items ?? data.pending_approvals.items
+  const approvalHasMore = approvalSummaryData?.has_more ?? approvalItems.length < approvalCount
+  const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
+  const approvalCountLabel = approvalSummaryInitialLoading
+    ? "loading"
+    : approvalHasMore
+      ? `showing ${approvalItems.length} of ${approvalCount} total`
+      : `${approvalCount} total`
   const approvalRecommendationCount =
     approvalSummaryData?.recommendation_approval_count ?? data.recommendations.pending_approval_count
-  const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
   const approvalSummaryError = approvalSummary.error
   const regime = data.regime
   const portfolioRisk = data.portfolio?.risk
@@ -653,7 +721,7 @@ export function Workspace() {
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
-              <span className="ml-auto text-xs text-subtle">{approvalSummaryInitialLoading ? "loading" : `${approvalCount} total`}</span>
+              <span className="ml-auto text-xs text-subtle">{approvalCountLabel}</span>
             </h2>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {approvalSummaryInitialLoading && (
@@ -670,6 +738,8 @@ export function Workspace() {
                 const key = `approval-${a.id}`
                 const expanded = expandedIds.has(key)
                 const gate = policyGateFromApproval(a)
+                const displayTicker = approvalTickerLabel(a)
+                const displayReason = approvalReasonLabel(a)
                 return (
                   <div
                     key={a.id}
@@ -679,9 +749,9 @@ export function Workspace() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <DecisionStateBadge state={approvalDecisionState(a)} />
-                          {a.ticker && (
-                            <Link to={`/dossier/${encodeURIComponent(a.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
-                              {a.ticker}
+                          {displayTicker && (
+                            <Link to={`/dossier/${encodeURIComponent(displayTicker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                              {displayTicker}
                             </Link>
                           )}
                           <span className="min-w-0 break-words text-xs text-subtle">{approvalSubjectLabel(a)}</span>
@@ -697,9 +767,9 @@ export function Workspace() {
                           <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
                           <QualityStateBadge state={a.quality_state ?? "missing"} />
                         </div>
-                        {a.reason && (
+                        {displayReason && (
                           <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
-                            {a.reason}
+                            {displayReason}
                           </p>
                         )}
                         {a.application_error && (
@@ -932,10 +1002,10 @@ export function Workspace() {
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
                 <span>Approval #{approvalReview.approval.id}</span>
                 <span>{approvalSubjectLabel(approvalReview.approval)}</span>
-                {approvalReview.approval.ticker && <span>{approvalReview.approval.ticker}</span>}
+                {approvalTickerLabel(approvalReview.approval) && <span>{approvalTickerLabel(approvalReview.approval)}</span>}
                 <span>Application: {applicationLabel(approvalReview.approval)}</span>
               </div>
-              {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
+              {approvalReasonLabel(approvalReview.approval) && <p className="mb-2">{approvalReasonLabel(approvalReview.approval)}</p>}
               {(() => {
                 const record = approvalReview.approval.proposed_change.record
                 if (record && typeof record === "object" && !Array.isArray(record)) {

@@ -62,7 +62,7 @@ Be greedy when others are fearful. Be fearful when others are greedy. But apply 
 
 **Hedging**: Not favored. Needs hedging → reconsider position. Longs and shorts each with independent positive EV.
 
-**Financial policy gate**: Recommendations are decision support only. Before any actionable recommendation can be staged, converted to an approval, or turned into a proposal, it must pass through the deterministic financial policy gate. The gate checks investor/account suitability, risk limits, liquidity, concentration, leverage, tax constraints, drawdown/stress tolerance, benchmark fit, scenario results, data freshness, assumptions, uncertainty, disconfirming evidence, and required disclosures. Never self-certify suitability or imply trade execution.
+**Financial policy gate**: Recommendations are decision support only. Before any actionable recommendation can be staged, converted to an approval, or turned into a proposal, it must pass through the deterministic financial policy gate. The gate checks risk limits, liquidity, concentration, leverage, tax impact, drawdown/stress tolerance, benchmark fit, scenario results, data freshness, assumptions, uncertainty, disconfirming evidence, and required disclosures. Never imply trade execution.
 
 ---
 

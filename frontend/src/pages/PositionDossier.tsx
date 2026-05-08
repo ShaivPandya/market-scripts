@@ -24,8 +24,10 @@ import {
   fetchPositionValuation,
   updatePositionValuationProfileOverride,
   updatePositionValueRange,
+  deletePositionValueRange,
   type ApprovalRecord,
   type PositionValuation,
+  type PositionValueRangeAssumption,
   type PositionValueRangeRequest,
   type PositionRiskEvidence,
   type PositionRiskSnapshot,
@@ -1101,9 +1103,10 @@ const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
 ])
 
 interface ValueRangeDraft {
-  metric: ValuationMetricKey
   scenarios: Record<ValueRangeScenarioKey, { multiple: string; denominator: string }>
 }
+
+type ValueRangeDraftMap = Partial<Record<ValuationMetricKey, ValueRangeDraft["scenarios"]>>
 
 interface ComputedValueRangeScenario {
   multiple: number | null
@@ -1145,25 +1148,8 @@ function financialCurrency(data: PositionValuation): string | null {
   return cleanCurrency(data.currency_context?.financial_currency ?? data.market_data?.financial_currency)
 }
 
-function valueRangeDenominatorCurrency(data: PositionValuation): string | null {
-  return cleanCurrency(data.value_range?.denominator_currency ?? financialCurrency(data) ?? priceCurrency(data))
-}
-
 function valueRangeOutputCurrency(data: PositionValuation): string | null {
   return cleanCurrency(data.value_range?.output_currency ?? data.value_range?.currency ?? priceCurrency(data))
-}
-
-function valueRangeDenominatorToPriceRate(data: PositionValuation): number | null {
-  const explicit = positiveNumber(data.value_range?.denominator_to_price_fx_rate)
-  if (explicit != null) return explicit
-  const denominatorCurrency = valueRangeDenominatorCurrency(data)
-  const outputCurrency = valueRangeOutputCurrency(data)
-  if (sameCurrency(denominatorCurrency, outputCurrency)) return 1
-  const contextRate = positiveNumber(data.currency_context?.financial_to_price_fx_rate)
-  if (contextRate != null && sameCurrency(denominatorCurrency, financialCurrency(data)) && sameCurrency(outputCurrency, priceCurrency(data))) {
-    return contextRate
-  }
-  return null
 }
 
 function formatValuationMoney(value: unknown, currency?: unknown): string {
@@ -1282,40 +1268,97 @@ function valueRangeDefaultMetric(data: PositionValuation): ValuationMetricKey {
   return "price_sales"
 }
 
-function valueRangeDefaultMultiples(data: PositionValuation, metric: ValuationMetricKey): Record<ValueRangeScenarioKey, number | null> {
-  const peer = data.peer_context.metric_stats[metric]
-  if (peer?.status === "ok" && positiveNumber(peer.q1) != null && positiveNumber(peer.median) != null && positiveNumber(peer.q3) != null) {
-    return { bear: positiveNumber(peer.q1), base: positiveNumber(peer.median), bull: positiveNumber(peer.q3) }
-  }
-
-  const current = positiveNumber(data.metrics[metric]?.value)
-  if (current == null) return { bear: null, base: null, bull: null }
-  return { bear: current * 0.8, base: current, bull: current * 1.2 }
-}
-
-function valueRangeScenarioDrafts(data: PositionValuation, metric: ValuationMetricKey): ValueRangeDraft["scenarios"] {
-  const denominator = positiveNumber(data.metrics[metric]?.denominator)
-  const multiples = valueRangeDefaultMultiples(data, metric)
+function blankValueRangeScenarioDrafts(): ValueRangeDraft["scenarios"] {
   return {
-    bear: { multiple: formatMultipleInput(multiples.bear), denominator: formatInputNumber(denominator) },
-    base: { multiple: formatMultipleInput(multiples.base), denominator: formatInputNumber(denominator) },
-    bull: { multiple: formatMultipleInput(multiples.bull), denominator: formatInputNumber(denominator) },
+    bear: { multiple: "", denominator: "" },
+    base: { multiple: "", denominator: "" },
+    bull: { multiple: "", denominator: "" },
   }
 }
 
-function valueRangeDraftFromData(data: PositionValuation): ValueRangeDraft {
-  const savedMetric = isValuationMetricKey(data.value_range?.metric) ? data.value_range.metric : null
-  const metric = savedMetric ?? valueRangeDefaultMetric(data)
-  const fallbackScenarios = valueRangeScenarioDrafts(data, metric)
-  const scenarios = VALUE_RANGE_SCENARIOS.reduce((acc, scenario) => {
-    const saved = data.value_range?.scenarios?.[scenario]
+function valueRangeSelectedMetric(data: PositionValuation): ValuationMetricKey {
+  const selected = data.value_range?.selected_metric ?? data.value_range?.metric
+  return isValuationMetricKey(selected) ? selected : valueRangeDefaultMetric(data)
+}
+
+function valueRangeAssumptions(data: PositionValuation): Partial<Record<ValuationMetricKey, PositionValueRangeAssumption>> {
+  const raw = data.value_range?.metric_assumptions
+  const assumptions: Partial<Record<ValuationMetricKey, PositionValueRangeAssumption>> = {}
+  if (raw && typeof raw === "object") {
+    for (const [metric, value] of Object.entries(raw)) {
+      if (isValuationMetricKey(metric) && value && typeof value === "object") {
+        assumptions[metric] = value
+      }
+    }
+  }
+  if (Object.keys(assumptions).length === 0 && data.value_range?.saved && isValuationMetricKey(data.value_range.metric)) {
+    assumptions[data.value_range.metric] = {
+      denominator_currency: data.value_range.stored_denominator_currency ?? data.value_range.denominator_currency ?? null,
+      legacy_denominator_currency: Boolean(data.value_range.legacy_denominator_currency),
+      scenarios: data.value_range.scenarios ?? {},
+    }
+  }
+  return assumptions
+}
+
+function valueRangeCurrencyConversionRate(data: PositionValuation, from: unknown, to: unknown): number | null {
+  if (sameCurrency(from, to)) return 1
+  const explicit = positiveNumber(data.value_range?.denominator_to_price_fx_rate)
+  const explicitDenominator = cleanCurrency(data.value_range?.denominator_currency ?? financialCurrency(data))
+  const outputCurrency = valueRangeOutputCurrency(data)
+  if (explicit != null && sameCurrency(from, explicitDenominator) && sameCurrency(to, outputCurrency)) {
+    return explicit
+  }
+  if (explicit != null && sameCurrency(from, outputCurrency) && sameCurrency(to, explicitDenominator)) {
+    return 1 / explicit
+  }
+  const contextRate = positiveNumber(data.currency_context?.financial_to_price_fx_rate)
+  if (contextRate != null && sameCurrency(from, financialCurrency(data)) && sameCurrency(to, priceCurrency(data))) {
+    return contextRate
+  }
+  if (contextRate != null && sameCurrency(from, priceCurrency(data)) && sameCurrency(to, financialCurrency(data))) {
+    return 1 / contextRate
+  }
+  return null
+}
+
+function valueRangeDisplayContext(data: PositionValuation, assumption?: PositionValueRangeAssumption | null) {
+  const outputCurrency = valueRangeOutputCurrency(data)
+  const financial = financialCurrency(data) ?? outputCurrency
+  const storedCurrency = cleanCurrency(assumption?.denominator_currency) ?? (assumption?.legacy_denominator_currency ? priceCurrency(data) : financial)
+  let denominatorCurrency = financial ?? storedCurrency
+  let displayRate = valueRangeCurrencyConversionRate(data, storedCurrency, denominatorCurrency)
+  if (displayRate == null) {
+    denominatorCurrency = storedCurrency
+    displayRate = 1
+  }
+  const denominatorToPriceRate = valueRangeCurrencyConversionRate(data, denominatorCurrency, outputCurrency)
+  return { denominatorCurrency, denominatorToPriceRate, displayRate }
+}
+
+function valueRangeDraftFromAssumption(
+  data: PositionValuation,
+  assumption: PositionValueRangeAssumption,
+): ValueRangeDraft["scenarios"] {
+  const { displayRate } = valueRangeDisplayContext(data, assumption)
+  return VALUE_RANGE_SCENARIOS.reduce((acc, scenario) => {
+    const row = assumption.scenarios?.[scenario]
+    const denominator = positiveNumber(row?.denominator)
     acc[scenario] = {
-      multiple: formatMultipleInput(saved?.multiple ?? parseMultipleInput(fallbackScenarios[scenario].multiple)),
-      denominator: formatInputNumber(saved?.denominator ?? parseScaledNumberInput(fallbackScenarios[scenario].denominator)),
+      multiple: formatMultipleInput(row?.multiple),
+      denominator: formatInputNumber(denominator != null ? denominator * displayRate : null),
     }
     return acc
   }, {} as ValueRangeDraft["scenarios"])
-  return { metric, scenarios }
+}
+
+function valueRangeInitialDrafts(data: PositionValuation): ValueRangeDraftMap {
+  const assumptions = valueRangeAssumptions(data)
+  const drafts = VALUATION_METRIC_ORDER.reduce((acc, metric) => {
+    acc[metric] = assumptions[metric] ? valueRangeDraftFromAssumption(data, assumptions[metric]) : blankValueRangeScenarioDrafts()
+    return acc
+  }, {} as ValueRangeDraftMap)
+  return drafts
 }
 
 function inferredShareCount(data: PositionValuation): number | null {
@@ -1330,10 +1373,10 @@ function computeDraftValueRangeScenario(
   data: PositionValuation,
   metric: ValuationMetricKey,
   draft: ValueRangeDraft["scenarios"][ValueRangeScenarioKey],
+  denominatorToPriceRate: number | null,
 ): ComputedValueRangeScenario {
   const multiple = parseMultipleInput(draft.multiple)
   const denominator = parseScaledNumberInput(draft.denominator)
-  const denominatorToPriceRate = valueRangeDenominatorToPriceRate(data)
   const denominatorConverted = denominator != null && denominatorToPriceRate != null ? denominator * denominatorToPriceRate : null
   const shares = inferredShareCount(data)
   const currentPrice = positiveNumber(data.market_data?.current_price)
@@ -1357,10 +1400,14 @@ function computeDraftValueRangeScenario(
   return { multiple, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
 }
 
-function valueRangeRequestFromDraft(draft: ValueRangeDraft, data: PositionValuation): PositionValueRangeRequest {
+function valueRangeRequestFromDraft(
+  metric: ValuationMetricKey,
+  draft: ValueRangeDraft["scenarios"],
+  denominatorCurrency: string | null,
+): PositionValueRangeRequest {
   const scenarios: PositionValueRangeRequest["scenarios"] = {}
   for (const scenario of VALUE_RANGE_SCENARIOS) {
-    const row = draft.scenarios[scenario]
+    const row = draft[scenario]
     const multiple = parseMultipleInput(row.multiple)
     const denominator = parseScaledNumberInput(row.denominator)
     if (multiple == null || denominator == null) {
@@ -1368,16 +1415,30 @@ function valueRangeRequestFromDraft(draft: ValueRangeDraft, data: PositionValuat
     }
     scenarios[scenario] = { multiple, denominator }
   }
-  return { metric: draft.metric, denominator_currency: valueRangeDenominatorCurrency(data), scenarios }
+  return { metric, denominator_currency: denominatorCurrency, scenarios }
 }
 
-function valueRangeDraftsMatch(a: ValueRangeDraft, b: ValueRangeDraft): boolean {
-  if (a.metric !== b.metric) return false
+function valueRangeDraftFromRequest(payload: PositionValueRangeRequest): ValueRangeDraft["scenarios"] {
+  return VALUE_RANGE_SCENARIOS.reduce((acc, scenario) => {
+    const row = payload.scenarios[scenario]
+    acc[scenario] = {
+      multiple: formatMultipleInput(row?.multiple),
+      denominator: formatInputNumber(row?.denominator),
+    }
+    return acc
+  }, {} as ValueRangeDraft["scenarios"])
+}
+
+function valueRangeDraftsMatch(a: ValueRangeDraft["scenarios"], b: ValueRangeDraft["scenarios"]): boolean {
   return VALUE_RANGE_SCENARIOS.every(
     scenario =>
-      a.scenarios[scenario].multiple === b.scenarios[scenario].multiple &&
-      a.scenarios[scenario].denominator === b.scenarios[scenario].denominator,
+      a[scenario].multiple === b[scenario].multiple &&
+      a[scenario].denominator === b[scenario].denominator,
   )
+}
+
+function valueRangeDraftHasAnyValue(draft: ValueRangeDraft["scenarios"]): boolean {
+  return VALUE_RANGE_SCENARIOS.some(scenario => draft[scenario].multiple.trim() || draft[scenario].denominator.trim())
 }
 
 function valuationStatusClass(status?: string | null): string {
@@ -1389,49 +1450,79 @@ function valuationStatusClass(status?: string | null): string {
 function ValueRangePanel({
   valuation,
   isSaving,
+  isClearing,
   saveError,
+  clearError,
   onSave,
+  onClear,
 }: {
   valuation: PositionValuation
   isSaving: boolean
+  isClearing: boolean
   saveError: unknown
+  clearError: unknown
   onSave: (payload: PositionValueRangeRequest) => void
+  onClear: (metric: ValuationMetricKey) => void
 }) {
-  const [draft, setDraft] = useState<ValueRangeDraft>(() => valueRangeDraftFromData(valuation))
+  const [activeMetric, setActiveMetric] = useState<ValuationMetricKey>(() => valueRangeSelectedMetric(valuation))
+  const [drafts, setDrafts] = useState<ValueRangeDraftMap>(() => valueRangeInitialDrafts(valuation))
   const [validationError, setValidationError] = useState<string | null>(null)
 
   function updateScenario(scenario: ValueRangeScenarioKey, patch: Partial<ValueRangeDraft["scenarios"][ValueRangeScenarioKey]>) {
     setValidationError(null)
-    setDraft(prev => ({
-      ...prev,
-      scenarios: {
-        ...prev.scenarios,
-        [scenario]: { ...prev.scenarios[scenario], ...patch },
-      },
-    }))
+    setDrafts(prev => {
+      const current = prev[activeMetric] ?? blankValueRangeScenarioDrafts()
+      return {
+        ...prev,
+        [activeMetric]: {
+          ...current,
+          [scenario]: { ...current[scenario], ...patch },
+        },
+      }
+    })
   }
 
   function handleMetricChange(value: string) {
     if (!isValuationMetricKey(value)) return
     setValidationError(null)
-    setDraft({ metric: value, scenarios: valueRangeScenarioDrafts(valuation, value) })
+    setDrafts(prev => (prev[value] ? prev : { ...prev, [value]: blankValueRangeScenarioDrafts() }))
+    setActiveMetric(value)
   }
 
   function handleSave() {
     try {
       setValidationError(null)
-      onSave(valueRangeRequestFromDraft(draft, valuation))
+      const payload = valueRangeRequestFromDraft(activeMetric, activeDraft, activeContext.denominatorCurrency)
+      setDrafts(prev => ({ ...prev, [activeMetric]: valueRangeDraftFromRequest(payload) }))
+      onSave(payload)
     } catch (err) {
       setValidationError(err instanceof Error ? err.message : "Invalid value range.")
     }
   }
 
-  const metricLabel = valuation.metrics[draft.metric]?.label ?? draft.metric
+  function handleClear() {
+    const fallbackMetric = VALUATION_METRIC_ORDER.find(metric => metric !== activeMetric && savedAssumptions[metric]) ?? valueRangeDefaultMetric(valuation)
+    setValidationError(null)
+    setDrafts(prev => ({ ...prev, [activeMetric]: blankValueRangeScenarioDrafts() }))
+    setActiveMetric(fallbackMetric)
+    onClear(activeMetric)
+  }
+
+  const savedAssumptions = valueRangeAssumptions(valuation)
+  const activeAssumption = savedAssumptions[activeMetric] ?? null
+  const activeDraft = drafts[activeMetric] ?? blankValueRangeScenarioDrafts()
+  const activeSavedDraft = activeAssumption ? valueRangeDraftFromAssumption(valuation, activeAssumption) : null
+  const activeContext = valueRangeDisplayContext(valuation, activeAssumption)
+  const hasSavedMetric = Boolean(activeAssumption)
+  const metricLabel = valuation.metrics[activeMetric]?.label ?? activeMetric
   const outputCurrency = valueRangeOutputCurrency(valuation)
-  const denominatorCurrency = valueRangeDenominatorCurrency(valuation)
+  const denominatorCurrency = activeContext.denominatorCurrency
   const currentPrice = formatSharePrice(valuation.market_data?.current_price, outputCurrency)
   const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
-  const hasUnsavedChanges = !valueRangeDraftsMatch(draft, valueRangeDraftFromData(valuation))
+  const clearErrorText = clearError instanceof Error ? clearError.message : clearError ? String(clearError) : null
+  const hasUnsavedChanges = activeSavedDraft
+    ? !valueRangeDraftsMatch(activeDraft, activeSavedDraft)
+    : valueRangeDraftHasAnyValue(activeDraft)
 
   return (
     <section className="space-y-3">
@@ -1440,23 +1531,34 @@ function ValueRangePanel({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-app">Value Range</h3>
             <span className="rounded border border-app px-2 py-0.5 text-xs font-semibold text-muted">
-              {valuation.value_range?.saved ? "saved" : "draft"}
+              {hasSavedMetric ? "saved" : "blank"}
             </span>
           </div>
           <p className="mt-1 text-xs text-muted">
             {metricLabel} scenarios from user assumptions. Current price {currentPrice}.
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_auto] lg:w-[430px]">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_auto_auto] lg:w-[520px]">
           <SelectInput
             label="Metric"
-            value={draft.metric}
+            value={activeMetric}
             onChange={handleMetricChange}
-            options={VALUATION_METRIC_ORDER.map(metric => ({ value: metric, label: valuation.metrics[metric]?.label ?? metric }))}
+            options={VALUATION_METRIC_ORDER.map(metric => ({
+              value: metric,
+              label: `${savedAssumptions[metric] ? "• " : ""}${valuation.metrics[metric]?.label ?? metric}`,
+            }))}
           />
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={!hasSavedMetric || isSaving || isClearing}
+            className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50 sm:self-end"
+          >
+            {isClearing ? "Clearing..." : "Clear"}
+          </button>
           <ActionButton
             onClick={handleSave}
-            disabled={!hasUnsavedChanges}
+            disabled={!hasUnsavedChanges || isClearing}
             loading={isSaving}
             loadingText="Saving..."
             className="min-h-10 px-4 sm:self-end sm:w-auto"
@@ -1468,7 +1570,7 @@ function ValueRangePanel({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {VALUE_RANGE_SCENARIOS.map(scenario => {
-          const computed = computeDraftValueRangeScenario(valuation, draft.metric, draft.scenarios[scenario])
+          const computed = computeDraftValueRangeScenario(valuation, activeMetric, activeDraft[scenario], activeContext.denominatorToPriceRate)
           return (
             <article key={scenario} className="rounded-lg border border-app bg-card px-3 py-3">
               <div className="flex items-start justify-between gap-3">
@@ -1487,13 +1589,13 @@ function ValueRangePanel({
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <TextInput
                   label="Multiple"
-                  value={draft.scenarios[scenario].multiple}
+                  value={activeDraft[scenario].multiple}
                   onChange={value => updateScenario(scenario, { multiple: value })}
                   placeholder="10x"
                 />
                 <TextInput
                   label={denominatorCurrency ? `Denominator (${denominatorCurrency})` : "Denominator"}
-                  value={draft.scenarios[scenario].denominator}
+                  value={activeDraft[scenario].denominator}
                   onChange={value => updateScenario(scenario, { denominator: value })}
                   placeholder="1.5B"
                 />
@@ -1504,9 +1606,9 @@ function ValueRangePanel({
         })}
       </div>
 
-      {(validationError || saveErrorText) && (
+      {(validationError || saveErrorText || clearErrorText) && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {validationError || saveErrorText}
+          {validationError || saveErrorText || clearErrorText}
         </p>
       )}
     </section>
@@ -1530,6 +1632,13 @@ function ValuationTab({ ticker }: { ticker: string }) {
 
   const valueRangeMutation = useMutation({
     mutationFn: (body: PositionValueRangeRequest) => updatePositionValueRange(ticker, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["valuation", ticker] })
+    },
+  })
+
+  const clearValueRangeMutation = useMutation({
+    mutationFn: (metric: ValuationMetricKey) => deletePositionValueRange(ticker, metric),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["valuation", ticker] })
     },
@@ -1597,11 +1706,14 @@ function ValuationTab({ ticker }: { ticker: string }) {
       )}
 
       <ValueRangePanel
-        key={`${data.ticker}-${data.as_of}-${data.profile.override_profile_id ?? "auto"}-${data.value_range?.source ?? "default"}`}
+        key={`${data.ticker}-${data.profile.override_profile_id ?? "auto"}`}
         valuation={data}
         isSaving={valueRangeMutation.isPending}
+        isClearing={clearValueRangeMutation.isPending}
         saveError={valueRangeMutation.error}
+        clearError={clearValueRangeMutation.error}
         onSave={payload => valueRangeMutation.mutate(payload)}
+        onClear={metric => clearValueRangeMutation.mutate(metric)}
       />
 
       <section className="space-y-2">

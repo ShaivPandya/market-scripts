@@ -2,7 +2,7 @@
 
 The gate is intentionally deterministic and conservative. It does not decide
 whether an investment idea is good; it decides whether the idea has enough
-account, risk, freshness, and disclosure context to be staged for human review.
+risk, freshness, and disclosure context to be staged for human review.
 """
 
 from __future__ import annotations
@@ -19,15 +19,12 @@ FINANCIAL_ACTION_IDS = {"create_recommendation", "update_portfolio_positions", "
 
 FAILURE_REASON_CODES = {
     "data_missing",
-    "missing_constraint",
-    "suitability_warning",
+    "review_warning",
     "liquidity_shortfall",
     "concentration_limit",
     "leverage_limit",
     "volatility_limit",
     "drawdown_limit",
-    "cash_shortfall",
-    "tax_flag",
     "benchmark_mismatch",
     "scenario_stress_fail",
     "stale_data",
@@ -40,12 +37,9 @@ DEFAULT_POLICY: dict[str, Any] = {
     "investor": {
         "investor_id": "default-investor",
         "name": "Default Investor",
-        "suitability_profile": "unspecified",
     },
     "account": {
         "account_id": "default-account",
-        "account_type": "unspecified",
-        "tax_status": "unknown",
     },
     "portfolio": {
         "portfolio_id": "default-portfolio",
@@ -63,24 +57,13 @@ DEFAULT_POLICY: dict[str, Any] = {
         "max_daily_volatility_pct": 0.05,
         "max_drawdown_pct": 0.30,
         "max_stress_loss_pct": 0.20,
-        "min_cash_reserve_pct": None,
         "max_exit_days": 3,
-        "taxable_account_rules": None,
     },
 }
 
-MISSING_CONSTRAINT_PATHS: tuple[tuple[str, ...], ...] = (
-    ("investor", "suitability_profile"),
-    ("account", "account_type"),
-    ("account", "tax_status"),
-    ("policy", "min_cash_reserve_pct"),
-    ("policy", "taxable_account_rules"),
-)
-
 DECISION_SUPPORT_DISCLOSURES = [
     "Decision support only; human approval required.",
-    "Policy gate checks deterministic constraints and data quality; it does not certify suitability.",
-    "Missing investor, account, tax, or policy constraints are surfaced as warnings in v1.",
+    "Automated checks cover data quality, concentration, leverage, liquidity, scenario stress, and required disclosures.",
 ]
 
 
@@ -183,7 +166,7 @@ def evaluate_policy_gate(
     context: Mapping[str, Any] | None = None,
     source_quality: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate deterministic suitability, risk, and data checks."""
+    """Evaluate deterministic risk, freshness, and data checks."""
     if not isinstance(payload, Mapping):
         return _result(
             action_id=action_id,
@@ -202,12 +185,10 @@ def evaluate_policy_gate(
 
     policy = default_policy_snapshot()
     check_results: list[dict[str, Any]] = []
-    check_results.extend(_missing_constraint_checks(policy))
     check_results.extend(_required_disclosure_checks(payload))
     check_results.extend(_data_freshness_checks(payload, source_quality=source_quality))
     check_results.extend(_portfolio_constraint_checks(action_id, payload, policy))
     check_results.extend(_liquidity_checks(payload, policy))
-    check_results.extend(_tax_checks(payload, policy))
     check_results.extend(_scenario_checks(action_id, payload, policy))
 
     return _result(action_id=action_id, decision=None, check_results=check_results, context=context, policy=policy)
@@ -295,7 +276,7 @@ def _check(
     limit: Any = None,
 ) -> dict[str, Any]:
     if reason_code and reason_code not in FAILURE_REASON_CODES:
-        reason_code = "suitability_warning"
+        reason_code = "review_warning"
     return {
         "check": check_name,
         "status": status,
@@ -309,30 +290,12 @@ def _check(
 
 def _reason_from_check(check: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "code": check.get("reason_code") or "suitability_warning",
+        "code": check.get("reason_code") or "review_warning",
         "check": check.get("check"),
         "message": check.get("message"),
         "observed": check.get("observed"),
         "limit": check.get("limit"),
     }
-
-
-def _missing_constraint_checks(policy: Mapping[str, Any]) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
-    for path in MISSING_CONSTRAINT_PATHS:
-        value = _deep_get(policy, path)
-        if value in (None, "", [], {}):
-            label = ".".join(path)
-            checks.append(
-                _check(
-                    label,
-                    "warn",
-                    "missing_constraint",
-                    f"Missing investor/account constraint: {label}.",
-                    severity="warn",
-                )
-            )
-    return checks
 
 
 def _required_disclosure_checks(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -511,7 +474,7 @@ def _portfolio_constraint_checks(
             _check(
                 "portfolio.notional",
                 "warn",
-                "missing_constraint",
+                "data_missing",
                 "Portfolio notionals are unavailable; using incomplete sizing context.",
                 severity="warn",
             )
@@ -587,20 +550,6 @@ def _portfolio_constraint_checks(
             )
         )
 
-    cash = _payload_number(payload, "cash")
-    min_cash = _deep_get(policy, ("policy", "min_cash_reserve_pct"))
-    if cash is not None and min_cash is not None and total_abs and cash / total_abs < float(min_cash):
-        checks.append(
-            _check(
-                "cash.reserve",
-                "fail",
-                "cash_shortfall",
-                "Cash reserve is below the policy minimum.",
-                severity="fail",
-                observed=round(cash / total_abs, 4),
-                limit=float(min_cash),
-            )
-        )
     return checks
 
 
@@ -621,25 +570,6 @@ def _liquidity_checks(
                 severity="fail",
                 observed=exit_days,
                 limit=max_exit,
-            )
-        )
-    return checks
-
-
-def _tax_checks(payload: Mapping[str, Any], policy: Mapping[str, Any]) -> list[dict[str, Any]]:
-    account = _deep_get(policy, ("account",), default={}) or {}
-    checks: list[dict[str, Any]] = []
-    tax_status = str(account.get("tax_status") or "unknown").lower()
-    record = _recommendation_record(payload)
-    if tax_status in {"taxable", "unknown"} and str(record.get("action") or "").lower() in {"sell", "reduce", "exit"}:
-        checks.append(
-            _check(
-                "tax.taxable_account",
-                "warn",
-                "tax_flag",
-                "Tax impact must be reviewed before reducing or exiting taxable/unknown-tax-status accounts.",
-                severity="warn",
-                observed=tax_status,
             )
         )
     return checks
@@ -901,7 +831,7 @@ def _normalize_reason_entries(value: Any) -> list[dict[str, Any]]:
         if isinstance(item, Mapping):
             entries.append(dict(item))
         elif str(item).strip():
-            entries.append({"code": "suitability_warning", "message": str(item)})
+            entries.append({"code": "review_warning", "message": str(item)})
     return entries
 
 
@@ -929,15 +859,12 @@ def _metrics_from_checks(checks: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _assumptions(policy: Mapping[str, Any]) -> list[str]:
     return [
-        f"Default account {policy['account']['account_id']} governs v1 recommendations.",
         "Current prices and account cash may be incomplete unless supplied by the caller.",
     ]
 
 
 def _uncertainty(checks: list[dict[str, Any]]) -> dict[str, Any]:
-    missing = [c for c in checks if c.get("reason_code") == "missing_constraint"]
     return {
-        "level": "high" if missing else "medium",
-        "missing_constraint_count": len(missing),
-        "notes": ["Missing constraints are warnings in v1, not hard blocks."] if missing else [],
+        "level": "medium",
+        "notes": [],
     }

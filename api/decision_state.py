@@ -12,6 +12,17 @@ STALE_APPROVAL_MESSAGE = (
     "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
 )
 _OBSOLETE_POLICY_REASON_FRAGMENTS = (
+    "missing investor/account constraint",
+    "investor/account constraint",
+    "missing investor, account, tax, or policy constraints",
+    ".".join(("investor", "suitability_profile")),
+    ".".join(("account", "account_type")),
+    ".".join(("account", "tax_status")),
+    ".".join(("policy", "min_cash_reserve_pct")),
+    ".".join(("policy", "taxable_account_rules")),
+    "suitability_profile",
+    "min_cash_reserve_pct",
+    "taxable_account_rules",
     "_".join(("tax", "lot", "data", "available")),
     ".".join(("tax", "_".join(("tax", "lots")))),
     " ".join(("tax", "lots")),
@@ -25,6 +36,14 @@ _OBSOLETE_POLICY_REASON_FRAGMENTS = (
     "recommendation horizon is longer than " + "".join(("man", "date")) + " maximum",
 )
 _RETIRED_POLICY_SCOPE = "".join(("man", "date"))
+_OBSOLETE_POLICY_KEY_FRAGMENTS = (
+    _RETIRED_POLICY_SCOPE,
+    "suitability_profile",
+    "account_type",
+    "tax_status",
+    "min_cash_reserve_pct",
+    "taxable_account_rules",
+)
 _DROP_VALUE = object()
 
 
@@ -135,7 +154,8 @@ def _scrub_retired_policy_scope(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for key, item in value.items():
-            if _RETIRED_POLICY_SCOPE in str(key).lower():
+            key_text = str(key).lower()
+            if any(fragment in key_text for fragment in _OBSOLETE_POLICY_KEY_FRAGMENTS):
                 continue
             cleaned = _scrub_retired_policy_scope(item)
             if cleaned is not _DROP_VALUE:
@@ -148,8 +168,10 @@ def _scrub_retired_policy_scope(value: Any) -> Any:
             if cleaned is not _DROP_VALUE:
                 scrubbed.append(cleaned)
         return scrubbed
-    if isinstance(value, str) and _RETIRED_POLICY_SCOPE in value.lower():
-        return _DROP_VALUE
+    if isinstance(value, str):
+        text = value.lower()
+        if _RETIRED_POLICY_SCOPE in text or any(fragment in text for fragment in _OBSOLETE_POLICY_REASON_FRAGMENTS):
+            return _DROP_VALUE
     return value
 
 
@@ -193,15 +215,10 @@ def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
         filtered["review_required"] = filtered["decision"] == "review_required"
         uncertainty = filtered.get("uncertainty")
         if isinstance(uncertainty, dict):
-            missing = [
-                row
-                for row in filtered.get("check_results", [])
-                if isinstance(row, dict) and row.get("reason_code") == "missing_constraint"
-            ]
             next_uncertainty = dict(uncertainty)
-            next_uncertainty["missing_constraint_count"] = len(missing)
-            next_uncertainty["level"] = "high" if missing else "medium"
-            next_uncertainty["notes"] = ["Missing constraints are warnings in v1, not hard blocks."] if missing else []
+            next_uncertainty.pop("missing_constraint_count", None)
+            next_uncertainty["level"] = "medium"
+            next_uncertainty["notes"] = []
             filtered["uncertainty"] = next_uncertainty
     return filtered
 

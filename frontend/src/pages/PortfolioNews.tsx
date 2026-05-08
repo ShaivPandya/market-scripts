@@ -78,6 +78,12 @@ function formatProposalAction(actionId?: string | null) {
     return String(actionId || "portfolio news change").replace(/_/g, " ")
 }
 
+function formatProposalLabel(proposal: StagedMutationResponse) {
+    const approvalId = String(proposal.approval_id ?? "").trim()
+    if (!approvalId || approvalId.startsWith("approval:")) return "Proposal"
+    return `Proposal #${approvalId}`
+}
+
 export function PortfolioNews() {
     const queryClient = useQueryClient()
     const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -230,7 +236,7 @@ export function PortfolioNews() {
                         <DecisionStateBadge state={pendingProposal.decision_state ?? "pending_approval"} />
                         <EffectScopeBadge scope={pendingProposal.effect_scope ?? "internal_state"} />
                         <span>
-                            Proposal #{pendingProposal.approval_id} staged for {formatProposalAction(pendingProposal.action_id)}. Review it in Workspace before the digest library changes.
+                            {formatProposalLabel(pendingProposal)} staged for {formatProposalAction(pendingProposal.action_id)}. Review it in Workspace before the digest library changes.
                         </span>
                         <Link
                             to={pendingProposal.review_route ?? "/workspace"}

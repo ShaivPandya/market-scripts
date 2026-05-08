@@ -90,3 +90,24 @@ def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch
     assert deleted_keys
     assert all(key.startswith("position_valuation:") for key in deleted_keys)
     assert all(not key.startswith(("valuation_current:", "valuation_peer_row:")) for key in deleted_keys)
+
+
+def test_delete_position_valuation_value_range_endpoint(auth_client, monkeypatch):
+    deleted_keys = []
+
+    monkeypatch.setattr(multiples, "read_profile_override", lambda ticker: None)
+    monkeypatch.setattr(valuation_router, "delete_cached", lambda cache, key: deleted_keys.append(key))
+
+    def _delete(ticker, metric):
+        return {"ticker": ticker, "value_range": {"selected_metric": "price_sales", "metric_assumptions": {}}}
+
+    monkeypatch.setattr(multiples, "delete_value_range_assumption", _delete)
+
+    resp = auth_client.delete("/api/v1/valuation/ZZVALUATION/value-range/price_sales")
+
+    assert resp.status_code == 200
+    assert resp.json()["ticker"] == "ZZVALUATION"
+    assert resp.json()["value_range"]["metric_assumptions"] == {}
+    assert deleted_keys
+    assert all(key.startswith("position_valuation:") for key in deleted_keys)
+    assert all(not key.startswith(("valuation_current:", "valuation_peer_row:")) for key in deleted_keys)

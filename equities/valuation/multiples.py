@@ -499,20 +499,58 @@ def write_value_range_assumption(ticker: str, payload: Mapping[str, Any]) -> dic
     if not normalized_ticker:
         raise ValueError("Ticker is required")
 
-    normalized_payload = _normalize_value_range_payload(payload, require_complete=True)
     ranges = _read_value_ranges()
-    ranges[normalized_ticker] = normalized_payload
+    current = ranges.get(normalized_ticker) or _empty_value_range_storage()
+    metric, assumption = _normalize_value_range_update_payload(payload)
+    assumptions = dict(current.get("metric_assumptions") or {})
+    assumptions[metric] = assumption
+    ranges[normalized_ticker] = {"selected_metric": metric, "metric_assumptions": assumptions}
     _write_value_ranges(ranges)
-    return {"ticker": normalized_ticker, "value_range": normalized_payload}
+    return {"ticker": normalized_ticker, "value_range": ranges[normalized_ticker]}
 
 
-def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require_complete: bool) -> dict[str, Any]:
-    if not isinstance(payload, Mapping):
-        raise ValueError("Value range payload is required")
+def delete_value_range_assumption(ticker: str, metric: str) -> dict[str, Any]:
+    normalized_ticker = _clean_ticker(ticker)
+    if not normalized_ticker:
+        raise ValueError("Ticker is required")
 
-    metric = normalize_value_range_metric(payload.get("metric"))
-    denominator_currency = _clean_currency(payload.get("denominator_currency"))
-    raw_scenarios = payload.get("scenarios")
+    normalized_metric = normalize_value_range_metric(metric)
+    ranges = _read_value_ranges()
+    current = ranges.get(normalized_ticker) or _empty_value_range_storage()
+    assumptions = dict(current.get("metric_assumptions") or {})
+    assumptions.pop(normalized_metric, None)
+
+    selected_metric = current.get("selected_metric")
+    if selected_metric == normalized_metric:
+        selected_metric = _first_value_range_metric(assumptions)
+
+    if assumptions:
+        ranges[normalized_ticker] = {
+            "selected_metric": selected_metric or _first_value_range_metric(assumptions) or "price_sales",
+            "metric_assumptions": assumptions,
+        }
+    else:
+        ranges.pop(normalized_ticker, None)
+
+    _write_value_ranges(ranges)
+    return {
+        "ticker": normalized_ticker,
+        "value_range": ranges.get(normalized_ticker) or _empty_value_range_storage(),
+    }
+
+
+def _empty_value_range_storage() -> dict[str, Any]:
+    return {"selected_metric": "price_sales", "metric_assumptions": {}}
+
+
+def _first_value_range_metric(metric_assumptions: Mapping[str, Any]) -> str | None:
+    for metric in VALUATION_COLUMNS:
+        if metric in metric_assumptions:
+            return metric
+    return None
+
+
+def _normalize_value_range_scenarios(raw_scenarios: Any, *, require_complete: bool) -> dict[str, dict[str, float]]:
     if not isinstance(raw_scenarios, Mapping):
         raise ValueError("Value range scenarios are required")
 
@@ -533,10 +571,82 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
 
     if require_complete and set(scenarios) != set(VALUE_RANGE_SCENARIOS):
         raise ValueError("Bear, base, and bull scenarios are required")
-    out: dict[str, Any] = {"metric": metric, "scenarios": scenarios}
+    return scenarios
+
+
+def _normalize_value_range_metric_assumption(
+    payload: Mapping[str, Any] | None,
+    *,
+    require_complete: bool,
+    legacy_without_currency: bool,
+) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("Value range metric assumption is required")
+
+    denominator_currency = _clean_currency(payload.get("denominator_currency"))
+    scenarios = _normalize_value_range_scenarios(payload.get("scenarios"), require_complete=require_complete)
+    legacy_denominator_currency = bool(payload.get("legacy_denominator_currency")) or (
+        legacy_without_currency and not denominator_currency
+    )
+
+    out: dict[str, Any] = {
+        "scenarios": scenarios,
+        "legacy_denominator_currency": legacy_denominator_currency,
+    }
     if denominator_currency:
         out["denominator_currency"] = denominator_currency
     return out
+
+
+def _normalize_value_range_update_payload(payload: Mapping[str, Any] | None) -> tuple[str, dict[str, Any]]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("Value range payload is required")
+    metric = normalize_value_range_metric(payload.get("metric"))
+    return metric, _normalize_value_range_metric_assumption(
+        payload,
+        require_complete=True,
+        legacy_without_currency=False,
+    )
+
+
+def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require_complete: bool) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("Value range payload is required")
+
+    if isinstance(payload.get("metric_assumptions"), Mapping):
+        raw_assumptions = payload.get("metric_assumptions")
+        metric_assumptions: dict[str, dict[str, Any]] = {}
+        for key, value in raw_assumptions.items():
+            try:
+                metric = normalize_value_range_metric(key)
+                metric_assumptions[metric] = _normalize_value_range_metric_assumption(
+                    value if isinstance(value, Mapping) else None,
+                    require_complete=require_complete,
+                    legacy_without_currency=False,
+                )
+            except ValueError:
+                if require_complete:
+                    raise
+                continue
+
+        selected_metric: str | None = None
+        raw_selected = payload.get("selected_metric")
+        if raw_selected:
+            try:
+                selected_metric = normalize_value_range_metric(raw_selected)
+            except ValueError:
+                if require_complete:
+                    raise
+        selected_metric = selected_metric or _first_value_range_metric(metric_assumptions) or "price_sales"
+        return {"selected_metric": selected_metric, "metric_assumptions": metric_assumptions}
+
+    metric = normalize_value_range_metric(payload.get("metric"))
+    assumption = _normalize_value_range_metric_assumption(
+        payload,
+        require_complete=require_complete,
+        legacy_without_currency=True,
+    )
+    return {"selected_metric": metric, "metric_assumptions": {metric: assumption}}
 
 
 def _read_value_ranges() -> dict[str, dict[str, Any]]:
@@ -672,19 +782,28 @@ def value_range_payload(
     currency_context: Mapping[str, Any],
     market_data: Mapping[str, Any],
 ) -> dict[str, Any]:
-    saved = saved_assumption is not None
-    assumption = (
+    stored = (
         _normalize_value_range_payload(saved_assumption, require_complete=True)
         if saved_assumption is not None
-        else default_value_range_assumption(metrics, peers=peers, effective_weights=effective_weights)
+        else {"metric_assumptions": {}}
     )
-    metric = normalize_value_range_metric(assumption.get("metric"))
+    metric_assumptions = (
+        stored.get("metric_assumptions") if isinstance(stored.get("metric_assumptions"), Mapping) else {}
+    )
+    selected_metric = stored.get("selected_metric")
+    metric = (
+        normalize_value_range_metric(selected_metric)
+        if selected_metric in VALUATION_COLUMNS
+        else (_first_value_range_metric(metric_assumptions) or _default_value_range_metric(metrics, effective_weights))
+    )
+    assumption = metric_assumptions.get(metric) if isinstance(metric_assumptions.get(metric), Mapping) else None
+    saved = assumption is not None
     price_currency = (
         _clean_currency(currency_context.get("price_currency")) or _clean_currency(market_data.get("currency")) or "USD"
     )
     financial_currency = _clean_currency(currency_context.get("financial_currency")) or price_currency
-    assumption_currency = _clean_currency(assumption.get("denominator_currency"))
-    legacy_denominator_currency = saved and not assumption_currency
+    assumption_currency = _clean_currency(assumption.get("denominator_currency")) if assumption else None
+    legacy_denominator_currency = bool(assumption.get("legacy_denominator_currency")) if assumption else False
     stored_denominator_currency = assumption_currency or (
         price_currency if legacy_denominator_currency else financial_currency
     )
@@ -718,7 +837,7 @@ def value_range_payload(
             denominator_to_output_fx_rate=denominator_to_price_rate,
             fx_rate_as_of=denominator_to_price.get("as_of"),
         )
-        for scenario, row in (assumption.get("scenarios") or {}).items()
+        for scenario, row in ((assumption or {}).get("scenarios") or {}).items()
         if scenario in VALUE_RANGE_SCENARIOS and isinstance(row, Mapping)
     }
 
@@ -740,7 +859,9 @@ def value_range_payload(
 
     return {
         "saved": saved,
-        "source": "saved_assumptions" if saved else "default",
+        "source": "saved_assumptions" if saved else "blank",
+        "selected_metric": metric,
+        "metric_assumptions": dict(metric_assumptions),
         "metric": metric,
         "metric_label": VALUATION_LABELS[metric],
         "denominator_label": DENOMINATOR_LABELS[metric],
