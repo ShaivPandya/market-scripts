@@ -19,8 +19,9 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`. Defaults are `1` vCPU, `1Gi`, and concurrency `20` because long-running analysis is offloaded to Cloud Run Jobs; raise these if synchronous endpoints show memory pressure or CPU saturation.
 - `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
 - `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns. Defaults to `1` vCPU and `512Mi`.
-- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs. Defaults to `1` vCPU and `512Mi`.
-- `deploy-ontology-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with ontology job/queue defaults from env for low-latency ontology query jobs. Defaults to `1` vCPU and `512Mi`.
+- `deploy-analyzer-worker.sh` — optional warm Cloud Run worker pool running `python -m api.job_worker_loop run` with analyzer job/queue defaults from env for low-latency portfolio analyzer jobs. Defaults to disabled (`0` instances), `1` vCPU, and `1Gi`.
+- `deploy-sizer-worker.sh` — optional warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs. Defaults to disabled (`0` instances), `1` vCPU, and `512Mi`.
+- `deploy-ontology-worker.sh` — optional warm Cloud Run worker pool running `python -m api.job_worker_loop run` with ontology job/queue defaults from env for low-latency ontology query jobs. Defaults to disabled (`0` instances), `1` vCPU, and `512Mi`.
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
@@ -91,31 +92,32 @@ Cloud Run services and jobs must include:
 ## Async Jobs
 
 Production async work uses the `async_jobs` Postgres table for durable status,
-progress, results, and dedupe. Batch jobs run through the generic Cloud Run Job;
-agent chat workflow turns, portfolio sizer jobs, and ontology query jobs run
-through warm Cloud Run worker pools so they do not pay per-request Cloud Run
-Job startup latency.
+progress, results, and dedupe. Batch jobs, portfolio analyzer jobs, portfolio
+sizer jobs, and ontology query jobs run through the generic Cloud Run Job by
+default. Agent chat workflow turns run through a warm Cloud Run worker pool so
+interactive chat does not pay per-request Cloud Run Job startup latency.
 
 Required services:
 
 - Cloud Run service `api`: `uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}`
 - Cloud Run Job `talisman-async-job`: `python -m api.async_job_runner run`
 - Cloud Run worker pool `talisman-agent-worker`: `python -m api.agent_worker_loop run`
-- Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=sizer` and `JOB_WORKER_QUEUE=sizer`
-- Cloud Run worker pool `talisman-ontology-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=ontology` and `JOB_WORKER_QUEUE=ontology`
+- Optional Cloud Run worker pool `talisman-analyzer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=analyzer` and `JOB_WORKER_QUEUE=analyzer`; keep at `0` instances unless low-latency analyzer jobs are needed
+- Optional Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=sizer` and `JOB_WORKER_QUEUE=sizer`; keep at `0` instances unless low-latency sizer jobs are needed
+- Optional Cloud Run worker pool `talisman-ontology-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=ontology` and `JOB_WORKER_QUEUE=ontology`; keep at `0` instances unless low-latency ontology queries are needed
 - Cloud Scheduler jobs:
   - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`
   - weekdays at 23:15 UTC: `POST /api/v1/admin/jobs/enqueue-market-snapshot-refresh`
 
 Cloud Run worker pools run a fixed number of instances, not min/max autoscaling.
-Set `AGENT_WORKER_INSTANCES`, `SIZER_WORKER_INSTANCES`, and
-`ONTOLOGY_WORKER_INSTANCES` in `infra/gcp/config.sh` to control warm worker
-capacity.
+Set `AGENT_WORKER_INSTANCES`, `ANALYZER_WORKER_INSTANCES`,
+`SIZER_WORKER_INSTANCES`, and `ONTOLOGY_WORKER_INSTANCES` in
+`infra/gcp/config.sh` to control warm worker capacity.
 
-Warm worker pools default to `1` vCPU and `512Mi` memory. If Cloud Monitoring
-shows p95 memory approaching roughly `400Mi` after rollout, raise the affected
-`*_WORKER_MEMORY` setting before the next deploy.
+Optional warm worker pools default to `0` instances. If you enable one and Cloud
+Monitoring shows p95 memory approaching roughly 80% of its configured limit,
+raise the affected `*_WORKER_MEMORY` setting before the next deploy.
 
 The legacy governance outbox drain scheduler is disabled by default because the
 runtime job is now a no-op. To recreate it for a temporary safety check, run
@@ -148,8 +150,10 @@ Required async env/secrets:
 ```bash
 ASYNC_JOB_BACKEND="cloud_run_jobs"
 AGENT_CHAT_DISPATCH_BACKEND="warm_worker"
-ASYNC_DISPATCH_BACKEND_SIZER="warm_worker"
-ASYNC_DISPATCH_BACKEND_ONTOLOGY="warm_worker"
+ASYNC_DISPATCH_BACKEND_ANALYZER="cloud_run_jobs"
+ASYNC_DISPATCH_BACKEND_SIZER="cloud_run_jobs"
+ASYNC_DISPATCH_BACKEND_ONTOLOGY="cloud_run_jobs"
+ASYNC_QUEUE_ANALYZER="analyzer"
 ASYNC_QUEUE_SIZER="sizer"
 ASYNC_QUEUE_ONTOLOGY="ontology"
 ASYNC_CLOUD_RUN_JOB="talisman-async-job"

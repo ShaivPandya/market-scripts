@@ -93,10 +93,13 @@ def test_analyzer_worker_deploy_uses_env_for_duplicate_analyzer_values() -> None
     assert '--memory="${ANALYZER_WORKER_MEMORY:-1Gi}"' in script
 
 
-def test_api_deploy_routes_analyzer_to_warm_worker() -> None:
+def test_api_deploy_routes_noncritical_jobs_to_cloud_run_jobs() -> None:
     script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
 
-    assert '"ASYNC_DISPATCH_BACKEND_ANALYZER=warm_worker"' in script
+    assert '"ASYNC_DISPATCH_BACKEND_ANALYZER=cloud_run_jobs"' in script
+    assert '"ASYNC_DISPATCH_BACKEND_SIZER=cloud_run_jobs"' in script
+    assert '"ASYNC_DISPATCH_BACKEND_ONTOLOGY=cloud_run_jobs"' in script
+    assert '"AGENT_CHAT_DISPATCH_BACKEND=warm_worker"' in script
     assert '"ASYNC_QUEUE_ANALYZER=analyzer"' in script
     assert '"ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"' in script
 
