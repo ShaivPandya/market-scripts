@@ -61,9 +61,14 @@ def test_deploy_scripts_do_not_repeat_gcloud_args_values() -> None:
 
 def test_sizer_worker_deploy_uses_env_for_duplicate_sizer_values() -> None:
     script = (ROOT / "infra/gcp/deploy-sizer-worker.sh").read_text()
+    config_example = (ROOT / "infra/gcp/config.example.sh").read_text()
 
     assert "--args=-m,api.job_worker_loop,run \\" in script
     assert "--job-type,sizer,--queue,sizer" not in script
+    assert "SIZER_WORKER_INSTANCES=0 is incompatible" in script
+    assert 'SIZER_WORKER_INSTANCES="1"' in script
+    assert 'SIZER_WORKER_INSTANCES="1"' in config_example
+    assert '"ASYNC_DISPATCH_BACKEND_SIZER=warm_worker"' in script
     assert '"JOB_WORKER_JOB_TYPE=sizer"' in script
     assert '"JOB_WORKER_QUEUE=sizer"' in script
 
@@ -93,11 +98,11 @@ def test_analyzer_worker_deploy_uses_env_for_duplicate_analyzer_values() -> None
     assert '--memory="${ANALYZER_WORKER_MEMORY:-1Gi}"' in script
 
 
-def test_api_deploy_routes_noncritical_jobs_to_cloud_run_jobs() -> None:
+def test_api_deploy_routes_noninteractive_jobs_to_cloud_run_jobs() -> None:
     script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
 
     assert '"ASYNC_DISPATCH_BACKEND_ANALYZER=cloud_run_jobs"' in script
-    assert '"ASYNC_DISPATCH_BACKEND_SIZER=cloud_run_jobs"' in script
+    assert '"ASYNC_DISPATCH_BACKEND_SIZER=warm_worker"' in script
     assert '"ASYNC_DISPATCH_BACKEND_ONTOLOGY=cloud_run_jobs"' in script
     assert '"AGENT_CHAT_DISPATCH_BACKEND=warm_worker"' in script
     assert '"ASYNC_QUEUE_ANALYZER=analyzer"' in script

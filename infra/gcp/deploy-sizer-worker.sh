@@ -26,6 +26,10 @@ if [[ -n "${SIZER_WORKER_MAX_INSTANCES:-}" && -z "${SIZER_WORKER_INSTANCES+x}" ]
 fi
 
 SIZER_WORKER_INSTANCES="${SIZER_WORKER_INSTANCES:-${SIZER_WORKER_MIN_INSTANCES:-1}}"
+if [[ "${SIZER_WORKER_INSTANCES}" == "0" ]]; then
+  echo "SIZER_WORKER_INSTANCES=0 is incompatible with ASYNC_DISPATCH_BACKEND_SIZER=warm_worker; using 1." >&2
+  SIZER_WORKER_INSTANCES="1"
+fi
 
 mapfile -t COMMON_ENV < <(common_env_vars)
 
