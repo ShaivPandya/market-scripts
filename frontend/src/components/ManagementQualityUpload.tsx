@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2, UserRoundCheck } from "lucide-react"
 
+import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 import { uploadManagementQualityDocument } from "@/lib/api"
 
@@ -53,7 +54,7 @@ export function ManagementQualityUpload({ ticker, hasContent }: ManagementQualit
     setError(null)
     try {
       const result = await uploadManagementQualityDocument(ticker, selectedFile)
-      setNotice(result.approval_id ? `Proposal #${result.approval_id}` : "Staged")
+      setNotice(`${formatApprovalDisplayLabel(result.approval_id)} staged`)
       await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
       await invalidateApprovalSummaries(queryClient)
     } catch (e) {

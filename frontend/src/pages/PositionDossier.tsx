@@ -50,6 +50,7 @@ import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { Dialog } from "@/components/shared/Dialog"
+import { formatApprovalDisplayLabel, StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
@@ -199,19 +200,6 @@ function statusOrFallback(value: unknown, fallback: string): string {
 
 function subjectLabel(entityType?: string | null): string {
   return String(entityType || "proposal").replace(/_/g, " ")
-}
-
-function ProposalNotice({ proposal }: { proposal: StagedMutationResponse | null }) {
-  if (!proposal) return null
-  return (
-    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-      <div className="flex flex-wrap items-center gap-2">
-        <DecisionStateBadge state={proposal.decision_state ?? "pending_approval"} />
-        <EffectScopeBadge scope={proposal.effect_scope ?? "internal_state"} />
-        <span>Proposal #{proposal.approval_id} staged. Approval is required before app state changes.</span>
-      </div>
-    </div>
-  )
 }
 
 export function PositionDossier() {
@@ -437,15 +425,9 @@ export function PositionDossier() {
       )}
 
       {lastProposal && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          <div className="flex flex-wrap items-center gap-2">
-            <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
-            <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
-            <span>
-              Proposal #{lastProposal.approval_id} staged for {subjectLabel(lastProposal.entity_type)}. It will not change app state until approved and applied.
-            </span>
-          </div>
-        </div>
+        <StagedProposalNotice proposal={lastProposal} className="mb-4 rounded-xl px-4 py-3">
+          staged for {subjectLabel(lastProposal.entity_type)}. It will not change app state until approved and applied.
+        </StagedProposalNotice>
       )}
 
       {/* Tabs */}
@@ -665,7 +647,7 @@ export function PositionDossier() {
             </div>
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
-                <span>Approval #{approvalReview.approval.id}</span>
+                <span>{formatApprovalDisplayLabel(approvalReview.approval.id, "Approval")}</span>
                 <span>{subjectLabel(approvalReview.approval.entity_type)}</span>
                 <span>
                   Application: {approvalReview.approval.base_state_status === "stale" ? "state changed" : approvalReview.approval.application_status || "pending"}
@@ -961,7 +943,7 @@ function ManagementQualityTab({
   if (!content) {
     return (
       <div>
-        <ProposalNotice proposal={proposal} />
+        <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
         <p className="mb-3 text-sm text-muted">No management quality assessment on file for this position.</p>
         <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
           Draft Management Quality Proposal
@@ -988,7 +970,7 @@ function ManagementQualityTab({
   if (editing) {
     return (
       <div>
-        <ProposalNotice proposal={proposal} />
+        <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
         <textarea
           value={draft}
           onChange={e => setDraft(e.target.value)}
@@ -1005,7 +987,7 @@ function ManagementQualityTab({
 
   return (
     <div>
-      <ProposalNotice proposal={proposal} />
+      <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
       <div className="mb-4 flex justify-end">
         <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
           Edit
@@ -1824,7 +1806,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
   if (!thesis.content && !thesis.meta) {
     return (
       <div>
-        <ProposalNotice proposal={proposal} />
+        <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
         <p className="text-sm text-muted mb-3">No thesis on file for this position.</p>
         <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
           Draft Thesis Proposal
@@ -1850,7 +1832,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
 
   return (
     <div>
-      <ProposalNotice proposal={proposal} />
+      <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
       {(position || thesis.meta) && (
         <div className="flex flex-wrap gap-4 text-sm mb-4 pb-4 border-b border-app">
           {position?.direction != null && <div><span className="text-subtle">Direction:</span> <span className="font-medium text-app">{String(position.direction)}</span></div>}
@@ -2055,7 +2037,7 @@ function ClaimsTab({
 
   return (
     <div className="space-y-4">
-      <ProposalNotice proposal={proposal} />
+      <StagedProposalNotice proposal={proposal} className="text-xs" />
       <div className="flex justify-end">
         <button
           type="button"
@@ -2268,7 +2250,7 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   const statusOptions = ["pending", "played_out", "failed", "superseded"]
   return (
     <div className="space-y-3">
-      <ProposalNotice proposal={proposal} />
+      <StagedProposalNotice proposal={proposal} className="text-xs" />
       {catalysts.map(c => {
         const status = statusOrFallback(c.status, "pending")
         return (
@@ -2328,7 +2310,7 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
   const statusOptions = ["active", "triggered", "retired"]
   return (
     <div className="space-y-3">
-      <ProposalNotice proposal={proposal} />
+      <StagedProposalNotice proposal={proposal} className="text-xs" />
       {conditions.map(k => {
         const status = statusOrFallback(k.status, "active")
         return (

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2 } from "lucide-react"
 import { Dialog } from "@/components/shared/Dialog"
 import { ActionButton, SegmentedControl, SelectInput } from "@/components/shared/FormControls"
-import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
+import { StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import {
   fetchHedgePositions,
   fetchPortfolioSettings,
@@ -68,12 +68,6 @@ function makeId() {
 
 function proposalSubjectLabel(entityType?: string | null): string {
   return String(entityType || "proposal").replace(/_/g, " ")
-}
-
-function proposalNoticeLabel(proposal: StagedMutationResponse): string {
-  const approvalId = String(proposal.approval_id ?? "").trim()
-  if (!approvalId || approvalId.startsWith("approval:")) return "Proposal"
-  return `Proposal #${approvalId}`
 }
 
 function canonicalSpotFxSymbol(value?: string | null) {
@@ -554,15 +548,9 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
           </div>
 
           {lastProposal && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-              <div className="flex flex-wrap items-center gap-2">
-                <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
-                <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
-                <span>
-                  {proposalNoticeLabel(lastProposal)} staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
-                </span>
-              </div>
-            </div>
+            <StagedProposalNotice proposal={lastProposal} className="mb-4">
+              staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
+            </StagedProposalNotice>
           )}
 
           {tab === "Positions" ? (

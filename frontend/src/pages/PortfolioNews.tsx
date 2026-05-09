@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Calendar, FileText, Loader2, RefreshCw, Search, Trash2, Upload } from "lucide-react"
-import { Link } from "react-router-dom"
 
-import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { PageHeader } from "@/components/shared/PageHeader"
+import { StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import { SurfaceCard } from "@/components/shared/SurfaceCard"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -76,12 +75,6 @@ function formatProposalAction(actionId?: string | null) {
     if (actionId === "create_portfolio_news_digest") return "digest upload"
     if (actionId === "delete_portfolio_news_digest") return "digest delete"
     return String(actionId || "portfolio news change").replace(/_/g, " ")
-}
-
-function formatProposalLabel(proposal: StagedMutationResponse) {
-    const approvalId = String(proposal.approval_id ?? "").trim()
-    if (!approvalId || approvalId.startsWith("approval:")) return "Proposal"
-    return `Proposal #${approvalId}`
 }
 
 export function PortfolioNews() {
@@ -231,21 +224,9 @@ export function PortfolioNews() {
 
             {uploadError && <ErrorMessage message={uploadError} />}
             {pendingProposal && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <DecisionStateBadge state={pendingProposal.decision_state ?? "pending_approval"} />
-                        <EffectScopeBadge scope={pendingProposal.effect_scope ?? "internal_state"} />
-                        <span>
-                            {formatProposalLabel(pendingProposal)} staged for {formatProposalAction(pendingProposal.action_id)}. Review it in Workspace before the digest library changes.
-                        </span>
-                        <Link
-                            to={pendingProposal.review_route ?? "/workspace"}
-                            className="font-semibold underline underline-offset-2"
-                        >
-                            Review
-                        </Link>
-                    </div>
-                </div>
+                <StagedProposalNotice proposal={pendingProposal} className="rounded-xl px-4 py-3" showReviewLink>
+                    staged for {formatProposalAction(pendingProposal.action_id)}. Review it in Workspace before the digest library changes.
+                </StagedProposalNotice>
             )}
             {listQuery.isLoading && <LoadingSpinner message="Loading news digests..." />}
             {!listQuery.isLoading && listQuery.error && <ErrorMessage message={String(listQuery.error)} />}

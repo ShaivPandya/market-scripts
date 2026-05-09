@@ -7,6 +7,7 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
+import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { colorPositiveNegative } from "@/lib/colors"
 import {
@@ -1130,7 +1131,7 @@ function ContinuousOptimizationPanel({
                     </div>
                   </div>
                   <p className="mt-2 text-xs text-subtle">
-                    Approval: {alert.action_item_approval_id ? `#${alert.action_item_approval_id}` : "not staged"}
+                    Approval: {alert.action_item_approval_id ? `${formatApprovalDisplayLabel(alert.action_item_approval_id)} staged` : "not staged"}
                   </p>
                 </article>
               )

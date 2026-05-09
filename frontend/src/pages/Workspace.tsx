@@ -32,6 +32,7 @@ import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog
 import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton } from "@/components/shared/FormControls"
+import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import {
   DecisionStateBadge,
   EffectScopeBadge,
@@ -1000,7 +1001,7 @@ export function Workspace() {
             </div>
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
-                <span>Approval #{approvalReview.approval.id}</span>
+                <span>{formatApprovalDisplayLabel(approvalReview.approval.id, "Approval")}</span>
                 <span>{approvalSubjectLabel(approvalReview.approval)}</span>
                 {approvalTickerLabel(approvalReview.approval) && <span>{approvalTickerLabel(approvalReview.approval)}</span>}
                 <span>Application: {applicationLabel(approvalReview.approval)}</span>

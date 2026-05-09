@@ -8,6 +8,7 @@ import { ActionPill, EvaluationPanel } from "@/components/idea/EvaluationPanel"
 import { ManagementQualityPreview } from "@/components/idea/ManagementQualityPreview"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
+import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import {
   acceptIdeaEvaluation,
@@ -263,10 +264,9 @@ export function IdeaDetail() {
     mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) =>
       uploadManagementQualityDocument(idea.ticker, file),
     onSuccess: result => {
+      const proposalLabel = formatApprovalDisplayLabel(result.approval_id).toLowerCase()
       setManagementUploadMessage(
-        result.approval_id
-          ? `Management quality proposal #${result.approval_id} staged.`
-          : "Management quality proposal staged.",
+        `Management quality ${proposalLabel} staged.`,
       )
       if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
       void invalidateApprovalSummaries(qc)
@@ -282,7 +282,7 @@ export function IdeaDetail() {
     onSuccess: result => {
       setAcceptMessage(
         result.action_proposal
-          ? `Recommendation accepted; approval #${result.action_proposal.approval_id} staged.`
+          ? `Recommendation accepted; ${formatApprovalDisplayLabel(result.action_proposal.approval_id)} staged.`
           : "Recommendation accepted.",
       )
       void qc.invalidateQueries({ queryKey: ["ideas"] })
