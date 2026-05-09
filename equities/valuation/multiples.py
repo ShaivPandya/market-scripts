@@ -757,6 +757,8 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[s
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "current_price": current_price,
+            "fifty_two_week_high": _fifty_two_week_high(info),
+            "fifty_two_week_low": _fifty_two_week_low(info),
         },
         "financial_data": current.get("financial_data") if isinstance(current.get("financial_data"), Mapping) else {},
         "profile": {
@@ -800,6 +802,59 @@ def value_range_payload(
     raw_assumption = metric_assumptions.get(metric)
     assumption = cast(Mapping[str, Any], raw_assumption) if isinstance(raw_assumption, Mapping) else None
     saved = assumption is not None
+    calculation = _value_range_metric_calculation(
+        metric,
+        assumption,
+        currency_context=currency_context,
+        market_data=market_data,
+    )
+    computed_metric_assumptions: dict[str, Any] = {}
+    for saved_metric in VALUATION_COLUMNS:
+        raw_saved_assumption = metric_assumptions.get(saved_metric)
+        if not isinstance(raw_saved_assumption, Mapping):
+            continue
+        saved_calculation = _value_range_metric_calculation(
+            saved_metric,
+            raw_saved_assumption,
+            currency_context=currency_context,
+            market_data=market_data,
+        )
+        computed_metric_assumptions[saved_metric] = {
+            **dict(raw_saved_assumption),
+            "computed_scenarios": saved_calculation["scenarios"],
+        }
+
+    return {
+        "saved": saved,
+        "source": "saved_assumptions" if saved else "blank",
+        "selected_metric": metric,
+        "metric_assumptions": computed_metric_assumptions,
+        "metric": metric,
+        "metric_label": VALUATION_LABELS[metric],
+        "denominator_label": DENOMINATOR_LABELS[metric],
+        "denominator_currency": calculation["denominator_currency"],
+        "stored_denominator_currency": calculation["stored_denominator_currency"],
+        "legacy_denominator_currency": calculation["legacy_denominator_currency"],
+        "denominator_to_price_fx_rate": calculation["denominator_to_price_fx_rate"],
+        "fx_rate_as_of": calculation["fx_rate_as_of"],
+        "calculation_method": "enterprise_value_to_equity" if metric in ENTERPRISE_VALUE_METRICS else "equity_value",
+        "current_price": _safe_float(market_data.get("current_price")),
+        "shares": _safe_float(market_data.get("shares")),
+        "net_debt": _safe_float(market_data.get("net_debt")),
+        "currency": calculation["output_currency"],
+        "output_currency": calculation["output_currency"],
+        "scenarios": calculation["scenarios"],
+    }
+
+
+def _value_range_metric_calculation(
+    metric: str,
+    assumption: Mapping[str, Any] | None,
+    *,
+    currency_context: Mapping[str, Any],
+    market_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    normalized_metric = normalize_value_range_metric(metric)
     price_currency = (
         _clean_currency(currency_context.get("price_currency")) or _clean_currency(market_data.get("currency")) or "USD"
     )
@@ -831,7 +886,7 @@ def value_range_payload(
     scenario_rows = cast(Mapping[str, Any], raw_scenarios) if isinstance(raw_scenarios, Mapping) else {}
     scenarios = {
         scenario: compute_value_range_scenario(
-            metric,
+            normalized_metric,
             _display_scenario(row),
             current_price=market_data.get("current_price"),
             shares=market_data.get("shares"),
@@ -849,7 +904,7 @@ def value_range_payload(
         scenarios.setdefault(
             scenario,
             compute_value_range_scenario(
-                metric,
+                normalized_metric,
                 {"multiple": None, "denominator": None},
                 current_price=market_data.get("current_price"),
                 shares=market_data.get("shares"),
@@ -862,23 +917,11 @@ def value_range_payload(
         )
 
     return {
-        "saved": saved,
-        "source": "saved_assumptions" if saved else "blank",
-        "selected_metric": metric,
-        "metric_assumptions": dict(metric_assumptions),
-        "metric": metric,
-        "metric_label": VALUATION_LABELS[metric],
-        "denominator_label": DENOMINATOR_LABELS[metric],
         "denominator_currency": display_denominator_currency,
         "stored_denominator_currency": stored_denominator_currency,
         "legacy_denominator_currency": legacy_denominator_currency,
         "denominator_to_price_fx_rate": denominator_to_price_rate,
         "fx_rate_as_of": denominator_to_price.get("as_of"),
-        "calculation_method": "enterprise_value_to_equity" if metric in ENTERPRISE_VALUE_METRICS else "equity_value",
-        "current_price": _safe_float(market_data.get("current_price")),
-        "shares": _safe_float(market_data.get("shares")),
-        "net_debt": _safe_float(market_data.get("net_debt")),
-        "currency": price_currency,
         "output_currency": price_currency,
         "scenarios": {scenario: scenarios[scenario] for scenario in VALUE_RANGE_SCENARIOS},
     }
@@ -1534,6 +1577,14 @@ def _market_cap(info: Mapping[str, Any]) -> float | None:
 
 def _current_price(info: Mapping[str, Any]) -> float | None:
     return _positive_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+
+
+def _fifty_two_week_high(info: Mapping[str, Any]) -> float | None:
+    return _positive_float(info.get("fiftyTwoWeekHigh") or info.get("52WeekHigh"))
+
+
+def _fifty_two_week_low(info: Mapping[str, Any]) -> float | None:
+    return _positive_float(info.get("fiftyTwoWeekLow") or info.get("52WeekLow"))
 
 
 def _shares_outstanding(

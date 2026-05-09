@@ -275,6 +275,48 @@ def test_profile_recomputes_with_cached_current_valuation(monkeypatch):
     assert second["profile"]["effective_weights"]["price_book"] == 0.5
 
 
+def test_get_position_valuation_includes_52_week_market_data(monkeypatch):
+    monkeypatch.setattr(
+        multiples,
+        "_fetch_info",
+        lambda symbol: {
+            "marketCap": 1000.0,
+            "currentPrice": 10.0,
+            "sharesOutstanding": 100.0,
+            "fiftyTwoWeekHigh": 15.0,
+            "fiftyTwoWeekLow": 6.0,
+            "currency": "USD",
+            "financialCurrency": "USD",
+        },
+    )
+    monkeypatch.setattr(multiples, "read_profile_override", lambda symbol: None)
+    monkeypatch.setattr(multiples, "read_value_range_assumption", lambda symbol: None)
+    monkeypatch.setattr(
+        multiples,
+        "fetch_current_valuation",
+        lambda symbol, *, info=None: {
+            "market_cap": 1000.0,
+            "enterprise_value": 1100.0,
+            "net_debt": 100.0,
+            "currency_context": multiples.currency_context_from_info(info or {}),
+            "metrics": {
+                "price_sales": {
+                    "key": "price_sales",
+                    "label": "EV/S",
+                    "value": 1.1,
+                    "denominator": 1000.0,
+                    "status": "ok",
+                }
+            },
+        },
+    )
+
+    result = multiples.get_position_valuation("zz52w", include_peers=False)
+
+    assert result["market_data"]["fifty_two_week_high"] == 15.0
+    assert result["market_data"]["fifty_two_week_low"] == 6.0
+
+
 def test_resolve_profile_handles_banks_software_cyclicals_and_override():
     assert (
         multiples.resolve_profile({"sector": "Financial Services", "industry": "Banks - Regional"})["id"]
@@ -578,6 +620,60 @@ def test_value_range_payload_without_saved_assumptions_uses_default_metric_with_
     assert payload["scenarios"]["base"]["status"] == "missing"
     assert payload["scenarios"]["base"]["multiple"] is None
     assert payload["scenarios"]["base"]["denominator"] is None
+
+
+def test_value_range_payload_computes_scenarios_for_each_saved_metric_with_metric_fx():
+    currency_context = {
+        "price_currency": "USD",
+        "financial_currency": "TWD",
+        "financial_to_price_fx_rate": 0.03125,
+        "fx_rate_as_of": "2026-05-08",
+        "conversion_status": "ok",
+    }
+
+    payload = multiples.value_range_payload(
+        saved_assumption={
+            "selected_metric": "price_sales",
+            "metric_assumptions": {
+                "price_sales": {
+                    "denominator_currency": "TWD",
+                    "scenarios": {
+                        "bear": {"multiple": 4.0, "denominator": 32000.0},
+                        "base": {"multiple": 5.0, "denominator": 32000.0},
+                        "bull": {"multiple": 6.0, "denominator": 32000.0},
+                    },
+                },
+                "price_earnings": {
+                    "denominator_currency": "USD",
+                    "scenarios": {
+                        "bear": {"multiple": 8.0, "denominator": 200.0},
+                        "base": {"multiple": 10.0, "denominator": 200.0},
+                        "bull": {"multiple": 12.0, "denominator": 200.0},
+                    },
+                },
+            },
+        },
+        metrics={},
+        peers=multiples._empty_peer_context(),
+        effective_weights={"price_sales": 1.0},
+        currency_context=currency_context,
+        market_data={"current_price": 10.0, "shares": 100.0, "net_debt": 100.0, "currency": "USD"},
+    )
+
+    assumptions = payload["metric_assumptions"]
+    sales_base = assumptions["price_sales"]["computed_scenarios"]["base"]
+    earnings_base = assumptions["price_earnings"]["computed_scenarios"]["base"]
+
+    assert assumptions["price_sales"]["denominator_currency"] == "TWD"
+    assert assumptions["price_earnings"]["denominator_currency"] == "USD"
+    assert payload["scenarios"]["base"] == sales_base
+    assert sales_base["denominator_currency"] == "TWD"
+    assert sales_base["denominator_converted"] == 1000.0
+    assert sales_base["expected_price"] == 49.0
+    assert earnings_base["denominator_currency"] == "TWD"
+    assert earnings_base["denominator"] == 6400.0
+    assert earnings_base["denominator_converted"] == 200.0
+    assert earnings_base["expected_price"] == 20.0
 
 
 def test_legacy_value_range_without_currency_is_computed_as_price_currency(monkeypatch):

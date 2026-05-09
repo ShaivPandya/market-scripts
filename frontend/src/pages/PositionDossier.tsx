@@ -28,6 +28,7 @@ import {
   type ApprovalRecord,
   type PositionValuation,
   type PositionValueRangeAssumption,
+  type PositionValueRangeScenario,
   type PositionValueRangeRequest,
   type PositionRiskEvidence,
   type PositionRiskSnapshot,
@@ -52,7 +53,7 @@ import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { Dialog } from "@/components/shared/Dialog"
 import { formatApprovalDisplayLabel, StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
-import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { ActionButton, SegmentedControl, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import type {
   ManagementQualityAssessment,
@@ -1078,6 +1079,8 @@ const VALUE_RANGE_SCENARIO_LABELS: Record<ValueRangeScenarioKey, string> = {
   bull: "Bull",
 }
 
+type ValuationTabView = "inputs" | "football_field"
+
 const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
   "price_sales",
   "price_operating_income",
@@ -1597,8 +1600,205 @@ function ValueRangePanel({
   )
 }
 
+interface ValuationFootballFieldRow {
+  id: string
+  label: string
+  subtitle: string
+  low: number
+  high: number
+  base: number | null
+  tone: "valuation" | "reference"
+}
+
+function scenarioExpectedPrice(
+  scenarios: Record<string, PositionValueRangeScenario> | undefined,
+  scenario: ValueRangeScenarioKey,
+): number | null {
+  return positiveNumber(scenarios?.[scenario]?.expected_price)
+}
+
+function valuationFootballFieldRows(data: PositionValuation): {
+  rows: ValuationFootballFieldRow[]
+  savedMetricCount: number
+  skippedMetricCount: number
+} {
+  const assumptions = valueRangeAssumptions(data)
+  const rows: ValuationFootballFieldRow[] = []
+  let savedMetricCount = 0
+  let skippedMetricCount = 0
+
+  for (const metric of VALUATION_METRIC_ORDER) {
+    const assumption = assumptions[metric]
+    if (!assumption) continue
+    savedMetricCount += 1
+    const scenarios = assumption.computed_scenarios
+    const bear = scenarioExpectedPrice(scenarios, "bear")
+    const base = scenarioExpectedPrice(scenarios, "base")
+    const bull = scenarioExpectedPrice(scenarios, "bull")
+    if (bear == null || base == null || bull == null) {
+      skippedMetricCount += 1
+      continue
+    }
+    rows.push({
+      id: metric,
+      label: data.metrics[metric]?.label ?? metric,
+      subtitle: data.metrics[metric]?.denominator_label ?? data.value_range?.denominator_label ?? "Saved range",
+      low: Math.min(bear, base, bull),
+      high: Math.max(bear, base, bull),
+      base,
+      tone: "valuation",
+    })
+  }
+
+  const weekLow = positiveNumber(data.market_data?.fifty_two_week_low)
+  const weekHigh = positiveNumber(data.market_data?.fifty_two_week_high)
+  if (savedMetricCount > 0 && weekLow != null && weekHigh != null) {
+    rows.push({
+      id: "52-week",
+      label: "52W High/Low",
+      subtitle: "Market reference",
+      low: Math.min(weekLow, weekHigh),
+      high: Math.max(weekLow, weekHigh),
+      base: null,
+      tone: "reference",
+    })
+  }
+
+  return { rows, savedMetricCount, skippedMetricCount }
+}
+
+function ValuationFootballField({ valuation }: { valuation: PositionValuation }) {
+  const { rows, savedMetricCount, skippedMetricCount } = valuationFootballFieldRows(valuation)
+  const outputCurrency = valueRangeOutputCurrency(valuation)
+  const currentPrice = positiveNumber(valuation.market_data?.current_price)
+
+  if (savedMetricCount === 0) {
+    return (
+      <section className="rounded-lg border border-app px-4 py-5">
+        <h3 className="text-sm font-semibold text-app">Football Field</h3>
+        <p className="mt-1 text-sm text-muted">Save at least one metric range to view the football field.</p>
+      </section>
+    )
+  }
+
+  if (rows.length === 0) {
+    return (
+      <section className="rounded-lg border border-app px-4 py-5">
+        <h3 className="text-sm font-semibold text-app">Football Field</h3>
+        <p className="mt-1 text-sm text-muted">No saved ranges can be plotted with the current valuation inputs.</p>
+      </section>
+    )
+  }
+
+  const values = rows.flatMap(row => [row.low, row.high, ...(row.base != null ? [row.base] : [])])
+  if (currentPrice != null) values.push(currentPrice)
+  const minValue = Math.min(...values)
+  const maxValue = Math.max(...values)
+  const span = maxValue - minValue
+  const padding = span > 0 ? span * 0.06 : Math.max(maxValue * 0.1, 1)
+  const axisMin = Math.max(0, minValue - padding)
+  const axisMax = maxValue + padding
+  const axisSpan = axisMax - axisMin || 1
+  const positionPct = (value: number) => Math.max(0, Math.min(100, ((value - axisMin) / axisSpan) * 100))
+  const currentPct = currentPrice != null ? positionPct(currentPrice) : null
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-app">Football Field</h3>
+          <p className="mt-1 text-xs text-muted">{savedMetricCount} saved metric{savedMetricCount === 1 ? "" : "s"}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-5 rounded-full bg-[hsl(var(--accent))]" />
+            Valuation range
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-4 w-px bg-app" />
+            Base
+          </span>
+          {currentPct != null && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-4 w-px border-l border-dashed border-[hsl(var(--foreground-tertiary))]" />
+              Current
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-app">
+        <div className="min-w-[680px] px-4 py-3">
+          <div className="grid grid-cols-[11rem_minmax(0,1fr)] gap-4 border-b border-app pb-2 text-xs text-subtle">
+            <span>Metric</span>
+            <div className="flex justify-between">
+              <span>{formatSharePrice(axisMin, outputCurrency)}</span>
+              {currentPrice != null && <span>Current {formatSharePrice(currentPrice, outputCurrency)}</span>}
+              <span>{formatSharePrice(axisMax, outputCurrency)}</span>
+            </div>
+          </div>
+          <div className="divide-y divide-[hsl(var(--border))]">
+            {rows.map(row => {
+              const left = positionPct(row.low)
+              const right = positionPct(row.high)
+              const width = Math.max(right - left, 0.7)
+              const basePct = row.base != null ? positionPct(row.base) : null
+              return (
+                <div key={row.id} className="grid grid-cols-[11rem_minmax(0,1fr)] gap-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-app">{row.label}</p>
+                    <p className="text-xs text-subtle">{row.subtitle}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="relative h-8">
+                      <div className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-[hsl(var(--border))]" />
+                      <div
+                        className={cn(
+                          "absolute top-1/2 h-3 -translate-y-1/2 rounded-full",
+                          row.tone === "reference" ? "bg-[hsl(var(--foreground-quaternary))]" : "bg-[hsl(var(--accent))]",
+                        )}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                      />
+                      {basePct != null && (
+                        <div
+                          className="absolute top-1/2 h-7 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[hsl(var(--foreground))]"
+                          style={{ left: `${basePct}%` }}
+                          title={`Base ${formatSharePrice(row.base, outputCurrency)}`}
+                        />
+                      )}
+                      {currentPct != null && (
+                        <div
+                          className="absolute top-1/2 h-8 -translate-x-1/2 -translate-y-1/2 border-l border-dashed border-[hsl(var(--foreground-tertiary))]"
+                          style={{ left: `${currentPct}%` }}
+                          title={`Current ${formatSharePrice(currentPrice, outputCurrency)}`}
+                        />
+                      )}
+                    </div>
+                    <div className="flex justify-between text-xs text-subtle">
+                      <span>{formatSharePrice(row.low, outputCurrency)}</span>
+                      {row.base != null && <span>Base {formatSharePrice(row.base, outputCurrency)}</span>}
+                      <span>{formatSharePrice(row.high, outputCurrency)}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      {skippedMetricCount > 0 && (
+        <p className="text-xs text-muted">
+          {skippedMetricCount} saved metric{skippedMetricCount === 1 ? "" : "s"} could not be plotted because one or more scenarios did not compute.
+        </p>
+      )}
+    </section>
+  )
+}
+
 function ValuationTab({ ticker }: { ticker: string }) {
   const qc = useQueryClient()
+  const [valuationView, setValuationView] = useState<ValuationTabView>("inputs")
   const { data, isLoading, error } = useApiQuery<PositionValuation>(
     ["valuation", ticker],
     () => fetchPositionValuation(ticker),
@@ -1687,16 +1887,34 @@ function ValuationTab({ ticker }: { ticker: string }) {
         </div>
       )}
 
-      <ValueRangePanel
-        key={`${data.ticker}-${data.profile.override_profile_id ?? "auto"}`}
-        valuation={data}
-        isSaving={valueRangeMutation.isPending}
-        isClearing={clearValueRangeMutation.isPending}
-        saveError={valueRangeMutation.error}
-        clearError={clearValueRangeMutation.error}
-        onSave={payload => valueRangeMutation.mutate(payload)}
-        onClear={metric => clearValueRangeMutation.mutate(metric)}
-      />
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-app">Scenario View</h3>
+          <SegmentedControl<ValuationTabView>
+            value={valuationView}
+            onChange={setValuationView}
+            size="sm"
+            options={[
+              { value: "inputs", label: "Inputs" },
+              { value: "football_field", label: "Football Field" },
+            ]}
+          />
+        </div>
+        {valuationView === "inputs" ? (
+          <ValueRangePanel
+            key={`${data.ticker}-${data.profile.override_profile_id ?? "auto"}`}
+            valuation={data}
+            isSaving={valueRangeMutation.isPending}
+            isClearing={clearValueRangeMutation.isPending}
+            saveError={valueRangeMutation.error}
+            clearError={clearValueRangeMutation.error}
+            onSave={payload => valueRangeMutation.mutate(payload)}
+            onClear={metric => clearValueRangeMutation.mutate(metric)}
+          />
+        ) : (
+          <ValuationFootballField valuation={data} />
+        )}
+      </section>
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">

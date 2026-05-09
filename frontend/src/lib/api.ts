@@ -2036,6 +2036,8 @@ export interface PositionValuation {
     sector?: string | null
     industry?: string | null
     current_price?: number | null
+    fifty_two_week_high?: number | null
+    fifty_two_week_low?: number | null
     shares_outstanding?: number | null
   }
   financial_data?: Record<string, unknown>
@@ -2089,6 +2091,7 @@ export interface PositionValueRangeAssumption {
   denominator_currency?: string | null
   legacy_denominator_currency?: boolean
   scenarios: Record<string, { multiple?: number | null; denominator?: number | null }>
+  computed_scenarios?: Record<string, PositionValueRangeScenario>
 }
 
 export interface PositionValueRange {
