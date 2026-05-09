@@ -1669,8 +1669,34 @@ def _series_edge_point(series: Any, *, first: bool) -> dict[str, Any] | None:
         return None
 
 
+def _agent_portfolio_book_size() -> float | None:
+    try:
+        from api.portfolio_settings import get_portfolio_book_size
+
+        book_size = _to_float(get_portfolio_book_size())
+    except Exception:
+        return None
+    return book_size if book_size is not None and book_size > 0 else None
+
+
+def _agent_position_notional(holding: Mapping[str, Any], perf: Mapping[str, Any]) -> float | None:
+    for value in (
+        perf.get("current_notional"),
+        holding.get("notional_base"),
+        perf.get("cost_notional"),
+    ):
+        notional = _to_float(value)
+        if notional is not None:
+            return abs(notional)
+    return None
+
+
 def _build_agent_portfolio_payload(
-    raw: dict[str, Any], holdings: list[dict[str, Any]], *, include_hedges: bool
+    raw: dict[str, Any],
+    holdings: list[dict[str, Any]],
+    *,
+    include_hedges: bool,
+    book_size: float | None = None,
 ) -> dict[str, Any]:
     analytics_raw = raw.get("analytics")
     analytics: dict[str, Any] = analytics_raw if isinstance(analytics_raw, dict) else {}
@@ -1680,6 +1706,8 @@ def _build_agent_portfolio_payload(
     portfolio_summary: dict[str, Any] = portfolio_summary_raw if isinstance(portfolio_summary_raw, dict) else {}
     raw_positions_raw = raw.get("positions")
     raw_positions: dict[str, Any] = raw_positions_raw if isinstance(raw_positions_raw, dict) else {}
+    if book_size is None:
+        book_size = _agent_portfolio_book_size()
 
     rows: list[dict[str, Any]] = []
     for holding in holdings:
@@ -1703,6 +1731,15 @@ def _build_agent_portfolio_payload(
         contract_multiplier = holding.get("contract_multiplier")
         if contract_multiplier is None:
             contract_multiplier = 1
+        current_notional = perf.get("current_notional")
+        cost_notional = perf.get("cost_notional")
+        gross_position_share = perf.get("weight")
+        weight_notional = _agent_position_notional(holding, perf)
+        weight_of_book = (
+            round(weight_notional / book_size, 4)
+            if weight_notional is not None and book_size is not None and book_size > 0
+            else None
+        )
         row = {
             "ticker": ticker,
             "asset": holding.get("asset"),
@@ -1720,8 +1757,8 @@ def _build_agent_portfolio_payload(
             "role": holding.get("role") or "position",
             "current_price": last_price,
             "price_as_of": last.get("date") if isinstance(last, dict) else None,
-            "current_notional": perf.get("current_notional"),
-            "cost_notional": perf.get("cost_notional"),
+            "current_notional": current_notional,
+            "cost_notional": cost_notional,
             "unrealized_pnl_pct": perf.get("unrealized_pnl_pct"),
             "unrealized_pnl_dollar": perf.get("unrealized_pnl_dollar"),
             "unrealized_pnl_per_unit": perf.get("unrealized_pnl_per_unit"),
@@ -1729,7 +1766,9 @@ def _build_agent_portfolio_payload(
             "monthly_return_pct": perf.get("monthly_return_pct"),
             "weekly_contribution_pct": perf.get("weekly_contribution_pct"),
             "monthly_contribution_pct": perf.get("monthly_contribution_pct"),
-            "weight": perf.get("weight"),
+            "weight": weight_of_book,
+            "weight_of_book": weight_of_book,
+            "gross_position_share": gross_position_share,
             "drawdown_from_52w_pct": perf.get("drawdown_from_52w_pct"),
             "performance_basis": "direction_adjusted",
         }
@@ -1750,6 +1789,9 @@ def _build_agent_portfolio_payload(
                 "short_price_declines_are_favorable": True,
                 "quantity_field": "quantity",
                 "legacy_shares_alias": True,
+                "weight": "absolute current notional as a fraction of configured book size",
+                "weight_of_book": "same as weight; use this for position concentration checks",
+                "gross_position_share": "absolute current notional as a fraction of total valued portfolio notional",
                 "futures_quantity": "contracts",
                 "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
                 "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
@@ -1758,6 +1800,7 @@ def _build_agent_portfolio_payload(
                 "position_count": len(rows),
                 "long_count": long_count,
                 "short_count": short_count,
+                "book_size": book_size,
                 **portfolio_summary,
             },
             "positions": rows,
@@ -2874,7 +2917,8 @@ def _dispatch(
     if name == "get_portfolio":
         timeframe = args.get("timeframe", "Daily")
         include_hedges = bool(args.get("include_hedges", False))
-        key = f"portfolio:v2:{timeframe}:hedges={include_hedges}"
+        book_size = _agent_portfolio_book_size()
+        key = f"portfolio:v3:{timeframe}:hedges={include_hedges}:book={book_size or 'unknown'}"
 
         def _load():
             import importlib
@@ -2891,7 +2935,12 @@ def _dispatch(
             except Exception:
                 raw = {"timeframe": timeframe}
             holdings = OntologyRuntimeReadService().positions(include_hedges=include_hedges)
-            return _build_agent_portfolio_payload(raw, holdings, include_hedges=include_hedges)
+            return _build_agent_portfolio_payload(
+                raw,
+                holdings,
+                include_hedges=include_hedges,
+                book_size=book_size,
+            )
 
         data, meta = fetch(short_cache, key, _load)
         return data, meta

@@ -878,12 +878,14 @@ def _portfolio_position_changes(
 
 def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     typed = cast(UpdatePortfolioPositionsInput, model)
+    from api.portfolio_settings import get_portfolio_book_size
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
     before_rows = OntologyRuntimeReadService().positions(include_hedges=False)
     after_rows = _position_rows(typed)
     return {
         "positions": after_rows,
+        "book_size": get_portfolio_book_size(),
         "position_changes": _portfolio_position_changes(before_rows, after_rows),
         "position_change_summary": {
             "before_count": len(before_rows),
@@ -895,8 +897,14 @@ def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
 
 def _hedge_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     typed = cast(UpdateHedgePositionsInput, model)
+    from api.portfolio_settings import get_portfolio_book_size
+
     rows = _hedge_rows(typed)
-    return {"positions": rows, "critical_data_quality": _valuation_quality(rows)}
+    return {
+        "positions": rows,
+        "book_size": get_portfolio_book_size(),
+        "critical_data_quality": _valuation_quality(rows),
+    }
 
 
 def _valuation_quality(rows: Sequence[Mapping[str, Any]]) -> str:

@@ -481,9 +481,11 @@ def _portfolio_constraint_checks(
         )
         return checks
 
+    book_size = _book_size_for_concentration(payload, fallback=total_abs)
+
     max_position = float(_deep_get(policy, ("policy", "max_position_weight_pct")) or 0)
     for row in valued_exposures:
-        weight = abs(row["notional"]) / total_abs
+        weight = abs(row["notional"]) / book_size
         if max_position and weight > max_position:
             checks.append(
                 _check(
@@ -502,7 +504,7 @@ def _portfolio_constraint_checks(
     for row in valued_exposures:
         by_asset[row["asset"]] = by_asset.get(row["asset"], 0.0) + abs(row["notional"])
     for asset, notional in by_asset.items():
-        weight = notional / total_abs
+        weight = notional / book_size
         if max_asset_class and weight > max_asset_class:
             checks.append(
                 _check(
@@ -764,6 +766,22 @@ def _payload_number(payload: Mapping[str, Any], key: str) -> float | None:
     if key in record:
         return _to_float(record.get(key))
     return None
+
+
+def _book_size_for_concentration(payload: Mapping[str, Any], *, fallback: float) -> float:
+    for key in ("book_size", "book"):
+        value = _payload_number(payload, key)
+        if value is not None and value > 0:
+            return value
+    try:
+        from api.portfolio_settings import get_portfolio_book_size
+
+        configured = _to_float(get_portfolio_book_size())
+    except Exception:
+        configured = None
+    if configured is not None and configured > 0:
+        return configured
+    return fallback
 
 
 def _risk_score_from_recommendation(record: Mapping[str, Any]) -> float | None:

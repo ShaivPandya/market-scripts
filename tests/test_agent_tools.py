@@ -664,6 +664,7 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
                     "monthly_return_pct": 8.0,
                     "weekly_contribution_pct": 2.5,
                     "monthly_contribution_pct": 2.0,
+                    "current_notional": 900.0,
                     "weight": 0.25,
                     "drawdown_from_52w_pct": 0.0,
                 },
@@ -674,6 +675,7 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
                     "monthly_return_pct": 4.0,
                     "weekly_contribution_pct": 1.0,
                     "monthly_contribution_pct": 0.8,
+                    "current_notional": 3150.0,
                     "weight": 0.2,
                     "drawdown_from_52w_pct": 0.0,
                 },
@@ -716,11 +718,13 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
     )
     monkeypatch.setattr("api.agent_tools.get_cached", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("api.agent_tools.set_cached", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("api.portfolio_settings.get_portfolio_book_size", lambda: 10_000.0)
 
     payload = json.loads(agent_tools.execute_tool("get_portfolio", {}))
     rows = {row["ticker"]: row for row in payload["positions"]}
     oklo = rows["OKLO"]
 
+    assert payload["summary"]["book_size"] == 10_000.0
     assert oklo["direction"] == "short"
     assert oklo["cost_basis"] == 10.0
     assert oklo["shares"] == 100.0
@@ -733,13 +737,21 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
     assert "first_price" not in oklo
     assert "raw_price_return_pct" not in oklo
     assert oklo["weekly_return_pct"] == 10.0
+    assert oklo["current_notional"] == 900.0
+    assert oklo["weight"] == 0.09
+    assert oklo["weight_of_book"] == 0.09
+    assert oklo["gross_position_share"] == 0.25
     assert payload["semantics"]["entry_history_available"] is False
     assert "not first entry price" in payload["semantics"]["cost_basis"]
     assert payload["semantics"]["short_price_declines_are_favorable"] is True
+    assert "book size" in payload["semantics"]["weight"]
 
     crwd = rows["CRWD"]
     assert crwd["cost_basis"] == 300.0
     assert crwd["current_price"] == 315.0
+    assert crwd["weight"] == 0.315
+    assert crwd["weight_of_book"] == 0.315
+    assert crwd["gross_position_share"] == 0.2
     assert "first_date" not in crwd
     assert "first_price" not in crwd
     assert "raw_price_return_pct" not in crwd

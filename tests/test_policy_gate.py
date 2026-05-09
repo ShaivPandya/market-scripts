@@ -96,6 +96,7 @@ def test_concentration_failure_requires_review_but_is_reviewable():
     gate = evaluate_policy_gate(
         "update_portfolio_positions",
         {
+            "book_size": 100_000,
             "positions": [
                 {
                     "ticker": "MU",
@@ -104,15 +105,39 @@ def test_concentration_failure_requires_review_but_is_reviewable():
                     "contrarian": False,
                     "conviction": 4,
                     "cost_basis": 100,
-                    "shares": 10,
+                    "shares": 250,
                 }
-            ]
+            ],
         },
     )
 
     assert gate["decision"] == "review_required"
     assert gate["review_required"] is True
     assert any(reason["code"] == "concentration_limit" for reason in gate["failure_reasons"])
+
+
+def test_concentration_uses_book_size_not_position_total_share():
+    gate = evaluate_policy_gate(
+        "update_portfolio_positions",
+        {
+            "book_size": 100_000,
+            "positions": [
+                {
+                    "ticker": "NVDA",
+                    "asset": "equity",
+                    "direction": "long",
+                    "cost_basis": 178.50,
+                    "shares": 100,
+                    "notional_base": 17_850,
+                    "valuation_status": "ok",
+                }
+            ],
+        },
+    )
+
+    concentration_failures = [reason for reason in gate["failure_reasons"] if reason["code"] == "concentration_limit"]
+    assert gate["decision"] == "pass"
+    assert concentration_failures == []
 
 
 def test_policy_gate_uses_base_currency_notional_for_foreign_position():
@@ -195,17 +220,18 @@ def test_policy_gate_falls_back_for_legacy_usd_rows_without_base_notional():
     gate = evaluate_policy_gate(
         "update_portfolio_positions",
         {
+            "book_size": 100_000,
             "positions": [
                 {
                     "ticker": "SPY",
                     "asset": "equity",
                     "direction": "long",
                     "cost_basis": 100,
-                    "shares": 100,
+                    "shares": 250,
                     "base_currency": "USD",
                     "valuation_status": "missing_position_inputs",
                 }
-            ]
+            ],
         },
     )
 
