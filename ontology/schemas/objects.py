@@ -1920,6 +1920,43 @@ class SupplyDemandOutlookV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class SupplyChainRelationshipV1(OntologySchemaBase):
+    relationship_id: NonBlankStr
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    counterparty_role: NonBlankStr
+    counterparty_name: NonBlankStr
+    relationship: str | None = None
+    exposure: str | None = None
+    notes: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator(
+        "relationship_id",
+        "overview_id",
+        "issuer_id",
+        "counterparty_role",
+        "counterparty_name",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("relationship", "exposure", "notes", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class ThesisDocumentV1(OntologySchemaBase):
     thesis_document_id: NonBlankStr
     ticker: NonBlankStr
@@ -2598,6 +2635,7 @@ OntologyObjectV1 = (
     | ExtrinsicSensitivityV1
     | IndustryForceAssessmentV1
     | SupplyDemandOutlookV1
+    | SupplyChainRelationshipV1
     | ThesisDocumentV1
     | ThesisSectionV1
     | InvestmentIdeaV1

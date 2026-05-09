@@ -13,8 +13,10 @@ import type {
   ParsedFinancials,
   ParsedOutlookSection,
   ParsedOverview,
+  ParsedSupplyChain,
   PorterForce,
   SensitivityRow,
+  SupplyChainCounterparty,
 } from "@/lib/overviewTypes"
 import { cn } from "@/lib/utils"
 
@@ -106,7 +108,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const [view, setView] = useState<FinancialViewMode>("annual")
 
   const { data: rawData, isLoading, error } = useApiQuery<Record<string, unknown>>(
-    ["financials-overview-v11", ticker],
+    ["financials-overview-v12", ticker],
     () => runFinancials({ ticker }),
     300_000,
   )
@@ -130,7 +132,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
         <>
           {dataSource === "yfinance" && (
             <p className="text-xs text-subtle">
-              Yahoo Finance fallback. Quarterly YoY metrics and filing breakdown are unavailable.
+              Yahoo Finance fallback. Filing breakdown is unavailable.
             </p>
           )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -379,6 +381,100 @@ function SupplyDemandOutlookSection({
   )
 }
 
+function SupplyChainNode({ item }: { item: SupplyChainCounterparty }) {
+  const name = cleanDossierDisplayText(item.name)
+  const relationship = cleanDossierDisplayText(item.relationship)
+  const exposure = cleanDossierDisplayText(item.exposure)
+  const notes = cleanDossierDisplayText(item.notes)
+
+  if (!name) return null
+
+  return (
+    <div className="rounded-lg border border-app bg-card px-3 py-2 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-sm font-semibold text-app">{name}</p>
+        {exposure && (
+          <span className="shrink-0 rounded-full border border-[hsl(var(--accent)/0.24)] bg-[hsl(var(--accent-muted))] px-2 py-0.5 text-[11px] font-semibold text-[hsl(var(--link))]">
+            {exposure}
+          </span>
+        )}
+      </div>
+      {relationship && <p className="mt-1 text-xs font-medium text-muted">{relationship}</p>}
+      {notes && <p className="mt-1 text-xs leading-5 text-subtle">{notes}</p>}
+    </div>
+  )
+}
+
+function SupplyChainColumn({
+  title,
+  items,
+  align = "left",
+}: {
+  title: string
+  items: SupplyChainCounterparty[]
+  align?: "left" | "right"
+}) {
+  return (
+    <div className="min-w-0 space-y-2">
+      <h4 className={cn("text-xs font-semibold uppercase text-subtle", align === "right" && "lg:text-right")}>{title}</h4>
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <SupplyChainNode key={`${item.name}-${index}`} item={item} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function FlowConnector() {
+  return (
+    <div className="hidden min-w-[4rem] items-center justify-center lg:flex" aria-hidden="true">
+      <div className="relative h-px w-full bg-[hsl(var(--border-strong))]">
+        <span
+          className="absolute right-0 top-1/2 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-app bg-card text-xs font-semibold text-subtle"
+        >
+          &gt;
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function SupplyChainSection({ supplyChain, ticker }: { supplyChain: ParsedSupplyChain | null; ticker: string }) {
+  const suppliers = (supplyChain?.suppliers ?? []).filter(item => cleanDossierDisplayText(item.name))
+  const customers = (supplyChain?.customers ?? []).filter(item => cleanDossierDisplayText(item.name))
+
+  if (!suppliers.length && !customers.length) return null
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-app">Supply Chain</h3>
+      <div className="rounded-lg border border-app bg-card-muted p-3 sm:p-4">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_4rem_minmax(8rem,0.72fr)_4rem_minmax(0,1fr)] lg:items-center">
+          {suppliers.length > 0 ? (
+            <SupplyChainColumn title="Suppliers" items={suppliers} />
+          ) : (
+            <div className="hidden lg:block" />
+          )}
+          <FlowConnector />
+          <div className="relative flex min-h-24 items-center justify-center rounded-lg border border-[hsl(var(--accent)/0.28)] bg-[hsl(var(--background-elevated))] px-4 py-5 text-center shadow-sm">
+            <div>
+              <p className="text-[11px] font-semibold uppercase text-subtle">Position</p>
+              <p className="mt-1 text-xl font-semibold tracking-normal text-app">{ticker}</p>
+            </div>
+          </div>
+          <FlowConnector />
+          {customers.length > 0 ? (
+            <SupplyChainColumn title="Customers" items={customers} align="right" />
+          ) : (
+            <div className="hidden lg:block" />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function EquityOverviewReadView({
   content,
   parsed,
@@ -393,10 +489,11 @@ export function EquityOverviewReadView({
       <div className="space-y-8">
         <FinancialsSection ticker={ticker} parsed={parsed.financials} />
         {parsed.porters_five_forces && <PortersForcesSection forces={parsed.porters_five_forces} />}
-        {parsed.sensitivity && <SensitivitySection rows={parsed.sensitivity} />}
+        <SupplyChainSection supplyChain={parsed.supply_chain} ticker={ticker} />
         {(parsed.supply_outlook || parsed.demand_outlook) && (
           <SupplyDemandOutlookSection supply={parsed.supply_outlook} demand={parsed.demand_outlook} />
         )}
+        {parsed.sensitivity && <SensitivitySection rows={parsed.sensitivity} />}
       </div>
     )
   }

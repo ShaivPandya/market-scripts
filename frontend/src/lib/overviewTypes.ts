@@ -46,10 +46,23 @@ export interface ParsedOutlookSection {
   points: (string | OutlookPoint)[]
 }
 
+export interface SupplyChainCounterparty {
+  name: string
+  relationship: string | null
+  exposure: string | null
+  notes: string | null
+}
+
+export interface ParsedSupplyChain {
+  suppliers: SupplyChainCounterparty[]
+  customers: SupplyChainCounterparty[]
+}
+
 export interface ParsedOverview {
   financials: ParsedFinancials | null
   sensitivity: SensitivityRow[] | null
   porters_five_forces: PorterForce[] | null
   supply_outlook: ParsedOutlookSection | null
   demand_outlook: ParsedOutlookSection | null
+  supply_chain: ParsedSupplyChain | null
 }

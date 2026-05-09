@@ -511,6 +511,74 @@ def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkey
     assert out["metrics"]["interest_coverage_warning_threshold"] == fs.INTEREST_COVERAGE_WARNING_THRESHOLD
 
 
+def test_get_data_refreshes_stale_edgar_interest_coverage_from_yfinance(monkeypatch):
+    quarterly_income_stmt = pd.DataFrame(
+        {
+            pd.Timestamp("2026-03-31"): [400.0, 4.0, 40.0, 30.0, -4.0],
+            pd.Timestamp("2025-12-31"): [300.0, 3.0, 30.0, 20.0, -3.0],
+            pd.Timestamp("2025-09-30"): [200.0, 2.0, 20.0, 15.0, -2.0],
+            pd.Timestamp("2025-06-30"): [100.0, 1.0, 10.0, 8.0, -1.0],
+        },
+        index=["Total Revenue", "Diluted EPS", "Operating Income", "Net Income", "Interest Expense"],
+    )
+
+    class FakeTicker:
+        def __init__(self, ticker: str):
+            self.ticker = ticker
+            self.info = {"longName": "Example Corp"}
+            self.quarterly_income_stmt = quarterly_income_stmt
+            self.quarterly_financials = quarterly_income_stmt
+
+    us_gaap = {
+        "Revenues": {
+            "units": {
+                "USD": [
+                    _fact(start="2025-01-01", end="2025-12-31", val=1000.0, fy=2025, filed="2026-02-01", accn="rev")
+                ]
+            }
+        },
+        "OperatingIncomeLoss": {
+            "units": {
+                "USD": [_fact(start="2025-01-01", end="2025-12-31", val=200.0, fy=2025, filed="2026-02-01", accn="oi")]
+            }
+        },
+        "NetIncomeLoss": {
+            "units": {
+                "USD": [_fact(start="2025-01-01", end="2025-12-31", val=150.0, fy=2025, filed="2026-02-01", accn="ni")]
+            }
+        },
+        "InterestExpense": {
+            "units": {
+                "USD": [
+                    _fact(
+                        start="2024-01-01",
+                        end="2024-12-31",
+                        val=50.0,
+                        fy=2024,
+                        filed="2025-02-01",
+                        accn="interest",
+                    )
+                ]
+            }
+        },
+    }
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=FakeTicker))
+    monkeypatch.setattr(fs, "get_cik_for_ticker", lambda ticker: "0000000001")
+    monkeypatch.setattr(
+        fs, "fetch_companyfacts_by_cik", lambda cik: {"entityName": "Example Corp", "facts": {"us-gaap": us_gaap}}
+    )
+    monkeypatch.setattr(fs, "fetch_submissions_by_cik", lambda cik: {})
+
+    out = fs.get_data("exm")
+
+    assert out["data_source"] == "sec_edgar"
+    assert out["metrics"]["interest_coverage"] == pytest.approx((40.0 + 30.0 + 20.0 + 10.0) / (4.0 + 3.0 + 2.0 + 1.0))
+    assert out["metrics"]["interest_coverage_basis"] == "ttm"
+    assert out["metrics"]["interest_coverage_period_end"] == "2026-03-31"
+    assert out["metrics"]["interest_coverage_source"] == "yfinance"
+
+
 def test_profitability_metrics_use_aligned_ttm_periods():
     periods = ["2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31"]
     quarterly_revenue = [

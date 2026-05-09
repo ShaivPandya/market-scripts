@@ -74,6 +74,7 @@ from ontology.schemas.identity import (
     signal_id,
     source_freshness_id,
     source_record_object_id,
+    supply_chain_relationship_id,
     supply_demand_outlook_id,
     thesis_claim_id,
     thesis_document_id,
@@ -153,6 +154,7 @@ from ontology.schemas.objects import (
     SignalV1,
     SourceFreshnessV1,
     SourceRecordV1,
+    SupplyChainRelationshipV1,
     SupplyDemandOutlookV1,
     ThesisClaimV1,
     ThesisDocumentV1,
@@ -237,6 +239,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "ExtrinsicSensitivity": ExtrinsicSensitivityV1,
     "IndustryForceAssessment": IndustryForceAssessmentV1,
     "SupplyDemandOutlook": SupplyDemandOutlookV1,
+    "SupplyChainRelationship": SupplyChainRelationshipV1,
     "ThesisDocument": ThesisDocumentV1,
     "ThesisSection": ThesisSectionV1,
     "InvestmentIdea": InvestmentIdeaV1,
@@ -290,6 +293,7 @@ OPTIONAL_NODE_TYPES = {
     "ExtrinsicSensitivity",
     "IndustryForceAssessment",
     "SupplyDemandOutlook",
+    "SupplyChainRelationship",
     "ThesisDocument",
     "ThesisSection",
     "InvestmentIdea",
@@ -703,6 +707,8 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return industry_force_assessment_id(model.force_id)
     if isinstance(model, SupplyDemandOutlookV1):
         return supply_demand_outlook_id(model.outlook_id)
+    if isinstance(model, SupplyChainRelationshipV1):
+        return supply_chain_relationship_id(model.relationship_id)
     if isinstance(model, ThesisDocumentV1):
         return thesis_document_id(model.thesis_document_id)
     if isinstance(model, ThesisSectionV1):
@@ -977,6 +983,8 @@ def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
         return model.force
     if isinstance(model, SupplyDemandOutlookV1):
         return f"{model.outlook_type} outlook"
+    if isinstance(model, SupplyChainRelationshipV1):
+        return f"{model.counterparty_role}: {model.counterparty_name}"
     if isinstance(model, ThesisDocumentV1):
         return f"Thesis document: {model.ticker}"
     if isinstance(model, ThesisSectionV1):

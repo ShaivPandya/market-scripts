@@ -317,6 +317,18 @@ def test_legacy_runtime_backfill_materializes_overview_and_thesis_markdown(monke
 
 ## Demand Outlook
 - **AI servers**: Strong demand is visible.
+
+### Supply Chain
+
+#### Key Suppliers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| ASML | Lithography equipment | Material capex supplier | EUV tools. |
+
+#### Key Customers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| Nvidia | HBM customer | Significant | AI accelerator demand. |
 """,
         encoding="utf-8",
     )
@@ -345,8 +357,9 @@ Memory pricing weakens.
     assert result["objects"]["ExtrinsicSensitivity"] == 1
     assert result["objects"]["IndustryForceAssessment"] == 1
     assert result["objects"]["SupplyDemandOutlook"] == 2
+    assert result["objects"]["SupplyChainRelationship"] == 2
     assert result["objects"]["Thesis"] == 1
     assert result["objects"]["ThesisDocument"] == 1
     assert result["objects"]["ThesisSection"] == 3
     assert result["objects"]["Instrument"] == 2
-    assert result["relations"] >= 13
+    assert result["relations"] >= 15

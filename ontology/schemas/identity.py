@@ -328,6 +328,13 @@ def supply_demand_outlook_id(identifier: object) -> str:
     return f"supply_demand_outlook:{slug(text)}"
 
 
+def supply_chain_relationship_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("supply_chain_relationship:"):
+        text = text.split(":", 1)[1]
+    return f"supply_chain_relationship:{slug(text)}"
+
+
 def thesis_document_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("thesis_document:"):

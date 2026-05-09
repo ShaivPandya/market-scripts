@@ -78,6 +78,7 @@ from ontology.schemas.identity import (
     signal_id,
     source_freshness_id,
     source_record_object_id,
+    supply_chain_relationship_id,
     supply_demand_outlook_id,
     thesis_claim_id,
     thesis_document_id,
@@ -142,6 +143,7 @@ _GOVERNED_OBJECT_TYPES = {
     "ExtrinsicSensitivity",
     "IndustryForceAssessment",
     "SupplyDemandOutlook",
+    "SupplyChainRelationship",
 }
 _GOVERNED_RELATION_TYPES = {
     "action_run_mutates_object_version",
@@ -172,6 +174,7 @@ _GOVERNED_RELATION_TYPES = {
     "equity_overview_has_extrinsic_sensitivity",
     "equity_overview_has_industry_force",
     "equity_overview_has_supply_demand_outlook",
+    "equity_overview_has_supply_chain_relationship",
     "thesis_document_covers_issuer",
     "thesis_document_covers_instrument",
     "thesis_document_has_section",
@@ -717,6 +720,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("supply_demand_outlook:"):
             return key
         return supply_demand_outlook_id(props.get("outlook_id") or key)
+    if object_type == "SupplyChainRelationship":
+        if key.startswith("supply_chain_relationship:"):
+            return key
+        return supply_chain_relationship_id(props.get("relationship_id") or key)
     if object_type == "ThesisDocument":
         if key.startswith("thesis_document:"):
             return key
@@ -947,6 +954,8 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("force_id", out.get("id") or key)
     elif object_type == "SupplyDemandOutlook":
         out.setdefault("outlook_id", out.get("id") or key)
+    elif object_type == "SupplyChainRelationship":
+        out.setdefault("relationship_id", out.get("id") or key)
     elif object_type == "ThesisDocument":
         out.setdefault("thesis_document_id", out.get("id") or key)
     elif object_type == "ThesisSection":

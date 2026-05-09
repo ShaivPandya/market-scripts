@@ -36,6 +36,7 @@ from ontology.schemas.identity import (
     portfolio_risk_snapshot_id,
     position_risk_snapshot_id,
     recommendation_id,
+    supply_chain_relationship_id,
     supply_demand_outlook_id,
     thesis_document_id,
     thesis_id,
@@ -1772,6 +1773,49 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
+        supply_chain = _dict(parsed.get("supply_chain"))
+        for counterparty_role, items in (
+            ("supplier", _list(supply_chain.get("suppliers"))),
+            ("customer", _list(supply_chain.get("customers"))),
+        ):
+            for index, item in enumerate(items, start=1):
+                if not isinstance(item, Mapping) or not item.get("name"):
+                    continue
+                child_uid = supply_chain_relationship_id(
+                    f"{overview_uid}:{counterparty_role}:{index}:{item.get('name')}"
+                )
+                row = self.objects.write_object(
+                    "SupplyChainRelationship",
+                    child_uid,
+                    {
+                        "relationship_id": child_uid,
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "counterparty_role": counterparty_role,
+                        "counterparty_name": item.get("name"),
+                        "relationship": item.get("relationship"),
+                        "exposure": item.get("exposure"),
+                        "notes": item.get("notes"),
+                        "ordinal": index,
+                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    },
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                refs.append(_version_ref_from_row(row))
+                self.objects.write_relation(
+                    overview_uid,
+                    child_uid,
+                    "equity_overview_has_supply_chain_relationship",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
         return refs
 
     def _write_thesis_content(

@@ -16,6 +16,7 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     income = _stmt(
         {
             "Total Revenue": [100, 90, 80, 70],
+            "EBITDA": [30, 30, 30, 30],
             "EBIT": [25, 25, 25, 25],
             "Operating Income": [20, 20, 20, 20],
             "Net Income": [10, 10, 10, 10],
@@ -45,11 +46,14 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     metrics = result["metrics"]
     assert result["enterprise_value"] == 1150
     assert math.isclose(metrics["price_sales"]["value"], 1150 / 340)
+    assert math.isclose(metrics["price_ebitda"]["value"], 1150 / 120)
     assert math.isclose(metrics["price_operating_income"]["value"], 1150 / 100)
     assert math.isclose(metrics["price_fcf"]["value"], 1150 / 40)
     assert math.isclose(metrics["price_earnings"]["value"], 1000 / 40)
     assert math.isclose(metrics["price_book"]["value"], 2.0)
     assert metrics["price_sales"]["label"] == "EV/S"
+    assert metrics["price_ebitda"]["label"] == "EV/EBITDA"
+    assert metrics["price_ebitda"]["denominator_label"] == "TTM EBITDA"
     assert metrics["price_operating_income"]["label"] == "EV/EBIT"
     assert metrics["price_operating_income"]["denominator_label"] == "TTM EBIT"
     assert metrics["price_fcf"]["label"] == "EV/FCF"
@@ -211,6 +215,7 @@ def test_batch_row_uses_daily_cache(monkeypatch):
         key: {"key": key, "label": multiples.VALUATION_LABELS[key], "value": value, "status": "ok"}
         for key, value in {
             "price_sales": 3.0,
+            "price_ebitda": 8.0,
             "price_operating_income": 10.0,
             "price_fcf": 12.0,
             "price_earnings": 15.0,

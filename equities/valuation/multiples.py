@@ -26,20 +26,22 @@ from utils.fx import fx_rate_to_base
 from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
-VALUATION_CURRENT_CACHE_VERSION = "v2"
-VALUATION_PEER_ROW_CACHE_VERSION = "v2"
+VALUATION_CURRENT_CACHE_VERSION = "v3"
+VALUATION_PEER_ROW_CACHE_VERSION = "v3"
 VALUATION_COLUMNS = (
     "price_sales",
+    "price_ebitda",
     "price_operating_income",
     "price_fcf",
     "price_earnings",
     "price_book",
 )
-ENTERPRISE_VALUE_METRICS = {"price_sales", "price_operating_income", "price_fcf"}
+ENTERPRISE_VALUE_METRICS = {"price_sales", "price_ebitda", "price_operating_income", "price_fcf"}
 VALUE_RANGE_SCENARIOS = ("bear", "base", "bull")
 
 VALUATION_LABELS = {
     "price_sales": "EV/S",
+    "price_ebitda": "EV/EBITDA",
     "price_operating_income": "EV/EBIT",
     "price_fcf": "EV/FCF",
     "price_earnings": "P/E",
@@ -48,6 +50,7 @@ VALUATION_LABELS = {
 
 VALUATION_PERIODS = {
     "price_sales": "TTM",
+    "price_ebitda": "TTM",
     "price_operating_income": "TTM",
     "price_fcf": "TTM",
     "price_earnings": "TTM",
@@ -56,6 +59,7 @@ VALUATION_PERIODS = {
 
 DENOMINATOR_LABELS = {
     "price_sales": "TTM revenue",
+    "price_ebitda": "TTM EBITDA",
     "price_operating_income": "TTM EBIT",
     "price_fcf": "TTM free cash flow",
     "price_earnings": "TTM net income",
@@ -63,6 +67,7 @@ DENOMINATOR_LABELS = {
 }
 NUMERATOR_LABELS = {
     "price_sales": "enterprise value",
+    "price_ebitda": "enterprise value",
     "price_operating_income": "enterprise value",
     "price_fcf": "enterprise value",
     "price_earnings": "market capitalization",
@@ -87,9 +92,10 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="General Equity",
         weights={
             "price_sales": 0.15,
-            "price_operating_income": 0.25,
-            "price_fcf": 0.30,
-            "price_earnings": 0.20,
+            "price_ebitda": 0.15,
+            "price_operating_income": 0.20,
+            "price_fcf": 0.25,
+            "price_earnings": 0.15,
             "price_book": 0.10,
         },
         rationale="Balanced operating, cash-flow, earnings, sales, and balance-sheet valuation.",
@@ -99,6 +105,7 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="Bank / Financial",
         weights={
             "price_sales": 0.05,
+            "price_ebitda": 0.00,
             "price_operating_income": 0.10,
             "price_fcf": 0.05,
             "price_earnings": 0.30,
@@ -111,7 +118,8 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="Insurance / Asset Manager",
         weights={
             "price_sales": 0.05,
-            "price_operating_income": 0.20,
+            "price_ebitda": 0.05,
+            "price_operating_income": 0.15,
             "price_fcf": 0.15,
             "price_earnings": 0.35,
             "price_book": 0.25,
@@ -123,7 +131,8 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="High-Growth Software / SaaS",
         weights={
             "price_sales": 0.45,
-            "price_operating_income": 0.10,
+            "price_ebitda": 0.05,
+            "price_operating_income": 0.05,
             "price_fcf": 0.35,
             "price_earnings": 0.05,
             "price_book": 0.05,
@@ -135,9 +144,10 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="Mature Software",
         weights={
             "price_sales": 0.20,
-            "price_operating_income": 0.25,
+            "price_ebitda": 0.10,
+            "price_operating_income": 0.20,
             "price_fcf": 0.35,
-            "price_earnings": 0.15,
+            "price_earnings": 0.10,
             "price_book": 0.05,
         },
         rationale="Mature software is best cross-checked with cash-flow conversion and operating profitability.",
@@ -147,9 +157,10 @@ VALUATION_PROFILES: dict[str, ValuationProfile] = {
         label="Capital-Intensive / Cyclical",
         weights={
             "price_sales": 0.10,
-            "price_operating_income": 0.30,
+            "price_ebitda": 0.20,
+            "price_operating_income": 0.20,
             "price_fcf": 0.25,
-            "price_earnings": 0.25,
+            "price_earnings": 0.15,
             "price_book": 0.10,
         },
         rationale="Cyclical and capital-intensive businesses need operating-profit and cash-flow valuation across the cycle.",
@@ -221,6 +232,13 @@ OPERATING_INCOME_KEYS = (
     "Income From Operations",
     "IncomeLossFromOperations",
 )
+EBITDA_KEYS = (
+    "EBITDA",
+    "Normalized EBITDA",
+    "Ebitda",
+    "Earnings Before Interest Taxes Depreciation And Amortization",
+    "EarningsBeforeInterestTaxesDepreciationAndAmortization",
+)
 NET_INCOME_KEYS = (
     "Net Income",
     "NetIncome",
@@ -241,6 +259,14 @@ CAPEX_KEYS = (
     "CapitalExpenditure",
     "Capital Expenditures",
     "PaymentsToAcquirePropertyPlantAndEquipment",
+)
+DEPRECIATION_AMORTIZATION_KEYS = (
+    "Depreciation And Amortization",
+    "DepreciationAmortizationDepletion",
+    "Reconciled Depreciation",
+    "Depreciation",
+    "Depreciation Depletion And Amortization",
+    "DepreciationDepletionAndAmortization",
 )
 BOOK_VALUE_KEYS = (
     "Stockholders Equity",
@@ -1112,6 +1138,15 @@ def compute_current_multiples_from_statements(
     market_cap = _market_cap(info)
     revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, REVENUE_KEYS)
     operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, OPERATING_INCOME_KEYS)
+    depreciation_amortization_ttm = _ttm_or_latest(
+        quarterly_cashflow,
+        annual_cashflow,
+        DEPRECIATION_AMORTIZATION_KEYS,
+    )
+    ebitda_ttm = _first_not_none(
+        _ttm_or_latest(quarterly_income, annual_income, EBITDA_KEYS),
+        _ebitda_from_operating_income(operating_income_ttm, depreciation_amortization_ttm),
+    )
     net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, NET_INCOME_KEYS)
     operating_cash_flow_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, OPERATING_CASH_FLOW_KEYS)
     capex_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, CAPEX_KEYS)
@@ -1155,6 +1190,20 @@ def compute_current_multiples_from_statements(
             numerator_reason=enterprise_value_payload["reason"],
             denominator_currency=currency_context.get("financial_currency"),
             denominator_converted_currency=currency_context.get("price_currency"),
+        ),
+        "price_ebitda": _metric_payload(
+            "price_ebitda",
+            enterprise_value,
+            ebitda_ttm,
+            _convert_financial_value(ebitda_ttm, currency_context),
+            source="yfinance_statements",
+            numerator_source=enterprise_value_payload["source"],
+            numerator_degraded=enterprise_value_payload["degraded"],
+            numerator_reason=enterprise_value_payload["reason"],
+            denominator_currency=currency_context.get("financial_currency"),
+            denominator_converted_currency=currency_context.get("price_currency"),
+            fallback_value=_positive_float(info.get("enterpriseToEbitda")),
+            fallback_source="yfinance_info.enterpriseToEbitda",
         ),
         "price_operating_income": _metric_payload(
             "price_operating_income",
@@ -1212,7 +1261,9 @@ def compute_current_multiples_from_statements(
         "currency_context": currency_context,
         "financial_data": {
             "revenue_ttm": revenue_ttm,
+            "ebitda_ttm": ebitda_ttm,
             "operating_income_ttm": operating_income_ttm,
+            "depreciation_amortization_ttm": depreciation_amortization_ttm,
             "net_income_ttm": net_income_ttm,
             "operating_cash_flow_ttm": operating_cash_flow_ttm,
             "capex_ttm": capex_ttm,
@@ -1385,7 +1436,12 @@ def peer_context(
     metric_stats: dict[str, Any] = {}
     for key in VALUATION_COLUMNS:
         current_value = _safe_float((metrics.get(key) or {}).get("value"))
-        values = pd.to_numeric(peer_df.get(key), errors="coerce").dropna()
+        raw_values = peer_df.get(key)
+        values = (
+            pd.to_numeric(raw_values, errors="coerce").dropna()
+            if raw_values is not None
+            else pd.Series(dtype="float64")
+        )
         values = values[values > 0].astype(float)
         if current_value is None or current_value <= 0 or len(values) < min_valid_peers:
             metric_stats[key] = {
@@ -1742,6 +1798,16 @@ def _free_cash_flow(operating_cash_flow: float | None, capex: float | None) -> f
     if operating_cash_flow is None or capex is None:
         return None
     return operating_cash_flow + capex if capex < 0 else operating_cash_flow - capex
+
+
+def _ebitda_from_operating_income(
+    operating_income: float | None,
+    depreciation_amortization: float | None,
+) -> float | None:
+    if operating_income is None or depreciation_amortization is None:
+        return None
+    value = operating_income + abs(depreciation_amortization)
+    return value if math.isfinite(value) else None
 
 
 def _multiple(numerator: float | None, denominator: float | None) -> float | None:

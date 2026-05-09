@@ -125,6 +125,7 @@ EQUITY_OVERVIEW_HAS_FINANCIAL_PROFILE: RelationType = "equity_overview_has_finan
 EQUITY_OVERVIEW_HAS_EXTRINSIC_SENSITIVITY: RelationType = "equity_overview_has_extrinsic_sensitivity"
 EQUITY_OVERVIEW_HAS_INDUSTRY_FORCE: RelationType = "equity_overview_has_industry_force"
 EQUITY_OVERVIEW_HAS_SUPPLY_DEMAND_OUTLOOK: RelationType = "equity_overview_has_supply_demand_outlook"
+EQUITY_OVERVIEW_HAS_SUPPLY_CHAIN_RELATIONSHIP: RelationType = "equity_overview_has_supply_chain_relationship"
 THESIS_DOCUMENT_COVERS_ISSUER: RelationType = "thesis_document_covers_issuer"
 THESIS_DOCUMENT_COVERS_INSTRUMENT: RelationType = "thesis_document_covers_instrument"
 THESIS_DOCUMENT_HAS_SECTION: RelationType = "thesis_document_has_section"
@@ -692,6 +693,7 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
                 "ExtrinsicSensitivity",
                 "IndustryForceAssessment",
                 "SupplyDemandOutlook",
+                "SupplyChainRelationship",
                 "ThesisDocument",
                 "ThesisSection",
             }
@@ -716,6 +718,7 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
                 "ExtrinsicSensitivity",
                 "IndustryForceAssessment",
                 "SupplyDemandOutlook",
+                "SupplyChainRelationship",
                 "ThesisDocument",
                 "ThesisSection",
             }
@@ -1052,6 +1055,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         name=EQUITY_OVERVIEW_HAS_SUPPLY_DEMAND_OUTLOOK,
         source_type="EquityOverview",
         target_type="SupplyDemandOutlook",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_HAS_SUPPLY_CHAIN_RELATIONSHIP: RelationDefinition(
+        name=EQUITY_OVERVIEW_HAS_SUPPLY_CHAIN_RELATIONSHIP,
+        source_type="EquityOverview",
+        target_type="SupplyChainRelationship",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
