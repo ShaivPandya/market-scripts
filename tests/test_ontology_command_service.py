@@ -762,6 +762,18 @@ def test_save_overview_content_writes_typed_research_objects_and_chunk_lineage(m
 
 ## Demand Outlook
 - **AI servers**: Strong demand is visible.
+
+### Supply Chain
+
+#### Key Suppliers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| ASML | Lithography equipment | Material capex supplier | EUV tools. |
+
+#### Key Customers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| Nvidia | HBM customer | Significant | AI accelerator demand. |
 """
 
     approval = service.propose_action(
@@ -780,6 +792,7 @@ def test_save_overview_content_writes_typed_research_objects_and_chunk_lineage(m
         "ExtrinsicSensitivity",
         "IndustryForceAssessment",
         "SupplyDemandOutlook",
+        "SupplyChainRelationship",
     } <= object_types
     assert {
         "document_artifact_materializes_research_object",
@@ -789,6 +802,7 @@ def test_save_overview_content_writes_typed_research_objects_and_chunk_lineage(m
         "equity_overview_has_extrinsic_sensitivity",
         "equity_overview_has_industry_force",
         "equity_overview_has_supply_demand_outlook",
+        "equity_overview_has_supply_chain_relationship",
     } <= relation_types
     assert indexed
     assert indexed[0]["doc_type"] == "overview"

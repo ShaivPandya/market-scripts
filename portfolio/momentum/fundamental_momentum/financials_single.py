@@ -562,7 +562,7 @@ def _yf_numeric(v: object) -> float | None:
     return x
 
 
-def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...]):
+def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...], *, freq: str = "annual"):
     for attr in attrs:
         try:
             obj = getattr(ticker_obj, attr)
@@ -573,7 +573,7 @@ def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...]):
             candidate = obj() if callable(obj) else obj
         except TypeError:
             try:
-                candidate = obj(freq="annual")
+                candidate = obj(freq=freq)
             except Exception:
                 continue
         except Exception:
@@ -589,7 +589,7 @@ def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...]):
             continue
         if not callable(obj):
             continue
-        for kwargs in ({"freq": "annual"}, {}):
+        for kwargs in ({"freq": freq}, {}):
             try:
                 candidate = obj(**kwargs)
             except Exception:
@@ -664,8 +664,14 @@ def _yf_column_sort_key(column: object) -> str:
     return _yf_column_date(column)
 
 
-def _yf_period_label(column: object) -> str:
+def _yf_period_label(column: object, *, frequency: str) -> str:
     period_end = _yf_column_date(column)
+    if frequency == "quarterly":
+        d = _parse_iso_date(period_end)
+        if d is not None:
+            q = ((d.month - 1) // 3) + 1
+            return f"Q{q} {d.year}"
+        return "Quarter"
     if len(period_end) >= 4 and period_end[:4].isdigit():
         return f"FY{period_end[:4]}"
     return "FY"
@@ -676,19 +682,27 @@ def _yf_rows_from_statement(
     *,
     value_getter: Any,
     yoy_abs_denom: bool,
+    frequency: str = "annual",
+    limit: int | None = None,
+    yoy_step: int | None = None,
 ) -> list[dict]:
     if statement is None or getattr(statement, "empty", True):
         return []
 
+    if limit is None:
+        limit = ANNUAL_DISPLAY_LIMIT if frequency == "annual" else QUARTERLY_DISPLAY_LIMIT
+    if yoy_step is None:
+        yoy_step = ANNUAL_YOY_STEP if frequency == "annual" else QUARTERLY_YOY_STEP
+
     columns = sorted(list(getattr(statement, "columns", [])), key=_yf_column_sort_key, reverse=True)
     rows: list[dict] = []
-    for column in columns[: ANNUAL_DISPLAY_LIMIT + ANNUAL_YOY_STEP]:
+    for column in columns[: limit + yoy_step]:
         value = value_getter(statement, column)
         if value is None:
             continue
         rows.append(
             {
-                "period_label": _yf_period_label(column),
+                "period_label": _yf_period_label(column, frequency=frequency),
                 "period_end": _yf_column_date(column),
                 "value": value,
                 "yoy_growth": None,
@@ -710,7 +724,176 @@ def _yf_rows_from_statement(
             continue
         row["yoy_growth"] = _safe_growth(curr - prev, prev, denom_abs=yoy_abs_denom)
 
-    return rows[:ANNUAL_DISPLAY_LIMIT]
+    return rows[:limit]
+
+
+def _build_yfinance_income_rows(ticker_obj: Any) -> dict[str, list[dict]]:
+    annual_income = _yf_statement(ticker_obj, ("income_stmt", "financials"), freq="annual")
+    quarterly_income = _yf_statement(ticker_obj, ("quarterly_income_stmt", "quarterly_financials"), freq="quarterly")
+
+    annual_revenue = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_REVENUE_KEYS),
+        yoy_abs_denom=False,
+        frequency="annual",
+    )
+    quarterly_revenue = _yf_rows_from_statement(
+        quarterly_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_REVENUE_KEYS),
+        yoy_abs_denom=False,
+        frequency="quarterly",
+    )
+    annual_eps = _yf_rows_from_statement(
+        annual_income,
+        value_getter=_yf_eps_value,
+        yoy_abs_denom=True,
+        frequency="annual",
+    )
+    quarterly_eps = _yf_rows_from_statement(
+        quarterly_income,
+        value_getter=_yf_eps_value,
+        yoy_abs_denom=True,
+        frequency="quarterly",
+    )
+    annual_operating_income = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_OPERATING_INCOME_KEYS),
+        yoy_abs_denom=False,
+        frequency="annual",
+    )
+    quarterly_operating_income = _yf_rows_from_statement(
+        quarterly_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_OPERATING_INCOME_KEYS),
+        yoy_abs_denom=False,
+        frequency="quarterly",
+    )
+    annual_net_income = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_NET_INCOME_KEYS),
+        yoy_abs_denom=False,
+        frequency="annual",
+    )
+    quarterly_net_income = _yf_rows_from_statement(
+        quarterly_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_NET_INCOME_KEYS),
+        yoy_abs_denom=False,
+        frequency="quarterly",
+    )
+    annual_interest_expense = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_INTEREST_EXPENSE_KEYS),
+        yoy_abs_denom=False,
+        frequency="annual",
+    )
+    quarterly_interest_expense = _yf_rows_from_statement(
+        quarterly_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_INTEREST_EXPENSE_KEYS),
+        yoy_abs_denom=False,
+        frequency="quarterly",
+    )
+
+    return {
+        "annual_revenue": annual_revenue,
+        "quarterly_revenue": quarterly_revenue,
+        "annual_eps": annual_eps,
+        "quarterly_eps": quarterly_eps,
+        "annual_operating_income": annual_operating_income,
+        "quarterly_operating_income": quarterly_operating_income,
+        "annual_net_income": annual_net_income,
+        "quarterly_net_income": quarterly_net_income,
+        "annual_interest_expense": annual_interest_expense,
+        "quarterly_interest_expense": quarterly_interest_expense,
+    }
+
+
+def _build_yfinance_profitability_metrics(ticker: str) -> dict[str, object | None] | None:
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None
+
+    try:
+        rows = _build_yfinance_income_rows(yf.Ticker(ticker))
+    except Exception:
+        LOGGER.debug("%s: yfinance profitability refresh failed", ticker, exc_info=True)
+        return None
+
+    metrics = _build_profitability_metrics(
+        rows["annual_revenue"],
+        rows["quarterly_revenue"],
+        rows["annual_operating_income"],
+        rows["quarterly_operating_income"],
+        rows["annual_net_income"],
+        rows["quarterly_net_income"],
+        rows["annual_interest_expense"],
+        rows["quarterly_interest_expense"],
+    )
+    metrics["interest_coverage_source"] = "yfinance"
+    return metrics
+
+
+def _date_key(value: object):
+    parsed = _parse_iso_date(str(value or ""))
+    return parsed
+
+
+def _latest_period_end(*row_groups: list[dict]) -> str | None:
+    latest: str | None = None
+    latest_date = None
+    for rows in row_groups:
+        for row in rows:
+            period_end = str(row.get("period_end") or "")
+            d = _date_key(period_end)
+            if d is None:
+                continue
+            if latest_date is None or d > latest_date:
+                latest = period_end
+                latest_date = d
+    return latest
+
+
+def _period_after(candidate: object, current: object) -> bool:
+    candidate_date = _date_key(candidate)
+    if candidate_date is None:
+        return False
+    current_date = _date_key(current)
+    return current_date is None or candidate_date > current_date
+
+
+def _maybe_refresh_interest_coverage_from_yfinance(
+    ticker: str,
+    metrics: dict[str, object | None],
+    *,
+    annual_operating_income: list[dict],
+    quarterly_operating_income: list[dict],
+) -> dict[str, object | None]:
+    latest_operating_period = _latest_period_end(quarterly_operating_income, annual_operating_income)
+    current_interest_period = metrics.get("interest_coverage_period_end")
+    if current_interest_period is not None and not _period_after(latest_operating_period, current_interest_period):
+        metrics["interest_coverage_source"] = "sec_edgar"
+        return metrics
+
+    yf_metrics = _build_yfinance_profitability_metrics(ticker)
+    if not yf_metrics or yf_metrics.get("interest_coverage") is None:
+        metrics["interest_coverage_source"] = "sec_edgar"
+        return metrics
+
+    yf_period = yf_metrics.get("interest_coverage_period_end")
+    if not _period_after(yf_period, current_interest_period):
+        metrics["interest_coverage_source"] = "sec_edgar"
+        return metrics
+
+    refreshed = dict(metrics)
+    for key in (
+        "interest_coverage",
+        "interest_coverage_basis",
+        "interest_coverage_period_end",
+        "interest_coverage_flag",
+        "interest_coverage_warning_threshold",
+        "interest_coverage_source",
+    ):
+        refreshed[key] = yf_metrics.get(key)
+    return refreshed
 
 
 def _empty_breakdown() -> dict:
@@ -734,47 +917,26 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
 
     ticker_obj = yf.Ticker(ticker)
     info = _yf_info(ticker_obj)
-    annual_income = _yf_statement(ticker_obj, ("income_stmt", "financials"))
+    yf_rows = _build_yfinance_income_rows(ticker_obj)
+    annual_revenue = yf_rows["annual_revenue"]
+    quarterly_revenue = yf_rows["quarterly_revenue"]
+    annual_eps = yf_rows["annual_eps"]
+    quarterly_eps = yf_rows["quarterly_eps"]
 
-    annual_revenue = _yf_rows_from_statement(
-        annual_income,
-        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_REVENUE_KEYS),
-        yoy_abs_denom=False,
-    )
-    annual_eps = _yf_rows_from_statement(
-        annual_income,
-        value_getter=_yf_eps_value,
-        yoy_abs_denom=True,
-    )
-    annual_operating_income = _yf_rows_from_statement(
-        annual_income,
-        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_OPERATING_INCOME_KEYS),
-        yoy_abs_denom=False,
-    )
-    annual_net_income = _yf_rows_from_statement(
-        annual_income,
-        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_NET_INCOME_KEYS),
-        yoy_abs_denom=False,
-    )
-    annual_interest_expense = _yf_rows_from_statement(
-        annual_income,
-        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_INTEREST_EXPENSE_KEYS),
-        yoy_abs_denom=False,
-    )
-
-    if not annual_revenue and not annual_eps:
+    if not annual_revenue and not quarterly_revenue and not annual_eps and not quarterly_eps:
         raise ValueError(f"No Revenue or EPS history found in Yahoo Finance for ticker: {ticker}")
 
     profitability_metrics = _build_profitability_metrics(
         annual_revenue,
-        [],
-        annual_operating_income,
-        [],
-        annual_net_income,
-        [],
-        annual_interest_expense,
-        [],
+        quarterly_revenue,
+        yf_rows["annual_operating_income"],
+        yf_rows["quarterly_operating_income"],
+        yf_rows["annual_net_income"],
+        yf_rows["quarterly_net_income"],
+        yf_rows["annual_interest_expense"],
+        yf_rows["quarterly_interest_expense"],
     )
+    profitability_metrics["interest_coverage_source"] = "yfinance"
 
     return {
         "ticker": ticker,
@@ -786,8 +948,8 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
         "metrics": {
             "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3, abs_fallback=False),
             "eps_cagr_3y": _calc_cagr(annual_eps, years=3, abs_fallback=True),
-            "avg_yoy_eps_growth_3q": None,
-            "avg_yoy_revenue_growth_3q": None,
+            "avg_yoy_eps_growth_3q": _calc_avg_3q_yoy(quarterly_eps, denom_abs=True),
+            "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
             **profitability_metrics,
         },
         "annual": {
@@ -795,8 +957,8 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
             "eps": annual_eps,
         },
         "quarterly": {
-            "revenue": [],
-            "eps": [],
+            "revenue": quarterly_revenue,
+            "eps": quarterly_eps,
         },
         "breakdown": _empty_breakdown(),
     }
@@ -1712,6 +1874,12 @@ def get_data(ticker: str) -> dict:
         "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
         **profitability_metrics,
     }
+    metrics = _maybe_refresh_interest_coverage_from_yfinance(
+        tk,
+        metrics,
+        annual_operating_income=annual_operating_income,
+        quarterly_operating_income=quarterly_operating_income,
+    )
 
     breakdown = _build_breakdown(us_gaap, cik_str, submissions)
 

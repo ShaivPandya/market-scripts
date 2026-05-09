@@ -60,6 +60,7 @@ from ontology.schemas.identity import (
     position_risk_snapshot_id,
     recommendation_id,
     source_freshness_id,
+    supply_chain_relationship_id,
     supply_demand_outlook_id,
     thesis_document_id,
     thesis_section_id,
@@ -1449,6 +1450,46 @@ def _overview_rows(
             relations.append(
                 _domain_relation("equity_overview_has_supply_demand_outlook", overview_uid, child_uid, cutover_time)
             )
+        supply_chain = parsed_dict.get("supply_chain") if isinstance(parsed_dict.get("supply_chain"), dict) else {}
+        for counterparty_role, items in (
+            ("supplier", supply_chain.get("suppliers") if isinstance(supply_chain, dict) else []),
+            ("customer", supply_chain.get("customers") if isinstance(supply_chain, dict) else []),
+        ):
+            if not isinstance(items, list):
+                continue
+            for index, item in enumerate(items, start=1):
+                if not isinstance(item, dict) or not item.get("name"):
+                    continue
+                child_uid = supply_chain_relationship_id(
+                    f"{overview_uid}:{counterparty_role}:{index}:{item.get('name')}"
+                )
+                mutations.append(
+                    (
+                        "SupplyChainRelationship",
+                        child_uid,
+                        {
+                            "relationship_id": child_uid,
+                            "overview_id": overview_uid,
+                            "issuer_id": issuer_uid,
+                            "ticker": ticker,
+                            "counterparty_role": counterparty_role,
+                            "counterparty_name": item.get("name"),
+                            "relationship": item.get("relationship"),
+                            "exposure": item.get("exposure"),
+                            "notes": item.get("notes"),
+                            "ordinal": index,
+                        },
+                        cutover_time,
+                    )
+                )
+                relations.append(
+                    _domain_relation(
+                        "equity_overview_has_supply_chain_relationship",
+                        overview_uid,
+                        child_uid,
+                        cutover_time,
+                    )
+                )
     return mutations, relations
 
 

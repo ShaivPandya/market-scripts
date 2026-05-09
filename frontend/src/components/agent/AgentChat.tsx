@@ -52,6 +52,7 @@ function resizeChatTextarea(el: HTMLTextAreaElement) {
   el.style.height = "auto"
   const nextHeight = Math.min(el.scrollHeight, CHAT_TEXTAREA_MAX_HEIGHT)
   el.style.height = `${nextHeight}px`
+  el.style.overflowX = "hidden"
   el.style.overflowY = el.scrollHeight > CHAT_TEXTAREA_MAX_HEIGHT ? "auto" : "hidden"
 }
 
@@ -632,9 +633,9 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   placeholder="Ask about markets, portfolio, macro..."
                   rows={1}
                   className={cn(
-                    "theme-input max-h-[120px] flex-1 resize-none text-sm",
+                    "theme-input min-w-0 max-h-[120px] flex-1 resize-none overflow-x-hidden text-sm",
                   )}
-                  style={{ minHeight: "38px", overflowY: "hidden" }}
+                  style={{ minHeight: "38px", overflowX: "hidden", overflowY: "hidden" }}
                   onInput={e => resizeChatTextarea(e.currentTarget)}
                   disabled={isStreaming}
                 />

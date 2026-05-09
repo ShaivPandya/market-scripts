@@ -50,6 +50,64 @@ def _document_generation_upload_path(job_id: str):
     return _local_path_for_storage_key(payload["storage_key"])
 
 
+def test_parse_overview_supply_chain_tables_and_placeholders():
+    parsed = overview_router.parse_overview_markdown(
+        """# MU Overview
+
+## Industry
+
+### Supply Chain
+
+#### Key Suppliers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| ASML | EUV lithography equipment | Material capex supplier |
+| Data not available | | | |
+
+#### Key Customers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+| Nvidia | HBM customer | Significant | AI accelerator demand. |
+| AMD | HBM customer | | GPU ramp. |
+"""
+    )
+
+    assert parsed is not None
+    assert parsed["supply_chain"] == {
+        "suppliers": [
+            {
+                "name": "ASML",
+                "relationship": "EUV lithography equipment",
+                "exposure": "Material capex supplier",
+                "notes": None,
+            }
+        ],
+        "customers": [
+            {
+                "name": "Nvidia",
+                "relationship": "HBM customer",
+                "exposure": "Significant",
+                "notes": "AI accelerator demand.",
+            },
+            {"name": "AMD", "relationship": "HBM customer", "exposure": None, "notes": "GPU ramp."},
+        ],
+    }
+
+
+def test_parse_overview_omits_empty_supply_chain():
+    parsed = overview_router.parse_overview_markdown(
+        """# MU Overview
+
+## Industry
+
+### Supply Chain
+Data not available in source document.
+"""
+    )
+
+    assert parsed is None
+
+
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
@@ -296,6 +354,15 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
             "- Supply is stable\n\n"
             "### Demand Outlook\n"
             "- Demand is improving\n"
+            "### Supply Chain\n\n"
+            "#### Key Suppliers\n"
+            "| Entity | Relationship | Exposure | Notes |\n"
+            "|--------|--------------|----------|-------|\n"
+            "| ASML | Lithography equipment | Material capex supplier | EUV systems. |\n\n"
+            "#### Key Customers\n"
+            "| Entity | Relationship | Exposure | Notes |\n"
+            "|--------|--------------|----------|-------|\n"
+            "| Nvidia | HBM customer | Significant | AI accelerator demand. |\n"
         )
 
     monkeypatch.setattr(overview_router, "_call_llm_overview_pdf", fail_pdf_call)
@@ -322,6 +389,10 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
     assert payload["ticker"] == "MU"
     assert payload["content"].startswith("# MU Overview")
     assert "### Porter's Five Forces" in payload["content"]
+    parsed = overview_router.parse_overview_markdown(payload["content"])
+    assert parsed is not None
+    assert parsed["supply_chain"]["suppliers"][0]["name"] == "ASML"
+    assert parsed["supply_chain"]["customers"][0]["name"] == "Nvidia"
     assert (overview_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
     assert len(markdown_calls) == 1
     assert not upload_path.exists()

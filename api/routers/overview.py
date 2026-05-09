@@ -59,6 +59,21 @@ Only include factors relevant to this company. If the source document does not c
 - **Threat of Substitutes — Low/Medium/High**: concise explanation
 - **Competitive Rivalry — Low/Medium/High**: concise explanation
 
+### Supply Chain
+Only include this subsection if the source names specific suppliers or customers.
+If included, use these tables and include only source-backed named entities:
+
+#### Key Suppliers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+
+#### Key Customers
+| Entity | Relationship | Exposure | Notes |
+|--------|--------------|----------|-------|
+
+If the source does not name specific suppliers or customers, omit the entire ### Supply Chain section.
+Do not output empty Supply Chain tables, demo names, hallucinated counterparties, or "Data not available" for Supply Chain.
+
 ### Supply Outlook
 - current and forward-looking supply dynamics
 
@@ -72,12 +87,14 @@ Do not include disclaimers or any text outside the markdown."""
 _PDF_USER_PROMPT = """Use the attached PDF to write the equity overview markdown.
 Extract specific data points (revenue growth percentages, EPS figures, debt amounts, sensitivity ratings) directly from the document.
 If a section's data is not present in the source document, write "Data not available in source document" under that subsection.
+Supply Chain is the only exception: omit the entire ### Supply Chain section unless the source names specific suppliers or customers.
 Keep it concise and decision-useful."""
 
 _MARKDOWN_USER_PROMPT = """Use the uploaded markdown below to write the equity overview markdown.
 Restructure the source into the exact schema from the system prompt so the application can render the structured Overview UI.
 Preserve source-backed company-specific facts, but remove citation artifacts, entity tags, nav lists, and source metadata that are not useful in the overview UI.
 If a section's data is not present in the source document, write "Data not available in source document" under that subsection.
+Supply Chain is the only exception: omit the entire ### Supply Chain section unless the source names specific suppliers or customers.
 Keep it concise and decision-useful."""
 
 
@@ -250,6 +267,93 @@ def _parse_sensitivity(text: str) -> list[dict] | None:
     return rows if rows else None
 
 
+def _markdown_table_cells(line: str) -> list[str]:
+    raw = line.strip()
+    if not raw or "|" not in raw:
+        return []
+    if raw.startswith("|"):
+        raw = raw[1:]
+    if raw.endswith("|"):
+        raw = raw[:-1]
+    return [cell.strip() for cell in raw.split("|")]
+
+
+def _is_markdown_separator_row(cells: list[str]) -> bool:
+    non_empty = [cell.replace(" ", "") for cell in cells if cell.strip()]
+    return bool(non_empty) and all(re.match(r"^:?-{2,}:?$", cell) for cell in non_empty)
+
+
+_PLACEHOLDER_COUNTERPARTY_RE = re.compile(
+    r"^(?:entity|name|n/?a|na|none|unknown|not\s+(?:available|disclosed|named)|"
+    r"data\s+not\s+available(?:\s+in\s+source\s+document)?|"
+    r"no\s+specific\s+(?:suppliers?|customers?|buyers?)\s+(?:named|disclosed|identified))$",
+    re.IGNORECASE,
+)
+
+
+def _optional_supply_chain_cell(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text or _PLACEHOLDER_COUNTERPARTY_RE.match(text):
+        return None
+    return text
+
+
+def _parse_supply_chain_table(text: str) -> list[dict]:
+    rows: list[dict] = []
+    in_table = False
+    for line in text.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            continue
+        if _is_markdown_separator_row(cells):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        name = _optional_supply_chain_cell(cells[0] if len(cells) > 0 else None)
+        if not name:
+            continue
+        rows.append(
+            {
+                "name": name,
+                "relationship": _optional_supply_chain_cell(cells[1] if len(cells) > 1 else None),
+                "exposure": _optional_supply_chain_cell(cells[2] if len(cells) > 2 else None),
+                "notes": _optional_supply_chain_cell(cells[3] if len(cells) > 3 else None),
+            }
+        )
+    return rows
+
+
+def _split_supply_chain_subsections(text: str) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current_key: str | None = None
+    for line in text.splitlines():
+        heading = re.match(r"^\s*####\s+(.+?)\s*$", line)
+        if heading:
+            title = heading.group(1).strip().lower()
+            if "supplier" in title:
+                current_key = "suppliers"
+            elif "customer" in title or "buyer" in title:
+                current_key = "customers"
+            else:
+                current_key = None
+            if current_key is not None:
+                sections.setdefault(current_key, [])
+            continue
+        if current_key is not None:
+            sections[current_key].append(line)
+    return {key: "\n".join(lines).strip() for key, lines in sections.items()}
+
+
+def _parse_supply_chain(text: str) -> dict | None:
+    subsections = _split_supply_chain_subsections(text)
+    suppliers = _parse_supply_chain_table(subsections.get("suppliers", ""))
+    customers = _parse_supply_chain_table(subsections.get("customers", ""))
+    if not suppliers and not customers:
+        return None
+    return {"suppliers": suppliers, "customers": customers}
+
+
 def _parse_porters(text: str) -> list[dict] | None:
     forces: list[dict] = []
     for line in text.splitlines():
@@ -339,6 +443,12 @@ def parse_overview_markdown(content: str) -> dict | None:
         result["demand_outlook"] = _parse_outlook(sections.get("demand outlook", ""))
     except Exception:
         result["demand_outlook"] = None
+
+    # Supply Chain
+    try:
+        result["supply_chain"] = _parse_supply_chain(sections.get("supply chain", ""))
+    except Exception:
+        result["supply_chain"] = None
 
     return result if any(v is not None for v in result.values()) else None
 
@@ -430,26 +540,15 @@ def generate_overview_from_upload_bytes(
         except Exception as e:
             raise DataFetchError(source="llm", detail=f"Failed to generate overview: {e}") from e
 
-    try:
-        source_path = _write_overview(normalized_ticker, content)
-    except Exception as e:
-        from api.exceptions import AppError
-
-        raise AppError(f"Failed to write overview file: {e}") from e
-
-    # Index overview for semantic search (best-effort)
-    try:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="overview",
-            content=content,
-            ticker=normalized_ticker,
-            source_path=source_path,
-            doc_id=f"overview-{normalized_ticker}",
-        )
-    except Exception:
-        pass
+    _sync_overview_content_paths()
+    stage_api_action(
+        "save_overview_content",
+        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        source_id="overview.generate_overview",
+        reason=f"Generate equity overview for {normalized_ticker} from upload",
+        apply=True,
+        approval_note="Approved generated overview upload.",
+    )
 
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
 

@@ -176,7 +176,7 @@ export function Financials() {
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
   const { data: rawData, isFetching, isError, error } = useQuery({
-    queryKey: ["financials-v11", submittedTicker],
+    queryKey: ["financials-v12", submittedTicker],
     queryFn: () => runFinancials({ ticker: submittedTicker! }),
     enabled: Boolean(submittedTicker),
     staleTime: Infinity,
@@ -272,7 +272,7 @@ export function Financials() {
             </p>
             {dataSource === "yfinance" ? (
               <p className="mt-1 text-sm text-gray-500">
-                Quarterly YoY metrics and filing revenue breakdown are unavailable from this fallback.
+                Filing revenue breakdown is unavailable from this fallback.
               </p>
             ) : null}
           </div>
