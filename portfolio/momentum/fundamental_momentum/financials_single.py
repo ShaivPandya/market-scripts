@@ -13,7 +13,8 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, SupportsFloat, SupportsIndex, Tuple  # noqa: UP035
+from collections.abc import Callable
+from typing import Any, Dict, List, Optional, Set, SupportsFloat, SupportsIndex, Tuple, TypedDict  # noqa: UP035
 
 from llm_utils import MODEL_LOW, MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 from portfolio.momentum.fundamental_momentum._edgar_periods import (
@@ -128,6 +129,12 @@ ANNUAL_YOY_STEP = 1
 QUARTERLY_YOY_STEP = 4
 
 
+class _RatioResult(TypedDict):
+    value: float | None
+    basis: str | None
+    period_end: str | None
+
+
 def _period_label(e: dict, frequency: str) -> str:
     end = str(e.get("end") or "")
     fy = e.get("fy")
@@ -229,7 +236,11 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -
     return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
-def _pick_first_concept_entries(us_gaap: dict, concepts: tuple[str, ...], extractor) -> list[dict]:
+def _pick_first_concept_entries(
+    us_gaap: dict,
+    concepts: tuple[str, ...],
+    extractor: Callable[[list[dict]], list[dict]],
+) -> list[dict]:
     for concept in concepts:
         raw = _entries_for(us_gaap, concept, "USD")
         if not raw:
@@ -433,7 +444,7 @@ def _values_by_period(rows: list[dict]) -> dict[str, float]:
     return out
 
 
-def _empty_ratio_result() -> dict[str, object | None]:
+def _empty_ratio_result() -> _RatioResult:
     return {"value": None, "basis": None, "period_end": None}
 
 
@@ -463,7 +474,7 @@ def _calc_aligned_ratio(
     denominator_quarterly: list[dict],
     *,
     denominator_abs: bool = False,
-) -> dict[str, object | None]:
+) -> _RatioResult:
     quarterly_numerator = _values_by_period(numerator_quarterly)
     quarterly_denominator = _values_by_period(denominator_quarterly)
     common_quarterly = sorted(set(quarterly_numerator) & set(quarterly_denominator), reverse=True)
