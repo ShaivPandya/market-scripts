@@ -6,6 +6,7 @@ import { FileUp, Play, Save, Trash2 } from "lucide-react"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ActionPill, EvaluationPanel } from "@/components/idea/EvaluationPanel"
 import { ManagementQualityPreview } from "@/components/idea/ManagementQualityPreview"
+import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
@@ -37,7 +38,7 @@ import {
 } from "@/lib/ideaUtils"
 import { cn } from "@/lib/utils"
 
-const TABS = ["Overview", "Management Quality", "Thesis", "Evaluation"] as const
+const TABS = ["Overview", "Management Quality", "Valuation", "Thesis", "Evaluation"] as const
 type Tab = typeof TABS[number]
 
 const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
@@ -496,6 +497,8 @@ export function IdeaDetail() {
                 )}
               </section>
             )}
+
+            {tab === "Valuation" && <PositionValuationTab ticker={selectedIdea.ticker} />}
 
             {tab === "Thesis" && (
               <section className="space-y-4">

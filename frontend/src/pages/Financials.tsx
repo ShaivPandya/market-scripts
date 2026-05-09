@@ -39,6 +39,24 @@ function formatPct(v: unknown): string {
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`
 }
 
+function formatCoverage(v: unknown): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
+  return `${v.toFixed(2)}x`
+}
+
+function metricBasisLabel(basis: unknown, periodEnd: unknown): string | undefined {
+  if (typeof basis !== "string" || typeof periodEnd !== "string" || !periodEnd) return undefined
+  if (basis === "ttm") return `TTM through ${periodEnd}`
+  if (basis === "annual") return `Annual through ${periodEnd}`
+  return undefined
+}
+
+function interestCoverageSignalLabel(metrics: Record<string, unknown>): string | undefined {
+  if (metrics.interest_coverage_flag !== true) return undefined
+  const threshold = formatCoverage(metrics.interest_coverage_warning_threshold)
+  return threshold === "N/A" ? "Below threshold" : `Below ${threshold}`
+}
+
 function formatPctWhole(v: unknown): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
   return `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`
@@ -158,7 +176,7 @@ export function Financials() {
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
   const { data: rawData, isFetching, isError, error } = useQuery({
-    queryKey: ["financials-v10", submittedTicker],
+    queryKey: ["financials-v11", submittedTicker],
     queryFn: () => runFinancials({ ticker: submittedTicker! }),
     enabled: Boolean(submittedTicker),
     staleTime: Infinity,
@@ -264,6 +282,23 @@ export function Financials() {
             <MetricCard title="3Y EPS CAGR" value={formatPct(metrics.eps_cagr_3y)} />
             <MetricCard title="Avg YoY EPS Growth (3Q)" value={formatPct(metrics.avg_yoy_eps_growth_3q)} />
             <MetricCard title="Avg YoY Revenue Growth (3Q)" value={formatPct(metrics.avg_yoy_revenue_growth_3q)} />
+            <MetricCard
+              title="Interest Coverage"
+              value={formatCoverage(metrics.interest_coverage)}
+              subtitle={metricBasisLabel(metrics.interest_coverage_basis, metrics.interest_coverage_period_end)}
+              signal={metrics.interest_coverage_flag === true ? "error" : null}
+              signalLabel={interestCoverageSignalLabel(metrics)}
+            />
+            <MetricCard
+              title="Operating Margin"
+              value={formatPct(metrics.operating_margin)}
+              subtitle={metricBasisLabel(metrics.operating_margin_basis, metrics.operating_margin_period_end)}
+            />
+            <MetricCard
+              title="Net Income Margin"
+              value={formatPct(metrics.net_income_margin)}
+              subtitle={metricBasisLabel(metrics.net_income_margin_basis, metrics.net_income_margin_period_end)}
+            />
           </div>
 
           <div>

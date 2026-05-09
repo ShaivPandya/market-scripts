@@ -38,6 +38,10 @@ def _us_gaap(concept: str, unit: str, rows: list[dict]) -> dict:
     return {concept: {"units": {unit: rows}}}
 
 
+def _metric_row(period_end: str, value: float) -> dict:
+    return {"period_end": period_end, "value": value}
+
+
 def test_annual_revenue_excludes_interim_10k_facts_and_prefers_own_filing():
     rows = [
         _fact(
@@ -410,15 +414,59 @@ def test_quarterly_selection_prefers_period_own_filing_over_later_comparative():
     assert q1["accn"] == "q1-2025-own"
 
 
+def test_interest_expense_rows_preserve_edgar_concept_priority():
+    us_gaap = {
+        "InterestExpense": {
+            "units": {
+                "USD": [
+                    _fact(
+                        start="2024-01-01",
+                        end="2024-12-31",
+                        val=10.0,
+                        fy=2024,
+                        filed="2025-02-01",
+                        accn="interest-expense",
+                    )
+                ]
+            }
+        },
+        "InterestAndDebtExpense": {
+            "units": {
+                "USD": [
+                    _fact(
+                        start="2025-01-01",
+                        end="2025-12-31",
+                        val=99.0,
+                        fy=2025,
+                        filed="2026-02-01",
+                        accn="interest-and-debt-expense",
+                    )
+                ]
+            }
+        },
+    }
+
+    annual, _quarterly = fs._build_flow_rows(
+        us_gaap,
+        fs.INTEREST_EXPENSE_RATIO_CONCEPTS,
+        "0000000000",
+        None,
+        preserve_concept_order=True,
+    )
+
+    assert annual[0]["value"] == 10.0
+    assert annual[0]["accn"] == "interest-expense"
+
+
 def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkeypatch):
     income_stmt = pd.DataFrame(
         {
-            pd.Timestamp("2025-12-31"): [160.0, 4.0],
-            pd.Timestamp("2024-12-31"): [140.0, 3.0],
-            pd.Timestamp("2023-12-31"): [120.0, 2.5],
-            pd.Timestamp("2022-12-31"): [100.0, 2.0],
+            pd.Timestamp("2025-12-31"): [160.0, 4.0, 32.0, 24.0, -8.0],
+            pd.Timestamp("2024-12-31"): [140.0, 3.0, 28.0, 21.0, -7.0],
+            pd.Timestamp("2023-12-31"): [120.0, 2.5, 18.0, 12.0, -6.0],
+            pd.Timestamp("2022-12-31"): [100.0, 2.0, 10.0, 8.0, -5.0],
         },
-        index=["Total Revenue", "Diluted EPS"],
+        index=["Total Revenue", "Diluted EPS", "Operating Income", "Net Income", "Interest Expense"],
     )
 
     class FakeTicker:
@@ -454,3 +502,135 @@ def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkey
     assert out["metrics"]["eps_cagr_3y"] == pytest.approx((4.0 / 2.0) ** (1.0 / 3.0) - 1.0)
     assert out["metrics"]["avg_yoy_revenue_growth_3q"] is None
     assert out["metrics"]["avg_yoy_eps_growth_3q"] is None
+    assert out["metrics"]["operating_margin"] == pytest.approx(32.0 / 160.0)
+    assert out["metrics"]["operating_margin_basis"] == "annual"
+    assert out["metrics"]["operating_margin_period_end"] == "2025-12-31"
+    assert out["metrics"]["net_income_margin"] == pytest.approx(24.0 / 160.0)
+    assert out["metrics"]["interest_coverage"] == pytest.approx(32.0 / 8.0)
+    assert out["metrics"]["interest_coverage_flag"] is False
+    assert out["metrics"]["interest_coverage_warning_threshold"] == fs.INTEREST_COVERAGE_WARNING_THRESHOLD
+
+
+def test_profitability_metrics_use_aligned_ttm_periods():
+    periods = ["2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31"]
+    quarterly_revenue = [
+        _metric_row(period, value) for period, value in zip(periods, [100.0, 90.0, 80.0, 70.0], strict=True)
+    ]
+    quarterly_operating_income = [
+        _metric_row(period, value) for period, value in zip(periods, [20.0, 18.0, 16.0, 14.0], strict=True)
+    ]
+    quarterly_net_income = [
+        _metric_row(period, value) for period, value in zip(periods, [10.0, 9.0, 8.0, 7.0], strict=True)
+    ]
+    quarterly_interest_expense = [_metric_row(period, 5.0) for period in periods]
+
+    metrics = fs._build_profitability_metrics(
+        [],
+        quarterly_revenue,
+        [],
+        quarterly_operating_income,
+        [],
+        quarterly_net_income,
+        [],
+        quarterly_interest_expense,
+    )
+
+    assert metrics["operating_margin"] == pytest.approx(68.0 / 340.0)
+    assert metrics["operating_margin_basis"] == "ttm"
+    assert metrics["operating_margin_period_end"] == "2025-12-31"
+    assert metrics["net_income_margin"] == pytest.approx(34.0 / 340.0)
+    assert metrics["net_income_margin_basis"] == "ttm"
+    assert metrics["interest_coverage"] == pytest.approx(68.0 / 20.0)
+    assert metrics["interest_coverage_basis"] == "ttm"
+    assert metrics["interest_coverage_flag"] is True
+
+
+def test_profitability_metrics_fall_back_to_latest_aligned_annual_period():
+    quarterly_revenue = [_metric_row("2025-12-31", 100.0), _metric_row("2025-09-30", 90.0)]
+    quarterly_operating_income = [_metric_row("2025-12-31", 25.0), _metric_row("2025-09-30", 20.0)]
+    annual_revenue = [_metric_row("2024-12-31", 200.0), _metric_row("2023-12-31", 180.0)]
+    annual_operating_income = [_metric_row("2024-12-31", 50.0), _metric_row("2023-12-31", 36.0)]
+    annual_net_income = [_metric_row("2024-12-31", 30.0), _metric_row("2023-12-31", 27.0)]
+    annual_interest_expense = [_metric_row("2024-12-31", 10.0), _metric_row("2023-12-31", 9.0)]
+
+    metrics = fs._build_profitability_metrics(
+        annual_revenue,
+        quarterly_revenue,
+        annual_operating_income,
+        quarterly_operating_income,
+        annual_net_income,
+        [],
+        annual_interest_expense,
+        [],
+    )
+
+    assert metrics["operating_margin"] == pytest.approx(50.0 / 200.0)
+    assert metrics["operating_margin_basis"] == "annual"
+    assert metrics["operating_margin_period_end"] == "2024-12-31"
+    assert metrics["net_income_margin"] == pytest.approx(30.0 / 200.0)
+    assert metrics["interest_coverage"] == pytest.approx(50.0 / 10.0)
+    assert metrics["interest_coverage_flag"] is False
+
+
+def test_profitability_metrics_return_null_for_mismatched_periods():
+    metrics = fs._build_profitability_metrics(
+        [_metric_row("2024-12-31", 200.0)],
+        [],
+        [_metric_row("2023-12-31", 50.0)],
+        [],
+        [_metric_row("2023-12-31", 30.0)],
+        [],
+        [_metric_row("2022-12-31", 10.0)],
+        [],
+    )
+
+    assert metrics["operating_margin"] is None
+    assert metrics["operating_margin_basis"] is None
+    assert metrics["net_income_margin"] is None
+    assert metrics["interest_coverage"] is None
+    assert metrics["interest_coverage_flag"] is False
+
+
+def test_negative_operating_income_interest_coverage_is_flagged():
+    metrics = fs._build_profitability_metrics(
+        [],
+        [],
+        [_metric_row("2024-12-31", -20.0)],
+        [],
+        [],
+        [],
+        [_metric_row("2024-12-31", -10.0)],
+        [],
+    )
+
+    assert metrics["interest_coverage"] == pytest.approx(-2.0)
+    assert metrics["interest_coverage_basis"] == "annual"
+    assert metrics["interest_coverage_flag"] is True
+
+
+def test_zero_or_missing_interest_expense_returns_null_without_flag():
+    zero_metrics = fs._build_profitability_metrics(
+        [],
+        [],
+        [_metric_row("2024-12-31", 20.0)],
+        [],
+        [],
+        [],
+        [_metric_row("2024-12-31", 0.0)],
+        [],
+    )
+    missing_metrics = fs._build_profitability_metrics(
+        [],
+        [],
+        [_metric_row("2024-12-31", 20.0)],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
+
+    assert zero_metrics["interest_coverage"] is None
+    assert zero_metrics["interest_coverage_flag"] is False
+    assert missing_metrics["interest_coverage"] is None
+    assert missing_metrics["interest_coverage_flag"] is False

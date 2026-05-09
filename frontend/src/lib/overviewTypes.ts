@@ -17,6 +17,9 @@ export interface ParsedDebt {
 export interface ParsedFinancials {
   revenue_growth: ParsedFinancialMetric | null
   eps_growth: ParsedFinancialMetric | null
+  interest_coverage: ParsedFinancialMetric | null
+  operating_margin: ParsedFinancialMetric | null
+  net_income_margin: ParsedFinancialMetric | null
   debt: ParsedDebt | null
   reinvestment: string | null
 }

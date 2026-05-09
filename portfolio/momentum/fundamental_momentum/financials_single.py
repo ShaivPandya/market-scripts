@@ -36,6 +36,9 @@ from portfolio.momentum.fundamental_momentum._edgar_periods import (
     _quarterly_flow_entries as _quarterly_fact_entries,
 )
 from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
+    INTEREST_EXPENSE_CONCEPTS as EDGAR_INTEREST_EXPENSE_CONCEPTS,
+)
+from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
     build_filing_url,
     fetch_companyfacts_by_cik,
     fetch_submissions_by_cik,
@@ -55,6 +58,10 @@ REVENUE_CONCEPTS = (
 
 EPS_CONCEPTS = ("EarningsPerShareDiluted", "EarningsPerShareBasic")
 EPS_UNITS = ("USD/shares", "USD-per-shares")
+OPERATING_INCOME_CONCEPTS = ("OperatingIncomeLoss",)
+NET_INCOME_CONCEPTS = ("NetIncomeLoss",)
+INTEREST_EXPENSE_RATIO_CONCEPTS = (*EDGAR_INTEREST_EXPENSE_CONCEPTS, "InterestAndDebtExpense")
+INTEREST_COVERAGE_WARNING_THRESHOLD = 4.0
 
 YF_REVENUE_KEYS = (
     "Total Revenue",
@@ -74,6 +81,12 @@ YF_EPS_KEYS = (
     "EPS Basic",
     "Earnings Per Share Basic",
 )
+YF_OPERATING_INCOME_KEYS = (
+    "Operating Income",
+    "OperatingIncome",
+    "Operating Income or Loss",
+    "OperatingIncomeLoss",
+)
 YF_NET_INCOME_KEYS = (
     "Net Income",
     "NetIncome",
@@ -81,6 +94,16 @@ YF_NET_INCOME_KEYS = (
     "NetIncomeCommonStockholders",
     "Net Income Applicable To Common Shares",
     "NetIncomeApplicableToCommonShares",
+)
+YF_INTEREST_EXPENSE_KEYS = (
+    "Interest Expense",
+    "InterestExpense",
+    "Interest Expense Debt",
+    "InterestExpenseDebt",
+    "Interest Paid",
+    "InterestPaid",
+    "Interest And Debt Expense",
+    "InterestAndDebtExpense",
 )
 YF_DILUTED_SHARES_KEYS = (
     "Diluted Average Shares",
@@ -204,6 +227,53 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -
         yoy_abs_denom=False,
     )
     return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
+
+
+def _pick_first_concept_entries(us_gaap: dict, concepts: tuple[str, ...], extractor) -> list[dict]:
+    for concept in concepts:
+        raw = _entries_for(us_gaap, concept, "USD")
+        if not raw:
+            continue
+        candidate = extractor(raw)
+        if candidate:
+            return candidate
+    return []
+
+
+def _build_flow_rows(
+    us_gaap: dict,
+    concepts: tuple[str, ...],
+    cik_str: str,
+    submissions: dict | None,
+    *,
+    preserve_concept_order: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    if preserve_concept_order:
+        annual_entries = _pick_first_concept_entries(us_gaap, concepts, _annual_fact_entries)
+        quarterly_entries = _pick_first_concept_entries(us_gaap, concepts, _quarterly_fact_entries)
+    else:
+        annual_entries = _pick_best_concept_entries(us_gaap, concepts, "USD", _annual_fact_entries)
+        quarterly_entries = _pick_best_concept_entries(us_gaap, concepts, "USD", _quarterly_fact_entries)
+
+    annual_rows = _rows_from_entries(
+        annual_entries,
+        frequency="annual",
+        limit=ANNUAL_DISPLAY_LIMIT,
+        cik_str=cik_str,
+        submissions=submissions,
+        yoy_step=ANNUAL_YOY_STEP,
+        yoy_abs_denom=False,
+    )
+    quarterly_rows = _rows_from_entries(
+        quarterly_entries,
+        frequency="quarterly",
+        limit=QUARTERLY_DISPLAY_LIMIT,
+        cik_str=cik_str,
+        submissions=submissions,
+        yoy_step=QUARTERLY_YOY_STEP,
+        yoy_abs_denom=False,
+    )
+    return annual_rows, quarterly_rows
 
 
 def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
@@ -351,6 +421,122 @@ def _calc_avg_3q_yoy(rows: list[dict], denom_abs: bool) -> float | None:
     if not changes:
         return None
     return sum(changes) / len(changes)
+
+
+def _values_by_period(rows: list[dict]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for row in rows:
+        period_end = str(row.get("period_end") or "")
+        value = _as_float(row.get("value"))
+        if period_end and value is not None:
+            out[period_end] = value
+    return out
+
+
+def _empty_ratio_result() -> dict[str, object | None]:
+    return {"value": None, "basis": None, "period_end": None}
+
+
+def _ratio_value(numerator: float | None, denominator: float | None, *, denominator_abs: bool = False) -> float | None:
+    if numerator is None or denominator is None:
+        return None
+    adjusted_denominator = abs(denominator) if denominator_abs else denominator
+    if adjusted_denominator == 0:
+        return None
+    return numerator / adjusted_denominator
+
+
+def _sum_periods(values: dict[str, float], periods: list[str]) -> float | None:
+    total = 0.0
+    for period in periods:
+        value = values.get(period)
+        if value is None:
+            return None
+        total += value
+    return total
+
+
+def _calc_aligned_ratio(
+    numerator_annual: list[dict],
+    numerator_quarterly: list[dict],
+    denominator_annual: list[dict],
+    denominator_quarterly: list[dict],
+    *,
+    denominator_abs: bool = False,
+) -> dict[str, object | None]:
+    quarterly_numerator = _values_by_period(numerator_quarterly)
+    quarterly_denominator = _values_by_period(denominator_quarterly)
+    common_quarterly = sorted(set(quarterly_numerator) & set(quarterly_denominator), reverse=True)
+    if len(common_quarterly) >= 4:
+        periods = common_quarterly[:4]
+        value = _ratio_value(
+            _sum_periods(quarterly_numerator, periods),
+            _sum_periods(quarterly_denominator, periods),
+            denominator_abs=denominator_abs,
+        )
+        if value is None:
+            return _empty_ratio_result()
+        return {"value": value, "basis": "ttm", "period_end": periods[0]}
+
+    annual_numerator = _values_by_period(numerator_annual)
+    annual_denominator = _values_by_period(denominator_annual)
+    common_annual = sorted(set(annual_numerator) & set(annual_denominator), reverse=True)
+    if not common_annual:
+        return _empty_ratio_result()
+
+    period = common_annual[0]
+    value = _ratio_value(annual_numerator[period], annual_denominator[period], denominator_abs=denominator_abs)
+    if value is None:
+        return _empty_ratio_result()
+    return {"value": value, "basis": "annual", "period_end": period}
+
+
+def _build_profitability_metrics(
+    annual_revenue: list[dict],
+    quarterly_revenue: list[dict],
+    annual_operating_income: list[dict],
+    quarterly_operating_income: list[dict],
+    annual_net_income: list[dict],
+    quarterly_net_income: list[dict],
+    annual_interest_expense: list[dict],
+    quarterly_interest_expense: list[dict],
+) -> dict[str, object | None]:
+    operating_margin = _calc_aligned_ratio(
+        annual_operating_income,
+        quarterly_operating_income,
+        annual_revenue,
+        quarterly_revenue,
+    )
+    net_income_margin = _calc_aligned_ratio(
+        annual_net_income,
+        quarterly_net_income,
+        annual_revenue,
+        quarterly_revenue,
+    )
+    interest_coverage = _calc_aligned_ratio(
+        annual_operating_income,
+        quarterly_operating_income,
+        annual_interest_expense,
+        quarterly_interest_expense,
+        denominator_abs=True,
+    )
+    interest_coverage_value = interest_coverage["value"]
+
+    return {
+        "interest_coverage": interest_coverage_value,
+        "interest_coverage_flag": (
+            interest_coverage_value is not None and float(interest_coverage_value) < INTEREST_COVERAGE_WARNING_THRESHOLD
+        ),
+        "interest_coverage_basis": interest_coverage["basis"],
+        "interest_coverage_period_end": interest_coverage["period_end"],
+        "interest_coverage_warning_threshold": INTEREST_COVERAGE_WARNING_THRESHOLD,
+        "operating_margin": operating_margin["value"],
+        "operating_margin_basis": operating_margin["basis"],
+        "operating_margin_period_end": operating_margin["period_end"],
+        "net_income_margin": net_income_margin["value"],
+        "net_income_margin_basis": net_income_margin["basis"],
+        "net_income_margin_period_end": net_income_margin["period_end"],
+    }
 
 
 def _yf_numeric(v: object) -> float | None:
@@ -549,9 +735,35 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
         value_getter=_yf_eps_value,
         yoy_abs_denom=True,
     )
+    annual_operating_income = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_OPERATING_INCOME_KEYS),
+        yoy_abs_denom=False,
+    )
+    annual_net_income = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_NET_INCOME_KEYS),
+        yoy_abs_denom=False,
+    )
+    annual_interest_expense = _yf_rows_from_statement(
+        annual_income,
+        value_getter=lambda statement, column: _yf_line_value(statement, column, YF_INTEREST_EXPENSE_KEYS),
+        yoy_abs_denom=False,
+    )
 
     if not annual_revenue and not annual_eps:
         raise ValueError(f"No Revenue or EPS history found in Yahoo Finance for ticker: {ticker}")
+
+    profitability_metrics = _build_profitability_metrics(
+        annual_revenue,
+        [],
+        annual_operating_income,
+        [],
+        annual_net_income,
+        [],
+        annual_interest_expense,
+        [],
+    )
 
     return {
         "ticker": ticker,
@@ -565,6 +777,7 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
             "eps_cagr_3y": _calc_cagr(annual_eps, years=3, abs_fallback=True),
             "avg_yoy_eps_growth_3q": None,
             "avg_yoy_revenue_growth_3q": None,
+            **profitability_metrics,
         },
         "annual": {
             "revenue": annual_revenue,
@@ -1444,6 +1657,25 @@ def get_data(ticker: str) -> dict:
 
     annual_revenue, quarterly_revenue = _build_revenue_rows(us_gaap, cik_str, submissions)
     annual_eps, quarterly_eps = _build_eps_rows(us_gaap, cik_str, submissions)
+    annual_operating_income, quarterly_operating_income = _build_flow_rows(
+        us_gaap,
+        OPERATING_INCOME_CONCEPTS,
+        cik_str,
+        submissions,
+    )
+    annual_net_income, quarterly_net_income = _build_flow_rows(
+        us_gaap,
+        NET_INCOME_CONCEPTS,
+        cik_str,
+        submissions,
+    )
+    annual_interest_expense, quarterly_interest_expense = _build_flow_rows(
+        us_gaap,
+        INTEREST_EXPENSE_RATIO_CONCEPTS,
+        cik_str,
+        submissions,
+        preserve_concept_order=True,
+    )
 
     if not annual_revenue and not quarterly_revenue and not annual_eps and not quarterly_eps:
         return _yfinance_fallback_or_raise(
@@ -1451,11 +1683,23 @@ def get_data(ticker: str) -> dict:
             f"No Revenue or EPS history found in EDGAR companyfacts for ticker: {tk}",
         )
 
+    profitability_metrics = _build_profitability_metrics(
+        annual_revenue,
+        quarterly_revenue,
+        annual_operating_income,
+        quarterly_operating_income,
+        annual_net_income,
+        quarterly_net_income,
+        annual_interest_expense,
+        quarterly_interest_expense,
+    )
+
     metrics = {
         "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3, abs_fallback=False),
         "eps_cagr_3y": _calc_cagr(annual_eps, years=3, abs_fallback=True),
         "avg_yoy_eps_growth_3q": _calc_avg_3q_yoy(quarterly_eps, denom_abs=True),
         "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
+        **profitability_metrics,
     }
 
     breakdown = _build_breakdown(us_gaap, cik_str, submissions)

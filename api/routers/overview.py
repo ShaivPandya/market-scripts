@@ -34,6 +34,9 @@ Output only markdown and follow this structure exactly:
 ## Financials
 - **3-Year Avg. YoY Revenue Growth**: percentage with brief context
 - **3-Year Avg. YoY EPS Growth**: percentage with brief context
+- **Interest Coverage**: OI / interest expense ratio with brief context; flag if below 4x
+- **Operating Margin**: percentage with brief context
+- **Net Income Margin**: percentage with brief context
 - **Debt**: total debt, maturity schedule, key details. Use a markdown table if a maturity schedule is available.
 - **Reinvestment Costs**: capex, R&D, or other reinvestment requirements
 
@@ -152,37 +155,32 @@ def _split_sections(content: str) -> dict[str, str]:
     return sections
 
 
+def _parse_financial_metric_line(lines: list[str], label_pattern: str) -> dict | None:
+    for line in lines:
+        m = re.match(rf"^\s*-\s*\*\*{label_pattern}\*\*:\s*(.+)", line)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        val_m = re.match(r"^([~+\-\d.%xX]+)", raw)
+        return {
+            "value": val_m.group(1) if val_m else None,
+            "context": raw,
+        }
+    return None
+
+
 def _parse_financials(text: str) -> dict | None:
     result: dict = {}
     lines = text.splitlines()
 
     # Revenue growth
-    for line in lines:
-        m = re.match(r"^\s*-\s*\*\*3-Year Avg\.?\s*YoY Revenue Growth\*\*:\s*(.+)", line)
-        if m:
-            raw = m.group(1).strip()
-            val_m = re.match(r"^([~+\-\d.%]+)", raw)
-            result["revenue_growth"] = {
-                "value": val_m.group(1) if val_m else None,
-                "context": raw,
-            }
-            break
-    if "revenue_growth" not in result:
-        result["revenue_growth"] = None
+    result["revenue_growth"] = _parse_financial_metric_line(lines, r"3-Year Avg\.?\s*YoY Revenue Growth")
 
     # EPS growth
-    for line in lines:
-        m = re.match(r"^\s*-\s*\*\*3-Year Avg\.?\s*YoY EPS Growth\*\*:\s*(.+)", line)
-        if m:
-            raw = m.group(1).strip()
-            val_m = re.match(r"^([~+\-\d.%]+)", raw)
-            result["eps_growth"] = {
-                "value": val_m.group(1) if val_m else None,
-                "context": raw,
-            }
-            break
-    if "eps_growth" not in result:
-        result["eps_growth"] = None
+    result["eps_growth"] = _parse_financial_metric_line(lines, r"3-Year Avg\.?\s*YoY EPS Growth")
+    result["interest_coverage"] = _parse_financial_metric_line(lines, r"Interest Coverage")
+    result["operating_margin"] = _parse_financial_metric_line(lines, r"Operating Margin")
+    result["net_income_margin"] = _parse_financial_metric_line(lines, r"Net Income Margin")
 
     # Debt
     debt_started = False

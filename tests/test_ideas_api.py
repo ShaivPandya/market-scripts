@@ -9,6 +9,9 @@ OVERVIEW_MARKDOWN = """# AAPL Overview
 ## Financials
 - **3-Year Avg. YoY Revenue Growth**: +8.0% supported by services growth.
 - **3-Year Avg. YoY EPS Growth**: +10.0% supported by buybacks.
+- **Interest Coverage**: 24.0x, comfortably above the 4x warning threshold.
+- **Operating Margin**: 31.0% supported by services mix.
+- **Net Income Margin**: 24.0% supported by scale.
 - **Debt**: Balanced maturity schedule.
 | Tranche | Rate | Maturity |
 |---------|------|----------|
@@ -168,6 +171,9 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     assert idea["ticker"] == "AAPL"
     assert idea["metadata"]["use_portfolio_context"] is True
     assert created_payload["documents"]["overview_parsed"]["financials"]["revenue_growth"]["value"] == "+8.0%"
+    assert created_payload["documents"]["overview_parsed"]["financials"]["interest_coverage"]["value"] == "24.0x"
+    assert created_payload["documents"]["overview_parsed"]["financials"]["operating_margin"]["value"] == "31.0%"
+    assert created_payload["documents"]["overview_parsed"]["financials"]["net_income_margin"]["value"] == "24.0%"
     assert created_payload["documents"]["overview_parsed"]["porters_five_forces"][0]["rating"] == "Low"
     assert created_payload["documents"]["management_quality_parsed"]["summary"]["overall_rating"] == "Strong"
 

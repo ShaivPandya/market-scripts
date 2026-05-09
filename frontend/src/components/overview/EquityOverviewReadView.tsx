@@ -35,6 +35,24 @@ function formatPct(v: unknown): string {
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`
 }
 
+function formatCoverage(v: unknown): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
+  return `${v.toFixed(2)}x`
+}
+
+function metricBasisLabel(basis: unknown, periodEnd: unknown): string | undefined {
+  if (typeof basis !== "string" || typeof periodEnd !== "string" || !periodEnd) return undefined
+  if (basis === "ttm") return `TTM through ${periodEnd}`
+  if (basis === "annual") return `Annual through ${periodEnd}`
+  return undefined
+}
+
+function interestCoverageSignalLabel(metrics: Record<string, unknown>): string | undefined {
+  if (metrics.interest_coverage_flag !== true) return undefined
+  const threshold = formatCoverage(metrics.interest_coverage_warning_threshold)
+  return threshold === "N/A" ? "Below threshold" : `Below ${threshold}`
+}
+
 function currencyPrefix(currency: string): string {
   const normalized = currency.toUpperCase()
   if (normalized === "USD") return "$"
@@ -88,7 +106,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const [view, setView] = useState<FinancialViewMode>("annual")
 
   const { data: rawData, isLoading, error } = useApiQuery<Record<string, unknown>>(
-    ["financials-overview-v10", ticker],
+    ["financials-overview-v11", ticker],
     () => runFinancials({ ticker }),
     300_000,
   )
@@ -120,6 +138,23 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
             <MetricCard title="3Y EPS CAGR" value={formatPct(metrics.eps_cagr_3y)} />
             <MetricCard title="Avg YoY Revenue (3Q)" value={formatPct(metrics.avg_yoy_revenue_growth_3q)} />
             <MetricCard title="Avg YoY EPS (3Q)" value={formatPct(metrics.avg_yoy_eps_growth_3q)} />
+            <MetricCard
+              title="Interest Coverage"
+              value={formatCoverage(metrics.interest_coverage)}
+              subtitle={metricBasisLabel(metrics.interest_coverage_basis, metrics.interest_coverage_period_end)}
+              signal={metrics.interest_coverage_flag === true ? "error" : null}
+              signalLabel={interestCoverageSignalLabel(metrics)}
+            />
+            <MetricCard
+              title="Operating Margin"
+              value={formatPct(metrics.operating_margin)}
+              subtitle={metricBasisLabel(metrics.operating_margin_basis, metrics.operating_margin_period_end)}
+            />
+            <MetricCard
+              title="Net Income Margin"
+              value={formatPct(metrics.net_income_margin)}
+              subtitle={metricBasisLabel(metrics.net_income_margin_basis, metrics.net_income_margin_period_end)}
+            />
           </div>
 
           <div className="flex items-center gap-3">
@@ -146,6 +181,9 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
         <div className="space-y-2 text-sm text-muted">
           {parsed.revenue_growth && <p><span className="font-medium text-subtle">Revenue Growth:</span> {cleanDossierDisplayText(parsed.revenue_growth.context)}</p>}
           {parsed.eps_growth && <p><span className="font-medium text-subtle">EPS Growth:</span> {cleanDossierDisplayText(parsed.eps_growth.context)}</p>}
+          {parsed.interest_coverage && <p><span className="font-medium text-subtle">Interest Coverage:</span> {cleanDossierDisplayText(parsed.interest_coverage.context)}</p>}
+          {parsed.operating_margin && <p><span className="font-medium text-subtle">Operating Margin:</span> {cleanDossierDisplayText(parsed.operating_margin.context)}</p>}
+          {parsed.net_income_margin && <p><span className="font-medium text-subtle">Net Income Margin:</span> {cleanDossierDisplayText(parsed.net_income_margin.context)}</p>}
         </div>
       )}
 
