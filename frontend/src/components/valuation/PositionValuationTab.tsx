@@ -18,6 +18,7 @@ import {
 
 const VALUATION_METRIC_ORDER = [
   "price_sales",
+  "price_ebitda",
   "price_operating_income",
   "price_fcf",
   "price_earnings",
@@ -38,6 +39,7 @@ type ValuationTabView = "inputs" | "football_field"
 
 const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
   "price_sales",
+  "price_ebitda",
   "price_operating_income",
   "price_fcf",
 ])
@@ -876,7 +878,7 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
           <h3 className="text-sm font-semibold text-app">Profile Weights</h3>
           <p className="text-xs text-muted">{data.profile.rationale}</p>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
           {VALUATION_METRIC_ORDER.map(key => (
             <div key={key} className="rounded-lg border border-app px-3 py-2">
               <p className="text-xs text-subtle">{data.metrics[key]?.label ?? key}</p>
@@ -954,4 +956,3 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
     </div>
   )
 }
-
