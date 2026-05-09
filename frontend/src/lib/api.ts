@@ -2326,7 +2326,6 @@ export const fetchIdea = (id: string) =>
 
 export const createIdea = (body: {
   ticker: string
-  company_name?: string | null
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus

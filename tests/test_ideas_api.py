@@ -193,6 +193,33 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     assert accepted_payload["action_proposal"]["approval_id"] is not None
 
 
+def test_create_idea_fetches_company_name_from_yfinance(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls: list[str] = []
+
+    def fake_company_name(ticker: str) -> str:
+        calls.append(ticker)
+        return "Arista Networks, Inc."
+
+    monkeypatch.setattr(ideas_router, "_fetch_company_name_yfinance", fake_company_name)
+
+    created = auth_client.post(
+        "/api/v1/ideas",
+        json={
+            "ticker": "anet",
+            "user_notes": "Review for quality growth.",
+            "tags": ["quality"],
+        },
+    )
+
+    assert created.status_code == 200
+    idea = created.json()["idea"]
+    assert calls == ["ANET"]
+    assert idea["ticker"] == "ANET"
+    assert idea["company_name"] == "Arista Networks, Inc."
+
+
 def test_delete_idea_removes_from_list_detail_and_archived_view(auth_client):
     created = auth_client.post(
         "/api/v1/ideas",

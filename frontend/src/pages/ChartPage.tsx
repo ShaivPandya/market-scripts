@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Download, Loader2 } from "lucide-react"
 
@@ -12,6 +12,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
 
 type ChartMode = "single" | "ratio"
+type PriceScale = "linear" | "log"
 type RatioWindow = "5Y" | "10Y"
 
 interface RatioPreset {
@@ -176,6 +177,7 @@ export function ChartPage() {
 
   const [ticker, setTicker] = useState("")
   const [lookback, setLookback] = useState<string>("2Y")
+  const [priceScale, setPriceScale] = useState<PriceScale>("linear")
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
   const [isDownloadingHistory, setIsDownloadingHistory] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -319,6 +321,25 @@ export function ChartPage() {
     () => allRocData.filter(d => new Date(String(d.date)) >= cutoff),
     [allRocData, cutoff],
   )
+  const priceLogAvailable = useMemo(() => {
+    let hasFiniteValue = false
+    for (const row of priceMultiData) {
+      for (const series of PRICE_SERIES) {
+        const value = toNumber(row[series.key])
+        if (value == null) continue
+        hasFiniteValue = true
+        if (value <= 0) return false
+      }
+    }
+    return hasFiniteValue
+  }, [priceMultiData])
+  const effectivePriceScale: PriceScale = priceScale === "log" && priceLogAvailable ? "log" : "linear"
+
+  useEffect(() => {
+    if (priceScale === "log" && !priceLogAvailable) {
+      setPriceScale("linear")
+    }
+  }, [priceLogAvailable, priceScale])
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(singleData?.summary) ? singleData.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
@@ -578,15 +599,36 @@ export function ChartPage() {
         <div className="space-y-6">
           {priceMultiData.length > 0 && (
             <div>
-              <div className="mb-2">
-                <h2 className="text-base font-semibold">
-                  {displayTicker} - {displayName}
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Current Price: {currentPrice != null ? PRICE_FORMATTER.format(currentPrice) : "N/A"}
-                </p>
+              <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold">
+                    {displayTicker} - {displayName}
+                  </h2>
+                  <p className="text-sm text-gray-600">
+                    Current Price: {currentPrice != null ? PRICE_FORMATTER.format(currentPrice) : "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1.5">Scale</label>
+                  <SegmentedControl
+                    options={[
+                      { value: "linear", label: "Linear" },
+                      {
+                        value: "log",
+                        label: "Log",
+                        disabled: !priceLogAvailable,
+                        title: priceLogAvailable
+                          ? "Use a logarithmic y-axis"
+                          : "Log scale requires all visible price values to be greater than zero",
+                      },
+                    ]}
+                    value={effectivePriceScale}
+                    onChange={setPriceScale}
+                    size="sm"
+                  />
+                </div>
               </div>
-              <TimeSeriesChart multiData={priceMultiData} series={PRICE_SERIES} height={280} />
+              <TimeSeriesChart multiData={priceMultiData} series={PRICE_SERIES} height={280} yScale={effectivePriceScale} />
             </div>
           )}
 

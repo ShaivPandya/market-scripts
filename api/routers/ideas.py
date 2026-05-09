@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from ontology.policy import actor_to_dict, admin_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
+LOGGER = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
 IDEA_EVALUATION_VERSION = "v3_portfolio_context_toggle"
@@ -177,6 +179,32 @@ def _with_analyzer_direction_metadata(payload: dict[str, Any]) -> dict[str, Any]
         "use_portfolio_context": use_portfolio_context,
     }
     return payload
+
+
+def _fetch_company_name_yfinance(ticker: str) -> str | None:
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        return None
+    try:
+        import yfinance as yf
+
+        info = yf.Ticker(normalized).get_info() or {}
+    except Exception:
+        LOGGER.debug("yfinance company-name lookup failed for %s", normalized, exc_info=True)
+        return None
+
+    for key in ("longName", "shortName", "displayName"):
+        value = str(info.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _resolve_company_name(ticker: str, provided: str | None) -> str | None:
+    cleaned = str(provided or "").strip()
+    if cleaned:
+        return cleaned
+    return _fetch_company_name_yfinance(ticker)
 
 
 def _canonical_factor_score(factor_scores: dict[str, Any], key: str) -> float | None:
@@ -2063,6 +2091,7 @@ def list_ideas(status: str | None = None, include_archived: bool = False, limit:
 @router.post("/ideas")
 def create_idea(body: IdeaCreateRequest):
     payload = _with_analyzer_direction_metadata(body.model_dump())
+    payload["company_name"] = _resolve_company_name(payload["ticker"], payload.get("company_name"))
     payload.update({"source_type": "user", "source_id": "ideas.create", "created_at": _now()})
     uid = _idea_uid(f"{payload['ticker']}:{_stable_hash(payload)}")
     idea = _write_runtime_object("InvestmentIdea", uid, payload)

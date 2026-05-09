@@ -51,6 +51,8 @@ interface TimeSeriesChartProps {
   yAxisOrientation?: YAxisOrientation
   /** Allow clicking legend items to hide/show multi-series lines */
   toggleableLegend?: boolean
+  /** Y-axis scale. Log assumes callers pass only positive visible values. */
+  yScale?: "linear" | "log"
 }
 
 const DEFAULT_SERIES_COLORS = {
@@ -170,6 +172,7 @@ export function TimeSeriesChart({
   series,
   yAxisOrientation = "left",
   toggleableLegend = false,
+  yScale = "linear",
 }: TimeSeriesChartProps) {
   const isMulti = multiData != null && series != null
   const chartData: ChartRow[] = isMulti ? multiData : data
@@ -254,7 +257,14 @@ export function TimeSeriesChart({
           />
           <YAxis
             orientation={yAxisOrientation}
-            domain={zeroLine ? [(dataMin: number) => Math.min(0, dataMin), "auto"] : ["auto", "auto"]}
+            scale={yScale === "log" ? "log" : undefined}
+            domain={
+              yScale === "log"
+                ? ["dataMin", "dataMax"]
+                : zeroLine
+                  ? [(dataMin: number) => Math.min(0, dataMin), "auto"]
+                  : ["auto", "auto"]
+            }
             tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
             tickLine={false}
             axisLine={false}

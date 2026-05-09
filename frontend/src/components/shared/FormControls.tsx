@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 /* ─── Segmented Control ─────────────────────────────────────────────────────── */
 
 interface SegmentedControlProps<T extends string> {
-  options: { value: T; label: string }[]
+  options: { value: T; label: string; disabled?: boolean; title?: string }[]
   value: T
   onChange: (value: T) => void
   size?: "sm" | "md"
@@ -22,9 +22,11 @@ export function SegmentedControl<T extends string>({
         <button
           key={o.value}
           type="button"
+          disabled={o.disabled}
+          title={o.title}
           onClick={() => onChange(o.value)}
           className={cn(
-            "theme-segmented-option rounded-full transition-all duration-150",
+            "theme-segmented-option rounded-full transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50",
             size === "sm" ? "px-3 py-1 text-xs" : "px-4 py-1.5 text-sm",
           )}
           data-active={value === o.value}

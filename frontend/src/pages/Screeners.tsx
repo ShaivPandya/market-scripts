@@ -74,6 +74,36 @@ function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
   }))
 }
 
+const QUALITY_COLUMN_ORDER = [
+  "index",
+  "ticker",
+  "growth",
+  "safety",
+  "quality",
+  "profitability",
+  "growth_pct",
+  "safety_pct",
+  "quality_pct",
+  "profitability_pct",
+]
+
+function normalizeColumnKey(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/%/g, "pct")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+}
+
+function orderQualityColumns(keys: string[]): string[] {
+  const priority = new Map(QUALITY_COLUMN_ORDER.map((key, index) => [key, index]))
+  return keys
+    .map((key, index) => ({ key, index, rank: priority.get(normalizeColumnKey(key)) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ key }) => key)
+}
+
 function formatSignedPercent(v: unknown): string {
   const n = Number(v)
   return Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "N/A"
@@ -140,7 +170,7 @@ function QualityPanel() {
 
   const rows: Record<string, unknown>[] = mutation.data?.results_df ?? []
   const columns: ColumnDef[] = rows.length > 0
-    ? Object.keys(rows[0]).map(k => ({
+    ? orderQualityColumns(Object.keys(rows[0])).map(k => ({
         key: k,
         header: formatHeader(k),
         colorFn: k.toLowerCase().includes("z") || k.toLowerCase().includes("score")

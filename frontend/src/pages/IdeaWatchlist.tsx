@@ -171,7 +171,6 @@ export function IdeaWatchlist() {
   const [comparisonJobSnapshot, setComparisonJobSnapshot] = useState<IdeaComparisonJobResponse | null>(null)
   const [comparisonJobError, setComparisonJobError] = useState<string | null>(null)
   const [ticker, setTicker] = useState("")
-  const [companyName, setCompanyName] = useState("")
   const [tags, setTags] = useState("")
   const [notes, setNotes] = useState("")
   const [deletingIdeaIds, setDeletingIdeaIds] = useState<Set<string>>(() => new Set())
@@ -269,13 +268,11 @@ export function IdeaWatchlist() {
   const createMutation = useMutation({
     mutationFn: () => createIdea({
       ticker,
-      company_name: companyName || null,
       user_notes: notes || null,
       tags: tags.split(",").map(t => t.trim()).filter(Boolean),
     }),
     onSuccess: data => {
       setTicker("")
-      setCompanyName("")
       setTags("")
       setNotes("")
       void qc.invalidateQueries({ queryKey: ["ideas"] })
@@ -432,14 +429,13 @@ export function IdeaWatchlist() {
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
-          className="grid gap-3 lg:grid-cols-[minmax(8rem,10rem)_minmax(10rem,1fr)_minmax(10rem,1fr)_minmax(16rem,2fr)_auto]"
+          className="grid gap-3 lg:grid-cols-[minmax(8rem,10rem)_minmax(10rem,1fr)_minmax(16rem,2fr)_auto]"
           onSubmit={event => {
             event.preventDefault()
             createMutation.mutate()
           }}
         >
           <TextInput label="Ticker" value={ticker} onChange={setTicker} uppercase placeholder="AAPL" />
-          <TextInput label="Company" value={companyName} onChange={setCompanyName} placeholder="Apple" />
           <TextInput label="Tags" value={tags} onChange={setTags} placeholder="quality, ai" />
           <TextInput label="Notes" value={notes} onChange={setNotes} placeholder="Reason for review" />
           <div className="flex items-end">
