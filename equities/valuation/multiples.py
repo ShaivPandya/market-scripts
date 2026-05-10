@@ -26,8 +26,8 @@ from utils.fx import fx_rate_to_base
 from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
-VALUATION_CURRENT_CACHE_VERSION = "v3"
-VALUATION_PEER_ROW_CACHE_VERSION = "v3"
+VALUATION_CURRENT_CACHE_VERSION = "v4"
+VALUATION_PEER_ROW_CACHE_VERSION = "v4"
 VALUATION_COLUMNS = (
     "price_sales",
     "price_ebitda",
@@ -37,6 +37,7 @@ VALUATION_COLUMNS = (
     "price_book",
 )
 ENTERPRISE_VALUE_METRICS = {"price_sales", "price_ebitda", "price_operating_income", "price_fcf"}
+PER_SHARE_VALUE_RANGE_METRICS = {"price_earnings"}
 VALUE_RANGE_SCENARIOS = ("bear", "base", "bull")
 
 VALUATION_LABELS = {
@@ -62,7 +63,7 @@ DENOMINATOR_LABELS = {
     "price_ebitda": "TTM EBITDA",
     "price_operating_income": "TTM EBIT",
     "price_fcf": "TTM free cash flow",
-    "price_earnings": "TTM net income",
+    "price_earnings": "TTM EPS",
     "price_book": "latest book value",
 }
 NUMERATOR_LABELS = {
@@ -70,7 +71,7 @@ NUMERATOR_LABELS = {
     "price_ebitda": "enterprise value",
     "price_operating_income": "enterprise value",
     "price_fcf": "enterprise value",
-    "price_earnings": "market capitalization",
+    "price_earnings": "share price",
     "price_book": "market capitalization",
 }
 
@@ -248,6 +249,20 @@ NET_INCOME_KEYS = (
     "NetIncomeContinuousOperations",
     "NetIncomeLoss",
 )
+EPS_KEYS = (
+    "Diluted EPS",
+    "DilutedEPS",
+    "Diluted Earnings Per Share",
+    "DilutedEarningsPerShare",
+    "Basic EPS",
+    "BasicEPS",
+    "Basic Earnings Per Share",
+    "BasicEarningsPerShare",
+)
+TRAILING_EPS_INFO_KEYS = (
+    "trailingEps",
+    "epsTrailingTwelveMonths",
+)
 OPERATING_CASH_FLOW_KEYS = (
     "Operating Cash Flow",
     "OperatingCashFlow",
@@ -349,6 +364,23 @@ def _convert_financial_value(value: Any, currency_context: Mapping[str, Any]) ->
     if parsed is None:
         return None
     rate = _financial_to_price_rate(currency_context)
+    if rate is None:
+        return None
+    converted = parsed * rate
+    return converted if math.isfinite(converted) else None
+
+
+def _convert_to_price_currency(value: Any, source_currency: Any, currency_context: Mapping[str, Any]) -> float | None:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return None
+    price_currency = currency_context.get("price_currency")
+    if _same_currency(source_currency, price_currency):
+        return parsed
+    if _same_currency(source_currency, currency_context.get("financial_currency")):
+        return _convert_financial_value(parsed, currency_context)
+    conversion = _conversion_rate(source_currency, price_currency, currency_context)
+    rate = _positive_float(conversion.get("rate"))
     if rate is None:
         return None
     converted = parsed * rate
@@ -863,7 +895,7 @@ def value_range_payload(
         "legacy_denominator_currency": calculation["legacy_denominator_currency"],
         "denominator_to_price_fx_rate": calculation["denominator_to_price_fx_rate"],
         "fx_rate_as_of": calculation["fx_rate_as_of"],
-        "calculation_method": "enterprise_value_to_equity" if metric in ENTERPRISE_VALUE_METRICS else "equity_value",
+        "calculation_method": _value_range_calculation_method(metric),
         "current_price": _safe_float(market_data.get("current_price")),
         "shares": _safe_float(market_data.get("shares")),
         "net_debt": _safe_float(market_data.get("net_debt")),
@@ -1010,12 +1042,21 @@ def compute_value_range_scenario(
     elif denominator_fx_rate is None:
         status = "missing"
         reason = "missing_fx_rate"
-    elif share_count is None:
+    elif normalized_metric not in PER_SHARE_VALUE_RANGE_METRICS and share_count is None:
         status = "missing"
         reason = "missing_shares"
     elif normalized_metric in ENTERPRISE_VALUE_METRICS and net_debt_value is None:
         status = "missing"
         reason = "missing_net_debt"
+    elif normalized_metric in PER_SHARE_VALUE_RANGE_METRICS:
+        expected_price = multiple * (denominator_converted or 0.0)
+        if expected_price <= 0:
+            status = "not_meaningful"
+            reason = "non_positive_expected_price"
+        else:
+            equity_value = expected_price * share_count if share_count is not None else None
+            if current_price_value is not None:
+                percent_change = (expected_price / current_price_value - 1.0) * 100.0
     else:
         enterprise_or_equity_value = multiple * (denominator_converted or 0.0)
         equity_value = (
@@ -1046,6 +1087,15 @@ def compute_value_range_scenario(
         "status": status,
         "reason": reason,
     }
+
+
+def _value_range_calculation_method(metric: str) -> str:
+    normalized_metric = normalize_value_range_metric(metric)
+    if normalized_metric in ENTERPRISE_VALUE_METRICS:
+        return "enterprise_value_to_equity"
+    if normalized_metric in PER_SHARE_VALUE_RANGE_METRICS:
+        return "per_share"
+    return "equity_value"
 
 
 def _default_value_range_metric(
@@ -1136,6 +1186,8 @@ def compute_current_multiples_from_statements(
 ) -> dict[str, Any]:
     currency_context = currency_context_from_info(info)
     market_cap = _market_cap(info)
+    current_price = _share_price(info, market_cap=market_cap)
+    shares = _shares_outstanding(info, market_cap=market_cap, current_price=current_price)
     revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, REVENUE_KEYS)
     operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, OPERATING_INCOME_KEYS)
     depreciation_amortization_ttm = _ttm_or_latest(
@@ -1148,6 +1200,13 @@ def compute_current_multiples_from_statements(
         _ebitda_from_operating_income(operating_income_ttm, depreciation_amortization_ttm),
     )
     net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, NET_INCOME_KEYS)
+    eps_ttm = _trailing_eps(
+        info,
+        quarterly_income=quarterly_income,
+        annual_income=annual_income,
+        net_income_ttm=net_income_ttm,
+        shares=shares,
+    )
     operating_cash_flow_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, OPERATING_CASH_FLOW_KEYS)
     capex_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, CAPEX_KEYS)
     fcf_ttm = _free_cash_flow(operating_cash_flow_ttm, capex_ttm)
@@ -1231,12 +1290,12 @@ def compute_current_multiples_from_statements(
         ),
         "price_earnings": _metric_payload(
             "price_earnings",
-            market_cap,
-            net_income_ttm,
-            _convert_financial_value(net_income_ttm, currency_context),
-            source="yfinance_statements",
-            numerator_source="market_cap",
-            denominator_currency=currency_context.get("financial_currency"),
+            current_price,
+            eps_ttm["value"],
+            _convert_to_price_currency(eps_ttm["value"], eps_ttm["currency"], currency_context),
+            source=eps_ttm["source"] or "yfinance_statements",
+            numerator_source="share_price",
+            denominator_currency=eps_ttm["currency"],
             denominator_converted_currency=currency_context.get("price_currency"),
             fallback_value=_positive_float(info.get("trailingPE")),
             fallback_source="yfinance_info.trailingPE",
@@ -1265,10 +1324,12 @@ def compute_current_multiples_from_statements(
             "operating_income_ttm": operating_income_ttm,
             "depreciation_amortization_ttm": depreciation_amortization_ttm,
             "net_income_ttm": net_income_ttm,
+            "eps_ttm": eps_ttm["value"],
             "operating_cash_flow_ttm": operating_cash_flow_ttm,
             "capex_ttm": capex_ttm,
             "fcf_ttm": fcf_ttm,
             "book_value": book_value,
+            "shares_outstanding": shares,
             "debt": debt,
             "cash": cash,
             "net_debt": net_debt_financial,
@@ -1299,7 +1360,12 @@ def _metric_payload(
 
     if numerator is None or numerator <= 0:
         status = "missing"
-        reason = "missing_enterprise_value" if key in ENTERPRISE_VALUE_METRICS else "missing_market_cap"
+        if key in ENTERPRISE_VALUE_METRICS:
+            reason = "missing_enterprise_value"
+        elif key in PER_SHARE_VALUE_RANGE_METRICS:
+            reason = "missing_share_price"
+        else:
+            reason = "missing_market_cap"
     elif denominator is None:
         status = "missing"
         reason = "missing_denominator"
@@ -1635,6 +1701,17 @@ def _current_price(info: Mapping[str, Any]) -> float | None:
     return _positive_float(info.get("currentPrice") or info.get("regularMarketPrice"))
 
 
+def _share_price(info: Mapping[str, Any], *, market_cap: float | None) -> float | None:
+    price = _current_price(info)
+    if price is not None:
+        return price
+    shares = _positive_float(info.get("sharesOutstanding"))
+    if market_cap is None or shares is None:
+        return None
+    value = market_cap / shares
+    return value if math.isfinite(value) and value > 0 else None
+
+
 def _fifty_two_week_high(info: Mapping[str, Any]) -> float | None:
     return _positive_float(info.get("fiftyTwoWeekHigh") or info.get("52WeekHigh"))
 
@@ -1656,6 +1733,53 @@ def _shares_outstanding(
         return None
     value = market_cap / current_price
     return value if math.isfinite(value) and value > 0 else None
+
+
+def _trailing_eps(
+    info: Mapping[str, Any],
+    *,
+    quarterly_income: pd.DataFrame | None,
+    annual_income: pd.DataFrame | None,
+    net_income_ttm: float | None,
+    shares: float | None,
+) -> dict[str, Any]:
+    for key in TRAILING_EPS_INFO_KEYS:
+        provider_eps = _safe_float(info.get(key))
+        if provider_eps is not None:
+            return {
+                "value": provider_eps,
+                "currency": _clean_currency(info.get("currency"))
+                or _clean_currency(info.get("financialCurrency"))
+                or "USD",
+                "source": f"yfinance_info.{key}",
+            }
+
+    statement_eps = _ttm_or_latest(quarterly_income, annual_income, EPS_KEYS)
+    if statement_eps is not None:
+        return {
+            "value": statement_eps,
+            "currency": _clean_currency(info.get("financialCurrency"))
+            or _clean_currency(info.get("currency"))
+            or "USD",
+            "source": "yfinance_statements",
+        }
+
+    if net_income_ttm is not None and shares is not None and shares > 0:
+        derived_eps = net_income_ttm / shares
+        if math.isfinite(derived_eps):
+            return {
+                "value": derived_eps,
+                "currency": _clean_currency(info.get("financialCurrency"))
+                or _clean_currency(info.get("currency"))
+                or "USD",
+                "source": "yfinance_statements_derived_eps",
+            }
+
+    return {
+        "value": None,
+        "currency": _clean_currency(info.get("financialCurrency")) or _clean_currency(info.get("currency")) or "USD",
+        "source": None,
+    }
 
 
 def _net_debt_or_ev_spread(net_debt: Any, enterprise_value: float | None, market_cap: float | None) -> float | None:

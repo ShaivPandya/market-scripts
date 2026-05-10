@@ -20,6 +20,7 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
             "EBIT": [25, 25, 25, 25],
             "Operating Income": [20, 20, 20, 20],
             "Net Income": [10, 10, 10, 10],
+            "Diluted EPS": [0.1, 0.1, 0.1, 0.1],
         }
     )
     cashflow = _stmt(
@@ -37,7 +38,7 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     )
 
     result = multiples.compute_current_multiples_from_statements(
-        {"marketCap": 1000},
+        {"marketCap": 1000, "currentPrice": 10, "sharesOutstanding": 100},
         quarterly_income=income,
         quarterly_cashflow=cashflow,
         quarterly_balance=balance,
@@ -49,7 +50,10 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     assert math.isclose(metrics["price_ebitda"]["value"], 1150 / 120)
     assert math.isclose(metrics["price_operating_income"]["value"], 1150 / 100)
     assert math.isclose(metrics["price_fcf"]["value"], 1150 / 40)
-    assert math.isclose(metrics["price_earnings"]["value"], 1000 / 40)
+    assert math.isclose(metrics["price_earnings"]["value"], 10 / 0.4)
+    assert math.isclose(metrics["price_earnings"]["denominator"], 0.4)
+    assert metrics["price_earnings"]["denominator_label"] == "TTM EPS"
+    assert metrics["price_earnings"]["numerator_label"] == "share price"
     assert math.isclose(metrics["price_book"]["value"], 2.0)
     assert metrics["price_sales"]["label"] == "EV/S"
     assert metrics["price_ebitda"]["label"] == "EV/EBITDA"
@@ -61,9 +65,12 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
 
 
 def test_compute_current_multiples_marks_non_positive_denominators_not_meaningful():
-    income = _stmt({"Total Revenue": [100, 100, 100, 100], "Net Income": [-5, -5, -5, -5]})
+    income = _stmt({"Total Revenue": [100, 100, 100, 100], "Diluted EPS": [-0.05, -0.05, -0.05, -0.05]})
 
-    result = multiples.compute_current_multiples_from_statements({"marketCap": 1000}, quarterly_income=income)
+    result = multiples.compute_current_multiples_from_statements(
+        {"marketCap": 1000, "currentPrice": 10, "sharesOutstanding": 100},
+        quarterly_income=income,
+    )
 
     assert result["metrics"]["price_sales"]["status"] == "degraded"
     assert result["metrics"]["price_sales"]["reason"] == "using_market_cap_enterprise_value_proxy"
@@ -407,10 +414,10 @@ def test_value_range_scenario_uses_ev_to_equity_for_enterprise_multiples():
     assert row["percent_change"] == 0.0
 
 
-def test_value_range_scenario_uses_equity_value_for_pe_and_pb():
+def test_value_range_scenario_uses_eps_per_share_for_pe():
     row = multiples.compute_value_range_scenario(
         "price_earnings",
-        {"multiple": 15.0, "denominator": 100.0},
+        {"multiple": 15.0, "denominator": 1.0},
         current_price=10.0,
         shares=100.0,
         net_debt=None,
@@ -420,6 +427,21 @@ def test_value_range_scenario_uses_equity_value_for_pe_and_pb():
     assert row["equity_value"] == 1500.0
     assert row["expected_price"] == 15.0
     assert row["percent_change"] == 50.0
+
+
+def test_value_range_scenario_uses_equity_value_for_pb():
+    row = multiples.compute_value_range_scenario(
+        "price_book",
+        {"multiple": 1.5, "denominator": 100.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=None,
+    )
+
+    assert row["status"] == "ok"
+    assert row["equity_value"] == 150.0
+    assert row["expected_price"] == 1.5
+    assert row["percent_change"] == -85.0
 
 
 def test_value_range_assumption_persists_per_metric_and_updates_selected(tmp_path, monkeypatch):
@@ -651,9 +673,9 @@ def test_value_range_payload_computes_scenarios_for_each_saved_metric_with_metri
                 "price_earnings": {
                     "denominator_currency": "USD",
                     "scenarios": {
-                        "bear": {"multiple": 8.0, "denominator": 200.0},
-                        "base": {"multiple": 10.0, "denominator": 200.0},
-                        "bull": {"multiple": 12.0, "denominator": 200.0},
+                        "bear": {"multiple": 8.0, "denominator": 2.0},
+                        "base": {"multiple": 10.0, "denominator": 2.0},
+                        "bull": {"multiple": 12.0, "denominator": 2.0},
                     },
                 },
             },
@@ -676,8 +698,8 @@ def test_value_range_payload_computes_scenarios_for_each_saved_metric_with_metri
     assert sales_base["denominator_converted"] == 1000.0
     assert sales_base["expected_price"] == 49.0
     assert earnings_base["denominator_currency"] == "TWD"
-    assert earnings_base["denominator"] == 6400.0
-    assert earnings_base["denominator_converted"] == 200.0
+    assert earnings_base["denominator"] == 64.0
+    assert earnings_base["denominator_converted"] == 2.0
     assert earnings_base["expected_price"] == 20.0
 
 
@@ -732,9 +754,9 @@ def test_value_range_payload_converts_major_denominator_to_minor_quote_currency(
             "metric": "price_earnings",
             "denominator_currency": "GBP",
             "scenarios": {
-                "bear": {"multiple": 8.0, "denominator": 50.0},
-                "base": {"multiple": 10.0, "denominator": 50.0},
-                "bull": {"multiple": 12.0, "denominator": 50.0},
+                "bear": {"multiple": 8.0, "denominator": 0.5},
+                "base": {"multiple": 10.0, "denominator": 0.5},
+                "bull": {"multiple": 12.0, "denominator": 0.5},
             },
         },
         metrics={},
@@ -747,8 +769,8 @@ def test_value_range_payload_converts_major_denominator_to_minor_quote_currency(
     assert payload["denominator_currency"] == "GBP"
     assert payload["currency"] == "GBp"
     assert payload["denominator_to_price_fx_rate"] == 100.0
-    assert payload["scenarios"]["base"]["denominator"] == 50.0
-    assert payload["scenarios"]["base"]["denominator_converted"] == 5000.0
+    assert payload["scenarios"]["base"]["denominator"] == 0.5
+    assert payload["scenarios"]["base"]["denominator_converted"] == 50.0
     assert payload["scenarios"]["base"]["expected_price"] == 500.0
     assert payload["scenarios"]["base"]["percent_change"] == -50.0
 

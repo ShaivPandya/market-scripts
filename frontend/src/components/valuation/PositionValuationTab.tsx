@@ -43,6 +43,7 @@ const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
   "price_operating_income",
   "price_fcf",
 ])
+const PER_SHARE_VALUE_RANGE_METRICS = new Set<ValuationMetricKey>(["price_earnings"])
 
 interface ValueRangeDraft {
   scenarios: Record<ValueRangeScenarioKey, { multiple: string; denominator: string }>
@@ -102,6 +103,14 @@ function formatValuationMoney(value: unknown, currency?: unknown): string {
   if (abs >= 1e9) return `${prefix}${(value / 1e9).toFixed(2)}B`
   if (abs >= 1e6) return `${prefix}${(value / 1e6).toFixed(1)}M`
   return `${prefix}${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
+
+function formatValuationDenominator(metric: ValuationMetricKey, value: unknown, currency?: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
+  if (PER_SHARE_VALUE_RANGE_METRICS.has(metric)) {
+    return `${currencyPrefix(currency)}${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+  return formatValuationMoney(value, currency)
 }
 
 function formatValuationPct(value: unknown): string {
@@ -327,10 +336,20 @@ function computeDraftValueRangeScenario(
   if (multiple == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
   if (denominator == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
   if (denominatorToPriceRate == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing fx rate" }
-  if (shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+  if (!PER_SHARE_VALUE_RANGE_METRICS.has(metric) && shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
   if (ENTERPRISE_VALUE_METRICS.has(metric) && netDebt == null) {
     return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
   }
+
+  if (PER_SHARE_VALUE_RANGE_METRICS.has(metric)) {
+    const expectedPrice = multiple * (denominatorConverted ?? 0)
+    if (!Number.isFinite(expectedPrice) || expectedPrice <= 0) {
+      return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive expected price" }
+    }
+    const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
+    return { multiple, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
+  }
+  if (shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
 
   const grossValue = multiple * (denominatorConverted ?? 0)
   const equityValue = ENTERPRISE_VALUE_METRICS.has(metric) ? grossValue - (netDebt ?? 0) : grossValue
@@ -539,7 +558,7 @@ function ValueRangePanel({
                   label={denominatorCurrency ? `Denominator (${denominatorCurrency})` : "Denominator"}
                   value={activeDraft[scenario].denominator}
                   onChange={value => updateScenario(scenario, { denominator: value })}
-                  placeholder="1.5B"
+                  placeholder={PER_SHARE_VALUE_RANGE_METRICS.has(activeMetric) ? "5.25" : "1.5B"}
                 />
               </div>
               {computed.reason && <p className="mt-2 text-xs text-subtle">{computed.reason}</p>}
@@ -912,10 +931,10 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
                   </td>
                   <td className="px-3 py-2 font-mono text-app">{formatMultipleValue(metric?.value)}</td>
                   <td className="px-3 py-2">
-                    <div className="text-app">{formatValuationMoney(metric?.denominator, metric?.denominator_currency ?? financialCcy)}</div>
+                    <div className="text-app">{formatValuationDenominator(key, metric?.denominator, metric?.denominator_currency ?? financialCcy)}</div>
                     {metric?.denominator_converted != null && !sameCurrency(metric.denominator_currency, metric.denominator_converted_currency) && (
                       <div className="text-xs text-subtle">
-                        {formatValuationMoney(metric.denominator_converted, metric.denominator_converted_currency ?? priceCcy)}
+                        {formatValuationDenominator(key, metric.denominator_converted, metric.denominator_converted_currency ?? priceCcy)}
                       </div>
                     )}
                     <div className="text-xs text-subtle">{metric?.denominator_label}</div>
