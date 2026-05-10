@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { Fragment, useState } from "react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -262,25 +263,88 @@ function sensitivityColor(val: unknown): string {
   return ""
 }
 
-const sensitivityCols: ColumnDef[] = [
-  { key: "factor", header: "Factor" },
-  { key: "sensitivity", header: "Sensitivity", colorFn: val => sensitivityColor(val) },
-  { key: "capacity", header: "Capacity to Deal" },
-]
-
 function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(key: string) {
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-app">Sensitivity to Extrinsic Factors</h3>
-      <DataTable
-        columns={sensitivityCols}
-        rows={rows.map(r => ({
-          factor: cleanDossierDisplayText(r.factor),
-          sensitivity: cleanDossierDisplayText(r.sensitivity),
-          capacity: cleanDossierDisplayText(r.capacity),
-        }))}
-        maxHeight="400px"
-      />
+      <div className="max-h-[400px] overflow-y-auto rounded-[1.2rem] border border-app bg-card">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <thead className="sticky top-0 z-10 bg-card-muted">
+            <tr>
+              <th className="w-[68%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                Factor
+              </th>
+              <th className="border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                Sensitivity
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const factor = cleanDossierDisplayText(row.factor)
+              const sensitivity = cleanDossierDisplayText(row.sensitivity)
+              const capacity = cleanDossierDisplayText(row.capacity)
+              const key = `${factor || "factor"}-${sensitivity || "sensitivity"}-${index}`
+              const expanded = expandedRows.has(key)
+              const Icon = expanded ? ChevronDown : ChevronRight
+
+              return (
+                <Fragment key={key}>
+                  <tr
+                    aria-expanded={expanded}
+                    aria-label={`${expanded ? "Collapse" : "Expand"} capacity to deal for ${factor || "factor"}`}
+                    className="cursor-pointer border-b border-app transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[hsl(var(--accent))]"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleExpanded(key)}
+                    onKeyDown={event => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        toggleExpanded(key)
+                      }
+                    }}
+                  >
+                    <td className="px-4 py-3 text-app">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Icon className="h-4 w-4 shrink-0 text-subtle" aria-hidden="true" />
+                        <span className="min-w-0 whitespace-normal break-words">{factor || "N/A"}</span>
+                      </div>
+                    </td>
+                    <td
+                      className="whitespace-normal px-4 py-3 font-medium"
+                      style={{ color: sensitivityColor(sensitivity) || undefined }}
+                    >
+                      {sensitivity || "N/A"}
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr key={`${key}-detail`} className="border-b border-app bg-[hsl(var(--muted-2))]/45">
+                      <td colSpan={2} className="px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Capacity to Deal</p>
+                        <p className="mt-1 whitespace-normal break-words text-sm leading-6 text-muted">{capacity || "N/A"}</p>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

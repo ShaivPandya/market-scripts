@@ -149,6 +149,7 @@ const URGENCY_COLORS: Record<string, string> = {
 const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exit", "rebalance", "hedge"])
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
 const WORKSPACE_APPROVAL_LIMIT = 50
+type ApprovalDialogAction = "approve" | "reject" | "restage"
 
 function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
@@ -410,9 +411,10 @@ export function Workspace() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
-  const [approvalReview, setApprovalReview] = useState<{ approval: ApprovalRecord; action: "approve" | "reject" } | null>(null)
+  const [approvalReview, setApprovalReview] = useState<ApprovalRecord | null>(null)
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [approvalDialogAction, setApprovalDialogAction] = useState<ApprovalDialogAction | null>(null)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -423,24 +425,25 @@ export function Workspace() {
     })
   }
 
-  function openApprovalReview(approval: ApprovalRecord, action: "approve" | "reject") {
-    setApprovalReview({ approval, action })
+  function openApprovalReview(approval: ApprovalRecord) {
+    setApprovalReview(approval)
     setApprovalNote("")
     setApprovalError(null)
+    setApprovalDialogAction(null)
   }
 
   async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
-    setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
+    if (action === "approve" && !String(note || "").trim()) {
+      setApprovalError("Approval note is required before applying an internal state change.")
+      return
+    }
+    setApprovalDialogAction(action)
+    setProcessingIds(prev => new Set(prev).add(approval.id))
     try {
       let resolved: ApprovalRecord
       if (action === "approve") {
-        const trimmed = String(note || "").trim()
-        if (!trimmed) {
-          setApprovalError("Approval note is required before applying an internal state change.")
-          return
-        }
-        resolved = await approveItem(approval.id, trimmed)
+        resolved = await approveItem(approval.id, String(note || "").trim())
       } else {
         resolved = await rejectItem(approval.id, note?.trim() || undefined)
       }
@@ -457,12 +460,14 @@ export function Workspace() {
         next.delete(approval.id)
         return next
       })
+      setApprovalDialogAction(null)
     }
   }
 
   async function handleRejectAndRestage(approval: ApprovalRecord, note?: string) {
     setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
+    setApprovalDialogAction("restage")
     try {
       const result = await rejectAndRestageApproval(approval.id, note?.trim() || undefined)
       patchResolvedApprovalSummaries(qc, result.original, approval)
@@ -478,6 +483,7 @@ export function Workspace() {
         next.delete(approval.id)
         return next
       })
+      setApprovalDialogAction(null)
     }
   }
 
