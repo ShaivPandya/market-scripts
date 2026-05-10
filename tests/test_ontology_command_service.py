@@ -212,6 +212,35 @@ def test_propose_and_apply_position_update_writes_only_ontology_objects():
     assert any(rel["relation_type"] == "executed_decision_applies_approval" for rel in service.objects.relations)  # type: ignore[attr-defined]
 
 
+def test_command_service_refreshes_read_model_after_position_approval_apply(monkeypatch):
+    import ontology.domain_write_service as domain_write_service
+    import ontology.read_model as read_model
+
+    refresh_calls: list[str] = []
+
+    class _Repo:
+        def refresh(self):
+            refresh_calls.append("refresh")
+
+    monkeypatch.setattr(domain_write_service, "ontology_read_model_enabled", lambda: True)
+    monkeypatch.setattr(read_model, "TemporalReadModelRepository", _Repo)
+
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "META", "asset": "equity", "direction": "long", "shares": 1}]},
+        context,
+        reason="unit",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    assert "position:META" in service.objects.objects  # type: ignore[attr-defined]
+    assert refresh_calls == ["refresh", "refresh"]
+
+
 def test_position_update_apply_preserves_negative_quantity():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
