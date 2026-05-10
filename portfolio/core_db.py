@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS optimization_alerts (
     severity                 TEXT NOT NULL
                              CHECK (severity IN ('low', 'normal', 'high', 'urgent')),
     status                   TEXT NOT NULL DEFAULT 'open'
-                             CHECK (status IN ('open', 'dismissed', 'superseded')),
+                             CHECK (status IN ('open', 'dismissed', 'superseded', 'resolved')),
     previous_snapshot_id     INTEGER,
     current_snapshot_id      INTEGER,
     change_summary           TEXT NOT NULL,
@@ -269,7 +269,9 @@ CREATE TABLE IF NOT EXISTS optimization_alerts (
     action_item_approval_id  INTEGER,
     created_at               TEXT NOT NULL,
     dismissed_at             TEXT,
-    dismissed_note           TEXT
+    dismissed_note           TEXT,
+    resolved_at              TEXT,
+    resolved_reason          TEXT
 )
 """
 
@@ -995,6 +997,13 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         },
     )
     _add_missing(
+        "optimization_alerts",
+        {
+            "resolved_at": "TEXT",
+            "resolved_reason": "TEXT",
+        },
+    )
+    _add_missing(
         "idea_evaluations",
         {
             "analyzer_context_json": "TEXT NOT NULL DEFAULT '{}'",
@@ -1115,6 +1124,7 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
     )
     _ensure_sqlite_watch_trigger_types(conn)
     _ensure_sqlite_recommendation_status_types(conn)
+    _ensure_sqlite_optimization_alert_status_types(conn)
 
 
 def _ensure_sqlite_watch_trigger_types(conn: sqlite3.Connection) -> None:
@@ -1180,6 +1190,30 @@ def _ensure_sqlite_recommendation_status_types(conn: sqlite3.Connection) -> None
     cols_sql = ", ".join(copy_cols)
     if cols_sql:
         conn.execute(f"INSERT INTO recommendations ({cols_sql}) SELECT {cols_sql} FROM {legacy_table}")
+    conn.execute(f"DROP TABLE {legacy_table}")
+
+
+def _ensure_sqlite_optimization_alert_status_types(conn: sqlite3.Connection) -> None:
+    """Rebuild legacy SQLite optimization_alerts tables whose status CHECK enum is stale."""
+
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'optimization_alerts'").fetchone()
+    create_sql = str(row[0] if row else "")
+    if not create_sql or "'resolved'" in create_sql:
+        return
+    if "CHECK" not in create_sql or "status" not in create_sql:
+        return
+
+    legacy_table = "optimization_alerts_legacy_status_upgrade"
+    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
+    conn.execute(f"ALTER TABLE optimization_alerts RENAME TO {legacy_table}")
+    conn.execute(_CREATE_OPTIMIZATION_ALERTS)
+
+    legacy_cols = {str(col[1]) for col in conn.execute(f"PRAGMA table_info({legacy_table})").fetchall()}
+    target_cols = {str(col[1]) for col in conn.execute("PRAGMA table_info(optimization_alerts)").fetchall()}
+    copy_cols = [col for col in target_cols if col in legacy_cols]
+    cols_sql = ", ".join(copy_cols)
+    if cols_sql:
+        conn.execute(f"INSERT INTO optimization_alerts ({cols_sql}) SELECT {cols_sql} FROM {legacy_table}")
     conn.execute(f"DROP TABLE {legacy_table}")
 
 
@@ -4069,6 +4103,31 @@ def dismiss_optimization_alert(alert_id: int, note: str | None = None) -> dict:
     if not row:
         raise ValueError(f"No optimization alert with id {alert_id}")
     return _hydrate_optimization_alert(_parse_optimization_alert_json_fields(_require_row_dict(row)))
+
+
+def resolve_optimization_alerts_for_tickers(
+    tickers: Iterable[str],
+    *,
+    alert_type: str = "thesis_pressure",
+    reason: str = "position_removed",
+) -> int:
+    """Resolve open optimization alerts for tickers that left the active portfolio."""
+
+    normalized = sorted({str(ticker or "").strip().upper() for ticker in tickers if str(ticker or "").strip()})
+    if not normalized:
+        return 0
+    placeholders = ", ".join("?" for _ in normalized)
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE optimization_alerts "
+            "SET status = 'resolved', resolved_at = ?, resolved_reason = ? "
+            f"WHERE status = 'open' AND alert_type = ? AND UPPER(ticker) IN ({placeholders})",
+            (now, reason, alert_type, *normalized),
+        )
+        conn.commit()
+    return int(getattr(cur, "rowcount", 0) or 0)
 
 
 # ---------------------------------------------------------------------------

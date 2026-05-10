@@ -280,6 +280,111 @@ def test_portfolio_update_approval_payload_lists_position_changes():
     assert nvda_change["after"] is None
 
 
+def _create_pressure_alert(ticker: str, *, alert_type: str = "thesis_pressure") -> dict:
+    return core_db.create_optimization_alert(
+        {
+            "mission_id": 1,
+            "run_id": "test-run",
+            "ticker": ticker,
+            "alert_type": alert_type,
+            "severity": "normal",
+            "change_summary": f"{ticker} alert",
+        }
+    )
+
+
+def test_portfolio_removal_resolves_thesis_pressure_alerts_only_on_approval_apply():
+    portfolio_db.save_positions(
+        [
+            {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10},
+            {"ticker": "CRWD", "asset": "equity", "direction": "long", "shares": 5},
+        ],
+        role="position",
+    )
+    pressure_alert = _create_pressure_alert("CRWD")
+    other_alert = _create_pressure_alert("CRWD", alert_type="action_changed")
+    kept_alert = _create_pressure_alert("MU")
+
+    staged = propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+        ActionContext(actor_type="user", source_type="user", source_id="test"),
+        reason="remove CRWD",
+    )
+
+    assert {alert["id"] for alert in core_db.get_optimization_alerts(status="open")} == {
+        pressure_alert["id"],
+        other_alert["id"],
+        kept_alert["id"],
+    }
+
+    core_db.resolve_approval(staged["id"], "rejected", "Do not apply")
+    assert {alert["id"] for alert in core_db.get_optimization_alerts(status="open")} == {
+        pressure_alert["id"],
+        other_alert["id"],
+        kept_alert["id"],
+    }
+
+    applied = _approve_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+        reason="remove CRWD",
+    )
+
+    assert applied["removed_tickers"] == ["CRWD"]
+    assert applied["resolved_alert_count"] == 1
+    resolved = core_db.get_optimization_alerts(status="resolved")
+    assert [alert["id"] for alert in resolved] == [pressure_alert["id"]]
+    assert resolved[0]["resolved_reason"] == "position_removed"
+    assert resolved[0]["resolved_at"]
+    assert {alert["id"] for alert in core_db.get_optimization_alerts(status="open")} == {
+        other_alert["id"],
+        kept_alert["id"],
+    }
+
+
+def test_hedge_removal_does_not_resolve_thesis_pressure_alerts():
+    portfolio_db.save_positions(
+        [{"ticker": "CRWD", "asset": "equity", "direction": "short", "shares": 5}],
+        role="hedge",
+    )
+    pressure_alert = _create_pressure_alert("CRWD")
+
+    result = _approve_action("update_hedge_positions", {"positions": []})
+
+    assert result == {"status": "ok", "count": 0}
+    assert [alert["id"] for alert in core_db.get_optimization_alerts(status="open")] == [pressure_alert["id"]]
+
+
+def test_readding_position_keeps_resolved_pressure_alerts_resolved():
+    portfolio_db.save_positions(
+        [
+            {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10},
+            {"ticker": "CRWD", "asset": "equity", "direction": "long", "shares": 5},
+        ],
+        role="position",
+    )
+    old_alert = _create_pressure_alert("CRWD")
+    _approve_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+    )
+
+    _approve_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10},
+                {"ticker": "CRWD", "asset": "equity", "direction": "long", "shares": 5},
+            ]
+        },
+    )
+    new_alert = _create_pressure_alert("CRWD")
+
+    assert [alert["id"] for alert in core_db.get_optimization_alerts(status="resolved")] == [old_alert["id"]]
+    assert [alert["id"] for alert in core_db.get_optimization_alerts(status="open")] == [new_alert["id"]]
+
+
 def test_execute_action_shadow_writes_ontology_versions(monkeypatch):
     captured: dict[str, list[dict]] = {"objects": [], "relations": []}
 

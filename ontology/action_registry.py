@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -2143,26 +2143,37 @@ def _restore_positions(previous_rows: list[dict[str, Any]], *, role: str, contex
             )
 
 
+def _ticker_set(rows: Iterable[Mapping[str, Any]]) -> set[str]:
+    return {str(row.get("ticker") or "").strip().upper() for row in rows if str(row.get("ticker") or "").strip()}
+
+
 def _update_portfolio_positions(input_model: BaseModel, context: ActionContext) -> ActionResult:
     typed = cast(UpdatePortfolioPositionsInput, input_model)
     if not typed.positions:
         raise ActionValidationError("At least one position is required.")
     _ensure_unique_tickers(typed.positions)
 
+    from portfolio import core_db
     from portfolio.portfolio_db import get_positions, save_positions
 
     previous = get_positions(include_hedges=False)
     preserve_existing_valuation = context.actor_type == "approval_apply"
     rows = _position_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
+    removed_tickers = sorted(_ticker_set(previous) - _ticker_set(rows))
     try:
         save_positions(rows, role="position", preserve_existing_valuation=preserve_existing_valuation)
         updated = get_positions(include_hedges=False)
         if len(updated) != len(rows):
             raise RuntimeError("Portfolio position postcondition failed: saved row count mismatch")
+        resolved_alert_count = core_db.resolve_optimization_alerts_for_tickers(removed_tickers)
     except Exception as exc:
         _restore_positions(previous, role="position", context=context, reason=str(exc) or exc.__class__.__name__)
         raise
-    return ActionResult({"status": "ok", "count": len(rows)}, _portfolio_callbacks())
+    output: dict[str, Any] = {"status": "ok", "count": len(rows)}
+    if removed_tickers:
+        output["removed_tickers"] = removed_tickers
+        output["resolved_alert_count"] = resolved_alert_count
+    return ActionResult(output, _portfolio_callbacks())
 
 
 def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> ActionResult:

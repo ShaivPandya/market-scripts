@@ -571,7 +571,8 @@ class OntologyCommandService:
         object_type: str,
         submitted_tickers: set[str],
         now: str,
-    ) -> None:
+    ) -> list[str]:
+        expired_tickers: list[str] = []
         for existing in self.objects.query_objects(object_type, limit=1000):
             flat = _flatten_object(existing)
             ticker = str(flat.get("ticker") or "").strip().upper()
@@ -579,6 +580,8 @@ class OntologyCommandService:
             if not ticker or not object_uid or ticker in submitted_tickers:
                 continue
             self._expire_current_object_and_relations(object_uid, now)
+            expired_tickers.append(ticker)
+        return sorted(set(expired_tickers))
 
     def _expire_current_object_and_relations(self, object_uid: str, now: str) -> None:
         self.objects.expire_object(object_uid, tx_to=now)
@@ -590,6 +593,45 @@ class OntologyCommandService:
             relation_uid = str(relation.get("relation_uid") or "").strip()
             if relation_uid:
                 self.objects.expire_relation(relation_uid, tx_to=now)
+
+    def _resolve_removed_position_pressure_alerts(
+        self,
+        removed_tickers: list[str],
+        *,
+        now: str,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+    ) -> list[dict[str, Any]]:
+        if not removed_tickers:
+            return []
+        removed = {ticker.upper() for ticker in removed_tickers}
+        refs: list[dict[str, Any]] = []
+        for alert in self.objects.query_objects("OptimizationAlert", filters={"status": "open"}, limit=1000):
+            flat = _flatten_object(alert)
+            ticker = str(flat.get("ticker") or "").strip().upper()
+            alert_type = str(flat.get("alert_type") or "").strip().lower()
+            if ticker not in removed or alert_type != "thesis_pressure":
+                continue
+            props = dict(flat)
+            business_key = str(props.get("alert_id") or props.get("id") or props.get("object_uid") or "").strip()
+            if not business_key:
+                continue
+            props["status"] = "resolved"
+            props["resolved_at"] = now
+            props["resolved_reason"] = "position_removed"
+            props["updated_at"] = now
+            resolved = self.objects.write_object(
+                "OptimizationAlert",
+                business_key,
+                props,
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(resolved))
+        return refs
 
     def _create_portfolio_news_digest(
         self,
@@ -721,7 +763,7 @@ class OntologyCommandService:
         if action_id == "update_portfolio_positions":
             positions = _list(payload.get("positions"))
             submitted_tickers = {_non_blank(_dict(position).get("ticker"), "ticker").upper() for position in positions}
-            self._expire_absent_replacement_objects("Position", submitted_tickers, now)
+            removed_tickers = self._expire_absent_replacement_objects("Position", submitted_tickers, now)
             self._ensure_default_account_portfolio(context, provenance_id=provenance_id, input_hash=input_hash)
             for position in positions:
                 row = dict(position)
@@ -784,6 +826,15 @@ class OntologyCommandService:
                     input_hash=input_hash,
                 )
                 refs.append(_version_ref_from_row(pos))
+            refs.extend(
+                self._resolve_removed_position_pressure_alerts(
+                    removed_tickers,
+                    now=now,
+                    actor=actor,
+                    provenance_id=provenance_id,
+                    input_hash=input_hash,
+                )
+            )
             return refs
         if action_id == "update_hedge_positions":
             positions = _list(payload.get("positions"))

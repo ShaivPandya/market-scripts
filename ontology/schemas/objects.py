@@ -2380,6 +2380,8 @@ class OptimizationAlertV1(OntologySchemaBase):
     current_snapshot: dict[str, Any] | None = None
     dismissal_note: str | None = None
     dismissed_at: str | None = None
+    resolved_at: str | None = None
+    resolved_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     ontology_run_id: str | None = None
@@ -2396,7 +2398,16 @@ class OptimizationAlertV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("dismissal_note", "dismissed_at", "created_at", "updated_at", "ontology_run_id", mode="before")
+    @field_validator(
+        "dismissal_note",
+        "dismissed_at",
+        "resolved_at",
+        "resolved_reason",
+        "created_at",
+        "updated_at",
+        "ontology_run_id",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)

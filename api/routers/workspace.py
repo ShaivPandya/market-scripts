@@ -23,6 +23,19 @@ def _safe_call(fn, *args, **kwargs) -> Any:
         return None
 
 
+def _portfolio_tickers(portfolio_data: Any) -> set[str]:
+    if not isinstance(portfolio_data, dict):
+        return set()
+    positions = portfolio_data.get("positions")
+    if not isinstance(positions, list):
+        return set()
+    return {
+        str(position.get("ticker") or "").strip().upper()
+        for position in positions
+        if isinstance(position, dict) and str(position.get("ticker") or "").strip()
+    }
+
+
 @router.get("/workspace")
 def get_workspace():
     """Return workspace landing page data."""
@@ -128,12 +141,17 @@ def get_workspace():
         }
 
     # Positions under thesis pressure
+    owned_tickers = _portfolio_tickers(portfolio_data)
     ontology_bundle = reads.workspace_bundle()
     thesis_pressure = []
     try:
-        latest_evals = {e["ticker"]: e for e in ontology_bundle.get("latest_evaluations", [])}
+        latest_evals = {
+            str(e.get("ticker") or "").strip().upper(): e for e in ontology_bundle.get("latest_evaluations", [])
+        }
         for meta in ontology_bundle.get("theses", []):
-            ticker = meta["ticker"]
+            ticker = str(meta["ticker"]).strip().upper()
+            if ticker not in owned_tickers:
+                continue
             ev = latest_evals.get(ticker)
             if not ev:
                 continue

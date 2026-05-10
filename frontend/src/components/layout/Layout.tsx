@@ -1,10 +1,15 @@
-import { Suspense, useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react"
-import { Outlet, useLocation } from "react-router-dom"
-import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
+import { Suspense, useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react"
+import { Link, Outlet, useLocation } from "react-router-dom"
+import { Bell, Menu, MessageCircle, PanelRightOpen, X } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { Sidebar, getRouteLabel } from "./Sidebar"
 import { SidebarSearchDialog } from "./SidebarSearchDialog"
 import { AgentChat } from "../agent/AgentChat"
 import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
+import { fetchApprovalSummary, type ApprovalRecord } from "@/lib/api"
+import { approvalSummaryQueryKey } from "@/lib/approvalQueries"
+
+const ACTION_ITEM_ALERT_LIMIT = 50
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -122,6 +127,8 @@ function LayoutInner({
         </div>
       </main>
 
+      <ActionItemApprovalAlert />
+
       <button
         type="button"
         onClick={() => setAgentOpen(true)}
@@ -138,6 +145,88 @@ function LayoutInner({
         onNavigate={() => setSidebarOpen(false)}
       />
     </div>
+  )
+}
+
+function actionItemTicker(approval: ApprovalRecord) {
+  const proposed = approval.proposed_change
+  const raw = approval.ticker || proposed?.ticker
+  const ticker = String(raw || "").trim().toUpperCase()
+  return ticker || null
+}
+
+function actionItemDescription(approval: ApprovalRecord) {
+  const raw = approval.proposed_change?.description
+  const description = String(raw || "").trim()
+  if (!description) return "A new action item proposal is waiting for approval."
+  return description.length > 140 ? `${description.slice(0, 139)}...` : description
+}
+
+function actionItemReviewRoute(approval: ApprovalRecord) {
+  return approval.review_route ?? `/workspace?approval_id=${encodeURIComponent(approval.id)}`
+}
+
+function ActionItemApprovalAlert() {
+  const location = useLocation()
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
+  const summaryQuery = useQuery({
+    queryKey: approvalSummaryQueryKey({ status: "pending", limit: ACTION_ITEM_ALERT_LIMIT }),
+    queryFn: () => fetchApprovalSummary({ status: "pending", limit: ACTION_ITEM_ALERT_LIMIT }),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  })
+
+  const approval = useMemo(() => {
+    const items = summaryQuery.data?.items ?? []
+    return items.find(item => item.action_id === "create_action_item" && !dismissedIds.has(item.id)) ?? null
+  }, [dismissedIds, summaryQuery.data?.items])
+
+  if (!approval || location.pathname === "/workspace") return null
+
+  const ticker = actionItemTicker(approval)
+
+  return (
+    <aside
+      className="theme-floating fixed right-[max(1rem,calc(1rem+var(--safe-right)))] top-[max(1rem,calc(1rem+var(--safe-top)))] z-50 w-[min(27rem,calc(100vw-2rem))] p-4"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          <Bell size={16} aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-app">
+                Action item staged{ticker ? ` for ${ticker}` : ""}
+              </p>
+              <p className="mt-1 break-words text-sm leading-5 text-muted">
+                {actionItemDescription(approval)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDismissedIds(prev => new Set(prev).add(approval.id))}
+              className="theme-icon-button h-8 w-8 shrink-0"
+              aria-label="Dismiss action item alert"
+              title="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Link
+              to={actionItemReviewRoute(approval)}
+              className="theme-button-base theme-button-primary min-h-9 px-3 text-xs"
+            >
+              Review in Workspace
+            </Link>
+            <span className="text-xs text-subtle">Approval required before it becomes an open action item.</span>
+          </div>
+        </div>
+      </div>
+    </aside>
   )
 }
 

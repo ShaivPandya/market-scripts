@@ -15,9 +15,16 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
                         "confidence": 0.8,
                         "risk_flag": None,
                         "evaluated_at": "2026-05-05",
-                    }
+                    },
+                    {
+                        "ticker": "CRWD",
+                        "action": "trim",
+                        "confidence": 0.7,
+                        "risk_flag": "No longer owned",
+                        "evaluated_at": "2026-05-05",
+                    },
                 ],
-                "theses": [{"ticker": "MU", "status": "active"}],
+                "theses": [{"ticker": "MU", "status": "active"}, {"ticker": "CRWD", "status": "active"}],
                 "pending_approvals": [{"id": 7, "status": "pending", "proposed_change": {"recommendation_id": 3}}],
                 "latest_daily_recommendation": {
                     "id": 3,
@@ -39,7 +46,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
             }
 
     monkeypatch.setattr(workspace_router, "OntologyRuntimeReadService", _Reads)
-    monkeypatch.setattr(agent_tools, "execute_tool", lambda name, args: {"positions": []})
+    monkeypatch.setattr(agent_tools, "execute_tool", lambda name, args: {"positions": [{"ticker": "MU"}]})
     monkeypatch.setattr(
         "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
         lambda **kwargs: {"regime": {"label": "neutral", "score": 0}},
@@ -47,7 +54,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
 
     payload = workspace_router.get_workspace()
 
-    assert payload["thesis_pressure"][0]["ticker"] == "MU"
+    assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
     assert payload["pending_approvals"]["count"] == 1
     assert payload["recommendations"]["latest_daily"]["id"] == 3
     assert payload["recommendations"]["pending_actionable"]["count"] == 1
