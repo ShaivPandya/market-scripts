@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
@@ -838,7 +838,8 @@ def _top_risk_contributors(snapshots: list[dict[str, Any]], *, limit: int = 5) -
 def _group_risk_summaries(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for row in snapshots:
-        position = row.get("position") if isinstance(row.get("position"), dict) else {}
+        position_raw = row.get("position")
+        position: Mapping[str, Any] = position_raw if isinstance(position_raw, Mapping) else {}
         try:
             group_name, group_conviction = normalize_position_group_fields(position)
         except ValueError:

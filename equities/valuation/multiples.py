@@ -1058,6 +1058,7 @@ def compute_value_range_scenario(
             if current_price_value is not None:
                 percent_change = (expected_price / current_price_value - 1.0) * 100.0
     else:
+        assert share_count is not None
         enterprise_or_equity_value = multiple * (denominator_converted or 0.0)
         equity_value = (
             enterprise_or_equity_value - (net_debt_value or 0.0)

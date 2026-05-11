@@ -929,20 +929,20 @@ def _portfolio_group_changes(
     removed_keys = [key for key in before_groups if key not in after_groups]
     added_keys = [key for key in after_groups if key not in before_groups]
     for before_key in removed_keys:
-        before = before_groups[before_key]
-        before_members = _member_key(before)
+        before_group = before_groups[before_key]
+        before_member_key = _member_key(before_group)
         renamed_to = next(
             (
                 after_key
                 for after_key in added_keys
-                if after_key not in handled_after and _member_key(after_groups[after_key]) == before_members
+                if after_key not in handled_after and _member_key(after_groups[after_key]) == before_member_key
             ),
             None,
         )
         if renamed_to is None:
             continue
-        after = after_groups[renamed_to]
-        changes.append({"change_type": "renamed", "before": before, "after": after})
+        after_group = after_groups[renamed_to]
+        changes.append({"change_type": "renamed", "before": before_group, "after": after_group})
         handled_before.add(before_key)
         handled_after.add(renamed_to)
 
