@@ -19,6 +19,13 @@ type PositionChange = {
   fields?: unknown
 }
 
+type GroupChange = {
+  change_type?: unknown
+  before?: unknown
+  after?: unknown
+  fields?: unknown
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -147,13 +154,47 @@ function positionDescriptor(value: unknown): string {
   if (record.valuation_status && record.valuation_status !== "ok") {
     bits.push(`valuation ${formatValue(record.valuation_status)}`)
   }
+  if (record.group_name) bits.push(`group ${formatValue(record.group_name)}`)
+  if (record.group_conviction != null) bits.push(`group conviction ${formatValue(record.group_conviction)}`)
   if (record.conviction != null) bits.push(`conviction ${formatValue(record.conviction)}`)
   if (record.contrarian === true) bits.push("contrarian")
   return bits.filter(Boolean).join(", ") || "-"
 }
 
+function groupDescriptor(value: unknown): string {
+  const record = asRecord(value)
+  const bits: string[] = []
+  if (record.group_conviction != null) bits.push(`conviction ${formatValue(record.group_conviction)}`)
+  if (record.direction) bits.push(formatValue(record.direction))
+  if (record.members) bits.push(`members ${formatValue(record.members)}`)
+  return bits.join(", ") || "-"
+}
+
+function groupChangeRows(changes: GroupChange[]): DetailRow[] {
+  return changes.map(item => {
+    const type = String(item.change_type || "").toLowerCase()
+    const before = asRecord(item.before)
+    const after = asRecord(item.after)
+    const groupName = formatValue(after.group_name || before.group_name || "Group")
+    if (type === "added") return { label: `Group ${groupName} added`, value: groupDescriptor(item.after) }
+    if (type === "removed") return { label: `Group ${groupName} removed`, value: groupDescriptor(item.before) }
+    if (type === "renamed") {
+      return {
+        label: `Group ${formatValue(before.group_name)} renamed`,
+        value: `${formatValue(before.group_name)} to ${formatValue(after.group_name)}; ${groupDescriptor(item.after)}`,
+      }
+    }
+    const fields = asRecordArray(item.fields) as PositionChangeField[]
+    const value = fields.length
+      ? fields.map(field => `${humanizeKey(String(field.field || "Field"))}: ${formatValue(field.before)} to ${formatValue(field.after)}`).join("; ")
+      : `${groupDescriptor(item.before)} to ${groupDescriptor(item.after)}`
+    return { label: `Group ${groupName} updated`, value }
+  })
+}
+
 function positionChangeSummary(change: Record<string, unknown>): { summary: string; rows: DetailRow[] } {
   const changes = asRecordArray(change.position_changes) as PositionChange[]
+  const groups = asRecordArray(change.group_changes) as GroupChange[]
   const countSummary = asRecord(change.position_change_summary)
   const beforeCount = countSummary.before_count
   const afterCount = countSummary.after_count
@@ -194,7 +235,7 @@ function positionChangeSummary(change: Record<string, unknown>): { summary: stri
 
   return {
     summary: `This applies captured portfolio position changes after approval.${countText}`,
-    rows,
+    rows: [...groupChangeRows(groups), ...rows],
   }
 }
 

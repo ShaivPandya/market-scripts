@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { Fragment, type CSSProperties, useState } from "react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -262,25 +263,88 @@ function sensitivityColor(val: unknown): string {
   return ""
 }
 
-const sensitivityCols: ColumnDef[] = [
-  { key: "factor", header: "Factor" },
-  { key: "sensitivity", header: "Sensitivity", colorFn: val => sensitivityColor(val) },
-  { key: "capacity", header: "Capacity to Deal" },
-]
-
 function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(key: string) {
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-app">Sensitivity to Extrinsic Factors</h3>
-      <DataTable
-        columns={sensitivityCols}
-        rows={rows.map(r => ({
-          factor: cleanDossierDisplayText(r.factor),
-          sensitivity: cleanDossierDisplayText(r.sensitivity),
-          capacity: cleanDossierDisplayText(r.capacity),
-        }))}
-        maxHeight="400px"
-      />
+      <div className="max-h-[400px] overflow-y-auto rounded-[1.2rem] border border-app bg-card">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <thead className="sticky top-0 z-10 bg-card-muted">
+            <tr>
+              <th className="w-[68%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                Factor
+              </th>
+              <th className="border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                Sensitivity
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const factor = cleanDossierDisplayText(row.factor)
+              const sensitivity = cleanDossierDisplayText(row.sensitivity)
+              const capacity = cleanDossierDisplayText(row.capacity)
+              const key = `${factor || "factor"}-${sensitivity || "sensitivity"}-${index}`
+              const expanded = expandedRows.has(key)
+              const Icon = expanded ? ChevronDown : ChevronRight
+
+              return (
+                <Fragment key={key}>
+                  <tr
+                    aria-expanded={expanded}
+                    aria-label={`${expanded ? "Collapse" : "Expand"} capacity to deal for ${factor || "factor"}`}
+                    className="cursor-pointer border-b border-app transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[hsl(var(--accent))]"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleExpanded(key)}
+                    onKeyDown={event => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        toggleExpanded(key)
+                      }
+                    }}
+                  >
+                    <td className="px-4 py-3 text-app">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Icon className="h-4 w-4 shrink-0 text-subtle" aria-hidden="true" />
+                        <span className="min-w-0 whitespace-normal break-words">{factor || "N/A"}</span>
+                      </div>
+                    </td>
+                    <td
+                      className="whitespace-normal px-4 py-3 font-medium"
+                      style={{ color: sensitivityColor(sensitivity) || undefined }}
+                    >
+                      {sensitivity || "N/A"}
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr key={`${key}-detail`} className="border-b border-app bg-[hsl(var(--muted-2))]/45">
+                      <td colSpan={2} className="px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Capacity to Deal</p>
+                        <p className="mt-1 whitespace-normal break-words text-sm leading-6 text-muted">{capacity || "N/A"}</p>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -426,9 +490,9 @@ function SupplyChainColumn({
   )
 }
 
-function FlowConnector() {
+function FlowConnector({ className }: { className?: string }) {
   return (
-    <div className="hidden min-w-[4rem] items-center justify-center lg:flex" aria-hidden="true">
+    <div className={cn("hidden min-w-[4rem] items-center justify-center lg:flex", className)} aria-hidden="true">
       <div className="relative h-px w-full bg-[hsl(var(--border-strong))]">
         <span
           className="absolute right-0 top-1/2 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-app bg-card text-xs font-semibold text-subtle"
@@ -440,9 +504,56 @@ function FlowConnector() {
   )
 }
 
+function PositionNode({ ticker, className, style }: { ticker: string; className?: string; style?: CSSProperties }) {
+  return (
+    <div
+      className={cn("relative flex min-h-24 items-center justify-center rounded-lg border border-[hsl(var(--accent)/0.28)] bg-[hsl(var(--background-elevated))] px-4 py-5 text-center shadow-sm", className)}
+      style={style}
+    >
+      <div>
+        <p className="text-[11px] font-semibold uppercase text-subtle">Position</p>
+        <p className="mt-1 text-xl font-semibold tracking-normal text-app">{ticker}</p>
+      </div>
+    </div>
+  )
+}
+
+function SupplierCompanyFlow({ suppliers, ticker }: { suppliers: SupplyChainCounterparty[]; ticker: string }) {
+  return (
+    <div className="min-w-0 space-y-2">
+      <h4 className="text-xs font-semibold uppercase text-subtle">Suppliers</h4>
+      <div className="space-y-2 lg:hidden">
+        {suppliers.map((item, index) => (
+          <SupplyChainNode key={`${item.name}-${index}`} item={item} />
+        ))}
+        <PositionNode ticker={ticker} />
+      </div>
+      <div className="hidden lg:grid lg:grid-cols-[minmax(0,1fr)_4rem_minmax(8rem,0.72fr)] lg:gap-x-0 lg:gap-y-2 lg:items-stretch">
+        {suppliers.map((item, index) => (
+          <Fragment key={`${item.name}-${index}`}>
+            <SupplyChainNode item={item} />
+            <FlowConnector />
+            {index === 0 && (
+              <PositionNode
+                ticker={ticker}
+                className="h-full"
+                style={{
+                  gridColumn: 3,
+                  gridRow: `1 / span ${suppliers.length}`,
+                }}
+              />
+            )}
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SupplyChainSection({ supplyChain, ticker }: { supplyChain: ParsedSupplyChain | null; ticker: string }) {
   const suppliers = (supplyChain?.suppliers ?? []).filter(item => cleanDossierDisplayText(item.name))
   const customers = (supplyChain?.customers ?? []).filter(item => cleanDossierDisplayText(item.name))
+  const hasCustomers = customers.length > 0
 
   if (!suppliers.length && !customers.length) return null
 
@@ -450,24 +561,20 @@ function SupplyChainSection({ supplyChain, ticker }: { supplyChain: ParsedSupply
     <div className="space-y-4">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-app">Supply Chain</h3>
       <div className="rounded-lg border border-app bg-card-muted p-3 sm:p-4">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_4rem_minmax(8rem,0.72fr)_4rem_minmax(0,1fr)] lg:items-center">
+        <div className={cn(
+          "grid grid-cols-1 gap-3 lg:items-center",
+          hasCustomers ? "lg:grid-cols-[minmax(0,1fr)_4rem_minmax(0,1fr)] lg:gap-x-0 lg:gap-y-3" : "lg:grid-cols-1",
+        )}>
           {suppliers.length > 0 ? (
-            <SupplyChainColumn title="Suppliers" items={suppliers} />
+            <SupplierCompanyFlow suppliers={suppliers} ticker={ticker} />
           ) : (
-            <div className="hidden lg:block" />
+            <PositionNode ticker={ticker} />
           )}
-          <FlowConnector />
-          <div className="relative flex min-h-24 items-center justify-center rounded-lg border border-[hsl(var(--accent)/0.28)] bg-[hsl(var(--background-elevated))] px-4 py-5 text-center shadow-sm">
-            <div>
-              <p className="text-[11px] font-semibold uppercase text-subtle">Position</p>
-              <p className="mt-1 text-xl font-semibold tracking-normal text-app">{ticker}</p>
-            </div>
-          </div>
-          <FlowConnector />
-          {customers.length > 0 ? (
-            <SupplyChainColumn title="Customers" items={customers} align="right" />
-          ) : (
-            <div className="hidden lg:block" />
+          {hasCustomers && (
+            <>
+              <FlowConnector className={suppliers.length > 0 ? "lg:mt-6" : undefined} />
+              <SupplyChainColumn title="Customers" items={customers} align="right" />
+            </>
           )}
         </div>
       </div>

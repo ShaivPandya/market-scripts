@@ -367,4 +367,7 @@ def test_stale_approval_controls_are_wired_on_review_surfaces():
         assert "BaseStateBadge" in source
         assert "Reject & Restage" in source
         assert "handleRejectAndRestage" in source
-        assert "approvalReview.approval.can_approve === false" in source
+        assert (
+            "approvalReview.approval.can_approve === false" in source
+            or "approvalReview.can_approve === false" in source
+        )

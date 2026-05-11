@@ -12,6 +12,12 @@ from api.exceptions import DataFetchError
 from api.portfolio_settings import get_portfolio_book_size
 from api.serializers import serialize_dataframe, serialize_value
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.position_groups import (
+    canonicalize_position_group_rows,
+    group_key,
+    normalize_group_conviction,
+    normalize_group_name,
+)
 
 router = APIRouter()
 
@@ -19,12 +25,25 @@ router = APIRouter()
 class SizerPosition(BaseModel):
     ticker: str = ""
     conviction: int = 3
+    group_name: str | None = None
+    group_conviction: int | None = Field(default=None, ge=1, le=5)
+
+    @model_validator(mode="after")
+    def _normalize_group(self) -> SizerPosition:
+        self.group_name = normalize_group_name(self.group_name)
+        if self.group_name:
+            self.group_conviction = normalize_group_conviction(self.group_conviction)
+            if self.group_conviction is None:
+                raise ValueError(f"Group '{self.group_name}' requires a group conviction.")
+        else:
+            self.group_conviction = None
+        return self
 
 
 class SizerRequest(BaseModel):
     book: float | None = None
     target_leverage: float = 2.0
-    beta_hedge_mode: Literal["spy_iwm", "spy"] = "spy_iwm"
+    beta_hedge_mode: Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq"] = "spy_iwm"
     positions: list[SizerPosition] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -38,8 +57,9 @@ def _effective_book(req: SizerRequest) -> float:
     return float(req.book) if req.book is not None else float(get_portfolio_book_size())
 
 
-def _canonical_positions(req: SizerRequest) -> list[tuple[str, int]]:
-    aggregated: dict[str, int] = {}
+def _canonical_positions(req: SizerRequest) -> list[tuple[str, int, str, int]]:
+    aggregated: dict[str, dict[str, Any]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for idx, row in enumerate(req.positions):  # noqa: B007
         ticker = str(row.ticker).strip().upper()
         conviction = int(row.conviction)
@@ -47,17 +67,50 @@ def _canonical_positions(req: SizerRequest) -> list[tuple[str, int]]:
             continue
         if conviction < 1 or conviction > 5:
             raise ValueError(f"Position '{ticker}' conviction must be 1-5, got {conviction}.")
-        # Take the max conviction for duplicate tickers
-        aggregated[ticker] = max(aggregated.get(ticker, 0), conviction)
+        name = normalize_group_name(row.group_name)
+        gkey = group_key(name)
+        group_conviction = normalize_group_conviction(row.group_conviction) if gkey else None
+        if gkey:
+            if group_conviction is None:
+                raise ValueError(f"Group '{name}' requires a group conviction.")
+            group = groups.setdefault(gkey, {"name": name, "conviction": group_conviction})
+            if group["conviction"] != group_conviction:
+                raise ValueError(
+                    f"Group '{group['name']}' has inconsistent group convictions "
+                    f"({group['conviction']} and {group_conviction})."
+                )
+            name = group["name"]
+        existing = aggregated.get(ticker)
+        if existing is None or conviction > existing["conviction"]:
+            aggregated[ticker] = {
+                "ticker": ticker,
+                "conviction": conviction,
+                "group_name": name,
+                "group_conviction": group_conviction,
+            }
     if not aggregated:
         raise ValueError("No valid positions provided.")
-    return sorted(aggregated.items(), key=lambda x: x[0])
+    return [
+        (
+            row["ticker"],
+            int(row["conviction"]),
+            str(row["group_name"] or ""),
+            int(row["group_conviction"] or 0),
+        )
+        for row in sorted(aggregated.values(), key=lambda x: str(x["ticker"]))
+    ]
 
 
 def _cache_key(req: SizerRequest) -> str:
     strategy_version = "v2_conviction_sizing_equity_beta"
     canonical = _canonical_positions(req)
-    token = "|".join(f"{ticker}:{conviction}" for ticker, conviction in canonical) or "none"
+    token = (
+        "|".join(
+            f"{ticker}:{conviction}:group={group_name}:{group_conviction}"
+            for ticker, conviction, group_name, group_conviction in canonical
+        )
+        or "none"
+    )
     return (
         f"portfolio_sizer:{strategy_version}:book={_effective_book(req):.4f}:"
         f"lev={float(req.target_leverage):.4f}:beta_hedge_mode={req.beta_hedge_mode}:positions={token}"
@@ -68,7 +121,7 @@ def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
     try:
         from portfolio.portfolio_optimizer.portfolio_sizer import get_data
 
-        payload = [row.model_dump() for row in req.positions]
+        payload = canonicalize_position_group_rows([row.model_dump() for row in req.positions])
         data = get_data(
             positions=payload,
             book=_effective_book(req),
@@ -156,23 +209,36 @@ def get_sizer_prefill():
             if "instrument_type" in df.columns
             else pd.Series(["security"] * len(df))
         )
+        group_names = (
+            df["group_name"].apply(normalize_group_name) if "group_name" in df.columns else pd.Series([None] * len(df))
+        )
+        group_convictions = (
+            pd.to_numeric(df["group_conviction"], errors="coerce").astype("Int64")
+            if "group_conviction" in df.columns
+            else pd.Series([pd.NA] * len(df), dtype="Int64")
+        )
 
         deduped_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for ticker, direction, conviction, instrument_type in zip(  # noqa: B905
+        for ticker, direction, conviction, instrument_type, group_name, group_conviction in zip(  # noqa: B905
             tickers.tolist(),
             directions.tolist(),
             convictions.tolist(),
             instrument_types.tolist(),
+            group_names.tolist(),
+            group_convictions.tolist(),
         ):
             if ticker and ticker not in seen:
                 seen.add(ticker)
+                group_conviction_out = None if pd.isna(group_conviction) else int(group_conviction)
                 deduped_rows.append(
                     {
                         "ticker": ticker,
                         "conviction": conviction,
                         "direction": direction,
                         "instrument_type": instrument_type,
+                        "group_name": group_name,
+                        "group_conviction": group_conviction_out if group_name else None,
                     }
                 )
 

@@ -233,7 +233,9 @@ class OntologyCommandService:
             object_refs=[{"type": "Approval", "id": approval_uid}],
             after_summary={"action_id": action_id, "target_object_uid": target_uid},
         )
-        return _flatten_object(row)
+        approval = _flatten_object(row)
+        _refresh_temporal_read_models_after_command()
+        return approval
 
     def _evaluate_policy_gate(
         self,
@@ -323,6 +325,7 @@ class OntologyCommandService:
                 object_refs=[{"type": "Approval", "id": approval["id"]}],
                 after_summary={"note": note},
             )
+            _refresh_temporal_read_models_after_command()
             return resolved
 
         applying_props = {
@@ -350,7 +353,7 @@ class OntologyCommandService:
         )
         resolved = _flatten_object(row)
         try:
-            return self._apply_approval(
+            applied = self._apply_approval(
                 resolved,
                 context,
                 provenance_id=provenance_id,
@@ -361,6 +364,9 @@ class OntologyCommandService:
             error = exc.message
         except Exception as exc:
             error = str(exc).strip() or exc.__class__.__name__
+        else:
+            _refresh_temporal_read_models_after_command()
+            return applied
         failed_now = _now()
         failed_action_id = str(resolved.get("action_id") or "").strip()
         if failed_action_id:
@@ -424,6 +430,7 @@ class OntologyCommandService:
             object_refs=[{"type": "Approval", "id": approval["id"]}],
             after_summary={"application_status": "failed", "error": error[:1000]},
         )
+        _refresh_temporal_read_models_after_command()
         raise OntologyCommandConflict(f"Approval {approval['id']} application failed: {error}") from None
 
     def _apply_approval(
@@ -2500,6 +2507,20 @@ def _stable_hash(value: Any) -> str:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _refresh_temporal_read_models_after_command() -> None:
+    try:
+        from ontology.domain_write_service import ontology_read_model_enabled
+
+        if not ontology_read_model_enabled():
+            return
+        from ontology.read_model import TemporalReadModelRepository
+
+        TemporalReadModelRepository().refresh()
+    except Exception:
+        logger.exception("ontology read model refresh failed after command write")
+        raise
 
 
 def _non_blank(value: Any, field: str) -> str:

@@ -14,7 +14,7 @@ import logging
 import traceback
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Dict, Literal, Optional, Tuple  # noqa: UP035
+from typing import Any, Literal, cast
 
 import cvxpy as cp
 import numpy as np
@@ -43,119 +43,172 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     SEVERE_DD_MAX,
     SHORT_MIN,
     apply_contrarian_gating,
-    apply_hedges_with_gross_cap,
-    apply_net_neutral,
     compute_10yr_equivalent,
-    compute_beta_frame,
+    compute_betas,
     compute_defense_volatility,
-    compute_equity_net_betas,
     compute_severe_drawdown_flags,
-    download_prices,
     ensure_psd,
     exposures_by_class,
-    fetch_currencies,
     fetch_prices_for_portfolio_symbols,
-    get_required_fx_tickers,
     identify_binding_constraint,
     max_scale_to_respect_linear_caps,
     prepare_instrument_metadata,
-    solve_joint_hedge_weights,
     to_usd_price,
     unit_notional_in_base,
 )
+from portfolio.position_groups import group_key, normalize_group_conviction, normalize_group_name
 
 LOGGER = logging.getLogger(__name__)
 
 CONVICTION_MIN = 1
 CONVICTION_MAX = 5
-BetaHedgeMode = Literal["spy_iwm", "spy"]
+BetaHedgeMode = Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq"]
 BETA_HEDGE_MODE_SPY_IWM: BetaHedgeMode = "spy_iwm"
 BETA_HEDGE_MODE_SPY: BetaHedgeMode = "spy"
+MARKET_TICKER_QQQ = "QQQ"
+HEDGE_DIAGNOSTIC_TICKERS = (MARKET_TICKER_LONG, MARKET_TICKER_SHORT, MARKET_TICKER_QQQ)
+BETA_HEDGE_MODE_TICKERS: dict[str, tuple[str, ...]] = {
+    "spy": (MARKET_TICKER_LONG,),
+    "iwm": (MARKET_TICKER_SHORT,),
+    "qqq": (MARKET_TICKER_QQQ,),
+    "spy_iwm": (MARKET_TICKER_LONG, MARKET_TICKER_SHORT),
+    "spy_qqq": (MARKET_TICKER_LONG, MARKET_TICKER_QQQ),
+    "iwm_qqq": (MARKET_TICKER_SHORT, MARKET_TICKER_QQQ),
+}
+
+
+def _benchmark_key(ticker: str) -> str:
+    return ticker.strip().lower()
+
+
+def _beta_metric_name(prefix: str, ticker: str) -> str:
+    return f"{prefix}_{_benchmark_key(ticker)}"
+
+
+def _expected_hedge_sign(ticker: str) -> int:
+    # SPY/QQQ offset long beta with shorts; IWM retains the legacy short-book hedge convention.
+    return 1 if ticker == MARKET_TICKER_SHORT else -1
 
 
 def _normalize_beta_hedge_mode(value: str | None) -> BetaHedgeMode:
-    if value is None or value == "":
-        return BETA_HEDGE_MODE_SPY_IWM
-    if value == BETA_HEDGE_MODE_SPY_IWM:
-        return BETA_HEDGE_MODE_SPY_IWM
-    if value == BETA_HEDGE_MODE_SPY:
-        return BETA_HEDGE_MODE_SPY
-    raise ValueError("beta_hedge_mode must be one of: spy_iwm, spy.")
+    normalized = (value or BETA_HEDGE_MODE_SPY_IWM).strip().lower()
+    if normalized in BETA_HEDGE_MODE_TICKERS:
+        return cast(BetaHedgeMode, normalized)
+    modes = ", ".join(sorted(BETA_HEDGE_MODE_TICKERS))
+    raise ValueError(f"beta_hedge_mode must be one of: {modes}.")
 
 
-def _solve_spy_only_hedge_weights(
-    net_beta_spy: float,
-    net_beta_iwm: float,
-    betas_all_spy: pd.Series,
-    betas_all_iwm: pd.Series,
-) -> tuple[float, float, float, float]:
-    """
-    Solve a single SPY hedge that neutralizes SPY beta only.
+def _hedge_tickers_for_mode(beta_hedge_mode: BetaHedgeMode) -> tuple[str, ...]:
+    return BETA_HEDGE_MODE_TICKERS[beta_hedge_mode]
 
-    IWM beta is retained as a residual diagnostic because the hedge basket does
-    not include an IWM leg in this mode.
-    """
-    beta_spy_to_spy = float(betas_all_spy.get(MARKET_TICKER_LONG, BETA_FALLBACK))
-    beta_spy_to_iwm = float(betas_all_iwm.get(MARKET_TICKER_LONG, BETA_FALLBACK))
-    hedge_spy_weight = float(-(net_beta_spy * beta_spy_to_spy) / (beta_spy_to_spy**2 + HEDGE_SOLVE_RIDGE))
-    hedge_iwm_weight = 0.0
-    post_hedge_beta_spy = float(net_beta_spy + beta_spy_to_spy * hedge_spy_weight)
-    post_hedge_beta_iwm = float(net_beta_iwm + beta_spy_to_iwm * hedge_spy_weight)
-    return hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm
+
+def _compute_equity_net_betas(
+    w: pd.Series,
+    beta_by_benchmark: dict[str, pd.Series],
+    long_mask: np.ndarray,
+    short_mask: np.ndarray,
+    eq_mask: np.ndarray,
+) -> dict[str, float]:
+    exposure_mask = eq_mask
+    long_exposure_mask = long_mask & exposure_mask
+    short_exposure_mask = short_mask & exposure_mask
+
+    out: dict[str, float] = {}
+    for benchmark, betas in beta_by_benchmark.items():
+        key = _benchmark_key(benchmark)
+        beta_long = (
+            float(betas.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
+        )
+        beta_short = (
+            float(betas.values[short_exposure_mask] @ w.values[short_exposure_mask])
+            if short_exposure_mask.any()
+            else 0.0
+        )
+        out[f"beta_long_{key}"] = beta_long
+        out[f"beta_short_{key}"] = beta_short
+        out[f"net_beta_{key}"] = beta_long + beta_short
+    return out
+
+
+def _solve_selected_hedge_weights(
+    beta_summary: dict[str, float],
+    selected_hedges: Sequence[str],
+    betas_all_by_benchmark: dict[str, pd.Series],
+    diagnostic_tickers: Sequence[str],
+) -> tuple[dict[str, float], dict[str, float]]:
+    target_benchmarks = list(selected_hedges)
+    B = np.array(
+        [
+            [
+                float(betas_all_by_benchmark.get(benchmark, pd.Series(dtype=float)).get(hedge_ticker, BETA_FALLBACK))
+                for hedge_ticker in selected_hedges
+            ]
+            for benchmark in target_benchmarks
+        ],
+        dtype=float,
+    )
+    target = np.array(
+        [-float(beta_summary.get(_beta_metric_name("net_beta", benchmark), 0.0)) for benchmark in target_benchmarks],
+        dtype=float,
+    )
+    ridge = HEDGE_SOLVE_RIDGE * np.eye(len(selected_hedges))
+    hedge = np.linalg.solve(B.T @ B + ridge, B.T @ target)
+
+    hedge_weights = {ticker: 0.0 for ticker in diagnostic_tickers}
+    for ticker, weight in zip(selected_hedges, hedge, strict=False):
+        hedge_weights[ticker] = float(weight)
+
+    post_betas: dict[str, float] = {}
+    for benchmark in diagnostic_tickers:
+        benchmark_betas = betas_all_by_benchmark.get(benchmark, pd.Series(dtype=float))
+        adjustment = sum(
+            float(benchmark_betas.get(hedge_ticker, BETA_FALLBACK)) * float(hedge_weights.get(hedge_ticker, 0.0))
+            for hedge_ticker in selected_hedges
+        )
+        post_betas[benchmark] = float(beta_summary.get(_beta_metric_name("net_beta", benchmark), 0.0) + adjustment)
+
+    return hedge_weights, post_betas
 
 
 def _apply_beta_hedges_with_gross_cap(
     w: pd.Series,
-    betas_spy: pd.Series,
-    betas_iwm: pd.Series,
-    betas_all_spy: pd.Series,
-    betas_all_iwm: pd.Series,
+    beta_by_benchmark: dict[str, pd.Series],
+    betas_all_by_benchmark: dict[str, pd.Series],
     long_mask: np.ndarray,
     short_mask: np.ndarray,
     eq_mask: np.ndarray,
     beta_hedge_mode: BetaHedgeMode,
 ) -> tuple[pd.Series, dict[str, Any]]:
-    if beta_hedge_mode == BETA_HEDGE_MODE_SPY_IWM:
-        hedged_w, hedge_summary = apply_hedges_with_gross_cap(
-            w,
-            betas_spy,
-            betas_iwm,
-            betas_all_spy,
-            betas_all_iwm,
-            long_mask,
-            short_mask,
-            eq_mask,
-        )
-        summary: dict[str, Any] = dict(hedge_summary)
-        summary["beta_hedge_mode"] = beta_hedge_mode
-        return hedged_w, summary
+    selected_hedges = _hedge_tickers_for_mode(beta_hedge_mode)
 
     def _solve_for_weights(weights: pd.Series) -> dict[str, Any]:
-        beta_summary = compute_equity_net_betas(weights, betas_spy, betas_iwm, long_mask, short_mask, eq_mask)
-        hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm = _solve_spy_only_hedge_weights(
-            beta_summary["net_beta_spy"],
-            beta_summary["net_beta_iwm"],
-            betas_all_spy,
-            betas_all_iwm,
+        beta_summary = _compute_equity_net_betas(weights, beta_by_benchmark, long_mask, short_mask, eq_mask)
+        hedge_weights, post_betas = _solve_selected_hedge_weights(
+            beta_summary,
+            selected_hedges,
+            betas_all_by_benchmark,
+            HEDGE_DIAGNOSTIC_TICKERS,
         )
 
         pre_hedge_gross = float(np.abs(weights).sum())
-        hedge_gross = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
+        hedge_gross = float(sum(abs(weight) for weight in hedge_weights.values()))
         gross_with_hedges = pre_hedge_gross + hedge_gross
 
         out: dict[str, Any] = dict(beta_summary)
         out.update(
             {
-                "hedge_spy_weight": hedge_spy_weight,
-                "hedge_iwm_weight": hedge_iwm_weight,
-                "post_hedge_beta_spy": post_hedge_beta_spy,
-                "post_hedge_beta_iwm": post_hedge_beta_iwm,
                 "pre_hedge_gross": pre_hedge_gross,
                 "hedge_gross": hedge_gross,
                 "gross_with_hedges": gross_with_hedges,
                 "beta_hedge_mode": beta_hedge_mode,
+                "selected_hedges": list(selected_hedges),
+                "hedge_weights": hedge_weights,
             }
         )
+        for benchmark in HEDGE_DIAGNOSTIC_TICKERS:
+            key = _benchmark_key(benchmark)
+            out[f"hedge_{key}_weight"] = float(hedge_weights.get(benchmark, 0.0))
+            out[f"post_hedge_beta_{key}"] = float(post_betas.get(benchmark, 0.0))
         return out
 
     summary = _solve_for_weights(w)
@@ -172,12 +225,13 @@ def _apply_beta_hedges_with_gross_cap(
 
 def _parse_positions(
     positions: Sequence[Mapping[str, Any]],
-) -> dict[str, int]:
-    """Parse and validate position rows into {ticker: conviction} dict."""
+) -> dict[str, dict[str, Any]]:
+    """Parse and validate position rows keyed by ticker."""
     if not positions:
         raise ValueError("positions must be a non-empty list.")
 
-    result: dict[str, int] = {}
+    result: dict[str, dict[str, Any]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for idx, row in enumerate(positions):  # noqa: B007
         ticker = str(row.get("ticker", "")).strip().upper()
         conviction_raw = row.get("conviction", 3)
@@ -195,7 +249,26 @@ def _parse_positions(
                 f"Position '{ticker}' conviction must be {CONVICTION_MIN}–{CONVICTION_MAX}, got {conviction}."
             )
 
-        result[ticker] = conviction
+        name = normalize_group_name(row.get("group_name"))
+        gkey = group_key(name)
+        group_conviction = normalize_group_conviction(row.get("group_conviction")) if gkey else None
+        if gkey:
+            if group_conviction is None:
+                raise ValueError(f"Group '{name}' requires a group conviction.")
+            group = groups.setdefault(gkey, {"name": name, "conviction": group_conviction})
+            if group["conviction"] != group_conviction:
+                raise ValueError(
+                    f"Group '{group['name']}' has inconsistent group convictions "
+                    f"({group['conviction']} and {group_conviction})."
+                )
+
+        result[ticker] = {
+            "ticker": ticker,
+            "conviction": conviction,
+            "group_name": group["name"] if gkey else None,
+            "group_key": gkey,
+            "group_conviction": group_conviction,
+        }
 
     if not result:
         raise ValueError("No valid positions provided. Add at least one ticker with a conviction level.")
@@ -205,7 +278,7 @@ def _parse_positions(
 
 def _build_conviction_weights(
     meta: pd.DataFrame,
-    convictions: dict[str, int],
+    positions: dict[str, dict[str, Any]],
 ) -> pd.Series:
     """
     Map conviction levels (1–5) to raw target weights.
@@ -217,8 +290,11 @@ def _build_conviction_weights(
 
     for ticker in meta.index:
         direction = str(meta.loc[ticker, "direction"]).strip().lower()
-        conviction = convictions.get(ticker, 0)
+        position = positions.get(ticker) or {}
+        conviction = int(position.get("conviction") or 0)
         if conviction <= 0 or not direction:
+            continue
+        if position.get("group_key"):
             continue
 
         frac = conviction / CONVICTION_MAX
@@ -227,7 +303,82 @@ def _build_conviction_weights(
         elif direction == "short":
             w_raw[ticker] = SHORT_MIN * frac
 
+    groups: dict[str, dict[str, Any]] = {}
+    for ticker in meta.index:
+        position = positions.get(ticker) or {}
+        gkey = position.get("group_key")
+        if not gkey:
+            continue
+        direction = str(meta.loc[ticker, "direction"]).strip().lower()
+        conviction = int(position.get("conviction") or 0)
+        group_conviction = int(position.get("group_conviction") or 0)
+        if conviction <= 0 or group_conviction <= 0:
+            continue
+        group = groups.setdefault(
+            str(gkey),
+            {
+                "name": position.get("group_name"),
+                "direction": direction,
+                "group_conviction": group_conviction,
+                "members": [],
+                "total_conviction": 0,
+            },
+        )
+        if group["direction"] and direction and group["direction"] != direction:
+            raise ValueError(f"Group '{group['name']}' cannot mix {group['direction']} and {direction} positions.")
+        if group["group_conviction"] != group_conviction:
+            raise ValueError(
+                f"Group '{group['name']}' has inconsistent group convictions "
+                f"({group['group_conviction']} and {group_conviction})."
+            )
+        group["members"].append((ticker, conviction))
+        group["total_conviction"] += conviction
+
+    for group in groups.values():
+        total = float(group["total_conviction"])
+        if total <= 0:
+            continue
+        frac = float(group["group_conviction"]) / CONVICTION_MAX
+        if group["direction"] == "long":
+            group_target = LONG_MAX * frac
+        elif group["direction"] == "short":
+            group_target = SHORT_MIN * frac
+        else:
+            continue
+        for ticker, conviction in group["members"]:
+            w_raw[ticker] = group_target * (float(conviction) / total)
+
     return w_raw
+
+
+def _group_metadata_for_tickers(
+    tickers: Sequence[str],
+    positions: Mapping[str, Mapping[str, Any]],
+    w_raw: pd.Series,
+) -> dict[str, list[Any]]:
+    group_targets: dict[str, float] = {}
+    for ticker in tickers:
+        position = positions.get(ticker) or {}
+        gkey = position.get("group_key")
+        if gkey:
+            group_targets[str(gkey)] = group_targets.get(str(gkey), 0.0) + float(w_raw.get(ticker, 0.0))
+    return {
+        "group_name": [(positions.get(t) or {}).get("group_name") for t in tickers],
+        "group_conviction": [(positions.get(t) or {}).get("group_conviction") for t in tickers],
+        "group_raw_target": [
+            group_targets.get(str((positions.get(t) or {}).get("group_key")), np.nan)
+            if (positions.get(t) or {}).get("group_key")
+            else np.nan
+            for t in tickers
+        ],
+        "group_member_share": [
+            abs(float(w_raw.get(t, 0.0)) / group_targets[str((positions.get(t) or {}).get("group_key"))])
+            if (positions.get(t) or {}).get("group_key")
+            and abs(group_targets.get(str((positions.get(t) or {}).get("group_key")), 0.0)) > 1e-12
+            else np.nan
+            for t in tickers
+        ],
+    }
 
 
 def _compute_equity_beta_inputs(
@@ -235,7 +386,7 @@ def _compute_equity_beta_inputs(
     tickers: Sequence[str],
     market_tickers: Sequence[str],
     eq_mask: np.ndarray,
-) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, list[str]]:
+) -> tuple[dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series], list[str]]:
     """
     Compute beta regressions only for equity holdings.
 
@@ -247,21 +398,18 @@ def _compute_equity_beta_inputs(
     beta_columns = list(dict.fromkeys([*equity_tickers, *market_tickers]))
     beta_rets = rets[[col for col in beta_columns if col in rets.columns]]
 
-    beta_frame, betas_all_spy, betas_all_iwm = compute_beta_frame(beta_rets, equity_tickers)
-    beta_display_spy = beta_frame["beta_spy"].reindex(tickers)
-    beta_display_iwm = beta_frame["beta_iwm"].reindex(tickers)
-    betas_spy = beta_display_spy.fillna(0.0)
-    betas_iwm = beta_display_iwm.fillna(0.0)
+    beta_by_benchmark: dict[str, pd.Series] = {}
+    beta_display_by_benchmark: dict[str, pd.Series] = {}
+    betas_all_by_benchmark: dict[str, pd.Series] = {}
+    for benchmark in market_tickers:
+        betas_all = compute_betas(beta_rets, benchmark)
+        equity_display = betas_all.reindex(equity_tickers).fillna(BETA_FALLBACK)
+        display = equity_display.reindex(tickers)
+        beta_display_by_benchmark[benchmark] = display
+        beta_by_benchmark[benchmark] = display.fillna(0.0)
+        betas_all_by_benchmark[benchmark] = betas_all
 
-    return (
-        betas_spy,
-        betas_iwm,
-        beta_display_spy,
-        beta_display_iwm,
-        betas_all_spy,
-        betas_all_iwm,
-        equity_tickers,
-    )
+    return beta_by_benchmark, beta_display_by_benchmark, betas_all_by_benchmark, equity_tickers
 
 
 def size_portfolio(
@@ -277,15 +425,15 @@ def size_portfolio(
         positions: List of {ticker: str, conviction: int (1–5)} dicts.
         book: Book size in USD.
         target_leverage: Target gross leverage (0.5–4.0).
-        beta_hedge_mode: "spy_iwm" to jointly neutralize SPY/IWM beta, or
-            "spy" to neutralize SPY beta with SPY only.
+        beta_hedge_mode: Hedge basket to use. Valid values are spy, iwm, qqq,
+            spy_iwm, spy_qqq, and iwm_qqq.
 
     Returns:
         Same output dict structure as optimize_portfolio().
     """
     try:
         beta_hedge_mode = _normalize_beta_hedge_mode(beta_hedge_mode)
-        convictions = _parse_positions(positions)
+        positions_by_ticker = _parse_positions(positions)
 
         # Load portfolio metadata
         meta = _get_positions_df(fallback_to_csv=True)
@@ -294,7 +442,7 @@ def size_portfolio(
         meta = prepare_instrument_metadata(meta)
 
         # Filter to user-requested tickers that exist in CSV
-        requested = list(convictions.keys())
+        requested = list(positions_by_ticker.keys())
         missing_from_csv = [t for t in requested if t not in meta.index]
         if missing_from_csv:
             raise ValueError(
@@ -308,7 +456,7 @@ def size_portfolio(
         if len(tickers) < 2:
             raise ValueError("Need at least 2 tickers to size a portfolio.")
 
-        market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+        market_tickers = list(HEDGE_DIAGNOSTIC_TICKERS)
         prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
         all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
 
@@ -370,7 +518,8 @@ def size_portfolio(
         L = np.linalg.cholesky(Sigma)
 
         # Build conviction-driven raw weights
-        w_raw = _build_conviction_weights(meta, convictions).reindex(tickers).fillna(0.0)
+        w_raw = _build_conviction_weights(meta, positions_by_ticker).reindex(tickers).fillna(0.0)
+        group_metadata = _group_metadata_for_tickers(tickers, positions_by_ticker, w_raw)
 
         # Scale unconfirmed contrarian positions to 1/3
         for t in tickers:
@@ -388,12 +537,9 @@ def size_portfolio(
 
         # Betas: restrict regressions to equities plus benchmark tickers.
         (
-            betas_spy,
-            betas_iwm,
-            beta_display_spy,
-            beta_display_iwm,
-            betas_all_spy,
-            betas_all_iwm,
+            beta_by_benchmark,
+            beta_display_by_benchmark,
+            betas_all_by_benchmark,
             equity_beta_tickers,
         ) = _compute_equity_beta_inputs(rets, tickers, market_tickers, eq_mask)
 
@@ -468,16 +614,13 @@ def size_portfolio(
 
         # Benchmark volatility
         benchmark_vol = compute_defense_volatility(usd_prices, market_tickers)
-        vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
-        vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
+        vol_by_benchmark = {benchmark: benchmark_vol.get(benchmark, np.nan) for benchmark in market_tickers}
 
         # Hedges
         w_final, hedge_summary = _apply_beta_hedges_with_gross_cap(
             w_final,
-            betas_spy,
-            betas_iwm,
-            betas_all_spy,
-            betas_all_iwm,
+            beta_by_benchmark,
+            betas_all_by_benchmark,
             long_mask,
             short_mask,
             eq_mask,
@@ -497,10 +640,8 @@ def size_portfolio(
                 w_final = w_final * scale
                 w_final, hedge_summary = _apply_beta_hedges_with_gross_cap(
                     w_final,
-                    betas_spy,
-                    betas_iwm,
-                    betas_all_spy,
-                    betas_all_iwm,
+                    beta_by_benchmark,
+                    betas_all_by_benchmark,
                     long_mask,
                     short_mask,
                     eq_mask,
@@ -564,9 +705,14 @@ def size_portfolio(
                 "fx_quote_currency": meta["fx_quote_currency"].values if "fx_quote_currency" in meta.columns else "",
                 "direction": meta["direction"].values,
                 "contrarian": meta["contrarian"].values if "contrarian" in meta.columns else False,
-                "conviction": [convictions.get(t, 0) for t in tickers],
-                "beta_spy": beta_display_spy.values,
-                "beta_iwm": beta_display_iwm.values,
+                "conviction": [int((positions_by_ticker.get(t) or {}).get("conviction") or 0) for t in tickers],
+                "group_name": group_metadata["group_name"],
+                "group_conviction": group_metadata["group_conviction"],
+                "group_raw_target": group_metadata["group_raw_target"],
+                "group_member_share": group_metadata["group_member_share"],
+                "beta_spy": beta_display_by_benchmark[MARKET_TICKER_LONG].values,
+                "beta_iwm": beta_display_by_benchmark[MARKET_TICKER_SHORT].values,
+                "beta_qqq": beta_display_by_benchmark[MARKET_TICKER_QQQ].values,
                 "realized_vol": meta["realized_vol"].values,
                 "weight": w_final.values,
                 "price": latest_prices.values,
@@ -583,43 +729,38 @@ def size_portfolio(
         weights_df = weights_df.sort_values("weight", ascending=False)
 
         # Build hedges DataFrame
-        hedge_spy_weight = hedge_summary["hedge_spy_weight"]
-        hedge_iwm_weight = hedge_summary["hedge_iwm_weight"]
-        hedge_direction_issues = []
-        if hedge_spy_weight > 0:
-            hedge_direction_issues.append(
-                f"{MARKET_TICKER_LONG} hedge is long ({hedge_spy_weight:+.4f}); long exposure should typically be hedged with a short {MARKET_TICKER_LONG}."
-            )
-        if hedge_iwm_weight < 0:
-            hedge_direction_issues.append(
-                f"{MARKET_TICKER_SHORT} hedge is short ({hedge_iwm_weight:+.4f}); short exposure should typically be hedged with a long {MARKET_TICKER_SHORT}."
-            )
+        hedge_direction_issues: list[str] = []
+        selected_hedges = _hedge_tickers_for_mode(beta_hedge_mode)
+        hedge_weights = {
+            ticker: float(hedge_summary.get(_beta_metric_name("hedge", ticker) + "_weight", 0.0))
+            for ticker in HEDGE_DIAGNOSTIC_TICKERS
+        }
+        for ticker in selected_hedges:
+            expected_sign = _expected_hedge_sign(ticker)
+            weight = hedge_weights[ticker]
+            if expected_sign < 0 and weight > 0:
+                hedge_direction_issues.append(
+                    f"{ticker} hedge is long ({weight:+.4f}); long exposure should typically be hedged with a short {ticker}."
+                )
+            if expected_sign > 0 and weight < 0:
+                hedge_direction_issues.append(
+                    f"{ticker} hedge is short ({weight:+.4f}); short exposure should typically be hedged with a long {ticker}."
+                )
         hedge_direction_warning = (
             "Potential hedge direction mismatch: " + " ".join(hedge_direction_issues)
             if hedge_direction_issues
             else None
         )
-        spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
-        iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
         hedge_rows = [
             {
-                "ticker": MARKET_TICKER_LONG,
+                "ticker": ticker,
                 "type": "hedge",
-                "direction": "short" if hedge_spy_weight < 0 else "long",
-                "weight": hedge_spy_weight,
-                "price": spy_price,
+                "direction": "short" if hedge_weights[ticker] < 0 else "long",
+                "weight": hedge_weights[ticker],
+                "price": float(usd_prices[ticker].iloc[-1]),
             }
+            for ticker in selected_hedges
         ]
-        if beta_hedge_mode == BETA_HEDGE_MODE_SPY_IWM:
-            hedge_rows.append(
-                {
-                    "ticker": MARKET_TICKER_SHORT,
-                    "type": "hedge",
-                    "direction": "long" if hedge_iwm_weight > 0 else "short",
-                    "weight": hedge_iwm_weight,
-                    "price": iwm_price,
-                }
-            )
         hedges_data: dict[str, Any] = {key: [row[key] for row in hedge_rows] for key in hedge_rows[0]}
         if book is not None:
             hedges_data["dollar_weight"] = [float(row["weight"]) * book for row in hedge_rows]
@@ -654,6 +795,11 @@ def size_portfolio(
                 "fx_base_currency": meta["fx_base_currency"].values if "fx_base_currency" in meta.columns else "",
                 "fx_quote_currency": meta["fx_quote_currency"].values if "fx_quote_currency" in meta.columns else "",
                 "direction": meta["direction"].values,
+                "conviction": [int((positions_by_ticker.get(t) or {}).get("conviction") or 0) for t in tickers],
+                "group_name": group_metadata["group_name"],
+                "group_conviction": group_metadata["group_conviction"],
+                "group_raw_target": group_metadata["group_raw_target"],
+                "group_member_share": group_metadata["group_member_share"],
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
             }
@@ -674,6 +820,25 @@ def size_portfolio(
             max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
+        benchmark_metrics: dict[str, Any] = {}
+        net_betas: dict[str, float] = {}
+        post_hedge_betas: dict[str, float] = {}
+        benchmark_vols: dict[str, float] = {}
+        for benchmark in HEDGE_DIAGNOSTIC_TICKERS:
+            key = _benchmark_key(benchmark)
+            vol = float(vol_by_benchmark.get(benchmark, np.nan))
+            net_beta = float(hedge_summary.get(f"net_beta_{key}", 0.0))
+            post_hedge_beta = float(hedge_summary.get(f"post_hedge_beta_{key}", 0.0))
+            benchmark_vols[benchmark] = vol
+            net_betas[benchmark] = net_beta
+            post_hedge_betas[benchmark] = post_hedge_beta
+            benchmark_metrics[f"vol_{key}"] = vol
+            benchmark_metrics[f"beta_long_{key}"] = hedge_summary.get(f"beta_long_{key}", 0.0)
+            benchmark_metrics[f"beta_short_{key}"] = hedge_summary.get(f"beta_short_{key}", 0.0)
+            benchmark_metrics[f"net_beta_{key}"] = net_beta
+            benchmark_metrics[f"post_hedge_beta_{key}"] = post_hedge_beta
+            benchmark_metrics[f"hedge_{key}_weight"] = hedge_weights.get(benchmark, 0.0)
+
         return {
             "status": prob.status,
             "error": None,
@@ -681,22 +846,16 @@ def size_portfolio(
             "book_size": book,
             "target_leverage": target_leverage,
             "beta_hedge_mode": beta_hedge_mode,
+            "selected_hedges": list(selected_hedges),
             # Solution metrics
             "vol_daily": vol_final,
-            "vol_spy": vol_spy,
-            "vol_iwm": vol_iwm,
             "gross_leverage": exp["total_gross"],
             # Beta hedging
-            "beta_long_spy": hedge_summary["beta_long_spy"],
-            "beta_short_spy": hedge_summary["beta_short_spy"],
-            "beta_long_iwm": hedge_summary["beta_long_iwm"],
-            "beta_short_iwm": hedge_summary["beta_short_iwm"],
-            "net_beta_spy": hedge_summary["net_beta_spy"],
-            "net_beta_iwm": hedge_summary["net_beta_iwm"],
-            "post_hedge_beta_spy": hedge_summary["post_hedge_beta_spy"],
-            "post_hedge_beta_iwm": hedge_summary["post_hedge_beta_iwm"],
-            "hedge_spy_weight": hedge_spy_weight,
-            "hedge_iwm_weight": hedge_iwm_weight,
+            **benchmark_metrics,
+            "hedge_weights": hedge_weights,
+            "net_betas": net_betas,
+            "post_hedge_betas": post_hedge_betas,
+            "benchmark_vols": benchmark_vols,
             "hedge_direction_warning": hedge_direction_warning,
             "hedge_direction_issues": hedge_direction_issues,
             "beta_scope": "equity_only",

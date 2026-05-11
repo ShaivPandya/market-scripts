@@ -8,10 +8,13 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 import { colorPositiveNegative } from "@/lib/colors"
 import { fetchPortfolioPositions, fetchSizerJob, fetchSizerPrefill, startSizerJob, type BetaHedgeMode } from "@/lib/api"
+import { groupKey, normalizeGroupConviction, normalizeGroupName } from "@/lib/positionGroups"
+import { cn } from "@/lib/utils"
 
 type SizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
 type WeightsViewMode = "basic" | "advanced"
+type HedgeTicker = "SPY" | "IWM" | "QQQ"
 
 interface SizerExposures {
   equity_gross?: number
@@ -51,17 +54,24 @@ interface SizerResponse {
   beta_hedge_mode?: BetaHedgeMode
   net_beta_spy?: number
   net_beta_iwm?: number
+  net_beta_qqq?: number
   post_hedge_beta_spy?: number
   post_hedge_beta_iwm?: number
+  post_hedge_beta_qqq?: number
   beta_scope?: string
   beta_asset_classes?: string[]
   beta_tickers?: string[]
+  selected_hedges?: string[]
+  net_betas?: Record<string, number>
+  post_hedge_betas?: Record<string, number>
   exposures?: SizerExposures
   constraints?: Record<string, SizerConstraint>
   weights_df?: Record<string, unknown>[]
   hedges_df?: Record<string, unknown>[]
   hedge_spy_weight?: number
   hedge_iwm_weight?: number
+  hedge_qqq_weight?: number
+  hedge_weights?: Record<string, number>
   hedge_direction_warning?: string | null
   hedge_direction_issues?: string[]
   max_scaled?: SizerMaxScaled
@@ -73,9 +83,11 @@ interface SizerRow {
   ticker: string
   direction: string
   conviction: number
+  groupName: string | null
+  groupConviction: number | null
 }
 
-const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v2"] as const
+const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v4"] as const
 const DEFAULT_BOOK_SIZE = 100_000
 const DEFAULT_BETA_HEDGE_MODE: BetaHedgeMode = "spy_iwm"
 const MIN_BOOK_SIZE = 10_000
@@ -89,14 +101,36 @@ const GROSS_LIMITS: Record<ExposureAssetClass, number> = {
   commodity: 1.0,
   bond: 3.0,
 }
+const HEDGE_TICKERS: HedgeTicker[] = ["SPY", "IWM", "QQQ"]
+const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, HedgeTicker[]> = {
+  spy: ["SPY"],
+  iwm: ["IWM"],
+  qqq: ["QQQ"],
+  spy_iwm: ["SPY", "IWM"],
+  spy_qqq: ["SPY", "QQQ"],
+  iwm_qqq: ["IWM", "QQQ"],
+}
+const HEDGE_MODE_LABELS: Record<BetaHedgeMode, string> = {
+  spy: "SPY",
+  iwm: "IWM",
+  qqq: "QQQ",
+  spy_iwm: "SPY + IWM",
+  spy_qqq: "SPY + QQQ",
+  iwm_qqq: "IWM + QQQ",
+}
 
 const ALWAYS_HIDDEN_COLUMNS = ["direction_intended", "days_since_new_low"] as const
 const BASIC_COLUMNS = new Set([
   "ticker",
   "asset",
   "direction",
+  "group_name",
+  "group_conviction",
+  "group_raw_target",
+  "group_member_share",
   "beta_spy",
   "beta_iwm",
+  "beta_qqq",
   "realized_vol",
   "weight",
   "price",
@@ -141,10 +175,15 @@ const COLUMN_LABELS: Record<string, string> = {
   direction: "Direction",
   contrarian: "Contrarian",
   conviction: "Conviction",
+  group_name: "Group",
+  group_conviction: "Group Conviction",
+  group_raw_target: "Group Raw Target",
+  group_member_share: "Group Share",
   drawdown_52w: "Drawdown 52W",
   stabilized_10d: "Stabilized",
   beta_spy: "Equity Beta SPY",
   beta_iwm: "Equity Beta IWM",
+  beta_qqq: "Equity Beta QQQ",
   realized_vol: "Vol",
   weight: "Weight",
   dollar_weight: "Dollar",
@@ -158,19 +197,73 @@ const COLUMN_LABELS: Record<string, string> = {
   shares: "Quantity",
   type: "Type",
 }
+const TICKER_SOURCE_KEYS = ["ticker", "Ticker", "symbol", "Symbol"] as const
 
-function makeRow(ticker = "", direction = "", conviction = 3): SizerRow {
+function makeRow(ticker = "", direction = "", conviction = 3, groupName?: string | null, groupConviction?: number | null): SizerRow {
   return {
     id: `row-${Math.random().toString(36).slice(2, 10)}`,
     ticker,
     direction,
     conviction,
+    groupName: normalizeGroupName(groupName),
+    groupConviction: normalizeGroupName(groupName) ? normalizeGroupConviction(groupConviction) ?? conviction : null,
   }
+}
+
+function sizerGroupState(rows: SizerRow[]) {
+  const groups = new Map<string, { key: string; name: string; conviction: number; direction: string; ids: string[]; tickers: string[] }>()
+  const errors: string[] = []
+  for (const row of rows) {
+    const name = normalizeGroupName(row.groupName)
+    const key = groupKey(name)
+    if (!key || !name) continue
+    const conviction = normalizeGroupConviction(row.groupConviction)
+    if (conviction == null) {
+      errors.push(`Group ${name} requires a conviction.`)
+      continue
+    }
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, { key, name, conviction, direction: row.direction, ids: [row.id], tickers: [row.ticker] })
+      continue
+    }
+    existing.ids.push(row.id)
+    existing.tickers.push(row.ticker)
+    if (existing.conviction !== conviction) errors.push(`Group ${existing.name} has inconsistent convictions.`)
+    if (existing.direction && row.direction && existing.direction !== row.direction) {
+      errors.push(`Group ${existing.name} cannot mix ${existing.direction} and ${row.direction} positions.`)
+    }
+  }
+  return { groups, errors: Array.from(new Set(errors)) }
 }
 
 function toRows(value: unknown): Record<string, unknown>[] {
   if (!Array.isArray(value)) return []
   return value.filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
+}
+
+function cleanTickerValue(value: unknown, allowNumeric = true): string | null {
+  if (value == null) return null
+  const ticker = String(value).trim().toUpperCase()
+  if (!ticker) return null
+  if (!allowNumeric && /^\d+$/.test(ticker)) return null
+  return ticker
+}
+
+function rowTicker(row: Record<string, unknown>): string | null {
+  for (const key of TICKER_SOURCE_KEYS) {
+    const ticker = cleanTickerValue(row[key])
+    if (ticker) return ticker
+  }
+  return cleanTickerValue(row.index, false)
+}
+
+function rowsWithTickerColumn(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map(row => {
+    const ticker = rowTicker(row)
+    if (!ticker || cleanTickerValue(row.ticker) === ticker) return row
+    return { ...row, ticker }
+  })
 }
 
 function toNumber(value: unknown): number | null {
@@ -193,6 +286,21 @@ function firstNumber(...values: unknown[]) {
 function getHedgeWeightFromRows(rows: Record<string, unknown>[], ticker: string): number | null {
   const row = rows.find(r => String(r.ticker ?? "").trim().toUpperCase() === ticker)
   return row ? toNumber(row.weight) : null
+}
+
+function betaHedgeModeToTickers(mode: BetaHedgeMode): HedgeTicker[] {
+  return HEDGE_MODE_TO_TICKERS[mode] ?? HEDGE_MODE_TO_TICKERS[DEFAULT_BETA_HEDGE_MODE]
+}
+
+function tickersToBetaHedgeMode(tickers: HedgeTicker[]): BetaHedgeMode {
+  const key = [...tickers].sort().join("_").toLowerCase()
+  if (key === "spy") return "spy"
+  if (key === "iwm") return "iwm"
+  if (key === "qqq") return "qqq"
+  if (key === "iwm_spy") return "spy_iwm"
+  if (key === "qqq_spy") return "spy_qqq"
+  if (key === "iwm_qqq") return "iwm_qqq"
+  return DEFAULT_BETA_HEDGE_MODE
 }
 
 function clamp01(value: number) {
@@ -218,7 +326,8 @@ function isIntegerColumn(key: string) {
     normalized === "quantity" ||
     normalized === "target_quantity" ||
     normalized === "contracts" ||
-    normalized === "conviction"
+    normalized === "conviction" ||
+    normalized === "group_conviction"
   )
 }
 
@@ -249,7 +358,15 @@ function formatRatioPercent(value: number, signed = true, precision = 1) {
 function buildCols(rows: Record<string, unknown>[], hiddenKeys?: string[]): ColumnDef[] {
   if (rows.length === 0) return []
   const hidden = new Set(hiddenKeys ?? [])
-  return Object.keys(rows[0]).filter(k => k !== "index" && !hidden.has(k)).map(k => ({
+  const keys = Array.from(new Set(rows.flatMap(row => Object.keys(row))))
+    .filter(k => k !== "index" && k !== "Ticker" && k !== "symbol" && k !== "Symbol" && !hidden.has(k))
+  const tickerIndex = keys.indexOf("ticker")
+  if (tickerIndex > 0) {
+    const [tickerKey] = keys.splice(tickerIndex, 1)
+    if (tickerKey) keys.unshift(tickerKey)
+  }
+
+  return keys.map(k => ({
     key: k,
     header: COLUMN_LABELS[k] ?? k,
     colorFn: isPercentColumn(k) ? colorPositiveNegative : undefined,
@@ -322,9 +439,11 @@ export function PortfolioSizer() {
               ticker: String(p?.ticker ?? "").trim().toUpperCase(),
               direction: String(p?.direction ?? "").trim().toLowerCase(),
               conviction: typeof p?.conviction === "number" ? p.conviction : 3,
+              groupName: normalizeGroupName(p?.group_name),
+              groupConviction: normalizeGroupConviction(p?.group_conviction),
             }))
             .filter(p => p.ticker.length > 0)
-            .map(p => makeRow(p.ticker, p.direction, p.conviction))
+            .map(p => makeRow(p.ticker, p.direction, p.conviction, p.groupName, p.groupConviction))
 
           if (prefilled.length > 0) setRows(prefilled)
         }
@@ -419,15 +538,59 @@ export function PortfolioSizer() {
     setRows(prev => prev.map(row => (row.id === id ? { ...row, conviction } : row)))
   }
 
+  function updateGroupName(id: string, value: string) {
+    setRows(prev => {
+      const target = prev.find(row => row.id === id)
+      const name = normalizeGroupName(value)
+      if (!target || !name) {
+        return prev.map(row => (row.id === id ? { ...row, groupName: null, groupConviction: null } : row))
+      }
+      const key = groupKey(name)
+      const existing = prev.find(row => row.id !== id && groupKey(row.groupName) === key)
+      const groupName = normalizeGroupName(existing?.groupName) ?? name
+      const groupConviction = normalizeGroupConviction(existing?.groupConviction) ?? normalizeGroupConviction(target.groupConviction) ?? target.conviction
+      return prev.map(row => (row.id === id ? { ...row, groupName, groupConviction } : row))
+    })
+  }
+
+  function updateGroupConviction(group: string | null | undefined, conviction: number) {
+    const key = groupKey(group)
+    if (!key) return
+    setRows(prev => prev.map(row => (groupKey(row.groupName) === key ? { ...row, groupConviction: conviction } : row)))
+  }
+
+  function toggleHedgeTicker(ticker: HedgeTicker) {
+    const selected = betaHedgeModeToTickers(betaHedgeMode)
+    const isSelected = selected.includes(ticker)
+    if (isSelected && selected.length === 1) return
+    if (!isSelected && selected.length === 2) return
+
+    const next = isSelected
+      ? selected.filter(t => t !== ticker)
+      : [...selected, ticker]
+    setBetaHedgeMode(tickersToBetaHedgeMode(next))
+  }
+
   async function handleRun() {
     const parsedBook = Number(bookSizeInput)
     const effectiveBook = Number.isFinite(parsedBook) ? clampBookSize(parsedBook) : bookSize
     setBookSize(effectiveBook)
     setBookSizeInput(String(effectiveBook))
 
+    const groupState = sizerGroupState(rows)
+    if (groupState.errors.length > 0) {
+      setErrorMessage(groupState.errors[0])
+      return
+    }
+
     const positions = rows
       .filter(r => r.ticker.trim().length > 0)
-      .map(r => ({ ticker: r.ticker.trim().toUpperCase(), conviction: r.conviction }))
+      .map(r => ({
+        ticker: r.ticker.trim().toUpperCase(),
+        conviction: r.conviction,
+        group_name: normalizeGroupName(r.groupName),
+        group_conviction: normalizeGroupName(r.groupName) ? normalizeGroupConviction(r.groupConviction) : null,
+      }))
 
     if (positions.length === 0) return
 
@@ -467,7 +630,7 @@ export function PortfolioSizer() {
   }
 
   const data = cachedResult
-  const weightsRows = toRows(data?.weights_df)
+  const weightsRows = rowsWithTickerColumn(toRows(data?.weights_df))
   const weightsHiddenKeys = weightsViewMode === "basic"
     ? (weightsRows.length === 0
       ? []
@@ -475,18 +638,21 @@ export function PortfolioSizer() {
         k => !BASIC_COLUMNS.has(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
       ))
     : [...ALWAYS_HIDDEN_COLUMNS]
-  const hedgesRows = toRows(data?.hedges_df)
+  const hedgesRows = rowsWithTickerColumn(toRows(data?.hedges_df))
   const exposures = data?.exposures ?? {}
   const constraints = data?.constraints ?? {}
   const maxScaled = data?.max_scaled
-  const maxScaledRows = toRows(maxScaled?.weights_df)
+  const maxScaledRows = rowsWithTickerColumn(toRows(maxScaled?.weights_df))
   const maxScaledExposures = maxScaled?.exposures ?? {}
+  const selectedHedgeTickers = betaHedgeModeToTickers(betaHedgeMode)
+  const hedgeModeLabel = HEDGE_MODE_LABELS[betaHedgeMode] ?? selectedHedgeTickers.join(" + ")
 
   const volDaily = firstNumber(data?.vol_daily)
   const grossLeverage = firstNumber(data?.gross_leverage)
   const hedgeGross = firstNumber(exposures.hedge_gross, 0) ?? 0
-  const hedgeSpyWeight = firstNumber(data?.hedge_spy_weight, getHedgeWeightFromRows(hedgesRows, "SPY"))
-  const hedgeIwmWeight = firstNumber(data?.hedge_iwm_weight, getHedgeWeightFromRows(hedgesRows, "IWM"))
+  const hedgeSpyWeight = firstNumber(data?.hedge_spy_weight, data?.hedge_weights?.SPY, getHedgeWeightFromRows(hedgesRows, "SPY"))
+  const hedgeIwmWeight = firstNumber(data?.hedge_iwm_weight, data?.hedge_weights?.IWM, getHedgeWeightFromRows(hedgesRows, "IWM"))
+  const hedgeQqqWeight = firstNumber(data?.hedge_qqq_weight, data?.hedge_weights?.QQQ, getHedgeWeightFromRows(hedgesRows, "QQQ"))
   const hedgeDirectionIssues = Array.from(new Set([
     ...(Array.isArray(data?.hedge_direction_issues) ? data.hedge_direction_issues.filter(v => typeof v === "string") : []),
     ...(hedgeSpyWeight != null && hedgeSpyWeight > 0
@@ -495,6 +661,9 @@ export function PortfolioSizer() {
     ...(hedgeIwmWeight != null && hedgeIwmWeight < 0
       ? [`IWM hedge is short (${hedgeIwmWeight >= 0 ? "+" : ""}${hedgeIwmWeight.toFixed(4)}). Short exposure should generally be hedged by going long IWM.`]
       : []),
+    ...(hedgeQqqWeight != null && hedgeQqqWeight > 0
+      ? [`QQQ hedge is long (${hedgeQqqWeight >= 0 ? "+" : ""}${hedgeQqqWeight.toFixed(4)}). Long exposure should generally be hedged by shorting QQQ.`]
+      : []),
   ]))
   const hedgeDirectionWarning = typeof data?.hedge_direction_warning === "string" && data.hedge_direction_warning.trim().length > 0
     ? data.hedge_direction_warning
@@ -502,19 +671,24 @@ export function PortfolioSizer() {
       ? "Potential hedge direction mismatch detected."
       : null
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
-  const netBetaSpy = firstNumber(data?.net_beta_spy)
-  const netBetaIwm = firstNumber(data?.net_beta_iwm)
-  const postHedgeBetaSpy = firstNumber(data?.post_hedge_beta_spy)
-  const postHedgeBetaIwm = firstNumber(data?.post_hedge_beta_iwm)
+  const netBetaSpy = firstNumber(data?.net_beta_spy, data?.net_betas?.SPY)
+  const netBetaIwm = firstNumber(data?.net_beta_iwm, data?.net_betas?.IWM)
+  const netBetaQqq = firstNumber(data?.net_beta_qqq, data?.net_betas?.QQQ)
+  const postHedgeBetaSpy = firstNumber(data?.post_hedge_beta_spy, data?.post_hedge_betas?.SPY)
+  const postHedgeBetaIwm = firstNumber(data?.post_hedge_beta_iwm, data?.post_hedge_betas?.IWM)
+  const postHedgeBetaQqq = firstNumber(data?.post_hedge_beta_qqq, data?.post_hedge_betas?.QQQ)
   const showHeaderMetrics = [
     volDaily,
     grossLeverage,
     equityNet,
     netBetaSpy,
     netBetaIwm,
+    netBetaQqq,
     postHedgeBetaSpy,
     postHedgeBetaIwm,
+    postHedgeBetaQqq,
   ].some(v => v != null)
+  const groupState = sizerGroupState(rows)
 
   const sizingDeltas = useMemo(() => {
     if (!data) return []
@@ -602,23 +776,37 @@ export function PortfolioSizer() {
 
           <div className="space-y-2">
             <div className="flex items-baseline justify-between text-sm text-muted">
-              <span>Beta Hedge Mode</span>
+              <span>Hedge Basket</span>
               <span className="text-sm font-semibold text-app">
-                {betaHedgeMode === "spy" ? "SPY only" : "SPY + IWM"}
+                {hedgeModeLabel}
               </span>
             </div>
-            <SegmentedControl
-              options={[
-                { value: "spy_iwm", label: "SPY + IWM" },
-                { value: "spy", label: "SPY only" },
-              ]}
-              value={betaHedgeMode}
-              onChange={setBetaHedgeMode}
-            />
+            <div className="grid grid-cols-3 gap-2">
+              {HEDGE_TICKERS.map(ticker => {
+                const selected = selectedHedgeTickers.includes(ticker)
+                const disabled = !selected && selectedHedgeTickers.length >= 2
+
+                return (
+                  <button
+                    key={ticker}
+                    type="button"
+                    onClick={() => toggleHedgeTicker(ticker)}
+                    disabled={disabled}
+                    aria-pressed={selected}
+                    className={cn(
+                      "h-10 rounded-lg border px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45",
+                      selected
+                        ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))] text-app shadow-sm"
+                        : "border-app bg-card-muted text-muted hover:border-[hsl(var(--accent)/0.45)] hover:text-app",
+                    )}
+                  >
+                    {ticker}
+                  </button>
+                )
+              })}
+            </div>
             <p className="text-xs text-gray-400">
-              {betaHedgeMode === "spy"
-                ? "Neutralizes SPY beta; IWM beta remains a diagnostic."
-                : "Neutralizes SPY and IWM beta with both hedge legs."}
+              Neutralizes selected benchmark beta; unselected benchmarks remain diagnostics.
             </p>
           </div>
         </div>
@@ -636,7 +824,7 @@ export function PortfolioSizer() {
               <p className="text-sm text-gray-400">Loading portfolio tickers...</p>
             )}
             {rows.map((row, idx) => (
-              <div key={row.id} className="grid grid-cols-12 gap-3 items-center">
+              <div key={row.id} className="grid gap-3 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
                 <div className="col-span-2">
                   {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Ticker</p>}
                   <span className="inline-flex w-full items-center justify-center rounded-lg border border-app bg-[hsl(var(--muted-2))] px-2 py-1.5 text-center text-sm font-mono text-app">
@@ -670,7 +858,36 @@ export function PortfolioSizer() {
                     {row.direction || "—"}
                   </span>
                 </div>
-                <div className="col-span-6">
+                <div className="col-span-3">
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Group</p>}
+                  <input
+                    type="text"
+                    value={row.groupName ?? ""}
+                    onChange={e => updateGroupName(row.id, e.target.value)}
+                    placeholder="Optional"
+                    className="theme-input w-full text-sm"
+                  />
+                </div>
+                <div className="col-span-3">
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Group Conv.</p>}
+                  <input
+                    type="range"
+                    min={1}
+                    max={5}
+                    step={1}
+                    value={normalizeGroupConviction(row.groupConviction) ?? row.conviction}
+                    onChange={e => updateGroupConviction(row.groupName, Number(e.target.value))}
+                    className="hig-slider w-full cursor-pointer"
+                    style={{ accentColor: "hsl(var(--accent))" }}
+                    disabled={!normalizeGroupName(row.groupName)}
+                  />
+                  <span className="text-xs text-muted">
+                    {normalizeGroupName(row.groupName)
+                      ? `${normalizeGroupConviction(row.groupConviction) ?? row.conviction} — ${CONVICTION_LABELS[normalizeGroupConviction(row.groupConviction) ?? row.conviction] ?? ""}`
+                      : "Ungrouped"}
+                  </span>
+                </div>
+                <div className="col-span-4">
                   {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Conviction</p>}
                   <input
                     type="range"
@@ -694,7 +911,13 @@ export function PortfolioSizer() {
           </div>
         </div>
 
-        <ActionButton onClick={handleRun} loading={isRunning} loadingText="Sizing portfolio...">
+        {groupState.errors.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {groupState.errors[0]}
+          </div>
+        )}
+
+        <ActionButton onClick={handleRun} loading={isRunning} loadingText="Sizing portfolio..." disabled={groupState.errors.length > 0}>
           Size Portfolio
         </ActionButton>
       </div>
@@ -719,14 +942,16 @@ export function PortfolioSizer() {
           )}
 
           {showHeaderMetrics && (
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}
               {grossLeverage != null && <MetricCard title="Gross Leverage (incl. hedges)" value={`${grossLeverage.toFixed(2)}x`} />}
               {equityNet != null && <MetricCard title="Equity Net" value={formatRatioPercent(equityNet, true, 1)} />}
               {netBetaSpy != null && <MetricCard title="Equity Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
               {netBetaIwm != null && <MetricCard title="Equity Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
+              {netBetaQqq != null && <MetricCard title="Equity Beta QQQ (pre-hedge)" value={netBetaQqq.toFixed(3)} />}
               {postHedgeBetaSpy != null && <MetricCard title="Equity Beta SPY (post-hedge)" value={postHedgeBetaSpy.toFixed(3)} />}
               {postHedgeBetaIwm != null && <MetricCard title="Equity Beta IWM (post-hedge)" value={postHedgeBetaIwm.toFixed(3)} />}
+              {postHedgeBetaQqq != null && <MetricCard title="Equity Beta QQQ (post-hedge)" value={postHedgeBetaQqq.toFixed(3)} />}
             </div>
           )}
 

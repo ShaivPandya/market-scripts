@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { FileUp, Play, Save, Trash2 } from "lucide-react"
+import { FileUp, Loader2, Play, Save, Trash2 } from "lucide-react"
 
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ActionPill, EvaluationPanel } from "@/components/idea/EvaluationPanel"
@@ -254,6 +254,9 @@ export function IdeaDetail() {
 
   const uploadMutation = useMutation({
     mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) => uploadOverviewDocument(idea.ticker, file),
+    onMutate: () => {
+      setUploadMessage(null)
+    },
     onSuccess: data => {
       setUploadMessage(`Overview saved for ${data.ticker}.`)
       if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
@@ -418,13 +421,21 @@ export function IdeaDetail() {
                       {detail?.documents?.management_quality_present ? " / management stored" : ""}
                     </p>
                   </div>
-                  <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
-                    <FileUp size={16} aria-hidden="true" />
-                    Upload
+                  <label className={cn(
+                    "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
+                    uploadMutation.isPending && "pointer-events-none opacity-60",
+                  )}>
+                    {uploadMutation.isPending ? (
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <FileUp size={16} aria-hidden="true" />
+                    )}
+                    {uploadMutation.isPending ? "Uploading" : "Upload"}
                     <input
                       type="file"
                       accept=".md,.markdown,.pdf,text/markdown,application/pdf"
                       className="hidden"
+                      disabled={uploadMutation.isPending}
                       onChange={event => {
                         const file = event.target.files?.[0]
                         event.currentTarget.value = ""
@@ -433,7 +444,15 @@ export function IdeaDetail() {
                     />
                   </label>
                 </div>
-                {uploadMessage && <p className="mb-2 text-xs text-subtle">{uploadMessage}</p>}
+                {uploadMessage && (
+                  uploadMutation.isError ? (
+                    <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      {uploadMessage}
+                    </p>
+                  ) : (
+                    <p className="mb-2 text-xs font-medium text-green-600 dark:text-green-400">{uploadMessage}</p>
+                  )
+                )}
                 {detail?.documents?.overview_error && (
                   <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
                     {detail.documents.overview_error}

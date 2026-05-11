@@ -181,7 +181,10 @@ def test_run_sizer_imports_packaged_module(monkeypatch):
 
     assert result == {"weights_df": None}
     assert captured == {
-        "positions": [{"ticker": "MU", "conviction": 3}, {"ticker": "OKLO", "conviction": 5}],
+        "positions": [
+            {"ticker": "MU", "conviction": 3, "group_name": None, "group_conviction": None},
+            {"ticker": "OKLO", "conviction": 5, "group_name": None, "group_conviction": None},
+        ],
         "book": 100_000.0,
         "target_leverage": 1.25,
     }

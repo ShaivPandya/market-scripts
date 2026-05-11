@@ -622,7 +622,10 @@ def action_mutations(
 
 
 def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]:
+    from portfolio.position_groups import normalize_position_group_fields
+
     ticker = str(row.get("ticker") or "").upper()
+    group_name, group_conviction = normalize_position_group_fields(row) if role == "position" else (None, None)
     return {
         "ticker": ticker,
         "asset": str(row.get("asset") or "equity").lower(),
@@ -637,6 +640,8 @@ def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]
         "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
         "fx_base_currency": _optional_text(row.get("fx_base_currency")),
         "fx_quote_currency": _optional_text(row.get("fx_quote_currency")),
+        "group_name": group_name,
+        "group_conviction": group_conviction,
         "role": role,
     }
 

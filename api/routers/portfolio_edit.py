@@ -31,6 +31,11 @@ from portfolio.instruments import (
     normalize_symbol,
     spot_fx_currencies,
 )
+from portfolio.position_groups import (
+    canonicalize_position_group_rows,
+    normalize_position_group_fields,
+    validate_position_groups,
+)
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
@@ -112,6 +117,8 @@ class PortfolioPosition(BaseModel):
     cost_basis_base: float | None = None
     notional_base: float | None = None
     valuation_status: str | None = None
+    group_name: str | None = None
+    group_conviction: int | None = Field(default=None, ge=1, le=5)
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPosition:
@@ -140,6 +147,7 @@ class PortfolioPosition(BaseModel):
         )
         self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
         self.shares = self.quantity
+        self.group_name, self.group_conviction = normalize_position_group_fields(self.model_dump())
         return self
 
 
@@ -148,6 +156,15 @@ class PortfolioUpdateRequest(BaseModel):
     reason: str | None = None
     apply: bool = False
     approval_note: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_groups(self) -> PortfolioUpdateRequest:
+        rows = canonicalize_position_group_rows([position.model_dump() for position in self.positions])
+        validate_position_groups(rows)
+        for position, row in zip(self.positions, rows, strict=False):
+            position.group_name = row.get("group_name")
+            position.group_conviction = row.get("group_conviction")
+        return self
 
 
 @router.get("/portfolio-positions")

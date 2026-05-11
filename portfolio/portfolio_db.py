@@ -31,6 +31,11 @@ from portfolio.instruments import (
     normalize_symbol,
     spot_fx_currencies,
 )
+from portfolio.position_groups import (
+    canonicalize_position_group_rows,
+    normalize_position_group_fields,
+    validate_position_groups,
+)
 
 DB_PATH = Path(__file__).parent / "portfolio.db"
 CSV_PATH = Path(__file__).parent / "portfolio.csv"
@@ -59,6 +64,8 @@ _POSITION_COLUMNS = [
     "cost_basis_base",
     "notional_base",
     "valuation_status",
+    "group_name",
+    "group_conviction",
     "role",
 ]
 _SELECT_COLUMNS = ", ".join(_POSITION_COLUMNS)
@@ -92,6 +99,8 @@ CREATE TABLE IF NOT EXISTS positions (
     cost_basis_base REAL,
     notional_base REAL,
     valuation_status TEXT NOT NULL DEFAULT 'missing_position_inputs',
+    group_name  TEXT,
+    group_conviction INTEGER CHECK (group_conviction BETWEEN 1 AND 5),
     role        TEXT    NOT NULL DEFAULT 'position'
                         CHECK (role IN ('position','hedge'))
 )
@@ -178,6 +187,14 @@ def _init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE positions ADD COLUMN role TEXT NOT NULL DEFAULT 'position'")
         conn.commit()
         cols.add("role")
+    if "group_name" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN group_name TEXT")
+        conn.commit()
+        cols.add("group_name")
+    if "group_conviction" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN group_conviction INTEGER")
+        conn.commit()
+        cols.add("group_conviction")
     # Migrate: rename distressed -> contrarian
     if "distressed" in cols and "contrarian" not in cols:
         conn.execute("ALTER TABLE positions RENAME COLUMN distressed TO contrarian")
@@ -277,6 +294,8 @@ def load_positions_csv() -> pd.DataFrame:
         "cost_basis_base": None,
         "notional_base": None,
         "valuation_status": None,
+        "group_name": None,
+        "group_conviction": None,
         "role": "position",
     }
     for column, default in defaults.items():
@@ -315,6 +334,8 @@ def load_positions_csv() -> pd.DataFrame:
     df["direction"] = df["direction"].astype(str).str.strip().str.lower()
     df["contrarian"] = df["contrarian"].astype(str).str.strip().str.lower().isin({"1", "true", "yes"})
     df["conviction"] = pd.to_numeric(df["conviction"], errors="coerce").fillna(3).clip(1, 5).astype(int)
+    df["group_name"] = df.apply(lambda row: normalize_position_group_fields(row)[0], axis=1)
+    df["group_conviction"] = df.apply(lambda row: normalize_position_group_fields(row)[1], axis=1)
     df["cost_basis"] = pd.to_numeric(df["cost_basis"], errors="coerce")
     df["shares"] = pd.to_numeric(df["shares"], errors="coerce")
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(df["shares"])
@@ -388,6 +409,18 @@ def save_positions(
     if role not in ("position", "hedge"):
         raise ValueError(f"Invalid role: {role!r}")
     rows = _normalize_position_rows(positions, role, preserve_existing_valuation=preserve_existing_valuation)
+    if role == "position":
+        validate_position_groups(
+            [
+                {
+                    "ticker": row[0],
+                    "direction": row[2],
+                    "group_name": row[22],
+                    "group_conviction": row[23],
+                }
+                for row in rows
+            ]
+        )
     if use_postgres_state():
         _pg_save_position_rows(rows, role=role)
         return
@@ -400,8 +433,9 @@ def save_positions(
             "(ticker, asset, direction, contrarian, conviction, cost_basis, shares, quantity, "
             "instrument_type, price_symbol, contract_multiplier, fx_base_currency, fx_quote_currency, "
             "currency, country, exchange, base_currency, "
-            "fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status, role) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status, "
+            "group_name, group_conviction, role) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -416,7 +450,8 @@ def _normalize_position_rows(
     rows = []
     from portfolio.valuation import enrich_position_valuation
 
-    for raw in positions:
+    input_positions = canonicalize_position_group_rows(positions) if role == "position" else positions
+    for raw in input_positions:
         p = enrich_position_valuation(raw, preserve_existing=preserve_existing_valuation)
         raw_ticker = p.get("ticker", "")
         raw_price_symbol = p.get("price_symbol") or raw_ticker
@@ -474,6 +509,7 @@ def _normalize_position_rows(
         cost_basis_base = _optional_float(p.get("cost_basis_base"))
         notional_base = _optional_float(p.get("notional_base"))
         valuation_status = _optional_text(p.get("valuation_status")) or "missing_position_inputs"
+        group_name, group_conviction = normalize_position_group_fields(p) if role == "position" else (None, None)
         rows.append(
             (
                 ticker,
@@ -498,6 +534,8 @@ def _normalize_position_rows(
                 cost_basis_base,
                 notional_base,
                 valuation_status,
+                group_name,
+                group_conviction,
                 role,
             )
         )
@@ -531,9 +569,10 @@ def _pg_save_position_rows(rows: list[tuple], *, role: str) -> None:
                     ticker, asset, direction, contrarian, conviction, cost_basis, shares, quantity,
                     instrument_type, price_symbol, contract_multiplier, fx_base_currency, fx_quote_currency,
                     currency, country, exchange, base_currency,
-                    fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status, role
+                    fx_rate_to_base, fx_rate_as_of, cost_basis_base, notional_base, valuation_status,
+                    group_name, group_conviction, role
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 rows,
             )
@@ -560,6 +599,11 @@ def _position_dict(row) -> dict:
         out["exchange"] = out.get("exchange") or "FX"
     out["base_currency"] = str(out.get("base_currency") or "USD").upper()
     out["valuation_status"] = str(out.get("valuation_status") or "missing_position_inputs")
+    if str(out.get("role") or "position") == "position":
+        out["group_name"], out["group_conviction"] = normalize_position_group_fields(out)
+    else:
+        out["group_name"] = None
+        out["group_conviction"] = None
     return out
 
 

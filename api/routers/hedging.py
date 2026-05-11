@@ -13,6 +13,7 @@ from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.position_groups import group_key, normalize_group_conviction, normalize_group_name
 
 router = APIRouter()
 
@@ -159,6 +160,8 @@ def _derive_portfolio_weights_from_ontology(book: float) -> tuple[list[dict[str,
         direction = str(row.get("direction") or "long").strip().lower()
         sign = 1.0 if direction == "long" else -1.0
         conviction = max(1, min(5, int(row.get("conviction") or 3)))
+        group_name = normalize_group_name(row.get("group_name"))
+        group_conviction = normalize_group_conviction(row.get("group_conviction")) if group_name else None
         quantity = _float_or_none(row.get("quantity") if row.get("quantity") is not None else row.get("shares"))
         cost_basis = _float_or_none(row.get("cost_basis"))
         multiplier = _float_or_none(row.get("contract_multiplier")) or 1.0
@@ -169,6 +172,9 @@ def _derive_portfolio_weights_from_ontology(book: float) -> tuple[list[dict[str,
                 "direction": direction,
                 "sign": sign,
                 "conviction": conviction,
+                "group_name": group_name,
+                "group_key": group_key(group_name),
+                "group_conviction": group_conviction,
                 "quantity": quantity,
                 "shares": quantity,
                 "cost_basis": cost_basis,
@@ -186,9 +192,41 @@ def _derive_portfolio_weights_from_ontology(book: float) -> tuple[list[dict[str,
         for row in records:
             row["weight"] = row["sign"] * float(row["dollar_value"]) / suggested_book
     else:
-        total_conviction = sum(int(row["conviction"]) for row in records)
+        groups: dict[str, dict[str, Any]] = {}
+        raw_scores: dict[str, float] = {}
         for row in records:
-            row["weight"] = row["sign"] * (int(row["conviction"]) / total_conviction)
+            gkey = row.get("group_key")
+            if not gkey:
+                raw_scores[row["ticker"]] = float(row["conviction"])
+                continue
+            if row.get("group_conviction") is None:
+                raise ValueError(f"Group '{row['group_name']}' requires a group conviction.")
+            group = groups.setdefault(
+                str(gkey),
+                {
+                    "name": row["group_name"],
+                    "direction": row["direction"],
+                    "group_conviction": int(row["group_conviction"]),
+                    "members": [],
+                    "total_conviction": 0,
+                },
+            )
+            if group["direction"] != row["direction"]:
+                raise ValueError(
+                    f"Group '{group['name']}' cannot mix {group['direction']} and {row['direction']} positions."
+                )
+            if group["group_conviction"] != int(row["group_conviction"]):
+                raise ValueError(f"Group '{group['name']}' has inconsistent group convictions.")
+            group["members"].append(row)
+            group["total_conviction"] += int(row["conviction"])
+        for group in groups.values():
+            for row in group["members"]:
+                raw_scores[row["ticker"]] = float(group["group_conviction"]) * (
+                    float(row["conviction"]) / float(group["total_conviction"])
+                )
+        total_conviction = sum(abs(score) for score in raw_scores.values())
+        for row in records:
+            row["weight"] = row["sign"] * (raw_scores[row["ticker"]] / total_conviction)
     return (
         [{"ticker": row["ticker"], "weight": row["weight"]} for row in records],
         [
@@ -196,6 +234,8 @@ def _derive_portfolio_weights_from_ontology(book: float) -> tuple[list[dict[str,
                 "ticker": row["ticker"],
                 "direction": row["direction"],
                 "conviction": row["conviction"],
+                "group_name": row.get("group_name"),
+                "group_conviction": row.get("group_conviction"),
                 "shares": row["shares"],
                 "quantity": row["quantity"],
                 "cost_basis": row["cost_basis"],

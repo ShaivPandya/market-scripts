@@ -384,6 +384,8 @@ class StateMigrator:
             row["fx_quote_currency"] = row.get("fx_quote_currency")
             row["base_currency"] = row.get("base_currency") or "USD"
             row["valuation_status"] = row.get("valuation_status") or "missing_position_inputs"
+            row["group_name"] = row.get("group_name")
+            row["group_conviction"] = row.get("group_conviction")
         self._upsert_rows(
             "positions",
             [
@@ -409,6 +411,8 @@ class StateMigrator:
                 "cost_basis_base",
                 "notional_base",
                 "valuation_status",
+                "group_name",
+                "group_conviction",
                 "role",
             ],
             ["ticker"],

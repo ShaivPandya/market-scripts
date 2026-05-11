@@ -1163,7 +1163,7 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
             {
                 "book": _NUMBER,
                 "target_leverage": _NUMBER,
-                "beta_hedge_mode": {"type": "string", "enum": ["spy_iwm", "spy"]},
+                "beta_hedge_mode": {"type": "string", "enum": ["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq"]},
                 "positions": _ARRAY_OBJECTS,
             }
         ),

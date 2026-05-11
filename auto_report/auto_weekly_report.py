@@ -320,8 +320,10 @@ def collect_thesis_data() -> dict:
 
     # 2. Load portfolio positions
     from ontology.runtime_read_service import OntologyRuntimeReadService
+    from portfolio.position_groups import group_summaries
 
     results["portfolio"] = [r for r in OntologyRuntimeReadService().positions() if r.get("ticker")]
+    results["portfolio_groups"] = group_summaries(results["portfolio"])
 
     tickers = [p["ticker"] for p in results["portfolio"]]
 
@@ -1190,6 +1192,7 @@ def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[s
     ta = thesis_data.get("technical_analysis", {})
     momentum_data = thesis_data.get("momentum", {})
     portfolio = thesis_data.get("portfolio", [])
+    portfolio_groups = thesis_data.get("portfolio_groups", [])
     digest_context = _format_news_digest_context(news_digests)
 
     # Build momentum lookup: ticker -> metrics
@@ -1213,6 +1216,14 @@ def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[s
 
     # Build per-ticker sections
     ticker_sections: list[str] = []
+    if portfolio_groups:
+        group_lines = ["## Portfolio Groups"]
+        for group in portfolio_groups:
+            group_lines.append(
+                f"- {group.get('group_name')}: conviction {group.get('group_conviction')}; "
+                f"direction {group.get('direction')}; members {', '.join(str(member) for member in (group.get('members') or []))}"
+            )
+        ticker_sections.append("\n".join(group_lines))
     for pos in portfolio:
         ticker = pos["ticker"]
         direction = pos.get("direction", "long")

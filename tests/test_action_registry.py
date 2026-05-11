@@ -129,6 +129,8 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
             "cost_basis_base": 100.0,
             "notional_base": 1200.0,
             "valuation_status": "ok",
+            "group_name": None,
+            "group_conviction": None,
             "role": "position",
         }
     ]
@@ -596,6 +598,95 @@ def test_v1_portfolio_approval_upgrades_and_applies_after_schema_bump():
     assert position["contract_multiplier"] == 1.0
     child_run = core_db.get_action_runs("update_portfolio_positions", approval_id=approval["id"])[0]
     assert child_run["action_schema_version"] == 1
+
+
+def test_portfolio_action_schema_upgrades_v2_to_v3_group_fields():
+    import ontology.action_registry as registry
+
+    action = registry.get_action("update_portfolio_positions")
+    model = registry._validate_and_upgrade_action_input(
+        action,
+        {
+            "positions": [
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "conviction": 3,
+                    "quantity": 5,
+                    "instrument_type": "security",
+                    "price_symbol": "MU",
+                    "contract_multiplier": 1,
+                }
+            ]
+        },
+        input_schema_version=2,
+    )
+
+    row = model.model_dump()["positions"][0]
+    assert row["group_name"] is None
+    assert row["group_conviction"] is None
+
+
+def test_portfolio_action_canonicalizes_group_display_name():
+    result = _approve_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "SKH",
+                    "asset": "equity",
+                    "direction": "long",
+                    "conviction": 4,
+                    "cost_basis": 100,
+                    "shares": 10,
+                    "group_name": " Memory ",
+                    "group_conviction": 5,
+                },
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "conviction": 3,
+                    "cost_basis": 90,
+                    "shares": 8,
+                    "group_name": "memory",
+                    "group_conviction": 5,
+                },
+            ]
+        },
+    )
+
+    assert result == {"status": "ok", "count": 2}
+    rows = {row["ticker"]: row for row in portfolio_db.get_positions()}
+    assert rows["SKH"]["group_name"] == "Memory"
+    assert rows["MU"]["group_name"] == "Memory"
+
+
+def test_portfolio_approval_payload_reports_group_renames_and_member_changes():
+    import ontology.action_registry as registry
+
+    before = [
+        {"ticker": "MU", "direction": "long", "group_name": "Memory", "group_conviction": 5},
+        {"ticker": "SKH", "direction": "long", "group_name": "Memory", "group_conviction": 5},
+        {"ticker": "WDC", "direction": "long", "group_name": "Storage", "group_conviction": 3},
+    ]
+    after = [
+        {"ticker": "MU", "direction": "long", "group_name": "Semis", "group_conviction": 5},
+        {"ticker": "SKH", "direction": "long", "group_name": "Semis", "group_conviction": 5},
+        {"ticker": "WDC", "direction": "long", "group_name": "Storage", "group_conviction": 4},
+        {"ticker": "STX", "direction": "long", "group_name": "Storage", "group_conviction": 4},
+    ]
+
+    changes = registry._portfolio_group_changes(before, after)
+
+    assert changes[0]["change_type"] == "renamed"
+    assert changes[0]["before"]["group_name"] == "Memory"
+    assert changes[0]["after"]["group_name"] == "Semis"
+    storage = [change for change in changes if change.get("after", {}).get("group_name") == "Storage"][0]
+    assert storage["change_type"] == "updated"
+    assert {"field": "group_conviction", "before": 3, "after": 4} in storage["fields"]
+    assert {"field": "members_added", "before": None, "after": ["STX"]} in storage["fields"]
 
 
 def test_thesis_status_action_noops_same_status_without_history_row():

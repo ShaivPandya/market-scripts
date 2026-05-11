@@ -149,6 +149,7 @@ const URGENCY_COLORS: Record<string, string> = {
 const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exit", "rebalance", "hedge"])
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
 const WORKSPACE_APPROVAL_LIMIT = 50
+type ApprovalDialogAction = "approve" | "reject" | "restage"
 
 function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
@@ -410,9 +411,10 @@ export function Workspace() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
-  const [approvalReview, setApprovalReview] = useState<{ approval: ApprovalRecord; action: "approve" | "reject" } | null>(null)
+  const [approvalReview, setApprovalReview] = useState<ApprovalRecord | null>(null)
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [approvalDialogAction, setApprovalDialogAction] = useState<ApprovalDialogAction | null>(null)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -423,24 +425,25 @@ export function Workspace() {
     })
   }
 
-  function openApprovalReview(approval: ApprovalRecord, action: "approve" | "reject") {
-    setApprovalReview({ approval, action })
+  function openApprovalReview(approval: ApprovalRecord) {
+    setApprovalReview(approval)
     setApprovalNote("")
     setApprovalError(null)
+    setApprovalDialogAction(null)
   }
 
   async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
-    setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
+    if (action === "approve" && !String(note || "").trim()) {
+      setApprovalError("Approval note is required before applying an internal state change.")
+      return
+    }
+    setApprovalDialogAction(action)
+    setProcessingIds(prev => new Set(prev).add(approval.id))
     try {
       let resolved: ApprovalRecord
       if (action === "approve") {
-        const trimmed = String(note || "").trim()
-        if (!trimmed) {
-          setApprovalError("Approval note is required before applying an internal state change.")
-          return
-        }
-        resolved = await approveItem(approval.id, trimmed)
+        resolved = await approveItem(approval.id, String(note || "").trim())
       } else {
         resolved = await rejectItem(approval.id, note?.trim() || undefined)
       }
@@ -457,12 +460,14 @@ export function Workspace() {
         next.delete(approval.id)
         return next
       })
+      setApprovalDialogAction(null)
     }
   }
 
   async function handleRejectAndRestage(approval: ApprovalRecord, note?: string) {
     setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
+    setApprovalDialogAction("restage")
     try {
       const result = await rejectAndRestageApproval(approval.id, note?.trim() || undefined)
       patchResolvedApprovalSummaries(qc, result.original, approval)
@@ -478,6 +483,7 @@ export function Workspace() {
         next.delete(approval.id)
         return next
       })
+      setApprovalDialogAction(null)
     }
   }
 
@@ -793,31 +799,13 @@ export function Workspace() {
                           <GitBranch size={14} />
                         </button>
                         <button
-                          onClick={() => openApprovalReview(a, "approve")}
-                          disabled={processingIds.has(a.id) || a.can_approve === false}
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
-                          title={a.base_state_status === "stale" ? a.base_state_message || "The underlying state changed." : a.can_approve === false ? "This proposal is not in an approvable state." : "Review and apply internal state change"}
+                          type="button"
+                          onClick={() => openApprovalReview(a)}
+                          disabled={processingIds.has(a.id)}
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50"
+                          title="Review approval"
                         >
-                          {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
-                        </button>
-                        {a.can_restage && (
-                          <button
-                            type="button"
-                            onClick={() => handleRejectAndRestage(a)}
-                            disabled={processingIds.has(a.id)}
-                            className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 dark:hover:bg-amber-900 disabled:opacity-50"
-                            title="Reject this stale proposal and create a fresh proposal from current state"
-                          >
-                            Reject & Restage
-                          </button>
-                        )}
-                        <button
-                          onClick={() => openApprovalReview(a, "reject")}
-                          disabled={processingIds.has(a.id) || a.can_reject === false}
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
-                          title={a.can_reject === false ? "This proposal is not rejectable from its current state." : "Reject proposal"}
-                        >
-                          Reject Proposal
+                          Review
                         </button>
                       </div>
                     </div>
@@ -977,104 +965,107 @@ export function Workspace() {
             setApprovalReview(null)
             setApprovalNote("")
             setApprovalError(null)
+            setApprovalDialogAction(null)
           }
         }}
-        title={approvalReview?.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
-        description={
-          approvalReview?.action === "approve"
-            ? "Approval records the human decision and applies the staged internal state change."
-            : "Rejecting keeps the proposal in audit history and does not apply the staged change."
-        }
+        title="Review Approval"
+        description="Review the staged change, then approve and apply it or reject the proposal."
         maxWidth="max-w-3xl"
       >
         {approvalReview && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <DecisionStateBadge state={approvalDecisionState(approvalReview.approval)} />
+              <DecisionStateBadge state={approvalDecisionState(approvalReview)} />
               <BaseStateBadge
-                state={approvalReview.approval.base_state_status}
-                message={approvalReview.approval.base_state_message}
+                state={approvalReview.base_state_status}
+                message={approvalReview.base_state_message}
               />
-              <EffectScopeBadge scope={approvalReview.approval.effect_scope ?? "internal_state"} />
-              <PolicyStateBadge state={approvalReview.approval.policy_state ?? policyGateFromApproval(approvalReview.approval)?.decision ?? "missing"} />
-              <QualityStateBadge state={approvalReview.approval.quality_state ?? "missing"} />
+              <EffectScopeBadge scope={approvalReview.effect_scope ?? "internal_state"} />
+              <PolicyStateBadge state={approvalReview.policy_state ?? policyGateFromApproval(approvalReview)?.decision ?? "missing"} />
+              <QualityStateBadge state={approvalReview.quality_state ?? "missing"} />
             </div>
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
-                <span>{formatApprovalDisplayLabel(approvalReview.approval.id, "Approval")}</span>
-                <span>{approvalSubjectLabel(approvalReview.approval)}</span>
-                {approvalTickerLabel(approvalReview.approval) && <span>{approvalTickerLabel(approvalReview.approval)}</span>}
-                <span>Application: {applicationLabel(approvalReview.approval)}</span>
+                <span>{formatApprovalDisplayLabel(approvalReview.id, "Approval")}</span>
+                <span>{approvalSubjectLabel(approvalReview)}</span>
+                {approvalTickerLabel(approvalReview) && <span>{approvalTickerLabel(approvalReview)}</span>}
+                <span>Application: {applicationLabel(approvalReview)}</span>
               </div>
-              {approvalReasonLabel(approvalReview.approval) && <p className="mb-2">{approvalReasonLabel(approvalReview.approval)}</p>}
+              {approvalReasonLabel(approvalReview) && <p className="mb-2">{approvalReasonLabel(approvalReview)}</p>}
               {(() => {
-                const record = approvalReview.approval.proposed_change.record
+                const record = approvalReview.proposed_change.record
                 if (record && typeof record === "object" && !Array.isArray(record)) {
                   return <RiskBindingLine record={record as Record<string, unknown>} />
                 }
                 return null
               })()}
-              <ApprovalChangeSummary approval={approvalReview.approval} />
+              <ApprovalChangeSummary approval={approvalReview} />
             </div>
-            {approvalReview.approval.base_state_status === "stale" && (
+            {approvalReview.base_state_status === "stale" && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                {approvalReview.approval.base_state_message || "The underlying state changed after this proposal was created."}
+                {approvalReview.base_state_message || "The underlying state changed after this proposal was created."}
               </div>
             )}
             <div>
               <label htmlFor="approval-note" className="theme-field-label">
-                {approvalReview.action === "approve" ? "Approval note" : "Rejection note"}
+                Decision note
               </label>
               <textarea
                 id="approval-note"
                 value={approvalNote}
                 onChange={e => setApprovalNote(e.target.value)}
                 className="theme-input mt-1 min-h-[90px] w-full"
-                placeholder={
-                  approvalReview.action === "approve"
-                    ? "State why this internal change is approved."
-                    : "Optional reason for rejecting this proposal."
-                }
+                placeholder="Required for approval. Optional for rejection."
               />
-              {approvalReview.action === "approve" && (
-                <p className="theme-field-caption mt-1">Required. Approval applies app state only.</p>
-              )}
+              <p className="theme-field-caption mt-1">Required for approval. Rejection notes are optional.</p>
             </div>
             {approvalError && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {approvalError}
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setApprovalReview(null)}
+                onClick={() => {
+                  setApprovalReview(null)
+                  setApprovalNote("")
+                  setApprovalError(null)
+                  setApprovalDialogAction(null)
+                }}
                 className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
               >
                 Cancel
               </button>
               <ActionButton
-                onClick={() => handleApproval(approvalReview.approval, approvalReview.action, approvalNote)}
-                loading={processingIds.has(approvalReview.approval.id)}
-                loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
-                disabled={
-                  approvalReview.action === "approve" &&
-                  (!approvalNote.trim() || approvalReview.approval.can_approve === false)
-                }
-                className="w-auto px-4"
+                onClick={() => handleApproval(approvalReview, "reject", approvalNote)}
+                loading={approvalDialogAction === "reject" && processingIds.has(approvalReview.id)}
+                loadingText="Rejecting..."
+                disabled={processingIds.has(approvalReview.id) || approvalReview.can_reject === false}
+                className="w-auto px-4 bg-red-600 hover:bg-red-700"
               >
-                {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+                Reject Proposal
               </ActionButton>
-              {approvalReview.approval.can_restage && (
+              {approvalReview.can_restage && (
                 <ActionButton
-                  onClick={() => handleRejectAndRestage(approvalReview.approval, approvalNote)}
-                  loading={processingIds.has(approvalReview.approval.id)}
+                  onClick={() => handleRejectAndRestage(approvalReview, approvalNote)}
+                  loading={approvalDialogAction === "restage" && processingIds.has(approvalReview.id)}
                   loadingText="Restaging..."
+                  disabled={processingIds.has(approvalReview.id)}
                   className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
                 >
                   Reject & Restage
                 </ActionButton>
               )}
+              <ActionButton
+                onClick={() => handleApproval(approvalReview, "approve", approvalNote)}
+                loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
+                loadingText="Applying..."
+                disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
+                className="w-auto px-4 bg-green-600 hover:bg-green-700"
+              >
+                {approvalReview.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
+              </ActionButton>
             </div>
           </div>
         )}

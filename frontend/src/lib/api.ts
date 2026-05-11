@@ -573,6 +573,8 @@ export interface PortfolioPosition {
   cost_basis_base?: number | null
   notional_base?: number | null
   valuation_status?: string | null
+  group_name?: string | null
+  group_conviction?: number | null
   role?: "position" | "hedge"
 }
 
@@ -1392,6 +1394,8 @@ export const fetchHedgingPortfolioWeights = (book?: number) =>
         contract_multiplier?: number | null
         cost_basis: number | null
         weight: number
+        group_name?: string | null
+        group_conviction?: number | null
       }[]
       book: number
       source: string
@@ -1406,6 +1410,8 @@ export interface SizerPrefillResponse {
     conviction?: number
     direction?: string
     instrument_type?: InstrumentType | null
+    group_name?: string | null
+    group_conviction?: number | null
   }[]
   book_size?: number
   source?: string
@@ -1729,13 +1735,13 @@ type SizerJobResponse =
   | { job_id: string; status: "error"; error?: string }
   | { job_id: string; status: "done"; result?: unknown }
 
-export type BetaHedgeMode = "spy_iwm" | "spy"
+export type BetaHedgeMode = "spy" | "iwm" | "qqq" | "spy_iwm" | "spy_qqq" | "iwm_qqq"
 
 export type PortfolioSizerRequest = {
   book: number
   target_leverage: number
   beta_hedge_mode: BetaHedgeMode
-  positions: { ticker: string; conviction: number }[]
+  positions: { ticker: string; conviction: number; group_name?: string | null; group_conviction?: number | null }[]
 }
 
 export const startSizerJob = (body: PortfolioSizerRequest) =>
