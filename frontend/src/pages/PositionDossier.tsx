@@ -354,6 +354,7 @@ export function PositionDossier() {
     pos && (
       positionQuantity != null ||
       (pos.instrument_type === "future" && pos.contract_multiplier != null) ||
+      pos.group_name != null ||
       pos.avg_cost != null ||
       pos.market_value != null ||
       pos.pnl_pct != null ||
@@ -405,6 +406,7 @@ export function PositionDossier() {
         <div className="theme-surface rounded-xl p-3 mb-4 flex flex-wrap gap-6 text-sm">
           {positionQuantity != null && <div><span className="text-subtle">{positionQuantityLabel}</span> <span className="font-medium text-app ml-1">{String(positionQuantity)}</span></div>}
           {pos.instrument_type === "future" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
+          {pos.group_name != null && <div><span className="text-subtle">Group</span> <span className="font-medium text-app ml-1">{String(pos.group_name)}{pos.group_conviction != null ? ` (${String(pos.group_conviction)})` : ""}</span></div>}
           {pos.avg_cost != null && <div><span className="text-subtle">Avg Cost</span> <span className="font-medium text-app ml-1">${Number(pos.avg_cost).toFixed(2)}</span></div>}
           {pos.market_value != null && <div><span className="text-subtle">Mkt Value</span> <span className="font-medium text-app ml-1">${Number(pos.market_value).toLocaleString()}</span></div>}
           {pos.pnl_pct != null && (
@@ -1858,6 +1860,7 @@ function RiskTab({ ticker }: { ticker: string }) {
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
               <span>{snapshot.asset ?? "unknown"} asset</span>
               <span>{snapshot.direction ?? "unknown"}</span>
+              {snapshot.position?.group_name != null && <span>Group {String(snapshot.position.group_name)}{snapshot.position.group_conviction != null ? ` (${String(snapshot.position.group_conviction)})` : ""}</span>}
               <span>{snapshot.sector ?? "Unknown sector"}</span>
               <span>Market snapshot {formatDateTime(marketAsOf)}</span>
             </div>

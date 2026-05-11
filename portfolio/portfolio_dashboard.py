@@ -19,6 +19,7 @@ import pandas as pd
 
 from ontology.runtime_read_service import get_positions, get_positions_df
 from portfolio.portfolio_analytics import compute_analytics
+from portfolio.position_groups import group_key, normalize_position_group_fields
 from utils.retry import yf_download
 
 LOGGER = logging.getLogger(__name__)
@@ -54,6 +55,8 @@ def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
             "cost_basis_base": getattr(row, "cost_basis_base", None),
             "notional_base": getattr(row, "notional_base", None),
             "valuation_status": getattr(row, "valuation_status", None),
+            "group_name": getattr(row, "group_name", None),
+            "group_conviction": getattr(row, "group_conviction", None),
             "role": getattr(row, "role", "position"),
         }
         for row in df.itertuples()
@@ -94,10 +97,40 @@ def _empty_payload(timeframe: str, warning: str | None = None) -> dict:
         "timestamp": datetime.now(),
         "position_order": POSITION_ORDER,
         "analytics": compute_analytics(positions, get_positions()),
+        "group_exposures": _group_exposures(POSITION_META),
     }
     if warning:
         payload["warning"] = warning
     return payload
+
+
+def _group_exposures(metadata: dict[str, dict]) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for ticker, meta in metadata.items():
+        try:
+            group_name, group_conviction = normalize_position_group_fields(meta)
+        except ValueError:
+            continue
+        if not group_name:
+            continue
+        key = group_key(group_name) or group_name.casefold()
+        group = groups.setdefault(
+            key,
+            {
+                "group_name": group_name,
+                "group_conviction": group_conviction,
+                "direction": meta.get("direction"),
+                "tickers": [],
+                "current_notional": 0.0,
+                "cost_notional": 0.0,
+            },
+        )
+        group["tickers"].append(ticker)
+        for field in ("current_notional", "cost_notional"):
+            value = meta.get(field)
+            if isinstance(value, (int, float)):
+                group[field] += float(value)
+    return sorted(groups.values(), key=lambda row: str(row["group_name"]).casefold())
 
 
 def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
@@ -182,6 +215,7 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
         "timestamp": datetime.now(),
         "position_order": POSITION_ORDER,
         "analytics": analytics,
+        "group_exposures": _group_exposures(metadata),
     }
     if warnings_out:
         payload["warning"] = "; ".join(warnings_out)

@@ -30,6 +30,7 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     solve_joint_hedge_weights,
     to_usd_price,
 )
+from portfolio.position_groups import group_key, normalize_group_conviction, normalize_group_name
 
 DEFAULT_BOOK = 100_000.0
 
@@ -327,6 +328,8 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
             conviction = max(1, min(5, int(row.get("conviction", 3))))
         except (TypeError, ValueError):
             conviction = 3
+        group_name = normalize_group_name(row.get("group_name"))
+        group_conviction = normalize_group_conviction(row.get("group_conviction")) if group_name else None
 
         has_dollar = pd.notna(quantity_val) and pd.notna(cost_val) and float(quantity_val) > 0 and float(cost_val) > 0
 
@@ -339,6 +342,9 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
                 "quantity": float(quantity_val) if pd.notna(quantity_val) else None,
                 "cost_basis": float(cost_val) if pd.notna(cost_val) else None,
                 "conviction": conviction,
+                "group_name": group_name,
+                "group_key": group_key(group_name),
+                "group_conviction": group_conviction,
                 "instrument_type": instrument_type,
                 "contract_multiplier": contract_multiplier,
                 "has_dollar": has_dollar,
@@ -358,9 +364,41 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
         for r in records:
             r["weight"] = r["sign"] * r["dollar_value"] / suggested_book
     else:
-        total_conviction = sum(r["conviction"] for r in records)
+        groups: dict[str, dict[str, Any]] = {}
+        raw_scores: dict[str, float] = {}
         for r in records:
-            r["weight"] = r["sign"] * (r["conviction"] / total_conviction)
+            gkey = r.get("group_key")
+            if not gkey:
+                raw_scores[r["ticker"]] = float(r["conviction"])
+                continue
+            if r.get("group_conviction") is None:
+                raise ValueError(f"Group '{r['group_name']}' requires a group conviction.")
+            group = groups.setdefault(
+                str(gkey),
+                {
+                    "name": r["group_name"],
+                    "direction": r["direction"],
+                    "group_conviction": int(r["group_conviction"]),
+                    "members": [],
+                    "total_conviction": 0,
+                },
+            )
+            if group["direction"] != r["direction"]:
+                raise ValueError(
+                    f"Group '{group['name']}' cannot mix {group['direction']} and {r['direction']} positions."
+                )
+            if group["group_conviction"] != int(r["group_conviction"]):
+                raise ValueError(f"Group '{group['name']}' has inconsistent group convictions.")
+            group["members"].append(r)
+            group["total_conviction"] += int(r["conviction"])
+        for group in groups.values():
+            for r in group["members"]:
+                raw_scores[r["ticker"]] = float(group["group_conviction"]) * (
+                    float(r["conviction"]) / float(group["total_conviction"])
+                )
+        total_conviction = sum(abs(score) for score in raw_scores.values())
+        for r in records:
+            r["weight"] = r["sign"] * (raw_scores[r["ticker"]] / total_conviction)
 
     positions = [{"ticker": r["ticker"], "weight": r["weight"]} for r in records]
     metadata = [
@@ -368,6 +406,8 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
             "ticker": r["ticker"],
             "direction": r["direction"],
             "conviction": r["conviction"],
+            "group_name": r.get("group_name"),
+            "group_conviction": r.get("group_conviction"),
             "shares": r["shares"],
             "quantity": r["quantity"],
             "cost_basis": r["cost_basis"],

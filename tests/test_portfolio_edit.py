@@ -90,6 +90,8 @@ def test_save_and_get_hedge_positions(auth_client):
             "cost_basis_base": 510.25,
             "notional_base": 6123.0,
             "valuation_status": "ok",
+            "group_name": None,
+            "group_conviction": None,
             "role": "hedge",
         }
     ]
@@ -136,6 +138,85 @@ def test_save_and_get_hedge_positions_preserves_negative_shares(auth_client):
     assert fetch_resp.json()["positions"][0]["shares"] == -12.0
     assert fetch_resp.json()["positions"][0]["quantity"] == -12.0
     assert fetch_resp.json()["positions"][0]["notional_base"] == 6123.0
+
+
+def test_save_and_get_grouped_positions_normalizes_group_fields(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {
+                    "ticker": "skh",
+                    "direction": "long",
+                    "conviction": 4,
+                    "cost_basis": 100,
+                    "shares": 10,
+                    "group_name": "  Memory   Cycle ",
+                    "group_conviction": 5,
+                },
+                {
+                    "ticker": "mu",
+                    "direction": "long",
+                    "conviction": 3,
+                    "cost_basis": 90,
+                    "shares": 8,
+                    "group_name": "memory cycle",
+                    "group_conviction": 5,
+                },
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+
+    assert resp.status_code == 200
+    fetch_resp = auth_client.get("/api/v1/portfolio-positions")
+    assert fetch_resp.status_code == 200
+    by_ticker = {row["ticker"]: row for row in fetch_resp.json()["positions"]}
+    assert by_ticker["SKH"]["group_name"] == "Memory Cycle"
+    assert by_ticker["SKH"]["group_conviction"] == 5
+    assert by_ticker["MU"]["group_name"] == "Memory Cycle"
+    assert by_ticker["MU"]["group_conviction"] == 5
+
+
+def test_grouped_portfolio_positions_reject_mixed_direction(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {"ticker": "MU", "direction": "long", "conviction": 4, "group_name": "Memory", "group_conviction": 5},
+                {
+                    "ticker": "SAMSUNG",
+                    "direction": "short",
+                    "conviction": 3,
+                    "group_name": "memory",
+                    "group_conviction": 5,
+                },
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "cannot mix long and short positions" in resp.text
+
+
+def test_grouped_portfolio_positions_reject_inconsistent_group_conviction(auth_client):
+    resp = auth_client.put(
+        "/api/v1/portfolio-positions",
+        json={
+            "positions": [
+                {"ticker": "MU", "direction": "long", "conviction": 4, "group_name": "Memory", "group_conviction": 5},
+                {"ticker": "WDC", "direction": "long", "conviction": 3, "group_name": "memory", "group_conviction": 4},
+            ],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "inconsistent group convictions" in resp.text
 
 
 def test_portfolio_settings_book_size_persists(auth_client):
@@ -591,6 +672,8 @@ def test_sqlite_init_backfills_legacy_position_columns():
             "cost_basis_base": None,
             "notional_base": None,
             "valuation_status": "missing_position_inputs",
+            "group_name": None,
+            "group_conviction": None,
             "role": "position",
         }
     ]

@@ -49,6 +49,7 @@ from ontology.sources.liquidity import LiquidityAdapter
 from ontology.sources.macro import EconomicGrowthAdapter, LaborMarketAdapter, PositioningAdapter, SentimentAdapter
 from ontology.sources.market_technicals import MarketBreadthAdapter, Top50BreadthAdapter, VixTermStructureAdapter
 from ontology.sources.sector_metrics import SectorMetricsAdapter
+from portfolio.position_groups import normalize_position_group_fields
 
 log = logging.getLogger("api.position_risk")
 
@@ -224,6 +225,7 @@ def refresh_portfolio_risk() -> dict[str, Any]:
         "position_count": len(position_snapshots),
         "risk_buckets": bucket_counts,
         "top_contributors": _top_risk_contributors(position_snapshots),
+        "group_risk": _group_risk_summaries(position_snapshots),
         "degraded_modules": degraded_modules,
         "missing_modules": [m["module"] for m in degraded_modules if m.get("status") in {"missing", "error"}],
         "stale_modules": [m["module"] for m in degraded_modules if m.get("status") == "stale"],
@@ -244,6 +246,12 @@ def refresh_portfolio_risk() -> dict[str, Any]:
                 "asset": row.get("asset"),
                 "direction": row.get("direction"),
                 "sector": row.get("sector"),
+                "group_name": (row.get("position") or {}).get("group_name")
+                if isinstance(row.get("position"), dict)
+                else None,
+                "group_conviction": (row.get("position") or {}).get("group_conviction")
+                if isinstance(row.get("position"), dict)
+                else None,
                 "risk_score": row.get("risk_score"),
                 "risk_level": row.get("risk_level"),
                 "risk_snapshot_id": row.get("result_id"),
@@ -739,6 +747,8 @@ def _load_portfolio_positions(*, now: datetime) -> list[dict[str, Any]]:
                 "contract_multiplier": _float_or_none(raw.get("contract_multiplier")) or 1.0,
                 "cost_basis": _float_or_none(raw.get("cost_basis")),
                 "conviction": _int_or_none(raw.get("conviction")),
+                "group_name": raw.get("group_name"),
+                "group_conviction": _int_or_none(raw.get("group_conviction")),
                 "contrarian": bool(raw.get("contrarian")),
                 "role": str(raw.get("role") or "position"),
                 "as_of": now.isoformat(),
@@ -823,6 +833,48 @@ def _top_risk_contributors(snapshots: list[dict[str, Any]], *, limit: int = 5) -
             }
         )
     return contributors
+
+
+def _group_risk_summaries(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in snapshots:
+        position = row.get("position") if isinstance(row.get("position"), dict) else {}
+        try:
+            group_name, group_conviction = normalize_position_group_fields(position)
+        except ValueError:
+            continue
+        if not group_name:
+            continue
+        key = group_name.casefold()
+        group = groups.setdefault(
+            key,
+            {
+                "group_name": group_name,
+                "group_conviction": group_conviction,
+                "tickers": [],
+                "scores": [],
+            },
+        )
+        group["tickers"].append(row.get("ticker"))
+        score = _float_or_none(row.get("risk_score"))
+        if score is not None:
+            group["scores"].append(float(score))
+
+    out: list[dict[str, Any]] = []
+    for group in groups.values():
+        scores = list(group.pop("scores"))
+        max_score = max(scores) if scores else 0.0
+        avg_score = sum(scores) / len(scores) if scores else 0.0
+        out.append(
+            {
+                **group,
+                "position_count": len(group["tickers"]),
+                "average_risk_score": round(avg_score, 4),
+                "max_risk_score": round(max_score, 4),
+                "risk_level": risk_level(max_score),
+            }
+        )
+    return sorted(out, key=lambda item: float(item["max_risk_score"]), reverse=True)
 
 
 def _valid_for_scoring(module_name: str, payload: Any, data: Any) -> tuple[bool, str | None]:

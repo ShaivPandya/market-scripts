@@ -16,6 +16,7 @@ import {
   type StagedMutationResponse,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
+import { groupKey, normalizeGroupConviction, normalizeGroupName } from "@/lib/positionGroups"
 
 interface EditorRow extends PortfolioPosition {
   _id: string
@@ -173,6 +174,49 @@ function valuationSummary(row: PortfolioPosition | HedgePosition) {
   return parts.join(" - ")
 }
 
+function positionGroupState(rows: EditorRow[]) {
+  const groups = new Map<string, {
+    key: string
+    name: string
+    conviction: number
+    direction: PortfolioPosition["direction"]
+    ids: string[]
+    tickers: string[]
+  }>()
+  const errors: string[] = []
+  for (const row of rows) {
+    const name = normalizeGroupName(row.group_name)
+    const key = groupKey(name)
+    if (!key || !name) continue
+    const conviction = normalizeGroupConviction(row.group_conviction)
+    if (conviction == null) {
+      errors.push(`Group ${name} requires a conviction.`)
+      continue
+    }
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, {
+        key,
+        name,
+        conviction,
+        direction: row.direction,
+        ids: [row._id],
+        tickers: [row.ticker || "New position"],
+      })
+      continue
+    }
+    existing.ids.push(row._id)
+    existing.tickers.push(row.ticker || "New position")
+    if (existing.conviction !== conviction) {
+      errors.push(`Group ${existing.name} has inconsistent convictions.`)
+    }
+    if (existing.direction !== row.direction) {
+      errors.push(`Group ${existing.name} cannot mix ${existing.direction} and ${row.direction} positions.`)
+    }
+  }
+  return { groups, errors: Array.from(new Set(errors)) }
+}
+
 function positionToRow(p: PortfolioPosition): EditorRow {
   const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
   const quantity = rowQuantity(p)
@@ -204,6 +248,8 @@ function newRow(): EditorRow {
     instrument_type: "security",
     price_symbol: "",
     contract_multiplier: null,
+    group_name: null,
+    group_conviction: null,
     _contractMultiplierTouched: false,
   }
 }
@@ -336,6 +382,29 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setPositionRows(prev => [...prev, newRow()])
   }
 
+  function updatePositionGroupName(id: string, value: string) {
+    setPositionRows(prev => {
+      const target = prev.find(row => row._id === id)
+      const name = normalizeGroupName(value)
+      if (!target || !name) {
+        return prev.map(row => (row._id === id ? { ...row, group_name: null, group_conviction: null } : row))
+      }
+      const key = groupKey(name)
+      const existing = prev.find(row => row._id !== id && groupKey(row.group_name) === key)
+      const groupName = normalizeGroupName(existing?.group_name) ?? name
+      const groupConviction = normalizeGroupConviction(existing?.group_conviction) ?? normalizeGroupConviction(target.group_conviction) ?? target.conviction
+      return prev.map(row => (row._id === id ? { ...row, group_name: groupName, group_conviction: groupConviction } : row))
+    })
+  }
+
+  function updatePositionGroupConviction(group: string | null | undefined, conviction: number) {
+    const key = groupKey(group)
+    if (!key) return
+    setPositionRows(prev => prev.map(row => (
+      groupKey(row.group_name) === key ? { ...row, group_conviction: conviction } : row
+    )))
+  }
+
   function addHedgeRow() {
     setHedgeRows(prev => [...prev, newHedgeRow()])
   }
@@ -376,12 +445,19 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       setPositionValidationError("Spot FX rows must use a pair like EURUSD=X, EURUSD, EUR/USD, or EUR-USD.")
       return
     }
+    const groupState = positionGroupState(positionRows)
+    if (groupState.errors.length > 0) {
+      setPositionValidationError(groupState.errors[0])
+      return
+    }
 
     const positions: PortfolioPosition[] = positionRows.map(r => {
       const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
       const ticker = instrumentType === "spot_fx" ? canonicalSpotFxSymbol(r.price_symbol || r.ticker) ?? r.ticker.trim().toUpperCase() : r.ticker.trim().toUpperCase()
       const priceSymbol = instrumentType === "spot_fx" ? ticker : (r.price_symbol?.trim() || r.ticker).toUpperCase()
       const fxCurrencies = instrumentType === "spot_fx" ? spotFxCurrencies(priceSymbol) : { fx_base_currency: r.fx_base_currency ?? null, fx_quote_currency: r.fx_quote_currency ?? null }
+      const rowGroupName = normalizeGroupName(r.group_name)
+      const rowGroup = rowGroupName ? groupState.groups.get(groupKey(rowGroupName) ?? "") : null
       return {
         ticker,
         asset: instrumentType === "spot_fx" ? "fx" : r.asset,
@@ -405,6 +481,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
         cost_basis_base: r.cost_basis_base ?? null,
         notional_base: r.notional_base ?? null,
         valuation_status: r.valuation_status ?? null,
+        group_name: rowGroup?.name ?? rowGroupName,
+        group_conviction: rowGroupName ? rowGroup?.conviction ?? normalizeGroupConviction(r.group_conviction) : null,
       }
     })
 
@@ -468,6 +546,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const currentLoading = tab === "Positions" ? positionMutation.isPending : hedgeMutation.isPending
   const currentLoadingText = tab === "Positions" ? "Proposing portfolio..." : "Proposing hedges..."
   const currentSaveLabel = tab === "Positions" ? "Propose Portfolio" : "Propose Hedges"
+  const currentGroupState = positionGroupState(positionRows)
+  const saveDisabled = tab === "Positions" && currentGroupState.errors.length > 0
 
   return (
     <Dialog
@@ -555,11 +635,13 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
           {tab === "Positions" ? (
             <>
-              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(18, minmax(0, 1fr))" }}>
+              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Group</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Group Conv.</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Cost / Entry</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Qty / Base Units</p>
@@ -569,8 +651,51 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
               </div>
 
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {positionRows.map(row => (
-                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(18, minmax(0, 1fr))" }}>
+                {positionRows.map((row, idx) => {
+                  const key = groupKey(row.group_name)
+                  const previousKey = idx > 0 ? groupKey(positionRows[idx - 1]?.group_name) : null
+                  const group = key ? currentGroupState.groups.get(key) : null
+                  const showGroupHeader = Boolean(group && key !== previousKey)
+                  return (
+                  <div key={row._id} className="space-y-1">
+                    {showGroupHeader && group && (
+                      <div className="rounded-lg border border-app bg-card-muted px-3 py-2">
+                        <div className="grid grid-cols-12 items-center gap-3">
+                          <div className="col-span-4 min-w-0">
+                            <input
+                              type="text"
+                              value={group.name}
+                              onChange={e => {
+                                const nextName = normalizeGroupName(e.target.value)
+                                setPositionRows(prev => prev.map(item => (
+                                  groupKey(item.group_name) === group.key
+                                    ? { ...item, group_name: nextName, group_conviction: nextName ? group.conviction : null }
+                                    : item
+                                )))
+                              }}
+                              className="theme-input w-full text-sm font-medium"
+                            />
+                          </div>
+                          <div className="col-span-4">
+                            <input
+                              type="range"
+                              min={1}
+                              max={5}
+                              step={1}
+                              value={group.conviction}
+                              onChange={e => updatePositionGroupConviction(group.name, Number(e.target.value))}
+                              className="hig-slider w-full cursor-pointer"
+                              style={{ accentColor: "hsl(var(--accent))" }}
+                              aria-label={`Group conviction for ${group.name}`}
+                            />
+                          </div>
+                          <div className="col-span-4 truncate text-xs text-muted">
+                            {group.conviction} · {CONVICTION_LABELS[group.conviction]} · {group.tickers.join(", ")}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  <div className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
                     <div className="col-span-2">
                       <input
                         type="text"
@@ -659,6 +784,38 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           {row.direction}
                         </span>
                       )}
+                    </div>
+
+                    <div className="col-span-2">
+                      <input
+                        type="text"
+                        value={row.group_name ?? ""}
+                        onChange={e => updatePositionGroupName(row._id, e.target.value)}
+                        placeholder="Optional"
+                        className="theme-input w-full text-sm"
+                      />
+                    </div>
+
+                    <div className="col-span-2 min-w-0">
+                      <div className="flex min-w-0 flex-col justify-center gap-1 px-1">
+                        <input
+                          type="range"
+                          min={1}
+                          max={5}
+                          step={1}
+                          value={normalizeGroupConviction(row.group_conviction) ?? row.conviction}
+                          onChange={e => updatePositionGroupConviction(row.group_name, Number(e.target.value))}
+                          aria-label={`Group conviction for ${row.group_name || row.ticker || "position"}`}
+                          className="hig-slider w-full min-w-0 cursor-pointer"
+                          style={{ accentColor: "hsl(var(--accent))" }}
+                          disabled={!normalizeGroupName(row.group_name)}
+                        />
+                        <span className="block truncate text-center text-[11px] leading-none text-gray-500">
+                          {normalizeGroupName(row.group_name)
+                            ? `${normalizeGroupConviction(row.group_conviction) ?? row.conviction} · ${CONVICTION_LABELS[normalizeGroupConviction(row.group_conviction) ?? row.conviction]}`
+                            : "Ungrouped"}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="col-span-2 min-w-0">
@@ -767,7 +924,9 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                       </div>
                     )}
                   </div>
-                ))}
+                  </div>
+                  )
+                })}
               </div>
 
               <button
@@ -944,6 +1103,12 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
             </>
           )}
 
+          {tab === "Positions" && currentGroupState.errors.length > 0 && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {currentGroupState.errors[0]}
+            </div>
+          )}
+
           {(currentValidationError || currentMutationError) && (
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {currentValidationError ?? currentMutationError}
@@ -962,6 +1127,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
               onClick={tab === "Positions" ? handleSavePositions : handleSaveHedges}
               loading={currentLoading}
               loadingText={currentLoadingText}
+              disabled={saveDisabled}
               className="w-auto px-6"
             >
               {currentSaveLabel}

@@ -39,6 +39,14 @@ type TimeframePayload = {
   positions?: Record<string, DataPoint[]>
   position_order?: string[]
   warning?: string
+  group_exposures?: Array<{
+    group_name?: string | null
+    group_conviction?: number | null
+    direction?: string | null
+    tickers?: string[]
+    current_notional?: number
+    cost_notional?: number
+  }>
 }
 type PortfolioTimeframeResponse = TimeframePayload & {
   holdings?: Array<{ ticker?: string | null; role?: string | null }>
@@ -72,6 +80,10 @@ function isFiniteNumber(value: number | null | undefined): value is number {
 
 function formatPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
 }
 
 function colorForPosition(index: number): string {
@@ -271,6 +283,7 @@ export function PortfolioDashboard() {
     () => buildUnifiedPerformance(order, positions),
     [order, positions],
   )
+  const groupExposures = timeframeData?.group_exposures ?? []
   const hasUnifiedSeries = unifiedPerformance.sortedPositions.length > 0 && unifiedPerformance.chartData.length > 0
 
   return (
@@ -317,6 +330,28 @@ export function PortfolioDashboard() {
       )}
       {!isLoading && !error && timeframeData && !hasSeries && (
         <Notice tone="info">No price series available.</Notice>
+      )}
+
+      {groupExposures.length > 0 && !isLoading && (
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {groupExposures.map(group => (
+            <div key={String(group.group_name)} className="rounded-lg border border-app bg-card-muted px-3 py-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-app">{group.group_name}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted">{(group.tickers ?? []).join(", ")}</p>
+                </div>
+                <span className="shrink-0 text-xs font-medium text-subtle">
+                  Conv {group.group_conviction ?? "-"}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+                <span>{group.direction ?? "mixed"}</span>
+                {isFiniteNumber(group.current_notional) && <span>{formatMoney(group.current_notional)}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {timeframeData && !isLoading && hasSeries && viewMode === "Grid" && (

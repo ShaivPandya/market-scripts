@@ -69,6 +69,7 @@ from auto_report.shared import (  # noqa: E402
     write_bundle,
 )
 from llm_utils import MODEL_HIGH  # noqa: E402
+from portfolio.position_groups import normalize_group_name
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -326,10 +327,19 @@ def collect_risk_data(portfolio_df) -> dict:
 def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERAGE) -> dict:
     """Run portfolio sizer and return full result dict."""
     try:
+        import pandas as pd
+
         from portfolio.portfolio_optimizer.portfolio_sizer import size_portfolio
 
         positions = [
-            {"ticker": row["ticker"], "conviction": int(row["conviction"])}
+            {
+                "ticker": row["ticker"],
+                "conviction": int(row["conviction"]),
+                "group_name": normalize_group_name(row.get("group_name")),
+                "group_conviction": int(row["group_conviction"])
+                if row.get("group_conviction") is not None and not pd.isna(row.get("group_conviction"))
+                else None,
+            }
             for _, row in portfolio_df.iterrows()
             if row["direction"] in ("long", "short")
         ]
@@ -555,12 +565,40 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
     # --- Per-position risk table ---
     weights_df = sizer_result.get("weights_df")
     if weights_df is not None:
+        group_rows: dict[str, dict] = {}
+        for _, row in weights_df.iterrows():
+            group_name = normalize_group_name(row.get("group_name"))
+            if not group_name:
+                continue
+            group = group_rows.setdefault(
+                group_name.casefold(),
+                {
+                    "group_name": group_name,
+                    "group_conviction": row.get("group_conviction"),
+                    "tickers": [],
+                    "weight": 0.0,
+                },
+            )
+            group["tickers"].append(row.get("ticker"))
+            group["weight"] += float(row.get("weight", 0) or 0)
+        if group_rows:
+            sections.append("## Group Summary\n")
+            sections.append("| Group | Conv | Members | Weight |")
+            sections.append("|-------|-----:|---------|-------:|")
+            for group in group_rows.values():
+                sections.append(
+                    f"| {group['group_name']} | {group.get('group_conviction') or ''} | "
+                    f"{', '.join(str(t) for t in group['tickers'])} | {group['weight'] * 100:.2f}% |"
+                )
+            sections.append("")
+
         sections.append("## Position Details\n")
-        sections.append("| Ticker | Dir | Conv | Weight | Beta SPY | Beta IWM | Vol | Shares | $ Weight |")
-        sections.append("|--------|-----|-----:|-------:|---------:|---------:|----:|-------:|---------:|")
+        sections.append("| Ticker | Group | Dir | Conv | Weight | Beta SPY | Beta IWM | Vol | Shares | $ Weight |")
+        sections.append("|--------|-------|-----|-----:|-------:|---------:|---------:|----:|-------:|---------:|")
         for _, row in weights_df.iterrows():
             sections.append(
                 f"| {row['ticker']} | "
+                f"{normalize_group_name(row.get('group_name')) or '-'} | "
                 f"{str(row.get('direction', '')).lower()[:1].upper()} | "
                 f"{row.get('conviction', '')} | {row['weight'] * 100:.2f}% | "
                 f"{row.get('beta_spy', 0):.3f} | {row.get('beta_iwm', 0):.3f} | "

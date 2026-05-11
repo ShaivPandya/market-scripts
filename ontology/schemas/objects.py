@@ -80,6 +80,8 @@ class PositionV1(OntologySchemaBase):
     cost_basis_base: float | None = None
     notional_base: float | None = None
     valuation_status: str | None = None
+    group_name: str | None = None
+    group_conviction: int | None = Field(default=None, ge=1, le=5)
     role: str = "position"
 
     @field_validator("ticker", mode="before")
@@ -111,6 +113,7 @@ class PositionV1(OntologySchemaBase):
         "base_currency",
         "fx_rate_as_of",
         "valuation_status",
+        "group_name",
         mode="before",
     )
     @classmethod

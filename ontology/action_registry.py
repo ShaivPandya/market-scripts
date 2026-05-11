@@ -46,6 +46,12 @@ from portfolio.instruments import (
     normalize_symbol,
     spot_fx_currencies,
 )
+from portfolio.position_groups import (
+    canonicalize_position_group_rows,
+    group_summaries,
+    normalize_position_group_fields,
+    validate_position_groups,
+)
 
 logger = logging.getLogger(__name__)
 PydanticValidationError = ValidationError
@@ -254,7 +260,7 @@ class UpdatePortfolioPositionsInputV1(BaseModel):
         return self
 
 
-class PortfolioPositionInput(BaseModel):
+class PortfolioPositionInputV2(BaseModel):
     ticker: str
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
     direction: Literal["long", "short"]
@@ -279,7 +285,7 @@ class PortfolioPositionInput(BaseModel):
     valuation_status: str | None = None
 
     @model_validator(mode="after")
-    def _normalize_instrument(self) -> PortfolioPositionInput:
+    def _normalize_instrument(self) -> PortfolioPositionInputV2:
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
             ticker=str(self.ticker),
@@ -308,6 +314,30 @@ class PortfolioPositionInput(BaseModel):
         return self
 
 
+class UpdatePortfolioPositionsInputV2(BaseModel):
+    positions: list[PortfolioPositionInputV2]
+
+    @model_validator(mode="after")
+    def _validate_positions(self) -> UpdatePortfolioPositionsInputV2:
+        if not self.positions:
+            raise ValueError("At least one position is required.")
+        tickers = [position.ticker for position in self.positions]
+        if len(set(tickers)) != len(tickers):
+            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
+            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        return self
+
+
+class PortfolioPositionInput(PortfolioPositionInputV2):
+    group_name: str | None = None
+    group_conviction: int | None = Field(default=None, ge=1, le=5)
+
+    @model_validator(mode="after")
+    def _normalize_group(self) -> PortfolioPositionInput:
+        self.group_name, self.group_conviction = normalize_position_group_fields(self.model_dump())
+        return self
+
+
 class UpdatePortfolioPositionsInput(BaseModel):
     positions: list[PortfolioPositionInput]
 
@@ -319,6 +349,11 @@ class UpdatePortfolioPositionsInput(BaseModel):
         if len(set(tickers)) != len(tickers):
             duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
             raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        rows = canonicalize_position_group_rows([position.model_dump() for position in self.positions])
+        validate_position_groups(rows)
+        for position, row in zip(self.positions, rows, strict=False):
+            position.group_name = row.get("group_name")
+            position.group_conviction = row.get("group_conviction")
         return self
 
 
@@ -815,6 +850,8 @@ _POSITION_DIFF_FIELDS = (
     "contract_multiplier",
     "fx_base_currency",
     "fx_quote_currency",
+    "group_name",
+    "group_conviction",
 )
 
 
@@ -876,6 +913,74 @@ def _portfolio_position_changes(
     return changes
 
 
+def _portfolio_group_changes(
+    before_rows: Sequence[Mapping[str, Any]],
+    after_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    before_groups = {str(group["group_key"]): group for group in group_summaries(before_rows)}
+    after_groups = {str(group["group_key"]): group for group in group_summaries(after_rows)}
+    changes: list[dict[str, Any]] = []
+    handled_before: set[str] = set()
+    handled_after: set[str] = set()
+
+    def _member_key(group: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(sorted(str(member) for member in group.get("members") or []))
+
+    removed_keys = [key for key in before_groups if key not in after_groups]
+    added_keys = [key for key in after_groups if key not in before_groups]
+    for before_key in removed_keys:
+        before = before_groups[before_key]
+        before_members = _member_key(before)
+        renamed_to = next(
+            (
+                after_key
+                for after_key in added_keys
+                if after_key not in handled_after and _member_key(after_groups[after_key]) == before_members
+            ),
+            None,
+        )
+        if renamed_to is None:
+            continue
+        after = after_groups[renamed_to]
+        changes.append({"change_type": "renamed", "before": before, "after": after})
+        handled_before.add(before_key)
+        handled_after.add(renamed_to)
+
+    for key in sorted(set(before_groups) | set(after_groups)):
+        if key in handled_before or key in handled_after:
+            continue
+        before = before_groups.get(key)
+        after = after_groups.get(key)
+        if before is None and after is not None:
+            changes.append({"change_type": "added", "before": None, "after": after})
+            continue
+        if after is None and before is not None:
+            changes.append({"change_type": "removed", "before": before, "after": None})
+            continue
+        if before is None or after is None:
+            continue
+        fields = []
+        if before.get("group_conviction") != after.get("group_conviction"):
+            fields.append(
+                {
+                    "field": "group_conviction",
+                    "before": before.get("group_conviction"),
+                    "after": after.get("group_conviction"),
+                }
+            )
+        before_members = set(before.get("members") or [])
+        after_members = set(after.get("members") or [])
+        added_members = sorted(after_members - before_members)
+        removed_members = sorted(before_members - after_members)
+        if added_members:
+            fields.append({"field": "members_added", "before": None, "after": added_members})
+        if removed_members:
+            fields.append({"field": "members_removed", "before": removed_members, "after": None})
+        if fields:
+            changes.append({"change_type": "updated", "before": before, "after": after, "fields": fields})
+    return changes
+
+
 def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     typed = cast(UpdatePortfolioPositionsInput, model)
     from api.portfolio_settings import get_portfolio_book_size
@@ -887,6 +992,7 @@ def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
         "positions": after_rows,
         "book_size": get_portfolio_book_size(),
         "position_changes": _portfolio_position_changes(before_rows, after_rows),
+        "group_changes": _portfolio_group_changes(before_rows, after_rows),
         "position_change_summary": {
             "before_count": len(before_rows),
             "after_count": len(after_rows),
@@ -2066,6 +2172,8 @@ def _position_rows(
             "cost_basis_base": pos.cost_basis_base,
             "notional_base": pos.notional_base,
             "valuation_status": pos.valuation_status,
+            "group_name": pos.group_name,
+            "group_conviction": pos.group_conviction,
         }
         for pos in input_model.positions
     ]
@@ -2703,7 +2811,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="update_portfolio_positions",
         input_model=UpdatePortfolioPositionsInput,
         handler=_update_portfolio_positions,
-        schema_version=2,
+        schema_version=3,
         approval_entity_type="portfolio_positions",
         approval_payload=_portfolio_positions_approval_payload,
         precondition_builder=_hash_current_portfolio_book,
@@ -3008,6 +3116,16 @@ def _upgrade_portfolio_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, 
     return {**payload, "positions": rows}
 
 
+def _upgrade_portfolio_positions_v2_to_v3(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = []
+    for row in payload.get("positions") or []:
+        if not isinstance(row, Mapping):
+            rows.append(row)
+            continue
+        rows.append({**dict(row), "group_name": None, "group_conviction": None})
+    return {**payload, "positions": rows}
+
+
 def _upgrade_hedge_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
     rows = []
     for row in payload.get("positions") or []:
@@ -3029,7 +3147,9 @@ def _upgrade_hedge_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]
 
 
 register_action_schema_version("update_portfolio_positions", 1, UpdatePortfolioPositionsInputV1)
+register_action_schema_version("update_portfolio_positions", 2, UpdatePortfolioPositionsInputV2)
 register_action_upgrade_adapter("update_portfolio_positions", 1, 2, _upgrade_portfolio_positions_v1_to_v2)
+register_action_upgrade_adapter("update_portfolio_positions", 2, 3, _upgrade_portfolio_positions_v2_to_v3)
 register_action_schema_version("update_hedge_positions", 1, UpdateHedgePositionsInputV1)
 register_action_upgrade_adapter("update_hedge_positions", 1, 2, _upgrade_hedge_positions_v1_to_v2)
 
