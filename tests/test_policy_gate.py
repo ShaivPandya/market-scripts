@@ -159,9 +159,7 @@ def test_max_position_concentration_does_not_apply_to_hedge_updates():
         },
     )
 
-    position_failures = [
-        reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"
-    ]
+    position_failures = [reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"]
     assert gate["decision"] == "pass"
     assert position_failures == []
 
@@ -186,9 +184,7 @@ def test_max_position_concentration_does_not_apply_to_marked_hedge_rows():
         },
     )
 
-    position_failures = [
-        reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"
-    ]
+    position_failures = [reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"]
     assert gate["decision"] == "pass"
     assert position_failures == []
 

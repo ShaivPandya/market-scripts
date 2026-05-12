@@ -2147,11 +2147,11 @@ export const fetchDCFHistorical = (ticker: string) =>
 export interface DCFValuationRequest {
   ticker: string
   revenue_growth_rates: number[]
-  ebitda_margin: number
-  tax_rate: number
-  da_pct_revenue: number
-  nwc_pct_revenue: number
-  capex_pct_revenue: number
+  ebitda_margin: number | number[]
+  tax_rate: number | number[]
+  da_pct_revenue: number | number[]
+  nwc_pct_revenue: number | number[]
+  capex_pct_revenue: number | number[]
   wacc: number
   terminal_growth_rates: { bear: number; base: number; bull: number }
   exit_ev_ebitda: { bear: number; base: number; bull: number }

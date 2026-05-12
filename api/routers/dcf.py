@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from api.cache import get_or_set_cached, long_cache, stamp_fresh
 from api.exceptions import DataFetchError
@@ -60,16 +62,96 @@ class TerminalGrowthRates(BaseModel):
 
 class DCFValuationRequest(BaseModel):
     ticker: str
-    revenue_growth_rates: list[float] = Field(..., min_length=5, max_length=5)
-    ebitda_margin: float = Field(..., gt=0, lt=1)
-    tax_rate: float = Field(0.21, ge=0, lt=1)
-    da_pct_revenue: float = Field(..., ge=0, lt=1)
-    nwc_pct_revenue: float = Field(..., ge=-1, le=1)
-    capex_pct_revenue: float = Field(..., ge=0, lt=1)
+    revenue_growth_rates: list[float] = Field(..., min_length=5, max_length=8)
+    ebitda_margin: float | list[float]
+    tax_rate: float | list[float] = 0.21
+    da_pct_revenue: float | list[float]
+    nwc_pct_revenue: float | list[float]
+    capex_pct_revenue: float | list[float]
     wacc: float = Field(..., gt=0, lt=1)
     terminal_growth_rates: TerminalGrowthRates = TerminalGrowthRates()
     exit_ev_ebitda: ScenarioMultiples
     exit_ev_revenue: ScenarioMultiples
+
+    @staticmethod
+    def _normalize_yearly(
+        field_name: str,
+        value: float | list[float],
+        years: int,
+        *,
+        min_value: float | None = None,
+        max_value: float | None = None,
+        min_inclusive: bool = True,
+        max_inclusive: bool = True,
+    ) -> list[float]:
+        values = value if isinstance(value, list) else [value] * years
+        if len(values) != years:
+            raise ValueError(f"{field_name} must have {years} values")
+
+        normalized: list[float] = []
+        for v in values:
+            if not math.isfinite(v):
+                raise ValueError(f"{field_name} must contain only finite numbers")
+            if min_value is not None:
+                if min_inclusive and v < min_value:
+                    raise ValueError(f"{field_name} values must be >= {min_value}")
+                if not min_inclusive and v <= min_value:
+                    raise ValueError(f"{field_name} values must be > {min_value}")
+            if max_value is not None:
+                if max_inclusive and v > max_value:
+                    raise ValueError(f"{field_name} values must be <= {max_value}")
+                if not max_inclusive and v >= max_value:
+                    raise ValueError(f"{field_name} values must be < {max_value}")
+            normalized.append(v)
+        return normalized
+
+    @model_validator(mode="after")
+    def normalize_yearly_assumptions(self):
+        years = len(self.revenue_growth_rates)
+        if any(not math.isfinite(v) for v in self.revenue_growth_rates):
+            raise ValueError("revenue_growth_rates must contain only finite numbers")
+
+        self.ebitda_margin = self._normalize_yearly(
+            "ebitda_margin",
+            self.ebitda_margin,
+            years,
+            min_value=0,
+            max_value=1,
+            min_inclusive=False,
+            max_inclusive=False,
+        )
+        self.tax_rate = self._normalize_yearly(
+            "tax_rate",
+            self.tax_rate,
+            years,
+            min_value=0,
+            max_value=1,
+            max_inclusive=False,
+        )
+        self.da_pct_revenue = self._normalize_yearly(
+            "da_pct_revenue",
+            self.da_pct_revenue,
+            years,
+            min_value=0,
+            max_value=1,
+            max_inclusive=False,
+        )
+        self.nwc_pct_revenue = self._normalize_yearly(
+            "nwc_pct_revenue",
+            self.nwc_pct_revenue,
+            years,
+            min_value=-1,
+            max_value=1,
+        )
+        self.capex_pct_revenue = self._normalize_yearly(
+            "capex_pct_revenue",
+            self.capex_pct_revenue,
+            years,
+            min_value=0,
+            max_value=1,
+            max_inclusive=False,
+        )
+        return self
 
 
 @router.post("/dcf/valuation")
