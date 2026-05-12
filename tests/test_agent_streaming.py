@@ -161,6 +161,47 @@ def _install_fake_openai(monkeypatch, streams: list[tuple[list[Any], Any]]):
     return fake_client
 
 
+def _gemini_chunk(parts: list[Any], usage: Any | None = None):
+    return SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))],
+        usage_metadata=usage,
+    )
+
+
+def _gemini_text_part(text: str):
+    return SimpleNamespace(text=text)
+
+
+def _gemini_function_call_part(name: str, call_id: str, args: dict):
+    return SimpleNamespace(function_call=SimpleNamespace(name=name, id=call_id, args=args))
+
+
+class _FakeGeminiModels:
+    def __init__(self, streams: list[list[Any]]):
+        self._streams = streams
+        self.calls = 0
+        self.kwargs_history: list[dict[str, Any]] = []
+
+    def generate_content_stream(self, **kwargs):
+        self.kwargs_history.append(dict(kwargs))
+        if self.calls >= len(self._streams):
+            raise AssertionError("Unexpected extra generate_content_stream() call")
+        stream = self._streams[self.calls]
+        self.calls += 1
+        return iter(stream)
+
+
+class _FakeGeminiClient:
+    def __init__(self, streams: list[list[Any]]):
+        self.models = _FakeGeminiModels(streams)
+
+
+def _install_fake_gemini_agent(monkeypatch, streams: list[list[Any]]):
+    fake_client = _FakeGeminiClient(streams)
+    monkeypatch.setattr(agent_router, "get_llm_client", lambda _provider, api_key=None: fake_client)
+    return fake_client
+
+
 class _RaiseInStreamMessages:
     def stream(self, **_kwargs):
         raise RuntimeError(
@@ -286,6 +327,89 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
     assert any(e == "tool_call" and p["name"] == "query_ontology" for e, p in parsed)
     assert any(e == "tool_result" and p["status"] == "ok" for e, p in parsed)
     assert any(e == "delta" and p["text"] == "analysis" for e, p in parsed)
+
+
+def test_agent_stream_gemini_function_call_roundtrip(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+
+    streams = [
+        [
+            _gemini_chunk(
+                [_gemini_function_call_part("query_ontology", "call-1", {"query": "A"})],
+                usage=SimpleNamespace(prompt_token_count=1, candidates_token_count=1),
+            )
+        ],
+        [
+            _gemini_chunk(
+                [_gemini_text_part("analysis")],
+                usage=SimpleNamespace(prompt_token_count=2, candidates_token_count=3),
+            )
+        ],
+    ]
+    fake_client = _install_fake_gemini_agent(monkeypatch, streams)
+
+    seen_args: list[dict] = []
+
+    def fake_execute_tool(_name: str, args: dict):
+        seen_args.append(args)
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 200
+    first_config = fake_client.models.kwargs_history[0]["config"]
+    second_config = fake_client.models.kwargs_history[1]["config"]
+    assert first_config["tool_config"]["function_calling_config"]["mode"] == "ANY"
+    assert second_config["tool_config"]["function_calling_config"]["mode"] == "AUTO"
+    assert first_config["tools"][0]["function_declarations"][0]["name"]
+    assert fake_client.models.kwargs_history[0]["contents"] == [{"role": "user", "parts": [{"text": "test"}]}]
+    assert fake_client.models.kwargs_history[1]["contents"][-1] == {
+        "role": "tool",
+        "parts": [{"function_response": {"name": "query_ontology", "response": {"result": json.dumps({"ok": True})}}}],
+    }
+    assert seen_args == [{"query": "A"}]
+    parsed = _parse_sse(resp.text)
+    assert any(e == "tool_call" and p["name"] == "query_ontology" for e, p in parsed)
+    assert any(e == "tool_result" and p["status"] == "ok" for e, p in parsed)
+    assert any(e == "delta" and p["text"] == "analysis" for e, p in parsed)
+
+
+def test_agent_gemini_v2_conversation_conversion_and_kwargs():
+    conversation = agent_router._gemini_conversation_from_context(
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+    )
+
+    assert conversation == [
+        {"role": "user", "parts": [{"text": "hello"}]},
+        {"role": "model", "parts": [{"text": "hi"}]},
+    ]
+
+    kwargs = agent_router._model_stream_kwargs(
+        provider=agent_router.PROVIDER_GEMINI,
+        instructions="instructions",
+        conversation=conversation,
+        max_tokens=123,
+        tool_defs=[{"name": "get_portfolio", "parameters": {"type": "object"}}],
+        force_tool_use=True,
+        reasoning_effort="high",
+    )
+
+    assert kwargs["model"] == "gemini-3.1-pro-preview-customtools"
+    assert kwargs["contents"] == conversation
+    assert kwargs["config"]["max_output_tokens"] == 123
+    assert kwargs["config"]["system_instruction"] == "instructions"
+    assert kwargs["config"]["thinking_config"] == {"thinking_level": "high"}
+    assert kwargs["config"]["tool_config"]["function_calling_config"]["mode"] == "ANY"
 
 
 def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, monkeypatch):

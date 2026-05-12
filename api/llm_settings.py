@@ -15,12 +15,13 @@ DB_PATH = Path(__file__).parent / "app_settings.db"
 
 LLM_PROVIDER_KEY = "llm.provider"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
-ALLOWED_LLM_PROVIDERS = {"anthropic", "openai"}
+ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
 MODEL_TIERS = {"low", "mid", "high"}
-REASONING_EFFORTS = {"none", "medium", "high", "xhigh", "max"}
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 DEFAULT_REASONING_EFFORTS = {
-    "anthropic": "high",
-    "openai": "medium",
+    "anthropic": {"low": "high", "mid": "high", "high": "high"},
+    "openai": {"low": "medium", "mid": "medium", "high": "medium"},
+    "gemini": {"low": "minimal", "mid": "high", "high": "high"},
 }
 
 _lock = threading.Lock()
@@ -144,7 +145,7 @@ def get_llm_provider_setting() -> str | None:
 def set_llm_provider_setting(provider: str) -> dict[str, Any]:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic' or 'openai'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return set_setting(LLM_PROVIDER_KEY, normalized)
 
 
@@ -155,7 +156,7 @@ def _reasoning_key(provider: str, tier: str) -> str:
 def _normalize_reasoning_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic' or 'openai'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return normalized
 
 
@@ -176,7 +177,7 @@ def _normalize_reasoning_effort(effort: str) -> str:
 def get_llm_reasoning_effort_setting(provider: str, tier: str) -> str:
     normalized_provider = _normalize_reasoning_provider(provider)
     normalized_tier = _normalize_reasoning_tier(tier)
-    default_effort = DEFAULT_REASONING_EFFORTS[normalized_provider]
+    default_effort = DEFAULT_REASONING_EFFORTS[normalized_provider][normalized_tier]
     row = get_setting(_reasoning_key(normalized_provider, normalized_tier))
     if not row:
         return default_effort
@@ -204,6 +205,6 @@ def set_llm_reasoning_effort_settings(provider: str, efforts: dict[str, str]) ->
         saved[tier] = set_llm_reasoning_effort_setting(
             normalized_provider,
             tier,
-            efforts.get(tier, DEFAULT_REASONING_EFFORTS[normalized_provider]),
+            efforts.get(tier, DEFAULT_REASONING_EFFORTS[normalized_provider][tier]),
         )["value"]
     return saved

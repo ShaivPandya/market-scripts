@@ -100,7 +100,7 @@ interface WorkspaceData {
 }
 
 interface ActionItem {
-  id: number
+  id: number | string
   ticker: string | null
   description: string
   action_type: string
@@ -487,12 +487,13 @@ export function Workspace() {
     }
   }
 
-  async function handleActionItem(id: number, action: "complete" | "dismiss") {
+  async function handleActionItem(id: number | string, action: "complete" | "dismiss") {
     setProcessingIds(prev => new Set(prev).add(id))
     try {
       if (action === "complete") await completeAction(id)
       else await dismissAction(id)
       void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
@@ -1042,7 +1043,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "reject" && processingIds.has(approvalReview.id)}
                 loadingText="Rejecting..."
                 disabled={processingIds.has(approvalReview.id) || approvalReview.can_reject === false}
-                className="w-auto px-4 bg-red-600 hover:bg-red-700"
+                className="theme-button-destructive w-auto px-4"
               >
                 Reject Proposal
               </ActionButton>
@@ -1062,7 +1063,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
                 loadingText="Applying..."
                 disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
-                className="w-auto px-4 bg-green-600 hover:bg-green-700"
+                className="theme-button-success w-auto px-4"
               >
                 {approvalReview.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
               </ActionButton>

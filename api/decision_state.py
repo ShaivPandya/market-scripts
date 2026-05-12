@@ -11,6 +11,8 @@ ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance
 STALE_APPROVAL_MESSAGE = (
     "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
 )
+_HEDGE_SCOPE_ACTION_IDS = {"update_hedge_positions"}
+_HEDGE_SCOPE_ENTITY_TYPES = {"hedge_positions"}
 _OBSOLETE_POLICY_REASON_FRAGMENTS = (
     "missing investor/account constraint",
     "investor/account constraint",
@@ -145,9 +147,45 @@ def _is_obsolete_policy_reason(reason: Any) -> bool:
     return _RETIRED_POLICY_SCOPE in text or any(fragment in text for fragment in _OBSOLETE_POLICY_REASON_FRAGMENTS)
 
 
-def _filter_obsolete_policy_reasons(value: Any) -> list[Any]:
+def _is_hedge_scope(record: dict[str, Any] | None) -> bool:
+    if not record:
+        return False
+    action_id = str(record.get("action_id") or "").strip()
+    entity_type = str(record.get("entity_type") or "").strip()
+    if action_id in _HEDGE_SCOPE_ACTION_IDS or entity_type in _HEDGE_SCOPE_ENTITY_TYPES:
+        return True
+    proposed = _as_dict(record.get("proposed_change"))
+    positions = proposed.get("positions") if proposed else None
+    if not isinstance(positions, list) or not positions:
+        return False
+    for row in positions:
+        if not isinstance(row, dict):
+            return False
+        role = str(row.get("role") or "").strip().lower()
+        position_type = str(row.get("type") or row.get("position_type") or "").strip().lower()
+        if role != "hedge" and position_type != "hedge":
+            return False
+    return True
+
+
+def _is_hedge_concentration_reason(reason: Any, record: dict[str, Any] | None) -> bool:
+    if not _is_hedge_scope(record) or not isinstance(reason, dict):
+        return False
+    code = str(reason.get("code") or "").strip().lower()
+    check = str(reason.get("check") or "").strip().lower()
+    message = str(reason.get("message") or "").strip().lower()
+    return code == "concentration_limit" and (
+        check == "concentration.position" or "max position concentration" in message
+    )
+
+
+def _filter_obsolete_policy_reasons(value: Any, *, policy_context: dict[str, Any] | None = None) -> list[Any]:
     rows = value if isinstance(value, list) else []
-    return [row for row in rows if not _is_obsolete_policy_reason(row)]
+    return [
+        row
+        for row in rows
+        if not _is_obsolete_policy_reason(row) and not _is_hedge_concentration_reason(row, policy_context)
+    ]
 
 
 def _scrub_retired_policy_scope(value: Any) -> Any:
@@ -195,7 +233,9 @@ def _decision_from_gate_reasons(gate: dict[str, Any], *, changed: bool) -> str:
     return decision if decision in {"pass", "warn", "review_required", "blocked", "error"} else "missing"
 
 
-def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
+def _filter_policy_gate(
+    gate: dict[str, Any] | None, *, policy_context: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     if not gate:
         return None
     filtered = deepcopy(gate)
@@ -203,7 +243,7 @@ def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
     for key in ("failure_reasons", "warnings", "check_results"):
         original = filtered.get(key)
         if isinstance(original, list):
-            next_rows = _filter_obsolete_policy_reasons(original)
+            next_rows = _filter_obsolete_policy_reasons(original, policy_context=policy_context)
             row_changed = len(next_rows) != len(original)
             reasons_changed = reasons_changed or row_changed
             filtered[key] = next_rows
@@ -247,7 +287,7 @@ def _filter_top_level_policy_fields(record: dict[str, Any]) -> None:
     for key in ("policy_gate_failures_json", "policy_gate_warnings_json"):
         original = record.get(key)
         if isinstance(original, list):
-            next_rows = _filter_obsolete_policy_reasons(original)
+            next_rows = _filter_obsolete_policy_reasons(original, policy_context=record)
             changed = changed or len(next_rows) != len(original)
             record[key] = next_rows
     if changed and not record.get("policy_gate_failures_json") and not record.get("policy_gate_warnings_json"):
@@ -316,7 +356,7 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
     _filter_top_level_policy_fields(out)
     status = str(out.get("status") or "pending").strip().lower()
     application_status = str(out.get("application_status") or "pending").strip().lower()
-    gate = _filter_policy_gate(_nested_policy_gate(out))
+    gate = _filter_policy_gate(_nested_policy_gate(out), policy_context=out)
     proposed_change = _replace_nested_policy_gate(_as_dict(out.get("proposed_change")) or {}, gate)
     out["proposed_change"] = proposed_change
     out["decision_state"] = _approval_decision_state(status, application_status)
@@ -350,7 +390,7 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
         return None
     out = deepcopy(record)
     _filter_top_level_policy_fields(out)
-    gate = _filter_policy_gate(_nested_policy_gate(out))
+    gate = _filter_policy_gate(_nested_policy_gate(out), policy_context=out)
     action = str(out.get("action") or "").strip().lower()
     approval_required = bool(out.get("approval_required")) or action in ACTIONABLE_RECOMMENDATION_ACTIONS
     out["decision_state"] = _recommendation_decision_state(out)

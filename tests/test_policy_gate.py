@@ -140,6 +140,55 @@ def test_concentration_uses_book_size_not_position_total_share():
     assert concentration_failures == []
 
 
+def test_max_position_concentration_does_not_apply_to_hedge_updates():
+    gate = evaluate_policy_gate(
+        "update_hedge_positions",
+        {
+            "book_size": 100_000,
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "asset": "equity",
+                    "direction": "short",
+                    "cost_basis": 500,
+                    "shares": 50,
+                    "notional_base": 25_000,
+                    "valuation_status": "ok",
+                }
+            ],
+        },
+    )
+
+    position_failures = [reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"]
+    assert gate["decision"] == "pass"
+    assert position_failures == []
+
+
+def test_max_position_concentration_does_not_apply_to_marked_hedge_rows():
+    gate = evaluate_policy_gate(
+        "update_portfolio_positions",
+        {
+            "book_size": 100_000,
+            "positions": [
+                {
+                    "ticker": "SH",
+                    "asset": "equity",
+                    "direction": "long",
+                    "role": "hedge",
+                    "cost_basis": 25,
+                    "shares": 1000,
+                    "notional_base": 25_000,
+                    "valuation_status": "ok",
+                }
+            ],
+        },
+    )
+
+    position_failures = [reason for reason in gate["failure_reasons"] if reason["check"] == "concentration.position"]
+    assert gate["decision"] == "pass"
+    assert position_failures == []
+
+
 def test_policy_gate_uses_base_currency_notional_for_foreign_position():
     positions = [
         {

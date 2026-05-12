@@ -444,7 +444,7 @@ def _portfolio_constraint_checks(
             )
         return checks
 
-    exposures = _position_exposures(positions)
+    exposures = _position_exposures(positions, hedge_action=action_id == "update_hedge_positions")
     for row in exposures:
         if row["notional"] is not None:
             continue
@@ -485,6 +485,8 @@ def _portfolio_constraint_checks(
 
     max_position = float(_deep_get(policy, ("policy", "max_position_weight_pct")) or 0)
     for row in valued_exposures:
+        if row.get("is_hedge"):
+            continue
         weight = abs(row["notional"]) / book_size
         if max_position and weight > max_position:
             checks.append(
@@ -637,7 +639,7 @@ def _candidate_positions(action_id: str, payload: Mapping[str, Any]) -> list[Map
     return None
 
 
-def _position_exposures(positions: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _position_exposures(positions: list[Mapping[str, Any]], *, hedge_action: bool = False) -> list[dict[str, Any]]:
     exposures: list[dict[str, Any]] = []
     for raw in positions:
         if not isinstance(raw, Mapping):
@@ -645,6 +647,9 @@ def _position_exposures(positions: list[Mapping[str, Any]]) -> list[dict[str, An
         ticker = str(raw.get("ticker") or "").upper()
         asset = str(raw.get("asset") or "equity").lower()
         direction = str(raw.get("direction") or "long").lower()
+        role = str(raw.get("role") or "").strip().lower()
+        position_type = str(raw.get("type") or raw.get("position_type") or "").strip().lower()
+        is_hedge = hedge_action or role == "hedge" or position_type == "hedge"
         currency = str(raw.get("currency") or "").strip() or None
         base_currency = str(raw.get("base_currency") or "USD").strip().upper() or "USD"
         valuation_status = str(raw.get("valuation_status") or "").strip()
@@ -670,6 +675,7 @@ def _position_exposures(positions: list[Mapping[str, Any]]) -> list[dict[str, An
                 "ticker": ticker or "UNKNOWN",
                 "asset": asset,
                 "direction": direction,
+                "is_hedge": is_hedge,
                 "notional": notional,
                 "currency": currency,
                 "base_currency": base_currency,

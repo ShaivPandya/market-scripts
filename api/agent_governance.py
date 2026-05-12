@@ -181,6 +181,7 @@ _RATE_WINDOWS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b")),
     ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b")),
+    ("gemini_key", re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b")),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE)),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
     (
@@ -314,20 +315,34 @@ def prepare_model_egress(
     """DLP-scan and record an egress manifest before a provider call."""
 
     sanitized_kwargs, findings = redact_secrets(dict(stream_kwargs))
+    config = sanitized_kwargs.get("config") if isinstance(sanitized_kwargs.get("config"), Mapping) else {}
     sensitivity = classify_model_payload(
         {
-            "instructions": sanitized_kwargs.get("instructions") or sanitized_kwargs.get("system"),
-            "conversation": sanitized_kwargs.get("input") or sanitized_kwargs.get("messages"),
+            "instructions": sanitized_kwargs.get("instructions")
+            or sanitized_kwargs.get("system")
+            or config.get("system_instruction"),
+            "conversation": sanitized_kwargs.get("input")
+            or sanitized_kwargs.get("messages")
+            or sanitized_kwargs.get("contents"),
         }
     )
     provider_egress = "external_allowed_raw_private" if sensitivity != "public_market" else "external_allowed"
     model = sanitized_kwargs.get("model")
-    max_output_tokens = int(sanitized_kwargs.get("max_tokens") or sanitized_kwargs.get("max_output_tokens") or 0)
+    max_output_tokens = int(
+        sanitized_kwargs.get("max_tokens")
+        or sanitized_kwargs.get("max_output_tokens")
+        or config.get("max_output_tokens")
+        or 0
+    )
     estimated_input_tokens = estimate_tokens(
         {
-            "instructions": sanitized_kwargs.get("instructions") or sanitized_kwargs.get("system"),
-            "conversation": sanitized_kwargs.get("input") or sanitized_kwargs.get("messages"),
-            "tools": sanitized_kwargs.get("tools"),
+            "instructions": sanitized_kwargs.get("instructions")
+            or sanitized_kwargs.get("system")
+            or config.get("system_instruction"),
+            "conversation": sanitized_kwargs.get("input")
+            or sanitized_kwargs.get("messages")
+            or sanitized_kwargs.get("contents"),
+            "tools": sanitized_kwargs.get("tools") or config.get("tools"),
         }
     )
     estimated_cost_usd = _estimate_model_cost_usd(provider, estimated_input_tokens, max_output_tokens)

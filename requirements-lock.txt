@@ -69,6 +69,7 @@ google-auth==2.49.2
 google-cloud-core==2.5.1
 google-cloud-storage==3.10.1
 google-crc32c==1.8.0
+google-genai==2.0.0
 google-resumable-media==2.8.2
 googleapis-common-protos==1.74.0
 grpcio==1.63.0

@@ -1,12 +1,27 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
+import { Plus, Trash2 } from "lucide-react"
 
 import { fetchDCFHistorical, runDCFValuation, type DCFValuationRequest } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { SegmentedControl, TextInput, ActionButton } from "@/components/shared/FormControls"
+import { Notice } from "@/components/shared/Notice"
 
 type TabMode = "historical" | "dcf"
+
+const MIN_PROJECTION_YEARS = 5
+const MAX_PROJECTION_YEARS = 8
+const DEFAULT_REVENUE_GROWTH = ["10", "8", "7", "6", "5"]
+const DEFAULT_EBITDA_MARGIN = "25"
+const DEFAULT_TAX_RATE = "21"
+const DEFAULT_DA_PCT = "3"
+const DEFAULT_NWC_PCT = "5"
+const DEFAULT_CAPEX_PCT = "3"
+
+function repeatAssumption(value: string, years = MIN_PROJECTION_YEARS): string[] {
+  return Array.from({ length: years }, () => value)
+}
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -39,6 +54,32 @@ function fmtX(v: number | null | undefined): string {
 function fmtUpside(v: number | null | undefined): string {
   if (v === null || v === undefined || isNaN(v)) return "N/A"
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`
+}
+
+function parseNumberInput(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const value = Number(trimmed)
+  return Number.isFinite(value) ? value : null
+}
+
+function pctBoundError(
+  label: string,
+  value: number,
+  min: number | null,
+  max: number | null,
+  minInclusive: boolean,
+  maxInclusive: boolean,
+): string | null {
+  if (min !== null) {
+    if (minInclusive && value < min) return `${label} must be at least ${min}%`
+    if (!minInclusive && value <= min) return `${label} must be greater than ${min}%`
+  }
+  if (max !== null) {
+    if (maxInclusive && value > max) return `${label} must be at most ${max}%`
+    if (!maxInclusive && value >= max) return `${label} must be less than ${max}%`
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -264,12 +305,12 @@ export function DCFModel() {
   })
 
   // DCF assumptions state
-  const [revGrowth, setRevGrowth] = useState(["10", "8", "7", "6", "5"])
-  const [ebitdaMargin, setEbitdaMargin] = useState("25")
-  const [taxRate, setTaxRate] = useState("21")
-  const [daPct, setDaPct] = useState("3")
-  const [nwcPct, setNwcPct] = useState("5")
-  const [capexPct, setCapexPct] = useState("3")
+  const [revGrowth, setRevGrowth] = useState(() => [...DEFAULT_REVENUE_GROWTH])
+  const [ebitdaMargin, setEbitdaMargin] = useState(() => repeatAssumption(DEFAULT_EBITDA_MARGIN))
+  const [taxRate, setTaxRate] = useState(() => repeatAssumption(DEFAULT_TAX_RATE))
+  const [daPct, setDaPct] = useState(() => repeatAssumption(DEFAULT_DA_PCT))
+  const [nwcPct, setNwcPct] = useState(() => repeatAssumption(DEFAULT_NWC_PCT))
+  const [capexPct, setCapexPct] = useState(() => repeatAssumption(DEFAULT_CAPEX_PCT))
   const [wacc, setWacc] = useState("10")
 
   // Terminal growth (bear/base/bull)
@@ -293,14 +334,14 @@ export function DCFModel() {
     if (!hist) return
     const avg = hist.historical_averages
     if (avg) {
-      if (avg.ebitda_margin_avg != null) setEbitdaMargin(String(avg.ebitda_margin_avg))
-      if (avg.da_pct_avg != null) setDaPct(String(avg.da_pct_avg))
-      if (avg.nwc_pct_avg != null) setNwcPct(String(avg.nwc_pct_avg))
-      if (avg.capex_pct_avg != null) setCapexPct(String(avg.capex_pct_avg))
+      if (avg.ebitda_margin_avg != null) setEbitdaMargin(prev => prev.map(() => String(avg.ebitda_margin_avg)))
+      if (avg.da_pct_avg != null) setDaPct(prev => prev.map(() => String(avg.da_pct_avg)))
+      if (avg.nwc_pct_avg != null) setNwcPct(prev => prev.map(() => String(avg.nwc_pct_avg)))
+      if (avg.capex_pct_avg != null) setCapexPct(prev => prev.map(() => String(avg.capex_pct_avg)))
     }
     const w = hist.wacc_inputs
     if (w?.wacc != null) setWacc(String(w.wacc))
-    if (w?.tax_rate != null) setTaxRate(String(w.tax_rate))
+    if (w?.tax_rate != null) setTaxRate(prev => prev.map(() => String(w.tax_rate)))
 
     // Pre-populate EV/EBITDA exit from historical average
     if (hist.ev_ebitda?.length) {
@@ -328,40 +369,194 @@ export function DCFModel() {
     mutationFn: runDCFValuation,
   })
 
+  const resetProjectionAssumptions = () => {
+    setRevGrowth([...DEFAULT_REVENUE_GROWTH])
+    setEbitdaMargin(repeatAssumption(DEFAULT_EBITDA_MARGIN))
+    setTaxRate(repeatAssumption(DEFAULT_TAX_RATE))
+    setDaPct(repeatAssumption(DEFAULT_DA_PCT))
+    setNwcPct(repeatAssumption(DEFAULT_NWC_PCT))
+    setCapexPct(repeatAssumption(DEFAULT_CAPEX_PCT))
+    setWacc("10")
+    setTgrBear("2")
+    setTgrBase("3")
+    setTgrBull("4")
+    setEveBear("10")
+    setEveBase("12")
+    setEveBull("14")
+    setEvrBear("3")
+    setEvrBase("4")
+    setEvrBull("5")
+  }
+
+  const updateYearlyAssumption = (
+    setter: Dispatch<SetStateAction<string[]>>,
+    index: number,
+    value: string,
+  ) => {
+    setter(prev => prev.map((existing, i) => (i === index ? value : existing)))
+  }
+
+  const addProjectionYear = () => {
+    if (revGrowth.length >= MAX_PROJECTION_YEARS) return
+    setRevGrowth(prev => [...prev, prev[prev.length - 1] ?? "5"])
+    setEbitdaMargin(prev => [...prev, prev[prev.length - 1] ?? DEFAULT_EBITDA_MARGIN])
+    setTaxRate(prev => [...prev, prev[prev.length - 1] ?? DEFAULT_TAX_RATE])
+    setDaPct(prev => [...prev, prev[prev.length - 1] ?? DEFAULT_DA_PCT])
+    setNwcPct(prev => [...prev, prev[prev.length - 1] ?? DEFAULT_NWC_PCT])
+    setCapexPct(prev => [...prev, prev[prev.length - 1] ?? DEFAULT_CAPEX_PCT])
+  }
+
+  const removeProjectionYear = (index: number) => {
+    if (revGrowth.length <= MIN_PROJECTION_YEARS || index < MIN_PROJECTION_YEARS) return
+    setRevGrowth(prev => prev.filter((_, i) => i !== index))
+    setEbitdaMargin(prev => prev.filter((_, i) => i !== index))
+    setTaxRate(prev => prev.filter((_, i) => i !== index))
+    setDaPct(prev => prev.filter((_, i) => i !== index))
+    setNwcPct(prev => prev.filter((_, i) => i !== index))
+    setCapexPct(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const assumptionValidation = useMemo(() => {
+    const errors: string[] = []
+    const years = revGrowth.length
+    const expectedLengths: Array<[string, number]> = [
+      ["EBITDA Margin", ebitdaMargin.length],
+      ["Tax Rate", taxRate.length],
+      ["D&A", daPct.length],
+      ["NWC", nwcPct.length],
+      ["CapEx", capexPct.length],
+    ]
+
+    if (years < MIN_PROJECTION_YEARS || years > MAX_PROJECTION_YEARS) {
+      errors.push(`Projection must use ${MIN_PROJECTION_YEARS}-${MAX_PROJECTION_YEARS} years.`)
+    }
+    expectedLengths.forEach(([label, length]) => {
+      if (length !== years) errors.push(`${label} must have ${years} yearly values.`)
+    })
+
+    const parseSeries = (
+      label: string,
+      values: string[],
+      min: number | null,
+      max: number | null,
+      minInclusive = true,
+      maxInclusive = true,
+    ) => values.map((raw, i) => {
+      const itemLabel = `${label} Year ${i + 1}`
+      const parsed = parseNumberInput(raw)
+      if (parsed === null) {
+        errors.push(`${itemLabel} must be a number.`)
+        return 0
+      }
+      const boundError = pctBoundError(itemLabel, parsed, min, max, minInclusive, maxInclusive)
+      if (boundError) errors.push(boundError)
+      return parsed / 100
+    })
+
+    const revenueGrowthRates = parseSeries("Revenue Growth", revGrowth, -100, null, false)
+    const ebitdaMargins = parseSeries("EBITDA Margin", ebitdaMargin, 0, 100, false, false)
+    const taxRates = parseSeries("Tax Rate", taxRate, 0, 100, true, false)
+    const daPcts = parseSeries("D&A", daPct, 0, 100, true, false)
+    const nwcPcts = parseSeries("NWC", nwcPct, -100, 100)
+    const capexPcts = parseSeries("CapEx", capexPct, 0, 100, true, false)
+
+    const parsedWacc = parseNumberInput(wacc)
+    if (parsedWacc === null) errors.push("WACC must be a number.")
+    const waccFraction = (parsedWacc ?? 0) / 100
+    const waccBoundError = parsedWacc === null
+      ? null
+      : pctBoundError("WACC", parsedWacc, 0, 100, false, false)
+    if (waccBoundError) errors.push(waccBoundError)
+
+    const terminalGrowthRates = {
+      bear: parseNumberInput(tgrBear),
+      base: parseNumberInput(tgrBase),
+      bull: parseNumberInput(tgrBull),
+    }
+    Object.entries(terminalGrowthRates).forEach(([scenario, value]) => {
+      const label = `${scenario.charAt(0).toUpperCase() + scenario.slice(1)} terminal growth`
+      if (value === null) {
+        errors.push(`${label} must be a number.`)
+      } else if (parsedWacc !== null && waccFraction <= value / 100) {
+        errors.push(`${label} must be below WACC.`)
+      }
+    })
+
+    const parseMultiple = (label: string, raw: string) => {
+      const parsed = parseNumberInput(raw)
+      if (parsed === null) {
+        errors.push(`${label} must be a number.`)
+        return 0
+      }
+      if (parsed <= 0) errors.push(`${label} must be greater than 0x.`)
+      return parsed
+    }
+
+    const exitEvEbitda = {
+      bear: parseMultiple("Bear EV/EBITDA exit", eveBear),
+      base: parseMultiple("Base EV/EBITDA exit", eveBase),
+      bull: parseMultiple("Bull EV/EBITDA exit", eveBull),
+    }
+    const exitEvRevenue = {
+      bear: parseMultiple("Bear EV/Revenue exit", evrBear),
+      base: parseMultiple("Base EV/Revenue exit", evrBase),
+      bull: parseMultiple("Bull EV/Revenue exit", evrBull),
+    }
+
+    const body: DCFValuationRequest | null = submittedTicker && errors.length === 0
+      ? {
+          ticker: submittedTicker,
+          revenue_growth_rates: revenueGrowthRates,
+          ebitda_margin: ebitdaMargins,
+          tax_rate: taxRates,
+          da_pct_revenue: daPcts,
+          nwc_pct_revenue: nwcPcts,
+          capex_pct_revenue: capexPcts,
+          wacc: waccFraction,
+          terminal_growth_rates: {
+            bear: (terminalGrowthRates.bear ?? 0) / 100,
+            base: (terminalGrowthRates.base ?? 0) / 100,
+            bull: (terminalGrowthRates.bull ?? 0) / 100,
+          },
+          exit_ev_ebitda: exitEvEbitda,
+          exit_ev_revenue: exitEvRevenue,
+        }
+      : null
+
+    return { errors, body }
+  }, [
+    revGrowth,
+    ebitdaMargin,
+    taxRate,
+    daPct,
+    nwcPct,
+    capexPct,
+    wacc,
+    tgrBear,
+    tgrBase,
+    tgrBull,
+    eveBear,
+    eveBase,
+    eveBull,
+    evrBear,
+    evrBase,
+    evrBull,
+    submittedTicker,
+  ])
+
   const handleAnalyze = () => {
     const t = ticker.trim().toUpperCase()
     if (!t) return
+    if (submittedTicker !== t) {
+      dcfMutation.reset()
+      resetProjectionAssumptions()
+    }
     setSubmittedTicker(t)
   }
 
   const handleRunDCF = () => {
-    if (!submittedTicker) return
-    const body: DCFValuationRequest = {
-      ticker: submittedTicker,
-      revenue_growth_rates: revGrowth.map(v => parseFloat(v) / 100),
-      ebitda_margin: parseFloat(ebitdaMargin) / 100,
-      tax_rate: parseFloat(taxRate) / 100,
-      da_pct_revenue: parseFloat(daPct) / 100,
-      nwc_pct_revenue: parseFloat(nwcPct) / 100,
-      capex_pct_revenue: parseFloat(capexPct) / 100,
-      wacc: parseFloat(wacc) / 100,
-      terminal_growth_rates: {
-        bear: parseFloat(tgrBear) / 100,
-        base: parseFloat(tgrBase) / 100,
-        bull: parseFloat(tgrBull) / 100,
-      },
-      exit_ev_ebitda: {
-        bear: parseFloat(eveBear),
-        base: parseFloat(eveBase),
-        bull: parseFloat(eveBull),
-      },
-      exit_ev_revenue: {
-        bear: parseFloat(evrBear),
-        base: parseFloat(evrBase),
-        bull: parseFloat(evrBull),
-      },
-    }
-    dcfMutation.mutate(body)
+    if (!assumptionValidation.body) return
+    dcfMutation.mutate(assumptionValidation.body)
   }
 
   // ---------------------------------------------------------------------------
@@ -503,9 +698,18 @@ export function DCFModel() {
   const evEbitdaTable = hist ? buildMultipleRows(hist.ev_ebitda, "ev_ebitda") : null
   const evRevTable = hist ? buildMultipleRows(hist.rev_multiple, "ev_revenue") : null
 
-  const projTable = dcfMutation.data ? buildProjectionTable(dcfMutation.data.projection) : null
-  const valuations = dcfMutation.data?.valuations
-  const currentPrice = dcfMutation.data?.current_price ?? hist?.current_price ?? 0
+  const activeDCFData = dcfMutation.data?.ticker === submittedTicker ? dcfMutation.data : null
+  const projTable = activeDCFData ? buildProjectionTable(activeDCFData.projection) : null
+  const valuations = activeDCFData?.valuations
+  const currentPrice = activeDCFData?.current_price ?? hist?.current_price ?? 0
+  const yearlyAssumptionRows = [
+    { label: "Revenue Growth", values: revGrowth, setter: setRevGrowth, step: "0.5" },
+    { label: "EBITDA Margin", values: ebitdaMargin, setter: setEbitdaMargin, step: "0.1" },
+    { label: "Tax Rate", values: taxRate, setter: setTaxRate, step: "0.1" },
+    { label: "D&A", values: daPct, setter: setDaPct, step: "0.1" },
+    { label: "NWC", values: nwcPct, setter: setNwcPct, step: "0.1" },
+    { label: "CapEx", values: capexPct, setter: setCapexPct, step: "0.1" },
+  ]
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -668,37 +872,74 @@ export function DCFModel() {
               <div className="rounded-xl border border-border bg-surface shadow-sm p-5 space-y-5">
                 <h3 className="text-sm font-semibold text-app">Assumptions</h3>
 
-                {/* Revenue growth rates */}
-                <div>
-                  <p className="text-xs font-medium text-muted mb-2">Revenue Growth (% per year)</p>
-                  <div className="flex items-center gap-3">
-                    {revGrowth.map((v, i) => (
-                      <div key={i} className="flex flex-col items-center gap-1">
-                        <span className="text-xs text-muted">Yr {i + 1}</span>
-                        <input
-                          type="number"
-                          step="0.5"
-                          value={v}
-                          onChange={e => {
-                            const next = [...revGrowth]
-                            next[i] = e.target.value
-                            setRevGrowth(next)
-                          }}
-                          className="theme-input rounded-lg px-2 py-1.5 text-sm text-right w-16"
-                        />
-                        <span className="text-xs text-muted">%</span>
-                      </div>
-                    ))}
+                {/* Yearly operating assumptions */}
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-muted">Operating Assumptions (% per year)</p>
+                    <button
+                      type="button"
+                      onClick={addProjectionYear}
+                      disabled={revGrowth.length >= MAX_PROJECTION_YEARS}
+                      className="theme-button-base theme-button-secondary inline-flex min-h-8 items-center gap-2 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      <Plus size={14} aria-hidden="true" />
+                      Add Year
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[720px] border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-muted min-w-[150px]" />
+                          {revGrowth.map((_, i) => (
+                            <th key={i} className="px-3 py-2 text-center text-xs font-semibold text-muted min-w-[86px]">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>Year {i + 1}</span>
+                                {i >= MIN_PROJECTION_YEARS && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeProjectionYear(i)}
+                                    title={`Remove Year ${i + 1}`}
+                                    aria-label={`Remove Year ${i + 1}`}
+                                    className="theme-button-ghost inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:text-app"
+                                  >
+                                    <Trash2 size={13} aria-hidden="true" />
+                                  </button>
+                                )}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {yearlyAssumptionRows.map(row => (
+                          <tr key={row.label} className="border-b border-border/50 last:border-b-0">
+                            <td className="px-3 py-2 text-sm font-medium text-muted whitespace-nowrap">
+                              {row.label}
+                            </td>
+                            {row.values.map((value, i) => (
+                              <td key={i} className="px-3 py-2">
+                                <div className="flex items-center justify-center gap-1">
+                                  <input
+                                    type="number"
+                                    step={row.step}
+                                    value={value}
+                                    onChange={e => updateYearlyAssumption(row.setter, i, e.target.value)}
+                                    className="theme-input w-16 rounded-lg px-2 py-1.5 text-right text-sm"
+                                  />
+                                  <span className="text-xs text-muted">%</span>
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
-                {/* Margin / cost assumptions */}
+                {/* Discount rate */}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <InputRow label="EBITDA Margin" value={ebitdaMargin} onChange={setEbitdaMargin} />
-                  <InputRow label="Tax Rate" value={taxRate} onChange={setTaxRate} />
-                  <InputRow label="D&A (% Rev)" value={daPct} onChange={setDaPct} />
-                  <InputRow label="NWC (% Rev)" value={nwcPct} onChange={setNwcPct} />
-                  <InputRow label="CapEx (% Rev)" value={capexPct} onChange={setCapexPct} />
                   <InputRow label="WACC" value={wacc} onChange={setWacc} />
                 </div>
 
@@ -725,10 +966,24 @@ export function DCFModel() {
                   />
                 </div>
 
+                {submittedTicker && assumptionValidation.errors.length > 0 && (
+                  <Notice tone="warning">
+                    <p className="text-sm font-medium">Fix assumptions before running DCF.</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs">
+                      {assumptionValidation.errors.slice(0, 5).map(errorText => (
+                        <li key={errorText}>{errorText}</li>
+                      ))}
+                      {assumptionValidation.errors.length > 5 && (
+                        <li>{assumptionValidation.errors.length - 5} more validation errors</li>
+                      )}
+                    </ul>
+                  </Notice>
+                )}
+
                 <ActionButton
                   onClick={handleRunDCF}
                   loading={dcfMutation.isPending}
-                  disabled={!submittedTicker}
+                  disabled={!submittedTicker || !assumptionValidation.body}
                 >
                   Run DCF
                 </ActionButton>
@@ -752,25 +1007,25 @@ export function DCFModel() {
                   />
 
                   {/* PV of FCFs summary */}
-                  {dcfMutation.data && (
+                  {activeDCFData && (
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       <MetricCard
                         title="PV of UFCFs"
-                        value={fmtB(dcfMutation.data.pv_fcfs)}
+                        value={fmtB(activeDCFData.pv_fcfs)}
                       />
                       <MetricCard
                         title="Net Debt"
-                        value={fmtB(dcfMutation.data.net_debt)}
+                        value={fmtB(activeDCFData.net_debt)}
                       />
                       <MetricCard
                         title="Shares Outstanding"
-                        value={dcfMutation.data.shares_outstanding
-                          ? `${(dcfMutation.data.shares_outstanding / 1e9).toFixed(2)}B`
+                        value={activeDCFData.shares_outstanding
+                          ? `${(activeDCFData.shares_outstanding / 1e9).toFixed(2)}B`
                           : "N/A"}
                       />
                       <MetricCard
                         title="Current Price"
-                        value={fmtPrice(dcfMutation.data.current_price)}
+                        value={fmtPrice(activeDCFData.current_price)}
                       />
                     </div>
                   )}

@@ -40,6 +40,7 @@ nest_asyncio>=1.5.0
 
 # AI/ML
 anthropic>=0.40.0
+google-genai>=2.0.0
 openai>=1.100.0
 
 # Rate limiting

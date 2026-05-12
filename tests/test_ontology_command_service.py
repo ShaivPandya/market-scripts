@@ -623,6 +623,47 @@ def test_restaged_approval_uses_distinct_uid_and_survives_original_rejection(mon
     assert service.get_approval(replacement["id"], actor=context.actor)["status"] == "pending"
 
 
+def test_action_item_status_proposal_accepts_ontology_uid_and_keeps_item_context(monkeypatch):
+    import ontology.runtime_read_service as runtime_read_service
+
+    class _Reads:
+        def get(self, object_uid: str):
+            assert object_uid == "action_item:5"
+            return {
+                "id": "action_item:5",
+                "ticker": "MU",
+                "description": "Review MU thesis",
+                "action_type": "review",
+                "urgency": "normal",
+                "status": "open",
+            }
+
+    monkeypatch.setattr(runtime_read_service, "OntologyRuntimeReadService", _Reads)
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "complete_action_item",
+        {"item_id": "action_item:5", "resolution_note": "Done"},
+        context,
+        reason="Complete item",
+    )
+
+    assert approval["entity_type"] == "action_item_status"
+    assert approval["ticker"] == "MU"
+    assert approval["target_object_uid"] == "action_item:5"
+    assert approval["target_object_type"] == "ActionItem"
+    assert approval["proposed_change"] == {
+        "item_id": "action_item:5",
+        "resolution_note": "Done",
+        "ticker": "MU",
+        "description": "Review MU thesis",
+        "action_type": "review",
+        "urgency": "normal",
+    }
+
+
 def test_approve_rejects_stale_ontology_base_state(monkeypatch):
     import portfolio.action_registry as action_registry
 

@@ -3,7 +3,7 @@ Discounted Cash Flow (DCF) valuation model.
 
 Provides:
   - get_historical_data(ticker) → historical financials for the Historical tab
-  - run_valuation(ticker, assumptions) → 5-year projection + multi-method valuations
+  - run_valuation(ticker, assumptions) → N-year projection + multi-method valuations
 
 Data sourcing: SEC EDGAR (primary, deeper history) with yfinance fallback.
 """
@@ -82,6 +82,48 @@ def _safe_float(val: Any) -> float | None:
         return None if (np.isnan(f) or np.isinf(f)) else f
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_numeric_series(
+    value: Any,
+    key: str,
+    years: int,
+    *,
+    min_value: float | None = None,
+    max_value: float | None = None,
+    min_inclusive: bool = True,
+    max_inclusive: bool = True,
+) -> list[float]:
+    """Normalize a scalar or series assumption to one float per projection year."""
+    if isinstance(value, pd.Series):
+        raw_values = value.tolist()
+    elif isinstance(value, np.ndarray):
+        raw_values = value.tolist()
+    elif isinstance(value, (list, tuple)):
+        raw_values = list(value)
+    else:
+        raw_values = [value] * years
+
+    if len(raw_values) != years:
+        raise ValueError(f"{key} must have {years} values")
+
+    values: list[float] = []
+    for raw in raw_values:
+        f = _safe_float(raw)
+        if f is None:
+            raise ValueError(f"{key} must contain only finite numbers")
+        if min_value is not None:
+            if min_inclusive and f < min_value:
+                raise ValueError(f"{key} values must be >= {min_value}")
+            if not min_inclusive and f <= min_value:
+                raise ValueError(f"{key} values must be > {min_value}")
+        if max_value is not None:
+            if max_inclusive and f > max_value:
+                raise ValueError(f"{key} values must be <= {max_value}")
+            if not max_inclusive and f >= max_value:
+                raise ValueError(f"{key} values must be < {max_value}")
+        values.append(f)
+    return values
 
 
 def _fiscal_bucket(d: _date) -> tuple[int, int]:
@@ -455,7 +497,7 @@ def _compute_multiples_yf(
         "Cash Financial",
     )
 
-    if rev_row is None or ebitda_row is None:
+    if rev_row is None:
         return [], []
 
     price_series = prices
@@ -494,7 +536,7 @@ def _compute_multiples_yf(
             continue
 
         ttm_rev = sum(_safe_float(rev_row.get(qd)) or 0 for qd in ttm_dates)
-        ttm_ebitda = sum(_safe_float(ebitda_row.get(qd)) or 0 for qd in ttm_dates)
+        ttm_ebitda = sum(_safe_float(ebitda_row.get(qd)) or 0 for qd in ttm_dates) if ebitda_row is not None else 0
 
         label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
 
@@ -681,6 +723,8 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
 
     # --- Quarterly multiples: EDGAR for 20Q depth, yfinance fallback ---
     data_source = "yfinance"
+    ev_ebitda: list[dict] = []
+    ev_revenue: list[dict] = []
     try:
         edgar = extract_dcf_historicals(ticker)
         if edgar and edgar.get("quarterly_revenue"):
@@ -693,30 +737,36 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
             q_cd = edgar.get("quarterly_current_debt") or []
             q_cash = edgar.get("quarterly_cash") or []
 
-            if q_ebitda or (q_oi and q_da):
-                ev_ebitda, ev_revenue = _build_quarterly_multiples_edgar(
-                    q_rev,
-                    q_ebitda or None,
-                    q_oi or None,
-                    q_da or None,
-                    q_debt,
-                    q_cd,
-                    q_cash,
-                    yf_data["prices"],
-                    info.get("sharesOutstanding"),
-                )
-            else:
-                data_source = "yfinance"
+            ev_ebitda, ev_revenue = _build_quarterly_multiples_edgar(
+                q_rev,
+                q_ebitda or None,
+                q_oi or None,
+                q_da or None,
+                q_debt,
+                q_cd,
+                q_cash,
+                yf_data["prices"],
+                info.get("sharesOutstanding"),
+            )
     except Exception:
         logger.warning("EDGAR fetch failed for %s, using yfinance for multiples", ticker)
 
-    if data_source == "yfinance":
-        ev_ebitda, ev_revenue = _compute_multiples_yf(
+    if data_source == "yfinance" or not ev_ebitda or not ev_revenue:
+        yf_ev_ebitda, yf_ev_revenue = _compute_multiples_yf(
             yf_data["quarterly_income_stmt"],
             yf_data["quarterly_balance_sheet"],
             yf_data["prices"],
             info,
         )
+        if data_source == "yfinance":
+            ev_ebitda, ev_revenue = yf_ev_ebitda, yf_ev_revenue
+        else:
+            if not ev_ebitda:
+                ev_ebitda = yf_ev_ebitda
+            if not ev_revenue:
+                ev_revenue = yf_ev_revenue
+            if not ev_ebitda and not ev_revenue:
+                data_source = "yfinance"
 
     # WACC (always from yfinance — needs beta, market cap, etc.)
     wacc_inputs = _compute_wacc(info, yf_data["income_stmt"], yf_data["balance_sheet"])
@@ -785,21 +835,73 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
 
     base_year_label = latest.strftime("%b-%y") if hasattr(latest, "strftime") else str(latest)
 
-    growth_rates = assumptions["revenue_growth_rates"]
-    ebitda_margin = assumptions["ebitda_margin"]
-    tax_rate = assumptions["tax_rate"]
-    da_pct = assumptions["da_pct_revenue"]
-    nwc_pct = assumptions["nwc_pct_revenue"]
-    capex_pct = assumptions["capex_pct_revenue"]
-    wacc = assumptions["wacc"]
+    raw_growth_rates = assumptions["revenue_growth_rates"]
+    if not isinstance(raw_growth_rates, (list, tuple, pd.Series, np.ndarray)):
+        raise ValueError("revenue_growth_rates must be a list")
+    projection_years = len(raw_growth_rates)
+    growth_rates = _normalize_numeric_series(raw_growth_rates, "revenue_growth_rates", projection_years)
+    projection_years = len(growth_rates)
+    if projection_years < 5 or projection_years > 8:
+        raise ValueError("revenue_growth_rates must contain between 5 and 8 values")
+
+    ebitda_margins = _normalize_numeric_series(
+        assumptions["ebitda_margin"],
+        "ebitda_margin",
+        projection_years,
+        min_value=0,
+        max_value=1,
+        min_inclusive=False,
+        max_inclusive=False,
+    )
+    tax_rates = _normalize_numeric_series(
+        assumptions["tax_rate"],
+        "tax_rate",
+        projection_years,
+        min_value=0,
+        max_value=1,
+        max_inclusive=False,
+    )
+    da_pcts = _normalize_numeric_series(
+        assumptions["da_pct_revenue"],
+        "da_pct_revenue",
+        projection_years,
+        min_value=0,
+        max_value=1,
+        max_inclusive=False,
+    )
+    nwc_pcts = _normalize_numeric_series(
+        assumptions["nwc_pct_revenue"],
+        "nwc_pct_revenue",
+        projection_years,
+        min_value=-1,
+        max_value=1,
+    )
+    capex_pcts = _normalize_numeric_series(
+        assumptions["capex_pct_revenue"],
+        "capex_pct_revenue",
+        projection_years,
+        min_value=0,
+        max_value=1,
+        max_inclusive=False,
+    )
+    wacc = _safe_float(assumptions["wacc"])
+    if wacc is None or wacc <= 0 or wacc >= 1:
+        raise ValueError("wacc must be > 0 and < 1")
 
     # Build projection
     projection = []
     prev_revenue = base_revenue
-    prev_nwc = prev_revenue * nwc_pct
+    prev_nwc = prev_revenue * nwc_pcts[0]
 
-    for year in range(5):
-        revenue = prev_revenue * (1 + growth_rates[year])
+    for year in range(projection_years):
+        growth_rate = growth_rates[year]
+        ebitda_margin = ebitda_margins[year]
+        tax_rate = tax_rates[year]
+        da_pct = da_pcts[year]
+        nwc_pct = nwc_pcts[year]
+        capex_pct = capex_pcts[year]
+
+        revenue = prev_revenue * (1 + growth_rate)
         ebitda = revenue * ebitda_margin
         da = revenue * da_pct
         ebit = ebitda - da
@@ -817,7 +919,7 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
                 "year": year + 1,
                 "year_label": f"Year {year + 1}",
                 "revenue": revenue,
-                "revenue_growth": growth_rates[year] * 100,
+                "revenue_growth": growth_rate * 100,
                 "ebitda": ebitda,
                 "ebitda_margin": ebitda_margin * 100,
                 "da": da,
@@ -875,7 +977,7 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
         if wacc <= g:
             return {"error": f"WACC ({wacc * 100:.1f}%) must exceed growth rate ({g * 100:.1f}%)"}
         tv = terminal_year_ufcf * (1 + g) / (wacc - g)
-        pv_tv = tv / ((1 + wacc) ** 5)
+        pv_tv = tv / ((1 + wacc) ** projection_years)
         ev = pv_fcfs + pv_tv
         equity = ev - net_debt
         per_share = equity / shares
@@ -891,7 +993,7 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
 
     def _exit_multiple(terminal_metric: float, multiple: float) -> dict:
         tv = terminal_metric * multiple
-        pv_tv = tv / ((1 + wacc) ** 5)
+        pv_tv = tv / ((1 + wacc) ** projection_years)
         ev = pv_fcfs + pv_tv
         equity = ev - net_debt
         per_share = equity / shares

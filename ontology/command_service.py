@@ -14,6 +14,7 @@ from ontology.object_service import OntologyObjectService
 from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
 from ontology.policy import Actor, actor_to_dict, admin_actor, require_allowed
 from ontology.schemas.identity import (
+    action_item_id,
     action_run_id,
     approval_id,
     audit_event_id,
@@ -1131,6 +1132,8 @@ class OntologyCommandService:
         if action_id in {"complete_action_item", "dismiss_action_item"}:
             item_id = payload.get("item_id") or payload.get("id")
             legacy_id = _legacy_int(item_id)
+            if legacy_id is None and str(item_id or "").startswith("action_item:"):
+                legacy_id = _legacy_int(str(item_id).removeprefix("action_item:"))
             item_key = str(legacy_id) if legacy_id is not None else _strip_uid_prefix(item_id, "action_item")
             description = str(payload.get("description") or f"Action item {item_key}").strip()
             row = self.objects.write_object(
@@ -2397,11 +2400,20 @@ def _normalize_approval_uid(value: str) -> str:
     return text if text.startswith("approval:") else approval_id(text)
 
 
+def _normalize_action_item_uid(value: Any) -> str:
+    text = _non_blank(value, "item_id")
+    return text if text.startswith("action_item:") else action_item_id(text)
+
+
 def _entity_type_for_action(action_id: str) -> str:
     if action_id == "update_portfolio_positions":
         return "portfolio_positions"
     if action_id == "update_hedge_positions":
         return "hedge_positions"
+    if action_id == "create_action_item":
+        return "action_item"
+    if action_id in {"complete_action_item", "dismiss_action_item"}:
+        return "action_item_status"
     if action_id == "create_recommendation":
         return "recommendation"
     if action_id == "create_portfolio_news_digest":
@@ -2415,6 +2427,10 @@ def _entity_type_for_action(action_id: str) -> str:
 
 def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
     ticker = _ticker_from_payload(payload)
+    if action_id in {"complete_action_item", "dismiss_action_item"}:
+        item_id = payload.get("item_id") or payload.get("id")
+        if item_id:
+            return _normalize_action_item_uid(item_id), "ActionItem"
     if action_id == "create_recommendation":
         record = _dict(payload.get("record") or payload)
         ticker = _ticker_from_payload(record)
