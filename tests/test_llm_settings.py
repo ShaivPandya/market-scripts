@@ -43,6 +43,7 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     response = auth_client.get("/api/v1/settings/llm")
 
@@ -51,8 +52,14 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert payload["provider"] == "anthropic"
     assert payload["models"]["low"] == "claude-haiku-4-5"
     assert payload["models_by_provider"]["openai"]["mid"] == "gpt-5.4"
+    assert payload["models_by_provider"]["gemini"]["mid"] == "gemini-3.1-pro-preview-customtools"
     assert payload["reasoning_efforts"]["anthropic"] == {
         "low": "high",
+        "mid": "high",
+        "high": "high",
+    }
+    assert payload["reasoning_efforts"]["gemini"] == {
+        "low": "minimal",
         "mid": "high",
         "high": "high",
     }
@@ -66,8 +73,20 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
         "medium",
         "xhigh",
     ]
+    assert [item["effort"] for item in payload["reasoning_options"]["gemini"]["low"]] == [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    ]
+    assert [item["effort"] for item in payload["reasoning_options"]["gemini"]["mid"]] == [
+        "low",
+        "medium",
+        "high",
+    ]
     anthropic = next(item for item in payload["available_providers"] if item["provider"] == "anthropic")
     openai = next(item for item in payload["available_providers"] if item["provider"] == "openai")
+    gemini = next(item for item in payload["available_providers"] if item["provider"] == "gemini")
     assert anthropic == {
         "provider": "anthropic",
         "label": "Claude",
@@ -75,6 +94,12 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
         "api_key_env": "ANTHROPIC_API_KEY",
     }
     assert openai["configured"] is False
+    assert gemini == {
+        "provider": "gemini",
+        "label": "Gemini",
+        "configured": False,
+        "api_key_env": "GEMINI_API_KEY",
+    }
     assert "sk-ant-test" not in response.text
 
 
@@ -84,6 +109,7 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     calls = []
 
@@ -110,6 +136,9 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
         "llm.reasoning_effort.openai.low",
         "llm.reasoning_effort.openai.mid",
         "llm.reasoning_effort.openai.high",
+        "llm.reasoning_effort.gemini.low",
+        "llm.reasoning_effort.gemini.mid",
+        "llm.reasoning_effort.gemini.high",
     ]
 
 
@@ -168,6 +197,34 @@ def test_put_llm_settings_persists_provider(temp_llm_settings, auth_client, monk
     assert temp_llm_settings.get_llm_reasoning_effort_setting("openai", "mid") == "xhigh"
 
 
+def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={
+            "provider": "gemini",
+            "reasoning_efforts": {
+                "low": "minimal",
+                "mid": "high",
+                "high": "medium",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "gemini"
+    assert response.json()["models_by_provider"]["gemini"]["high"] == "gemini-3.1-pro-preview-customtools"
+    assert response.json()["reasoning_efforts"]["gemini"] == {
+        "low": "minimal",
+        "mid": "high",
+        "high": "medium",
+    }
+    assert temp_llm_settings.get_llm_provider_setting() == "gemini"
+    assert temp_llm_settings.get_llm_reasoning_effort_setting("gemini", "low") == "minimal"
+
+
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):
     response = auth_client.put("/api/v1/settings/llm", json={"provider": "other"})
 
@@ -181,6 +238,15 @@ def test_put_llm_settings_rejects_missing_provider_key(temp_llm_settings, auth_c
 
     assert response.status_code == 422
     assert "OPENAI_API_KEY" in response.text
+
+
+def test_put_llm_settings_rejects_missing_gemini_key(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    response = auth_client.put("/api/v1/settings/llm", json={"provider": "gemini"})
+
+    assert response.status_code == 422
+    assert "GEMINI_API_KEY" in response.text
 
 
 def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):
@@ -201,6 +267,26 @@ def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings
 
     assert response.status_code == 422
     assert "claude-haiku-4-5" in response.text
+
+
+def test_put_llm_settings_rejects_unsupported_gemini_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={
+            "provider": "gemini",
+            "reasoning_efforts": {
+                "low": "minimal",
+                "mid": "minimal",
+                "high": "high",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "gemini-3.1-pro-preview-customtools" in response.text
 
 
 def test_get_agent_response_preferences_returns_defaults(temp_llm_settings, auth_client):

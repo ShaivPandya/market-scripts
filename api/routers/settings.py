@@ -14,7 +14,6 @@ from api.audit import emit_audit_event
 from api.exceptions import ValidationError
 from api.llm_settings import (
     ALLOWED_LLM_PROVIDERS,
-    DEFAULT_REASONING_EFFORTS,
     LLM_PROVIDER_KEY,
     REASONING_EFFORTS,
     _reasoning_key,
@@ -30,8 +29,10 @@ from llm_utils import (
     MODEL_LOW,
     MODEL_MID,
     PROVIDER_ANTHROPIC,
+    PROVIDER_GEMINI,
     PROVIDER_OPENAI,
     api_key_env,
+    default_reasoning_effort,
     get_api_key,
     model_for_tier,
     reasoning_effort_options,
@@ -42,8 +43,8 @@ from ontology.policy import Actor
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
-Provider = Literal["anthropic", "openai"]
-ReasoningEffort = Literal["none", "medium", "high", "xhigh", "max"]
+Provider = Literal["anthropic", "openai", "gemini"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 PreferenceLevel = Literal["less", "balanced", "more"]
 Personality = Literal["friendly", "pragmatic"]
 CustomInstructionText = Annotated[str, Field(max_length=2000)]
@@ -78,7 +79,11 @@ class AgentResponsePreferencesSettings(BaseModel):
 
 
 def _provider_label(provider: str) -> str:
-    return "Claude" if provider == PROVIDER_ANTHROPIC else "OpenAI"
+    return {
+        PROVIDER_ANTHROPIC: "Claude",
+        PROVIDER_OPENAI: "OpenAI",
+        PROVIDER_GEMINI: "Gemini",
+    }.get(provider, provider.title())
 
 
 def _provider_status(provider: str) -> dict:
@@ -101,6 +106,8 @@ def _models_for_provider(provider: str) -> dict:
 def _reasoning_label(effort: str) -> str:
     return {
         "none": "None",
+        "minimal": "Minimal",
+        "low": "Low",
         "medium": "Medium",
         "high": "High",
         "xhigh": "XHigh",
@@ -131,7 +138,7 @@ def _validate_reasoning_efforts(provider: str, efforts: dict[str, str]) -> None:
 
 
 def _llm_settings_keys() -> list[str]:
-    providers = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI)
+    providers = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI)
     tiers = (MODEL_LOW, MODEL_MID, MODEL_HIGH)
     return [LLM_PROVIDER_KEY, *(_reasoning_key(provider, tier) for provider in providers for tier in tiers)]
 
@@ -143,17 +150,20 @@ def _provider_from_settings(rows: dict[str, dict]) -> str:
 
     provider = (os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM_PROVIDER must be 'anthropic' or 'openai'")
+        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
     return provider
 
 
 def _reasoning_effort_from_settings(rows: dict[str, dict], provider: str, tier: str, model: str) -> str:
-    fallback = DEFAULT_REASONING_EFFORTS[provider]
+    fallback = default_reasoning_effort(provider, tier)
     key = _reasoning_key(provider, tier)
     effort = str(rows.get(key, {}).get("value") or "").strip().lower()
     if effort not in REASONING_EFFORTS:
         effort = fallback
-    return effort if effort in reasoning_effort_options(provider, model) else fallback
+    options = reasoning_effort_options(provider, model)
+    if fallback not in options:
+        fallback = "high" if "high" in options else options[0]
+    return effort if effort in options else fallback
 
 
 def _settings_response() -> dict:
@@ -162,12 +172,14 @@ def _settings_response() -> dict:
     models_by_provider = {
         PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
         PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
+        PROVIDER_GEMINI: _models_for_provider(PROVIDER_GEMINI),
     }
     return {
         "provider": provider,
         "available_providers": [
             _provider_status(PROVIDER_ANTHROPIC),
             _provider_status(PROVIDER_OPENAI),
+            _provider_status(PROVIDER_GEMINI),
         ],
         "models": models_by_provider[provider],
         "models_by_provider": models_by_provider,
@@ -184,10 +196,17 @@ def _settings_response() -> dict:
                 )
                 for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
             },
+            PROVIDER_GEMINI: {
+                tier: _reasoning_effort_from_settings(
+                    rows, PROVIDER_GEMINI, tier, models_by_provider[PROVIDER_GEMINI][tier]
+                )
+                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+            },
         },
         "reasoning_options": {
             PROVIDER_ANTHROPIC: _reasoning_options_for_provider(PROVIDER_ANTHROPIC),
             PROVIDER_OPENAI: _reasoning_options_for_provider(PROVIDER_OPENAI),
+            PROVIDER_GEMINI: _reasoning_options_for_provider(PROVIDER_GEMINI),
         },
     }
 

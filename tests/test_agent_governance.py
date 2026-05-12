@@ -8,7 +8,7 @@ from ontology.policy import admin_actor, agent_actor
 
 def test_redact_secrets_removes_provider_keys_bearer_tokens_and_credentials():
     payload = {
-        "message": "use sk-ant-1234567890abcdefghijklmnop and Bearer abcdefghijklmnop",
+        "message": "use sk-ant-1234567890abcdefghijklmnop and AIza1234567890abcdefghijklmnop and Bearer abcdefghijklmnop",
         "headers": {"authorization": "Bearer should-not-leak"},
         "note": "password = supersecret123",
     }
@@ -17,9 +17,37 @@ def test_redact_secrets_removes_provider_keys_bearer_tokens_and_credentials():
 
     text = str(redacted)
     assert "sk-ant-1234567890abcdefghijklmnop" not in text
+    assert "AIza1234567890abcdefghijklmnop" not in text
     assert "Bearer abcdefghijklmnop" not in text
     assert "supersecret123" not in text
     assert findings
+
+
+def test_prepare_model_egress_understands_gemini_contents_and_config():
+    actor = agent_actor(admin_actor())
+    budget = AgentBudgetState(max_model_calls=2, max_input_tokens=10_000, max_cost_usd=10.0)
+
+    kwargs, manifest = prepare_model_egress(
+        provider="gemini",
+        purpose="agent_chat",
+        stream_kwargs={
+            "model": "gemini-test",
+            "contents": [{"role": "user", "parts": [{"text": "Analyze my portfolio positions."}]}],
+            "config": {
+                "max_output_tokens": 256,
+                "system_instruction": "system instructions",
+                "tools": [{"function_declarations": [{"name": "get_portfolio"}]}],
+            },
+        },
+        actor=actor,
+        budget=budget,
+        session_id="s1",
+    )
+
+    assert kwargs["contents"][0]["parts"][0]["text"] == "Analyze my portfolio positions."
+    assert manifest["provider_egress"] == "external_allowed_raw_private"
+    assert manifest["data_sensitivity"] == "portfolio_private"
+    assert budget.model_calls == 1
 
 
 def test_prepare_model_egress_allows_private_payload_with_manifest_and_budget():

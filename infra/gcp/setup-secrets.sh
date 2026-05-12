@@ -8,7 +8,7 @@
 #     created (or its password reset), and the full DATABASE_URL_* string is
 #     written to Secret Manager. The plaintext password is never echoed and
 #     never lands on disk.
-#   - User-provided secrets (ANTHROPIC_API_KEY, FRED_API_KEY,
+#   - User-provided secrets (ANTHROPIC_API_KEY, GEMINI_API_KEY, FRED_API_KEY,
 #     AUTH_PASSWORD_HASH source, optional vendor tokens) are read silently.
 #   - Each secret is created on first run and skipped on re-run; delete a
 #     secret with `gcloud secrets delete` to force regeneration.
@@ -153,6 +153,19 @@ else
   echo "  ANTHROPIC_API_KEY: exists, leaving alone"
 fi
 
+if ! secret_exists GEMINI_API_KEY; then
+  v="$(prompt_optional 'GEMINI_API_KEY (AIza...)')"
+  if [[ -n "${v}" ]]; then
+    [[ "${v}" == AIza* ]] || echo "  warning: value does not start with AIza" >&2
+    printf '%s' "${v}" | create_if_missing GEMINI_API_KEY
+  else
+    echo "  GEMINI_API_KEY: skipped (remove from API_SECRETS/WORKER_SECRETS in config.sh until added)"
+  fi
+  unset v
+else
+  echo "  GEMINI_API_KEY: exists, leaving alone"
+fi
+
 if ! secret_exists FRED_API_KEY; then
   v="$(prompt_secret 'FRED_API_KEY')"
   printf '%s' "${v}" | create_if_missing FRED_API_KEY
@@ -202,11 +215,11 @@ fi
 ###############################################################################
 API_ALLOWED=(
   DATABASE_URL_API AUTH_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
-  SCHEDULER_SECRET ANTHROPIC_API_KEY FRED_API_KEY
+  SCHEDULER_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
 )
 WORKER_ALLOWED=(
-  DATABASE_URL_WORKER ANTHROPIC_API_KEY FRED_API_KEY
+  DATABASE_URL_WORKER ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
 )
 MIGRATOR_ALLOWED=( DATABASE_URL_MIGRATION )

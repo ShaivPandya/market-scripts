@@ -100,7 +100,7 @@ interface WorkspaceData {
 }
 
 interface ActionItem {
-  id: number
+  id: number | string
   ticker: string | null
   description: string
   action_type: string
@@ -487,12 +487,13 @@ export function Workspace() {
     }
   }
 
-  async function handleActionItem(id: number, action: "complete" | "dismiss") {
+  async function handleActionItem(id: number | string, action: "complete" | "dismiss") {
     setProcessingIds(prev => new Set(prev).add(id))
     try {
       if (action === "complete") await completeAction(id)
       else await dismissAction(id)
       void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }

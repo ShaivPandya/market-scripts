@@ -47,6 +47,7 @@ from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
+    PROVIDER_GEMINI,
     PROVIDER_OPENAI,
     api_key_env,
     apply_reasoning_config,
@@ -516,7 +517,12 @@ def _format_stream_error(exc: Exception) -> str:
     raw = str(exc)
     lowered = raw.lower()
 
-    if status_code == 401 or "invalid x-api-key" in lowered or "authentication_error" in lowered:
+    if (
+        status_code == 401
+        or "invalid x-api-key" in lowered
+        or "authentication_error" in lowered
+        or "api_key_invalid" in lowered
+    ):
         try:
             provider = selected_provider()
             key_env = api_key_env(provider)
@@ -1168,6 +1174,92 @@ def _extract_openai_tool_calls(output_items: list[dict]) -> list[dict]:
     return calls
 
 
+def _serialize_gemini_response_parts(response: object) -> list[dict]:
+    parts: list[dict] = []
+    for candidate in _obj_list(response, "candidates"):
+        content = _obj_value(candidate, "content", {})
+        for part in _obj_list(content, "parts"):
+            serialized = _serialize_gemini_part(part)
+            if serialized:
+                parts.append(serialized)
+    return parts
+
+
+def _serialize_gemini_part(part: object) -> dict:
+    if isinstance(part, dict):
+        return dict(part)
+    to_json_dict = getattr(part, "to_json_dict", None)
+    if callable(to_json_dict):
+        try:
+            value = to_json_dict()
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            pass
+
+    out: dict[str, object] = {}
+    text = _obj_value(part, "text")
+    if isinstance(text, str) and text:
+        out["text"] = text
+    thought = _obj_value(part, "thought")
+    if isinstance(thought, bool):
+        out["thought"] = thought
+    function_call = _obj_value(part, "function_call", _obj_value(part, "functionCall"))
+    if function_call:
+        out["function_call"] = _serialize_gemini_function_call(function_call)
+    function_response = _obj_value(part, "function_response", _obj_value(part, "functionResponse"))
+    if function_response:
+        out["function_response"] = function_response
+    return out
+
+
+def _serialize_gemini_function_call(function_call: object) -> dict:
+    if isinstance(function_call, dict):
+        return dict(function_call)
+    to_json_dict = getattr(function_call, "to_json_dict", None)
+    if callable(to_json_dict):
+        try:
+            value = to_json_dict()
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            pass
+    return {
+        key: value
+        for key, value in {
+            "id": _obj_value(function_call, "id"),
+            "name": _obj_value(function_call, "name"),
+            "args": _obj_value(function_call, "args"),
+        }.items()
+        if value is not None
+    }
+
+
+def _extract_gemini_tool_calls(parts: list[dict]) -> list[dict]:
+    calls: list[dict] = []
+    for index, part in enumerate(parts):
+        function_call = part.get("function_call") or part.get("functionCall")
+        if not isinstance(function_call, dict):
+            continue
+        name = function_call.get("name")
+        raw_args = function_call.get("args") or function_call.get("arguments") or {}
+        args = raw_args if isinstance(raw_args, dict) else {}
+        call_id = function_call.get("id") or function_call.get("call_id") or f"gemini:{name}:{index}"
+        if isinstance(name, str) and isinstance(call_id, str):
+            calls.append({"name": name, "call_id": call_id, "args": args})
+    return calls
+
+
+def _gemini_aggregate_response(parts: list[dict], usage_source: object | None) -> dict:
+    usage = (
+        _obj_value(usage_source, "usage_metadata", _obj_value(usage_source, "usageMetadata")) if usage_source else None
+    )
+    return {
+        "candidates": [{"content": {"parts": parts}}],
+        "usage_metadata": usage,
+    }
+
+
 def _obj_list(value: object, key: str) -> list[object]:
     if isinstance(value, dict):
         out = value.get(key, [])
@@ -1201,6 +1293,14 @@ def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
             tools.append(
                 {
                     "type": "function",
+                    "name": name,
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
+                }
+            )
+        elif provider == PROVIDER_GEMINI:
+            tools.append(
+                {
                     "name": name,
                     "description": tool.get("description", ""),
                     "parameters": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
@@ -1246,6 +1346,35 @@ def _model_stream_kwargs(
             kwargs["tool_choice"] = {"type": "any"}
         return kwargs
 
+    if provider == PROVIDER_GEMINI:
+        resolved_model = resolve_model(MODEL_MID, PROVIDER_GEMINI)
+        config: dict[str, object] = {
+            "max_output_tokens": max_tokens,
+            "system_instruction": instructions,
+        }
+        kwargs = {
+            "model": resolved_model,
+            "contents": conversation,
+            "config": config,
+        }
+        apply_reasoning_config(
+            kwargs,
+            provider=PROVIDER_GEMINI,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+        config = dict(kwargs.get("config") or {})
+        if tool_defs:
+            config["tools"] = [{"function_declarations": tool_defs}]
+            config["tool_config"] = {
+                "function_calling_config": {
+                    "mode": "ANY" if force_tool_use else "AUTO",
+                }
+            }
+        kwargs["config"] = config
+        return kwargs
+
     resolved_model = resolve_model(MODEL_MID, PROVIDER_OPENAI)
     kwargs = {
         "model": resolved_model,
@@ -1271,9 +1400,19 @@ def _openai_text_type(role: object) -> str:
     return "output_text" if role == "assistant" else "input_text"
 
 
+def _gemini_role(role: object) -> str:
+    return "model" if role == "assistant" else "user"
+
+
+def _gemini_text_content(role: object, text: str) -> dict:
+    return {"role": _gemini_role(role), "parts": [{"text": text}]}
+
+
 def _initial_conversation(provider: str, messages: list[ChatMessage]) -> list[dict]:
     if provider == PROVIDER_ANTHROPIC:
         return [{"role": m.role, "content": m.content} for m in messages]
+    if provider == PROVIDER_GEMINI:
+        return [_gemini_text_content(m.role, m.content) for m in messages]
     return [{"role": m.role, "content": [{"type": _openai_text_type(m.role), "text": m.content}]} for m in messages]
 
 
@@ -1289,8 +1428,34 @@ def _openai_conversation_from_context(conversation: list[dict[str, object]]) -> 
     return out
 
 
+def _gemini_conversation_from_context(conversation: list[dict[str, object]]) -> list[dict]:
+    out: list[dict] = []
+    for msg in conversation:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            out.append(_gemini_text_content(role, content))
+        elif isinstance(content, list):
+            out.append({"role": _gemini_role(role), "parts": content})
+        else:
+            out.append(_gemini_text_content(role, str(content)))
+    return out
+
+
 def _openai_user_prompt(prompt: str) -> list[dict]:
     return [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}]
+
+
+def _gemini_user_prompt(prompt: str) -> list[dict]:
+    return [{"role": "user", "parts": [{"text": prompt}]}]
+
+
+def _user_prompt_for_provider(provider: str, prompt: str) -> list[dict]:
+    if provider == PROVIDER_ANTHROPIC:
+        return [{"role": "user", "content": prompt}]
+    if provider == PROVIDER_GEMINI:
+        return _gemini_user_prompt(prompt)
+    return _openai_user_prompt(prompt)
 
 
 def _stream_llm_response(
@@ -1341,6 +1506,42 @@ def _stream_llm_response(
             yield from emit_final_text_if_missing(final_message)
             return final_message
 
+    if provider == PROVIDER_GEMINI:
+        emitted_call_ids: set[str] = set()
+        aggregate_parts: list[dict] = []
+        last_chunk: object | None = None
+        for chunk in client.models.generate_content_stream(**stream_kwargs):
+            last_chunk = chunk
+            for part in _serialize_gemini_response_parts(chunk):
+                aggregate_parts.append(part)
+                function_call = part.get("function_call") or part.get("functionCall")
+                if isinstance(function_call, dict):
+                    name = function_call.get("name")
+                    call_id = (
+                        function_call.get("id")
+                        or function_call.get("call_id")
+                        or f"gemini:{name}:{len(aggregate_parts)}"
+                    )
+                    if "function_call" in part:
+                        part["function_call"] = {**function_call, "id": call_id}
+                    elif "functionCall" in part:
+                        part["functionCall"] = {**function_call, "id": call_id}
+                    if isinstance(name, str) and isinstance(call_id, str) and call_id not in emitted_call_ids:
+                        emitted_call_ids.add(call_id)
+                        yield _sse("tool_call", {"name": name, "id": call_id})
+                    continue
+                if part.get("thought") is True:
+                    continue
+                delta = part.get("text")
+                if isinstance(delta, str) and delta:
+                    record_first_token()
+                    if text_parts is not None:
+                        text_parts.append(delta)
+                    yield _sse("delta", {"text": delta})
+        final_response = _gemini_aggregate_response(aggregate_parts, last_chunk)
+        yield from emit_final_text_if_missing(final_response)
+        return final_response
+
     emitted_call_ids: set[str] = set()
     with client.responses.stream(**stream_kwargs) as stream:
         for event in stream:
@@ -1374,11 +1575,19 @@ def _stream_llm_response(
 
 
 def _usage_dict(message: object) -> dict:
-    usage = _obj_value(message, "usage")
+    usage = _obj_value(message, "usage") or _obj_value(message, "usage_metadata", _obj_value(message, "usageMetadata"))
     if not usage:
         return {}
-    input_tokens = _obj_value(usage, "input_tokens", _obj_value(usage, "prompt_tokens", None))
-    output_tokens = _obj_value(usage, "output_tokens", _obj_value(usage, "completion_tokens", None))
+    input_tokens = _obj_value(
+        usage,
+        "input_tokens",
+        _obj_value(usage, "prompt_tokens", _obj_value(usage, "prompt_token_count", None)),
+    )
+    output_tokens = _obj_value(
+        usage,
+        "output_tokens",
+        _obj_value(usage, "completion_tokens", _obj_value(usage, "candidates_token_count", None)),
+    )
     out: dict[str, int] = {}
     if isinstance(input_tokens, int):
         out["input_tokens"] = input_tokens
@@ -1466,8 +1675,9 @@ def _start_model_call_provenance(
         from api import provenance
 
         model = stream_kwargs.get("model")
-        conversation = stream_kwargs.get("messages") or stream_kwargs.get("input")
-        tools = stream_kwargs.get("tools")
+        config = stream_kwargs.get("config") if isinstance(stream_kwargs.get("config"), dict) else {}
+        conversation = stream_kwargs.get("messages") or stream_kwargs.get("input") or stream_kwargs.get("contents")
+        tools = stream_kwargs.get("tools") or config.get("tools")
         event_id = provenance.deterministic_id(
             "pv:model_call",
             session_id or workflow_run_id or "legacy",
@@ -1485,7 +1695,9 @@ def _start_model_call_provenance(
             workflow_run_id=workflow_run_id,
             agent_session_id=session_id,
             input_value={
-                "instructions": stream_kwargs.get("instructions") or stream_kwargs.get("system"),
+                "instructions": stream_kwargs.get("instructions")
+                or stream_kwargs.get("system")
+                or config.get("system_instruction"),
                 "conversation": conversation,
             },
             summary={
@@ -1497,9 +1709,11 @@ def _start_model_call_provenance(
                 "tool_count": len(tools) if isinstance(tools, Sized) else 0,
             },
             metadata={
-                "max_tokens": stream_kwargs.get("max_tokens"),
-                "tool_choice": stream_kwargs.get("tool_choice"),
-                "reasoning": stream_kwargs.get("reasoning"),
+                "max_tokens": stream_kwargs.get("max_tokens")
+                or stream_kwargs.get("max_output_tokens")
+                or config.get("max_output_tokens"),
+                "tool_choice": stream_kwargs.get("tool_choice") or config.get("tool_config"),
+                "reasoning": stream_kwargs.get("reasoning") or config.get("thinking_config"),
             },
         )
         return event_id
@@ -1653,11 +1867,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 synthesis_chunks: list[str] = []
                 for attempt in range(MAX_API_RETRIES):
                     try:
-                        synthesis_conversation = (
-                            [{"role": "user", "content": synthesis_prompt}]
-                            if provider == PROVIDER_ANTHROPIC
-                            else _openai_user_prompt(synthesis_prompt)
-                        )
+                        synthesis_conversation = _user_prompt_for_provider(provider, synthesis_prompt)
                         stream_kwargs = _model_stream_kwargs(
                             provider=provider,
                             instructions=instructions,
@@ -1867,6 +2077,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 if provider == PROVIDER_ANTHROPIC:
                     assistant_content = _serialize_content_blocks(list(final_message.content))
                     deferred_calls = _extract_tool_calls(assistant_content)
+                elif provider == PROVIDER_GEMINI:
+                    assistant_content = _serialize_gemini_response_parts(final_message)
+                    deferred_calls = _extract_gemini_tool_calls(assistant_content)
                 else:
                     assistant_content = _serialize_output_items(final_message)
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
@@ -1992,6 +2205,13 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                                 }
                                 if err_msg:
                                     result_block["is_error"] = True
+                            elif provider == PROVIDER_GEMINI:
+                                result_block = {
+                                    "function_response": {
+                                        "name": call_info["name"],
+                                        "response": {"result": result_str},
+                                    }
+                                }
                             else:
                                 result_block = {
                                     "type": "function_call_output",
@@ -2003,6 +2223,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     if provider == PROVIDER_ANTHROPIC:
                         conversation.append({"role": "assistant", "content": assistant_content})
                         conversation.append({"role": "user", "content": tool_results})
+                    elif provider == PROVIDER_GEMINI:
+                        conversation.append({"role": "model", "parts": assistant_content})
+                        conversation.append({"role": "tool", "parts": tool_results})
                     else:
                         conversation.extend(assistant_content)
                         conversation.extend(tool_results)
@@ -2220,9 +2443,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             workflow_name=workflow_name,
             workflow_ticker=workflow_ticker,
         )
-        conversation = (
-            raw_conversation if provider == PROVIDER_ANTHROPIC else _openai_conversation_from_context(raw_conversation)
-        )
+        if provider == PROVIDER_ANTHROPIC:
+            conversation = raw_conversation
+        elif provider == PROVIDER_GEMINI:
+            conversation = _gemini_conversation_from_context(raw_conversation)
+        else:
+            conversation = _openai_conversation_from_context(raw_conversation)
 
         if not workflow_name and _is_simple_portfolio_summary(req.message):
             call_info = {
@@ -2309,10 +2535,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         model_purpose="portfolio_summary_synthesis",
                         attempt=attempt,
                     )
-                    synthesis_conversation = (
-                        [{"role": "user", "content": _build_portfolio_summary_prompt(req.message, portfolio_result)}]
-                        if provider == PROVIDER_ANTHROPIC
-                        else _openai_user_prompt(_build_portfolio_summary_prompt(req.message, portfolio_result))
+                    synthesis_conversation = _user_prompt_for_provider(
+                        provider,
+                        _build_portfolio_summary_prompt(req.message, portfolio_result),
                     )
                     stream_kwargs = _model_stream_kwargs(
                         provider=provider,
@@ -2481,11 +2706,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             model_purpose="workflow_synthesis",
                             attempt=attempt,
                         )
-                        synthesis_conversation = (
-                            [{"role": "user", "content": synthesis_prompt}]
-                            if provider == PROVIDER_ANTHROPIC
-                            else _openai_user_prompt(synthesis_prompt)
-                        )
+                        synthesis_conversation = _user_prompt_for_provider(provider, synthesis_prompt)
                         stream_kwargs = _model_stream_kwargs(
                             provider=provider,
                             instructions=instructions,
@@ -2754,6 +2975,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 if provider == PROVIDER_ANTHROPIC:
                     assistant_content = _serialize_content_blocks(list(final_message.content))
                     deferred_calls = _extract_tool_calls(assistant_content)
+                elif provider == PROVIDER_GEMINI:
+                    assistant_content = _serialize_gemini_response_parts(final_message)
+                    deferred_calls = _extract_gemini_tool_calls(assistant_content)
                 else:
                     assistant_content = _serialize_output_items(final_message)
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
@@ -2909,6 +3133,13 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                                 }
                                 if err_msg:
                                     result_block["is_error"] = True
+                            elif provider == PROVIDER_GEMINI:
+                                result_block = {
+                                    "function_response": {
+                                        "name": call_info["name"],
+                                        "response": {"result": result_str},
+                                    }
+                                }
                             else:
                                 result_block = {
                                     "type": "function_call_output",
@@ -2920,6 +3151,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     if provider == PROVIDER_ANTHROPIC:
                         conversation.append({"role": "assistant", "content": assistant_content})
                         conversation.append({"role": "user", "content": tool_results})
+                    elif provider == PROVIDER_GEMINI:
+                        conversation.append({"role": "model", "parts": assistant_content})
+                        conversation.append({"role": "tool", "parts": tool_results})
                     else:
                         conversation.extend(assistant_content)
                         conversation.extend(tool_results)

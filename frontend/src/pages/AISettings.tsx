@@ -37,10 +37,27 @@ const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEff
     mid: "medium",
     high: "medium",
   },
+  gemini: {
+    low: "minimal",
+    mid: "high",
+    high: "high",
+  },
+}
+
+const PROVIDER_DESCRIPTIONS: Record<LLMProvider, string> = {
+  anthropic: "Claude runtime requests",
+  openai: "OpenAI runtime requests",
+  gemini: "Gemini runtime requests",
+}
+
+const PROVIDER_FALLBACK_LABELS: Record<LLMProvider, string> = {
+  anthropic: "Claude",
+  openai: "OpenAI",
+  gemini: "Gemini",
 }
 
 function providerDescription(provider: LLMProvider) {
-  return provider === "anthropic" ? "Claude runtime requests" : "OpenAI runtime requests"
+  return PROVIDER_DESCRIPTIONS[provider]
 }
 
 function statusBadge(provider: LLMProviderStatus) {
@@ -63,6 +80,7 @@ export function AISettings() {
     () => data?.available_providers.find(provider => provider.provider === effectiveProvider),
     [data?.available_providers, effectiveProvider],
   )
+  const effectiveProviderLabel = selectedStatus?.label ?? PROVIDER_FALLBACK_LABELS[effectiveProvider]
 
   const effectiveModels = data?.models_by_provider?.[effectiveProvider] ?? data?.models
   const providerDefaultReasoningEfforts = DEFAULT_REASONING_EFFORTS_BY_PROVIDER[effectiveProvider]
@@ -113,7 +131,7 @@ export function AISettings() {
           <div>
             <h2 className="section-title">Provider</h2>
             <p className="mt-1 text-xs text-muted">
-              Active provider: {data.provider === "anthropic" ? "Claude" : "OpenAI"}
+              Active provider: {data.available_providers.find(provider => provider.provider === data.provider)?.label ?? PROVIDER_FALLBACK_LABELS[data.provider]}
             </p>
           </div>
           <button
@@ -130,7 +148,7 @@ export function AISettings() {
           </button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-3">
           {data.available_providers.map(provider => {
             return (
               <button
@@ -182,7 +200,7 @@ export function AISettings() {
         <div>
           <h2 className="section-title">Reasoning Effort</h2>
           <p className="mt-1 text-xs text-muted">
-            {effectiveProvider === "anthropic" ? "Claude" : "OpenAI"} thinking depth by model tier.
+            {effectiveProviderLabel} thinking depth by model tier.
           </p>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-3">

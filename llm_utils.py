@@ -8,7 +8,8 @@ from typing import Any
 
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OPENAI = "openai"
-PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI}
+PROVIDER_GEMINI = "gemini"
+PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI}
 
 MODEL_LOW = "low"
 MODEL_MID = "mid"
@@ -18,6 +19,8 @@ MODEL_TIERS = {MODEL_LOW, MODEL_MID, MODEL_HIGH}
 REASONING_MEDIUM = "medium"
 REASONING_HIGH = "high"
 REASONING_NONE = "none"
+REASONING_MINIMAL = "minimal"
+REASONING_LOW = "low"
 REASONING_XHIGH = "xhigh"
 REASONING_MAX = "max"
 OPENAI_REASONING_EFFORTS = (
@@ -30,10 +33,36 @@ ANTHROPIC_REASONING_EFFORTS = (
     REASONING_HIGH,
     REASONING_MAX,
 )
-REASONING_EFFORTS = set(OPENAI_REASONING_EFFORTS) | set(ANTHROPIC_REASONING_EFFORTS)
-DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
-    PROVIDER_ANTHROPIC: REASONING_HIGH,
-    PROVIDER_OPENAI: REASONING_MEDIUM,
+GEMINI_FLASH_REASONING_EFFORTS = (
+    REASONING_MINIMAL,
+    REASONING_LOW,
+    REASONING_MEDIUM,
+    REASONING_HIGH,
+)
+GEMINI_PRO_REASONING_EFFORTS = (
+    REASONING_LOW,
+    REASONING_MEDIUM,
+    REASONING_HIGH,
+)
+REASONING_EFFORTS = (
+    set(OPENAI_REASONING_EFFORTS) | set(ANTHROPIC_REASONING_EFFORTS) | set(GEMINI_FLASH_REASONING_EFFORTS)
+)
+DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER = {
+    PROVIDER_ANTHROPIC: {
+        MODEL_LOW: REASONING_HIGH,
+        MODEL_MID: REASONING_HIGH,
+        MODEL_HIGH: REASONING_HIGH,
+    },
+    PROVIDER_OPENAI: {
+        MODEL_LOW: REASONING_MEDIUM,
+        MODEL_MID: REASONING_MEDIUM,
+        MODEL_HIGH: REASONING_MEDIUM,
+    },
+    PROVIDER_GEMINI: {
+        MODEL_LOW: REASONING_MINIMAL,
+        MODEL_MID: REASONING_HIGH,
+        MODEL_HIGH: REASONING_HIGH,
+    },
 }
 
 ANTHROPIC_DEFAULT_MODELS = {
@@ -45,6 +74,16 @@ OPENAI_DEFAULT_MODELS = {
     MODEL_LOW: "gpt-5.4-mini",
     MODEL_MID: "gpt-5.4",
     MODEL_HIGH: "gpt-5.5",
+}
+GEMINI_DEFAULT_MODELS = {
+    MODEL_LOW: "gemini-3.1-flash-lite",
+    MODEL_MID: "gemini-3.1-pro-preview-customtools",
+    MODEL_HIGH: "gemini-3.1-pro-preview-customtools",
+}
+DEFAULT_MODELS_BY_PROVIDER = {
+    PROVIDER_ANTHROPIC: ANTHROPIC_DEFAULT_MODELS,
+    PROVIDER_OPENAI: OPENAI_DEFAULT_MODELS,
+    PROVIDER_GEMINI: GEMINI_DEFAULT_MODELS,
 }
 
 # Compatibility aliases for older call sites. These now represent tiers.
@@ -59,6 +98,9 @@ _LEGACY_MODEL_TO_TIER = {
     "gpt-5.4-mini": MODEL_LOW,
     "gpt-5.4": MODEL_MID,
     "gpt-5.5": MODEL_HIGH,
+    "gemini-3.1-flash-lite": MODEL_LOW,
+    "gemini-3.1-pro-preview": MODEL_HIGH,
+    "gemini-3.1-pro-preview-customtools": MODEL_HIGH,
 }
 _MODEL_ENV_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: {
@@ -71,10 +113,16 @@ _MODEL_ENV_BY_PROVIDER = {
         MODEL_MID: "OPENAI_MODEL_MID",
         MODEL_HIGH: "OPENAI_MODEL_HIGH",
     },
+    PROVIDER_GEMINI: {
+        MODEL_LOW: "GEMINI_MODEL_LOW",
+        MODEL_MID: "GEMINI_MODEL_MID",
+        MODEL_HIGH: "GEMINI_MODEL_HIGH",
+    },
 }
 _API_KEY_ENV_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
     PROVIDER_OPENAI: "OPENAI_API_KEY",
+    PROVIDER_GEMINI: "GEMINI_API_KEY",
 }
 _CLIENT_CACHE: dict[tuple[str, str | None], Any] = {}
 _CLIENT_FACTORY_CACHE: dict[str, Any] = {}
@@ -99,7 +147,7 @@ def _stored_provider() -> str | None:
 def selected_provider() -> str:
     provider = (_stored_provider() or os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("LLM_PROVIDER must be 'anthropic' or 'openai'")
+        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
     return provider
 
 
@@ -135,30 +183,40 @@ def model_for_tier(tier: str, provider: str | None = None) -> str:
     override = (os.environ.get(env_name) or "").strip()
     if override:
         return override
-    defaults = ANTHROPIC_DEFAULT_MODELS if resolved_provider == PROVIDER_ANTHROPIC else OPENAI_DEFAULT_MODELS
-    return defaults[normalized_tier]
+    return DEFAULT_MODELS_BY_PROVIDER[resolved_provider][normalized_tier]
 
 
 def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
     resolved_provider = _normalize_provider(provider)
     normalized_tier = _normalize_tier(tier)
     resolved_model = model_for_tier(normalized_tier, resolved_provider)
-    fallback = DEFAULT_REASONING_EFFORT_BY_PROVIDER[resolved_provider]
+    fallback = default_reasoning_effort(resolved_provider, normalized_tier)
     try:
         from api.llm_settings import get_llm_reasoning_effort_setting
 
         effort = get_llm_reasoning_effort_setting(resolved_provider, normalized_tier)
     except Exception:
         effort = fallback
-    return effort if effort in reasoning_effort_options(resolved_provider, resolved_model) else fallback
+    options = reasoning_effort_options(resolved_provider, resolved_model)
+    if fallback not in options:
+        fallback = REASONING_HIGH if REASONING_HIGH in options else options[0]
+    return effort if effort in options else fallback
 
 
 def reasoning_effort_options(provider: str, model: str | None = None) -> list[str]:
     resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_OPENAI:
         return [REASONING_NONE, REASONING_MEDIUM, REASONING_XHIGH]
+    if resolved_provider == PROVIDER_GEMINI:
+        return list(_gemini_reasoning_efforts_for_model(model))
 
     return [REASONING_NONE, REASONING_HIGH, REASONING_MAX]
+
+
+def default_reasoning_effort(provider: str, tier: str) -> str:
+    resolved_provider = _normalize_provider(provider)
+    normalized_tier = _normalize_tier(tier)
+    return DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER[resolved_provider][normalized_tier]
 
 
 def resolve_model(model: str, provider: str | None = None) -> str:
@@ -193,6 +251,10 @@ def extract_text(response: Any) -> str:
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
 
+    gemini_text = _obj_get(response, "text")
+    if isinstance(gemini_text, str) and gemini_text.strip():
+        return gemini_text.strip()
+
     parts: list[str] = []
 
     for block in _obj_get(response, "content", []) or []:
@@ -208,6 +270,13 @@ def extract_text(response: Any) -> str:
             text = _obj_get(block, "text")
             if isinstance(text, str) and text:
                 parts.append(text)
+
+    for block in _gemini_response_parts(response):
+        if block.get("thought") is True:
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            parts.append(text)
 
     return "".join(parts).strip()
 
@@ -242,7 +311,79 @@ def extract_citations(response: Any) -> list[tuple[str, str]]:
     for source in _obj_get(response, "sources", []) or []:
         add(_obj_get(source, "title"), _obj_get(source, "url"))
 
+    for candidate in _obj_get(response, "candidates", []) or []:
+        metadata = _obj_get(candidate, "grounding_metadata") or _obj_get(candidate, "groundingMetadata")
+        for chunk in _obj_get(metadata, "grounding_chunks", _obj_get(metadata, "groundingChunks", [])) or []:
+            web = _obj_get(chunk, "web")
+            add(_obj_get(web, "title"), _obj_get(web, "uri"))
+
     return citations
+
+
+def _gemini_content(role: str, parts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"role": role, "parts": parts}
+
+
+def _gemini_response_parts(response: Any) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = []
+    for candidate in _obj_get(response, "candidates", []) or []:
+        content = _obj_get(candidate, "content")
+        for part in _obj_get(content, "parts", []) or []:
+            serialized = _serialize_gemini_part(part)
+            if serialized:
+                parts.append(serialized)
+    return parts
+
+
+def _serialize_gemini_part(part: Any) -> dict[str, Any]:
+    if isinstance(part, dict):
+        return dict(part)
+
+    to_json_dict = getattr(part, "to_json_dict", None)
+    if callable(to_json_dict):
+        try:
+            value = to_json_dict()
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            pass
+
+    out: dict[str, Any] = {}
+    text = _obj_get(part, "text")
+    if isinstance(text, str) and text:
+        out["text"] = text
+    thought = _obj_get(part, "thought")
+    if isinstance(thought, bool):
+        out["thought"] = thought
+    function_call = _obj_get(part, "function_call") or _obj_get(part, "functionCall")
+    if function_call:
+        out["function_call"] = _serialize_gemini_function_call(function_call)
+    function_response = _obj_get(part, "function_response") or _obj_get(part, "functionResponse")
+    if function_response:
+        out["function_response"] = function_response
+    return out
+
+
+def _serialize_gemini_function_call(function_call: Any) -> dict[str, Any]:
+    if isinstance(function_call, dict):
+        return dict(function_call)
+    to_json_dict = getattr(function_call, "to_json_dict", None)
+    if callable(to_json_dict):
+        try:
+            value = to_json_dict()
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            pass
+    return {
+        key: value
+        for key, value in {
+            "id": _obj_get(function_call, "id"),
+            "name": _obj_get(function_call, "name"),
+            "args": _obj_get(function_call, "args"),
+        }.items()
+        if value is not None
+    }
 
 
 def _prepare_text_egress(
@@ -309,9 +450,19 @@ def call_llm_text(
             max_web_search_uses=max_web_search_uses,
             reasoning_effort=reasoning_effort,
         )
-    else:
+    elif resolved_provider == PROVIDER_OPENAI:
         response = _call_openai_response(
             input_items=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+            allowed_domains=allowed_domains,
+            reasoning_effort=reasoning_effort,
+        )
+    else:
+        response = _call_gemini_generate_content(
+            contents=[_gemini_content("user", [{"text": prompt}])],
             model=model,
             api_key=api_key,
             max_tokens=max_tokens,
@@ -360,7 +511,7 @@ def call_llm_pdf_text(
             system=system,
             reasoning_effort=reasoning_effort,
         )
-    else:
+    elif resolved_provider == PROVIDER_OPENAI:
         response = _call_openai_response(
             input_items=[
                 {
@@ -374,6 +525,23 @@ def call_llm_pdf_text(
                         {"type": "input_text", "text": prompt},
                     ],
                 }
+            ],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+            reasoning_effort=reasoning_effort,
+        )
+    else:
+        response = _call_gemini_generate_content(
+            contents=[
+                _gemini_content(
+                    "user",
+                    [
+                        {"inline_data": {"mime_type": "application/pdf", "data": pdf_b64}},
+                        {"text": prompt},
+                    ],
+                )
             ],
             model=model,
             api_key=api_key,
@@ -403,6 +571,7 @@ def call_claude_text(
         system=system,
         allowed_domains=allowed_domains,
         max_web_search_uses=max_web_search_uses,
+        provider=PROVIDER_ANTHROPIC,
         reasoning_effort=reasoning_effort,
     )
 
@@ -508,6 +677,39 @@ def _call_openai_response(
     return client.responses.create(**kwargs)
 
 
+def _call_gemini_generate_content(
+    *,
+    contents: list[dict[str, Any]],
+    model: str,
+    api_key: str | None,
+    max_tokens: int,
+    system: str | None = None,
+    allowed_domains: Sequence[str] | None = None,
+    reasoning_effort: str | None = None,
+) -> Any:
+    if allowed_domains is not None:
+        raise RuntimeError("Gemini does not support domain-constrained web search in llm_utils")
+
+    client = get_llm_client(PROVIDER_GEMINI, api_key=api_key)
+    resolved_model = resolve_model(model, PROVIDER_GEMINI)
+    config: dict[str, Any] = {"max_output_tokens": max_tokens}
+    if system:
+        config["system_instruction"] = system
+    kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "contents": contents,
+        "config": config,
+    }
+    apply_reasoning_config(
+        kwargs,
+        provider=PROVIDER_GEMINI,
+        model=resolved_model,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
+    return client.models.generate_content(**kwargs)
+
+
 def apply_reasoning_config(
     kwargs: dict[str, Any],
     *,
@@ -523,6 +725,12 @@ def apply_reasoning_config(
 
     if resolved_provider == PROVIDER_OPENAI:
         kwargs["reasoning"] = {"effort": effort}
+        return
+
+    if resolved_provider == PROVIDER_GEMINI:
+        config = dict(kwargs.get("config") or {})
+        config["thinking_config"] = {"thinking_level": effort}
+        kwargs["config"] = config
         return
 
     if _anthropic_supports_adaptive_thinking(model):
@@ -545,7 +753,7 @@ def apply_reasoning_config(
 def _normalize_provider(provider: str | None) -> str:
     resolved = selected_provider() if provider is None else provider.strip().lower()
     if resolved not in PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic' or 'openai'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return resolved
 
 
@@ -581,11 +789,25 @@ def _normalize_reasoning_effort(
     resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_ANTHROPIC and normalized == REASONING_NONE:
         return None
-    options = OPENAI_REASONING_EFFORTS if resolved_provider == PROVIDER_OPENAI else ANTHROPIC_REASONING_EFFORTS
+    if resolved_provider == PROVIDER_OPENAI:
+        options = OPENAI_REASONING_EFFORTS
+    elif resolved_provider == PROVIDER_GEMINI:
+        if normalized == REASONING_NONE:
+            return None
+        options = tuple(reasoning_effort_options(resolved_provider, model))
+    else:
+        options = ANTHROPIC_REASONING_EFFORTS
     if normalized not in options:
         allowed = "', '".join(options)
         raise ValueError(f"reasoning_effort must be one of '{allowed}'")
     return normalized
+
+
+def _gemini_reasoning_efforts_for_model(model: str | None = None) -> tuple[str, ...]:
+    normalized = (model or "").strip().lower()
+    if "flash" in normalized:
+        return GEMINI_FLASH_REASONING_EFFORTS
+    return GEMINI_PRO_REASONING_EFFORTS
 
 
 def _anthropic_supports_adaptive_thinking(model: str) -> bool:
@@ -639,6 +861,10 @@ def _client_factory(provider: str) -> Any:
         import anthropic
 
         return anthropic.Anthropic
+    if provider == PROVIDER_GEMINI:
+        from google import genai
+
+        return genai.Client
     from openai import OpenAI
 
     return OpenAI

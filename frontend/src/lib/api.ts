@@ -445,9 +445,9 @@ export const authApi = {
   me: () => client.get("/auth/me").then(r => r.data),
 }
 
-export type LLMProvider = "anthropic" | "openai"
+export type LLMProvider = "anthropic" | "openai" | "gemini"
 export type LLMModelTier = "low" | "mid" | "high"
-export type LLMReasoningEffort = "none" | "medium" | "high" | "xhigh" | "max"
+export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 export type LLMModelTierMap = Record<LLMModelTier, string>
 export type LLMReasoningEffortMap = Record<LLMModelTier, LLMReasoningEffort>
 
@@ -2430,10 +2430,10 @@ export const fetchActions = (params?: { status?: string; ticker?: string }) =>
   client.get("/actions", { params }).then(r => r.data)
 export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string } & StagedMutationOptions) =>
   client.post("/actions", body).then(r => r.data as StagedMutationResponse)
-export const completeAction = (id: number, resolution_note?: string, options?: StagedMutationOptions) =>
-  client.put(`/actions/${id}/complete`, { resolution_note: resolution_note ?? "", ...options }).then(r => r.data as StagedMutationResponse)
-export const dismissAction = (id: number, options?: StagedMutationOptions) =>
-  client.put(`/actions/${id}/dismiss`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const completeAction = (id: number | string, resolution_note?: string, options?: StagedMutationOptions) =>
+  client.put(`/actions/${encodeURIComponent(String(id))}/complete`, { resolution_note: resolution_note ?? "", ...options }).then(r => r.data as StagedMutationResponse)
+export const dismissAction = (id: number | string, options?: StagedMutationOptions) =>
+  client.put(`/actions/${encodeURIComponent(String(id))}/dismiss`, options ?? {}).then(r => r.data as StagedMutationResponse)
 
 // Watch Triggers
 export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>

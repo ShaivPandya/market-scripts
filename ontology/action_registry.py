@@ -633,9 +633,22 @@ class CreateActionItemInput(OptionalTickerMixin):
         return text
 
 
+ActionItemIdentifier = int | str
+
+
 class CompleteActionItemInput(BaseModel):
-    item_id: int
+    item_id: ActionItemIdentifier
     resolution_note: str = ""
+
+    @field_validator("item_id")
+    @classmethod
+    def _strip_item_id(cls, value: ActionItemIdentifier) -> ActionItemIdentifier:
+        if isinstance(value, int):
+            return value
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Action item id cannot be empty.")
+        return text
 
     @field_validator("resolution_note")
     @classmethod
@@ -644,7 +657,17 @@ class CompleteActionItemInput(BaseModel):
 
 
 class DismissActionItemInput(BaseModel):
-    item_id: int
+    item_id: ActionItemIdentifier
+
+    @field_validator("item_id")
+    @classmethod
+    def _strip_item_id(cls, value: ActionItemIdentifier) -> ActionItemIdentifier:
+        if isinstance(value, int):
+            return value
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Action item id cannot be empty.")
+        return text
 
 
 class CreateWatchTriggerInput(OptionalTickerMixin):
@@ -1082,13 +1105,43 @@ def _hash_current_management_quality(model: BaseModel) -> dict[str, Any]:
     return result
 
 
-def _hash_action_item_status(model: BaseModel) -> dict[str, Any]:
-    item_id = int(getattr(model, "item_id", 0) or 0)
+def _normalize_action_item_uid(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("action_item:"):
+        return text
+    return f"action_item:{text}"
+
+
+def _legacy_action_item_id(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if text.startswith("action_item:"):
+        text = text.removeprefix("action_item:").strip()
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _action_item_context(value: Any) -> dict[str, Any]:
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    item_uid = f"action_item:{item_id}"
-    item = OntologyRuntimeReadService().get(item_uid)
+    return OntologyRuntimeReadService().get(_normalize_action_item_uid(value)) or {}
+
+
+def _hash_action_item_status(model: BaseModel) -> dict[str, Any]:
+    item_id = getattr(model, "item_id", "")
+    item = _action_item_context(item_id)
     return {"item_id": item_id, "status": item.get("status") if item else None}
+
+
+def _action_item_status_payload(model: BaseModel) -> dict[str, Any]:
+    payload = _model_payload(model)
+    item = _action_item_context(payload.get("item_id"))
+    for payload_field in ("ticker", "description", "action_type", "urgency"):
+        value = item.get(payload_field)
+        if value not in (None, ""):
+            payload[payload_field] = value
+    return payload
 
 
 def _hash_watch_trigger_status(model: BaseModel) -> dict[str, Any]:
@@ -2539,7 +2592,10 @@ def _complete_action_item(input_model: BaseModel, _context: ActionContext) -> Ac
     from portfolio import core_db
 
     try:
-        result = core_db.complete_action_item(typed.item_id, typed.resolution_note)
+        item_id = _legacy_action_item_id(typed.item_id)
+        if item_id is None:
+            raise ValueError(f"No action item with id {typed.item_id}")
+        result = core_db.complete_action_item(item_id, typed.resolution_note)
     except ValueError as exc:
         _raise_not_found_or_validation(exc, "Action item", typed.item_id)
     return ActionResult(result)
@@ -2550,7 +2606,10 @@ def _dismiss_action_item(input_model: BaseModel, _context: ActionContext) -> Act
     from portfolio import core_db
 
     try:
-        result = core_db.dismiss_action_item(typed.item_id)
+        item_id = _legacy_action_item_id(typed.item_id)
+        if item_id is None:
+            raise ValueError(f"No action item with id {typed.item_id}")
+        result = core_db.dismiss_action_item(item_id)
     except ValueError as exc:
         _raise_not_found_or_validation(exc, "Action item", typed.item_id)
     return ActionResult(result)
@@ -2897,7 +2956,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=CompleteActionItemInput,
         handler=_complete_action_item,
         approval_entity_type="action_item_status",
-        approval_payload=_model_payload,
+        approval_payload=_action_item_status_payload,
         precondition_builder=_hash_action_item_status,
         base_state_hash_fields=("item_id", "status"),
     ),
@@ -2906,7 +2965,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=DismissActionItemInput,
         handler=_dismiss_action_item,
         approval_entity_type="action_item_status",
-        approval_payload=_model_payload,
+        approval_payload=_action_item_status_payload,
         precondition_builder=_hash_action_item_status,
         base_state_hash_fields=("item_id", "status"),
     ),

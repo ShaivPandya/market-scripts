@@ -118,7 +118,7 @@ type EntityId = number | string
 interface Catalyst { id: EntityId; description: string | null; category: string | null; status: string | null; target_date: string | null; evidence: string | null }
 interface KillCondition { id: EntityId; condition: string | null; metric: string | null; threshold: string | null; status: string | null; triggered_at: string | null }
 interface WorkflowRun { run_id: string | null; workflow_name: string | null; status: string | null; started_at: string | null; completed_at: string | null }
-interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
+interface ActionItem { id: number | string; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 
 const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Workflows"] as const
@@ -319,12 +319,13 @@ export function PositionDossier() {
     }
   }
 
-  async function handleActionItem(id: number, action: "complete" | "dismiss") {
+  async function handleActionItem(id: number | string, action: "complete" | "dismiss") {
     setProcessingIds(prev => new Set(prev).add(id))
     try {
-      if (action === "complete") await completeAction(id)
-      else await dismissAction(id)
+      const result = action === "complete" ? await completeAction(id) : await dismissAction(id)
+      setLastProposal(result)
       void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["dossier", ticker] })
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
