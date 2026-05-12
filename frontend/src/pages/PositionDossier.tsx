@@ -694,7 +694,10 @@ export function PositionDossier() {
                   approvalReview.action === "approve" &&
                   (!approvalNote.trim() || approvalReview.approval.can_approve === false)
                 }
-                className="w-auto px-4"
+                className={cn(
+                  "w-auto px-4",
+                  approvalReview.action === "approve" ? "theme-button-success" : "theme-button-destructive",
+                )}
               >
                 {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
               </ActionButton>

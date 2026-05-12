@@ -184,6 +184,16 @@ def _retired_policy_scope_reason() -> dict:
     }
 
 
+def _hedge_concentration_reason() -> dict:
+    return {
+        "code": "concentration_limit",
+        "check": "concentration.position",
+        "message": "SPY exceeds max position concentration.",
+        "status": "fail",
+        "severity": "fail",
+    }
+
+
 def test_normalize_recommendation_filters_obsolete_policy_warning():
     rec = normalize_recommendation(
         {
@@ -270,6 +280,35 @@ def test_normalize_approval_filters_retired_policy_scope_warning():
     assert retired_field not in str(approval["policy_gate"])
     assert approval["proposed_change"]["policy_gate_result"]["warnings"] == []
     assert retired_field not in str(approval["proposed_change"]["policy_gate_result"])
+
+
+def test_normalize_hedge_approval_filters_position_concentration_warning():
+    approval = normalize_approval(
+        {
+            "id": 22,
+            "status": "pending",
+            "application_status": "pending",
+            "action_id": "update_hedge_positions",
+            "entity_type": "hedge_positions",
+            "reason": "Review hedge",
+            "proposed_change": {
+                "policy_gate_result": {
+                    "decision": "review_required",
+                    "review_required": True,
+                    "warnings": [_hedge_concentration_reason()],
+                    "failure_reasons": [_hedge_concentration_reason()],
+                    "check_results": [_hedge_concentration_reason()],
+                }
+            },
+        }
+    )
+
+    assert approval is not None
+    assert approval["policy_state"] == "pass"
+    assert approval["policy_gate"]["warnings"] == []
+    assert approval["policy_gate"]["failure_reasons"] == []
+    assert approval["policy_gate"]["check_results"] == []
+    assert approval["proposed_change"]["policy_gate_result"]["warnings"] == []
 
 
 def test_normalize_action_item_preserves_open_state():

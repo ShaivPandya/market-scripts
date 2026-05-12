@@ -355,6 +355,17 @@
     background-color: hsl(var(--destructive) / 0.14);
   }
 
+  .theme-button-success {
+    background-color: hsl(var(--success-muted));
+    color: hsl(var(--success));
+    border: 1px solid hsl(var(--success) / 0.15);
+    box-shadow: 0 1px 2px hsl(var(--shadow-color) / 0.04);
+  }
+
+  .theme-button-success:hover {
+    background-color: hsl(var(--success) / 0.14);
+  }
+
   .theme-icon-button {
     display: inline-flex;
     height: 2.75rem;

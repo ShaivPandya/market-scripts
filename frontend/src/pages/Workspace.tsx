@@ -1042,7 +1042,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "reject" && processingIds.has(approvalReview.id)}
                 loadingText="Rejecting..."
                 disabled={processingIds.has(approvalReview.id) || approvalReview.can_reject === false}
-                className="w-auto px-4 bg-red-600 hover:bg-red-700"
+                className="theme-button-destructive w-auto px-4"
               >
                 Reject Proposal
               </ActionButton>
@@ -1062,7 +1062,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
                 loadingText="Applying..."
                 disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
-                className="w-auto px-4 bg-green-600 hover:bg-green-700"
+                className="theme-button-success w-auto px-4"
               >
                 {approvalReview.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
               </ActionButton>
