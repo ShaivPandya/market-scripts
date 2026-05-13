@@ -934,10 +934,16 @@ class OntologyCommandService:
                     "name": str(payload.get("name") or description[:120]),
                     "description": description,
                     "source": context.source_type,
-                    "category": payload.get("category"),
-                    "target_date": payload.get("target_date"),
+                    "category": payload.get("category")
+                    if payload.get("category") is not None
+                    else existing.get("category"),
+                    "target_date": payload.get("target_date")
+                    if payload.get("target_date") is not None
+                    else existing.get("target_date"),
                     "status": payload.get("status") or existing.get("status") or "pending",
-                    "evidence": payload.get("evidence"),
+                    "evidence": payload.get("evidence")
+                    if payload.get("evidence") is not None
+                    else existing.get("evidence"),
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -963,8 +969,10 @@ class OntologyCommandService:
                 {
                     "ticker": ticker,
                     "condition": condition,
-                    "metric": payload.get("metric"),
-                    "threshold": payload.get("threshold"),
+                    "metric": payload.get("metric") if payload.get("metric") is not None else existing.get("metric"),
+                    "threshold": payload.get("threshold")
+                    if payload.get("threshold") is not None
+                    else existing.get("threshold"),
                     "status": payload.get("status") or "active",
                     "created_at": now,
                     "updated_at": now,
