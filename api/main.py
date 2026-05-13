@@ -5,6 +5,7 @@ Run from project root:
     uvicorn api.main:app --reload --port 8000
 """
 
+import hmac
 import logging
 import os
 import time
@@ -230,6 +231,8 @@ async def _security_headers_middleware(request: Request, call_next):
         response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
     if _is_production_runtime() and "strict-transport-security" not in response.headers:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if "x-frame-options" not in response.headers:
+        response.headers["X-Frame-Options"] = "DENY"
     return response
 
 
@@ -301,7 +304,7 @@ async def _require_proxy_secret(request: Request, call_next):
                 )
                 return JSONResponse({"detail": "API proxy secret is required for this auth mode."}, status_code=403)
             provided = request.headers.get("x-api-proxy-secret")
-            if provided != proxy_secret:
+            if not provided or not hmac.compare_digest(provided, proxy_secret):
                 emit_audit_event(
                     "permission.proxy_secret_denied",
                     "permission",
