@@ -25,6 +25,13 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from api.agent_domain_policy import (
+    DOMAIN_BLOCK_RESPONSE,
+    DOMAIN_CLARIFY_RESPONSE,
+    MIXED_DOMAIN_INSTRUCTION,
+    AgentDomainClassification,
+    analyze_agent_domain,
+)
 from api.agent_governance import (
     AgentBudgetExceeded,
     AgentBudgetState,
@@ -191,6 +198,26 @@ def _with_response_preferences(base: str, prefs: AgentResponsePreferences | None
     return base + "\n\n---\n\n" + preference_section
 
 
+def _with_domain_guardrail_instruction(base: str, classification: AgentDomainClassification) -> str:
+    if not classification.contains_unsupported_request:
+        return base
+    return base + "\n\n---\n\n## Domain Guardrail\n\n" + MIXED_DOMAIN_INSTRUCTION
+
+
+def _domain_guardrail_text(classification: AgentDomainClassification) -> str:
+    if classification.decision == "clarify":
+        return DOMAIN_CLARIFY_RESPONSE
+    return DOMAIN_BLOCK_RESPONSE
+
+
+def _domain_done_meta(classification: AgentDomainClassification) -> dict[str, Any]:
+    return {
+        "domain_decision": classification.decision,
+        "domain_reason": classification.reason,
+        "domain_contains_unsupported_request": classification.contains_unsupported_request,
+    }
+
+
 def _build_response_preferences_section(prefs: AgentResponsePreferences | None) -> str:
     if prefs is None:
         return ""
@@ -341,6 +368,40 @@ def _done_payload(base: dict[str, Any], timings: dict[str, Any], turn_started: f
     }
     out["timings"] = compact
     return out
+
+
+def _domain_guardrail_stream(classification: AgentDomainClassification):
+    yield _sse_ping()
+    yield _sse("delta", {"text": _domain_guardrail_text(classification)})
+    yield _sse("done", {"usage": {}, **_domain_done_meta(classification)})
+
+
+def _domain_guardrail_stream_v2(req: AgentChatRequestV2, classification: AgentDomainClassification):
+    from api import memory_db
+    from api.memory_manager import finalize_turn, finalize_turn_async
+
+    turn_started = time.perf_counter()
+    timings = _new_agent_timings()
+    text = _domain_guardrail_text(classification)
+    session = memory_db.get_or_create_session(req.session_id)
+    session_id = str(session["session_id"])
+    turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+    user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
+    assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time(), **turn_meta}
+    finalize_turn_fn = finalize_turn if req.finalize_synchronously else finalize_turn_async
+
+    yield _sse_ping()
+    timings["first_token_ms"] = _elapsed_ms(turn_started)
+    yield _sse("delta", {"text": text})
+    finalize_turn_fn(session_id, user_msg, assistant_msg)
+    yield _sse(
+        "done",
+        _done_payload(
+            {"usage": {}, "session_id": session_id, **_domain_done_meta(classification)},
+            timings,
+            turn_started,
+        ),
+    )
 
 
 def _agent_chat_job_cache_key(req: AgentChatJobRequest) -> str:
@@ -932,12 +993,13 @@ def _dedupe_tool_calls(calls: list[dict]) -> list[dict]:
 def _execute_tools_parallel(
     calls: list[dict],
     actor: Actor | None = None,
+    domain_classification: AgentDomainClassification | None = None,
 ) -> list[tuple[dict, str, float]]:
     """Execute deduplicated tool calls in parallel and measure runtime."""
     if len(calls) == 1:
         c = calls[0]
         started = time.perf_counter()
-        result = _execute_tool_for_actor(c["name"], c["args"], actor)
+        result = _execute_tool_for_actor(c["name"], c["args"], actor, domain_classification=domain_classification)
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         return [(c, result, elapsed_ms)]
 
@@ -951,6 +1013,7 @@ def _execute_tools_parallel(
                 c["args"],
                 actor,
                 c.get("_provenance_context"),
+                domain_classification,
             )
             futures.append((c, fut, started))
         out: list[tuple[dict, str, float]] = []
@@ -964,6 +1027,7 @@ def _execute_tools_parallel(
 def _execute_tools_parallel_keepalive(
     calls: list[dict],
     actor: Actor | None = None,
+    domain_classification: AgentDomainClassification | None = None,
 ):
     """Execute tool calls while yielding None periodically as an SSE keepalive signal."""
     if not calls:
@@ -979,6 +1043,7 @@ def _execute_tools_parallel_keepalive(
                 c["args"],
                 actor,
                 c.get("_provenance_context"),
+                domain_classification,
             )
             future_meta[fut] = (c, started)
 
@@ -1032,7 +1097,13 @@ def _execute_tool_for_actor(
     args: dict,
     actor: Actor | None,
     provenance_context: dict[str, Any] | None = None,
+    domain_classification: AgentDomainClassification | None = None,
 ) -> str:
+    if domain_classification is not None and domain_classification.decision != "allow":
+        return _blocked_tool_result(
+            name,
+            RuntimeError(f"Agent domain guardrail blocked tool execution: {domain_classification.reason}"),
+        )
     params = inspect.signature(execute_tool).parameters.values()
     param_names = {p.name for p in params}
     supports_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
@@ -1828,13 +1899,24 @@ def _attach_tool_provenance_context(
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest, actor: ActorDep):
     tool_actor = agent_actor(actor)
+    latest_user_text = _extract_last_user_text(req.messages)
+    domain_classification = analyze_agent_domain(latest_user_text, screen_context=req.screen_context)
+    if domain_classification.decision != "allow":
+        return StreamingResponse(
+            _domain_guardrail_stream(domain_classification),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
+
     provider, api_key = _read_llm_api_key()
     reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
-    instructions = _with_response_preferences(
-        _build_agent_instructions(screen_context=req.screen_context),
-        req.response_preferences,
+    instructions = _with_domain_guardrail_instruction(
+        _with_response_preferences(
+            _build_agent_instructions(screen_context=req.screen_context),
+            req.response_preferences,
+        ),
+        domain_classification,
     )
-    latest_user_text = _extract_last_user_text(req.messages)
     casual = _is_casual(latest_user_text)
     workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
     tool_defs = _tool_definitions_for_provider(provider)
@@ -2173,7 +2255,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             workflow_run_id=None,
                             source="agent.chat",
                         )
-                        for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
+                        for tool_item in _execute_tools_parallel_keepalive(
+                            pending_calls,
+                            actor=tool_actor,
+                            domain_classification=domain_classification,
+                        ):
                             if tool_item is None:
                                 yield _sse_ping()
                                 continue
@@ -2376,6 +2462,14 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     assembles optimal context from a rolling summary, verbatim window,
     and retrieval hits.
     """
+    domain_classification = analyze_agent_domain(req.message, screen_context=req.screen_context)
+    if domain_classification.decision != "allow":
+        return StreamingResponse(
+            _domain_guardrail_stream_v2(req, domain_classification),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
+
     casual = _is_casual(req.message)
     workflow_name, workflow_ticker = _detect_workflow(req.message)
     if workflow_name and req.allow_workflow_handoff:
@@ -2449,9 +2543,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
         provider, api_key = _read_llm_api_key()
         reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
-        instructions = _with_response_preferences(
-            _build_agent_instructions(screen_context=req.screen_context),
-            req.response_preferences,
+        instructions = _with_domain_guardrail_instruction(
+            _with_response_preferences(
+                _build_agent_instructions(screen_context=req.screen_context),
+                req.response_preferences,
+            ),
+            domain_classification,
         )
         client = _get_provider_client(provider, api_key)
         budget = AgentBudgetState()
@@ -2502,7 +2599,11 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             )
             portfolio_result = ""
             portfolio_elapsed_ms = 0.0
-            for tool_item in _execute_tools_parallel_keepalive([call_info], actor=tool_actor):
+            for tool_item in _execute_tools_parallel_keepalive(
+                [call_info],
+                actor=tool_actor,
+                domain_classification=domain_classification,
+            ):
                 if tool_item is None:
                     yield _sse_ping()
                     continue
@@ -3088,7 +3189,11 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             workflow_run_id=None,
                             source="agent.chat.v2",
                         )
-                        for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
+                        for tool_item in _execute_tools_parallel_keepalive(
+                            pending_calls,
+                            actor=tool_actor,
+                            domain_classification=domain_classification,
+                        ):
                             if tool_item is None:
                                 yield _sse_ping()
                                 continue
