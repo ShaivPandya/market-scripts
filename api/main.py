@@ -102,6 +102,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.signal_aggregator", "signal_aggregator", "macro"),
     ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
     ("api.routers.ontology", "ontology", "ontology"),
+    ("api.routers.source_ingestion", "source_ingestion", "ontology"),
     ("api.routers.risk", "risk", "risk"),
     ("api.routers.dcf", "dcf", "equities"),
 ]

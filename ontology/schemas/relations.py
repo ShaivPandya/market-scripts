@@ -119,6 +119,14 @@ RECOMMENDATION_HAS_TRADE_PROPOSAL: RelationType = "recommendation_has_trade_prop
 RECOMMENDATION_USES_POSITION_RISK_SNAPSHOT: RelationType = "recommendation_uses_position_risk_snapshot"
 RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationType = "recommendation_uses_portfolio_risk_snapshot"
 DOCUMENT_ARTIFACT_MATERIALIZES_RESEARCH_OBJECT: RelationType = "document_artifact_materializes_research_object"
+SOURCE_MANIFEST_GOVERNS_SOURCE_RECORD: RelationType = "source_manifest_governs_source_record"
+SOURCE_RECORD_PRODUCES_DOCUMENT_ARTIFACT: RelationType = "source_record_produces_document_artifact"
+SOURCE_RECORD_PRODUCES_MEDIA_ARTIFACT: RelationType = "source_record_produces_media_artifact"
+ARTIFACT_HAS_EXTRACTION_RUN: RelationType = "artifact_has_extraction_run"
+EXTRACTION_RUN_PRODUCES_OBSERVATION: RelationType = "extraction_run_produces_observation"
+EXTRACTION_RUN_PRODUCES_CLASSIFICATION: RelationType = "extraction_run_produces_classification"
+EXTRACTION_RUN_PRODUCES_PATTERN_DETECTION: RelationType = "extraction_run_produces_pattern_detection"
+ANALYST_FEEDBACK_TARGETS_OBJECT: RelationType = "analyst_feedback_targets_object"
 EQUITY_OVERVIEW_COVERS_ISSUER: RelationType = "equity_overview_covers_issuer"
 EQUITY_OVERVIEW_COVERS_INSTRUMENT: RelationType = "equity_overview_covers_instrument"
 EQUITY_OVERVIEW_HAS_FINANCIAL_PROFILE: RelationType = "equity_overview_has_financial_profile"
@@ -1010,6 +1018,72 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id", "document_role"}),
         optional=True,
         allowed_target_types=frozenset({"EquityOverview", "ThesisDocument", "ManagementQualityAssessment"}),
+    ),
+    SOURCE_MANIFEST_GOVERNS_SOURCE_RECORD: RelationDefinition(
+        name=SOURCE_MANIFEST_GOVERNS_SOURCE_RECORD,
+        source_type="SourceManifest",
+        target_type="SourceRecord",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    SOURCE_RECORD_PRODUCES_DOCUMENT_ARTIFACT: RelationDefinition(
+        name=SOURCE_RECORD_PRODUCES_DOCUMENT_ARTIFACT,
+        source_type="SourceRecord",
+        target_type="DocumentArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    SOURCE_RECORD_PRODUCES_MEDIA_ARTIFACT: RelationDefinition(
+        name=SOURCE_RECORD_PRODUCES_MEDIA_ARTIFACT,
+        source_type="SourceRecord",
+        target_type="MediaArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ARTIFACT_HAS_EXTRACTION_RUN: RelationDefinition(
+        name=ARTIFACT_HAS_EXTRACTION_RUN,
+        source_type="DocumentArtifact",
+        target_type="ExtractionRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"DocumentArtifact", "MediaArtifact"}),
+    ),
+    EXTRACTION_RUN_PRODUCES_OBSERVATION: RelationDefinition(
+        name=EXTRACTION_RUN_PRODUCES_OBSERVATION,
+        source_type="ExtractionRun",
+        target_type="Observation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EXTRACTION_RUN_PRODUCES_CLASSIFICATION: RelationDefinition(
+        name=EXTRACTION_RUN_PRODUCES_CLASSIFICATION,
+        source_type="ExtractionRun",
+        target_type="Classification",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EXTRACTION_RUN_PRODUCES_PATTERN_DETECTION: RelationDefinition(
+        name=EXTRACTION_RUN_PRODUCES_PATTERN_DETECTION,
+        source_type="ExtractionRun",
+        target_type="PatternDetection",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ANALYST_FEEDBACK_TARGETS_OBJECT: RelationDefinition(
+        name=ANALYST_FEEDBACK_TARGETS_OBJECT,
+        source_type="AnalystFeedback",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "target_object_uid"}),
+        optional=True,
+        allowed_target_types=PROVENANCE_ENDPOINT_TYPES,
     ),
     EQUITY_OVERVIEW_COVERS_ISSUER: RelationDefinition(
         name=EQUITY_OVERVIEW_COVERS_ISSUER,

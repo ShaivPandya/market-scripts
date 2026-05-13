@@ -2838,6 +2838,25 @@ def _dispatch(
         top_k = int(args.get("top_k", 8))
         return search_agent_capabilities(query, top_k=top_k), {"cache": "n/a"}
 
+    if name in {"list_source_artifacts", "get_source_artifact", "summarize_extracted_observations"}:
+        from ontology.source_ingestion import SourceIngestionService, require_multimodal_ingestion_enabled
+
+        require_multimodal_ingestion_enabled()
+        service = SourceIngestionService()
+        if name == "list_source_artifacts":
+            return service.list_artifacts(
+                artifact_type=str(args.get("artifact_type") or "all"),
+                manifest_id=args.get("manifest_id"),
+                ticker=args.get("ticker"),
+                limit=int(args.get("limit") or 25),
+            ), {"cache": "n/a"}
+        if name == "get_source_artifact":
+            return service.get_artifact_detail(str(args.get("artifact_uid") or "")), {"cache": "n/a"}
+        return service.summarize_observations(
+            artifact_uid=args.get("artifact_uid"),
+            limit=int(args.get("limit") or 20),
+        ), {"cache": "n/a"}
+
     if name == "get_liquidity":
         key = "agent_liquidity"
 

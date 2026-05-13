@@ -237,6 +237,18 @@ JOB_SPECS: dict[str, JobSpec] = {
         stale_grace_s=_env_int("ASYNC_STALE_GRACE_DOCUMENT_GENERATION_SECONDS", 60),
         error_message="Document generation failed",
     ),
+    "source_extraction": JobSpec(
+        job_type="source_extraction",
+        request_model="api.source_ingestion_jobs.SourceExtractionJobRequest",
+        compute_func="api.source_ingestion_jobs.run_source_extraction_job",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_SOURCE_EXTRACTION", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_SOURCE_EXTRACTION_SECONDS", 10 * 60),
+        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_SOURCE_EXTRACTION_SECONDS", 60),
+        error_message="Source extraction failed",
+    ),
     "cache_warm": JobSpec(
         job_type="cache_warm",
         request_model=None,

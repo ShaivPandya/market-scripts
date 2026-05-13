@@ -14,11 +14,13 @@ from ontology.schemas.identity import (
     action_item_id,
     action_run_id,
     agent_session_ref_id,
+    analyst_feedback_id,
     approval_id,
     asset_id,
     audit_event_id,
     catalyst_id,
     citation_id,
+    classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
     document_artifact_id,
@@ -27,6 +29,7 @@ from ontology.schemas.identity import (
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    extraction_run_id,
     extrinsic_sensitivity_id,
     factor_score_id,
     forward_outlook_id,
@@ -47,14 +50,17 @@ from ontology.schemas.identity import (
     management_quality_scorecard_row_id,
     management_quality_setback_id,
     market_regime_snapshot_id,
+    media_artifact_id,
     missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
+    observation_id,
     ontology_run_ref_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
     optimization_run_id,
+    pattern_detection_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
@@ -73,6 +79,7 @@ from ontology.schemas.identity import (
     signal_factor_score_id,
     signal_id,
     source_freshness_id,
+    source_manifest_id,
     source_record_object_id,
     supply_chain_relationship_id,
     supply_demand_outlook_id,
@@ -93,11 +100,13 @@ from ontology.schemas.objects import (
     ActionItemV1,
     ActionRunV1,
     AgentSessionRefV1,
+    AnalystFeedbackV1,
     ApprovalV1,
     AssetV1,
     AuditEventV1,
     CatalystV1,
     CitationV1,
+    ClassificationV1,
     CompanyFinancialProfileV1,
     ComputedSnapshotRefV1,
     DocumentArtifactV1,
@@ -106,6 +115,7 @@ from ontology.schemas.objects import (
     EvidenceV1,
     ExecutedActionV1,
     ExecutedDecisionRecordV1,
+    ExtractionRunV1,
     ExtrinsicSensitivityV1,
     FactorScoreV1,
     ForwardOutlookV1,
@@ -126,15 +136,18 @@ from ontology.schemas.objects import (
     ManagementQualityScorecardRowV1,
     ManagementQualitySetbackV1,
     MarketRegimeSnapshotV1,
+    MediaArtifactV1,
     MissingInformationRequirementV1,
     ModelCallRefV1,
     ObjectVersionRefV1,
+    ObservationV1,
     OntologyObjectV1,
     OntologyRunRefV1,
     OptimizationActionSnapshotV1,
     OptimizationAlertV1,
     OptimizationMissionV1,
     OptimizationRunV1,
+    PatternDetectionV1,
     PolicyGateResultV1,
     PortfolioRiskSnapshotV1,
     PortfolioV1,
@@ -153,6 +166,7 @@ from ontology.schemas.objects import (
     SignalFactorScoreV1,
     SignalV1,
     SourceFreshnessV1,
+    SourceManifestV1,
     SourceRecordV1,
     SupplyChainRelationshipV1,
     SupplyDemandOutlookV1,
@@ -233,7 +247,14 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "WorkflowArtifact": WorkflowArtifactV1,
     "Recommendation": RecommendationV1,
     "ReportRun": ReportRunV1,
+    "SourceManifest": SourceManifestV1,
     "DocumentArtifact": DocumentArtifactV1,
+    "MediaArtifact": MediaArtifactV1,
+    "ExtractionRun": ExtractionRunV1,
+    "Observation": ObservationV1,
+    "Classification": ClassificationV1,
+    "PatternDetection": PatternDetectionV1,
+    "AnalystFeedback": AnalystFeedbackV1,
     "EquityOverview": EquityOverviewV1,
     "CompanyFinancialProfile": CompanyFinancialProfileV1,
     "ExtrinsicSensitivity": ExtrinsicSensitivityV1,
@@ -273,7 +294,14 @@ OPTIONAL_NODE_TYPES = {
     "WorkflowArtifact",
     "Recommendation",
     "ReportRun",
+    "SourceManifest",
     "DocumentArtifact",
+    "MediaArtifact",
+    "ExtractionRun",
+    "Observation",
+    "Classification",
+    "PatternDetection",
+    "AnalystFeedback",
     "ProvenanceEvent",
     "RelationVersionRef",
     "SchemaDefinitionRef",
@@ -695,8 +723,22 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         )
     if isinstance(model, ReportRunV1):
         return report_run_id(model.report_id)
+    if isinstance(model, SourceManifestV1):
+        return source_manifest_id(model.manifest_id)
     if isinstance(model, DocumentArtifactV1):
         return document_artifact_id(model.document_type, model.document_id)
+    if isinstance(model, MediaArtifactV1):
+        return media_artifact_id(model.media_id)
+    if isinstance(model, ExtractionRunV1):
+        return extraction_run_id(model.extraction_run_id)
+    if isinstance(model, ObservationV1):
+        return observation_id(model.observation_id)
+    if isinstance(model, ClassificationV1):
+        return classification_id(model.classification_id)
+    if isinstance(model, PatternDetectionV1):
+        return pattern_detection_id(model.pattern_id)
+    if isinstance(model, AnalystFeedbackV1):
+        return analyst_feedback_id(model.feedback_id)
     if isinstance(model, EquityOverviewV1):
         return equity_overview_id(model.overview_id)
     if isinstance(model, CompanyFinancialProfileV1):
