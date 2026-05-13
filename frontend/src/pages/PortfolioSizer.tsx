@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { Info } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/components/shared/FormControls"
@@ -417,6 +418,7 @@ export function PortfolioSizer() {
   const [errorMessage, setErrorMessage] = useState<string | null>(cachedState?.errorMessage ?? null)
   const [tab, setTab] = useState<SizerTab>("Weights")
   const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
+  const [showInfo, setShowInfo] = useState(false)
   const [currentHoldings, setCurrentHoldings] = useState<Record<string, number>>({})
   const runSeqRef = useRef(0)
 
@@ -739,7 +741,16 @@ export function PortfolioSizer() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Sizer</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Sizer</h1>
+          <button
+            onClick={() => setShowInfo(v => !v)}
+            className="text-gray-300 hover:text-gray-500 transition-colors"
+            title="What is this?"
+          >
+            <Info size={16} />
+          </button>
+        </div>
         <p className="text-sm text-gray-400 mt-0.5">Conviction-based portfolio sizing with constraint optimization and equity beta hedging</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <DecisionStateBadge state={String(data?.decision_state ?? "analysis")} />
@@ -747,6 +758,13 @@ export function PortfolioSizer() {
           <QualityStateBadge state={String(data?.quality_state ?? "ok")} />
           <span className="text-xs text-gray-500">Decision support only. Sizing deltas are not orders and are not sent to a broker.</span>
         </div>
+        {showInfo && (
+          <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
+            Converts ticker convictions and optional group convictions into target weights, quantities, hedge legs, and
+            constraint utilization using book size, gross leverage, realized volatility, and the selected equity beta
+            basket. Outputs are decision support only; sizing deltas estimate trade impact but do not submit orders.
+          </p>
+        )}
       </div>
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5">

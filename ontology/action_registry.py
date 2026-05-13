@@ -153,6 +153,7 @@ ProviderEgressMode = Literal[
 ]
 ToolAuditLevel = Literal["standard", "enhanced", "financial_critical"]
 ToolFailureMode = Literal["fail_closed", "partial_allowed"]
+ToolLifecycleState = Literal["draft", "enabled", "deprecated", "disabled"]
 ActionEffectKind = Literal["read_only", "approval_gated", "direct_mutation"]
 ActionRiskClass = Literal["none", "low", "financial"]
 ActionExecutionMode = Literal["direct", "approval_required", "break_glass"]
@@ -3325,6 +3326,7 @@ class ToolExposure:
     rate_limit: Mapping[str, Any] = field(default_factory=dict)
     audit_level: ToolAuditLevel = "standard"
     failure_mode: ToolFailureMode = "partial_allowed"
+    lifecycle_state: ToolLifecycleState = "enabled"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -3873,6 +3875,7 @@ def _build_tool_exposure(spec: dict[str, Any]) -> ToolExposure:
         rate_limit=dict(spec.get("rate_limit") or _tool_rate_limit(access_mode)),
         audit_level=cast(ToolAuditLevel, str(spec.get("audit_level") or _tool_audit_level(access_mode, sensitivity))),
         failure_mode=cast(ToolFailureMode, str(spec.get("failure_mode") or _tool_failure_mode(access_mode))),
+        lifecycle_state=cast(ToolLifecycleState, str(spec.get("lifecycle_state") or "enabled")),
     )
 
 
@@ -3898,7 +3901,7 @@ def iter_tool_exposures(*, agent_exposed_only: bool = False) -> list[ToolExposur
     exposures = list(_TOOL_EXPOSURES.values())
     if not agent_exposed_only:
         return exposures
-    return [tool for tool in exposures if tool.agent_exposed]
+    return [tool for tool in exposures if tool.agent_exposed and tool.lifecycle_state != "disabled"]
 
 
 def agent_tool_names() -> set[str]:
@@ -3907,7 +3910,7 @@ def agent_tool_names() -> set[str]:
 
 def is_agent_tool_exposed(tool_name: str) -> bool:
     exposure = _TOOL_EXPOSURES.get(tool_name)
-    return bool(exposure and exposure.agent_exposed)
+    return bool(exposure and exposure.agent_exposed and exposure.lifecycle_state != "disabled")
 
 
 def list_tool_exposures(*, agent_exposed_only: bool = False) -> list[dict[str, Any]]:
@@ -3936,6 +3939,7 @@ def list_tool_exposures(*, agent_exposed_only: bool = False) -> list[dict[str, A
                 "rate_limit": dict(tool.rate_limit),
                 "audit_level": tool.audit_level,
                 "failure_mode": tool.failure_mode,
+                "lifecycle_state": tool.lifecycle_state,
             }
         )
     return rows

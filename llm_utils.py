@@ -10,7 +10,8 @@ from typing import Any
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
-PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI}
+PROVIDER_LOCAL = "local"
+PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI, PROVIDER_LOCAL}
 
 MODEL_LOW = "low"
 MODEL_MID = "mid"
@@ -64,6 +65,11 @@ DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER = {
         MODEL_MID: REASONING_HIGH,
         MODEL_HIGH: REASONING_HIGH,
     },
+    PROVIDER_LOCAL: {
+        MODEL_LOW: REASONING_NONE,
+        MODEL_MID: REASONING_NONE,
+        MODEL_HIGH: REASONING_NONE,
+    },
 }
 
 ANTHROPIC_DEFAULT_MODELS = {
@@ -81,10 +87,16 @@ GEMINI_DEFAULT_MODELS = {
     MODEL_MID: "gemini-3.1-pro-preview-customtools",
     MODEL_HIGH: "gemini-3.1-pro-preview-customtools",
 }
+LOCAL_DEFAULT_MODELS = {
+    MODEL_LOW: "local-low",
+    MODEL_MID: "local-mid",
+    MODEL_HIGH: "local-high",
+}
 DEFAULT_MODELS_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: ANTHROPIC_DEFAULT_MODELS,
     PROVIDER_OPENAI: OPENAI_DEFAULT_MODELS,
     PROVIDER_GEMINI: GEMINI_DEFAULT_MODELS,
+    PROVIDER_LOCAL: LOCAL_DEFAULT_MODELS,
 }
 
 # Compatibility aliases for older call sites. These now represent tiers.
@@ -119,12 +131,19 @@ _MODEL_ENV_BY_PROVIDER = {
         MODEL_MID: "GEMINI_MODEL_MID",
         MODEL_HIGH: "GEMINI_MODEL_HIGH",
     },
+    PROVIDER_LOCAL: {
+        MODEL_LOW: "LOCAL_LLM_MODEL_LOW",
+        MODEL_MID: "LOCAL_LLM_MODEL_MID",
+        MODEL_HIGH: "LOCAL_LLM_MODEL_HIGH",
+    },
 }
 _API_KEY_ENV_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
     PROVIDER_OPENAI: "OPENAI_API_KEY",
     PROVIDER_GEMINI: "GEMINI_API_KEY",
+    PROVIDER_LOCAL: "LOCAL_LLM_API_KEY",
 }
+LOCAL_LLM_BASE_URL_ENV = "LOCAL_LLM_BASE_URL"
 _CLIENT_CACHE: dict[tuple[str, str | None], Any] = {}
 _CLIENT_FACTORY_CACHE: dict[str, Any] = {}
 _CLIENT_LOCK = threading.Lock()
@@ -148,7 +167,7 @@ def _stored_provider() -> str | None:
 def selected_provider() -> str:
     provider = (_stored_provider() or os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', 'gemini', or 'local'")
     return provider
 
 
@@ -161,12 +180,24 @@ def get_api_key(provider: str | None = None) -> str | None:
     return value or None
 
 
+def get_local_base_url() -> str | None:
+    value = (os.environ.get(LOCAL_LLM_BASE_URL_ENV) or "").strip().strip("\"'")
+    return value or None
+
+
 def has_llm_api_key(provider: str | None = None) -> bool:
-    return get_api_key(provider) is not None
+    resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_LOCAL:
+        return get_local_base_url() is not None
+    return get_api_key(resolved_provider) is not None
 
 
 def require_api_key(provider: str | None = None) -> str:
     resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_LOCAL:
+        if not get_local_base_url():
+            raise RuntimeError(f"{LOCAL_LLM_BASE_URL_ENV} is required for LLM_PROVIDER={resolved_provider}")
+        return get_api_key(resolved_provider) or "local"
     api_key = get_api_key(resolved_provider)
     if not api_key:
         raise RuntimeError(f"{api_key_env(resolved_provider)} is required for LLM_PROVIDER={resolved_provider}")
@@ -206,6 +237,8 @@ def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
 
 def reasoning_effort_options(provider: str, model: str | None = None) -> list[str]:
     resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_LOCAL:
+        return [REASONING_NONE]
     if resolved_provider == PROVIDER_OPENAI:
         return [REASONING_NONE, REASONING_MEDIUM, REASONING_XHIGH]
     if resolved_provider == PROVIDER_GEMINI:
@@ -231,6 +264,17 @@ def resolve_model(model: str, provider: str | None = None) -> str:
 def get_llm_client(provider: str | None = None, api_key: str | None = None) -> Any:
     resolved_provider = _normalize_provider(provider)
     resolved_key = api_key if api_key is not None else get_api_key(resolved_provider)
+    if resolved_provider == PROVIDER_LOCAL:
+        base_url = get_local_base_url()
+        if not base_url:
+            raise RuntimeError(f"{LOCAL_LLM_BASE_URL_ENV} is required for LLM_PROVIDER={resolved_provider}")
+        from openai import OpenAI
+
+        cache_key = (resolved_provider, f"{base_url}|{resolved_key or 'local'}")
+        with _CLIENT_LOCK:
+            if cache_key not in _CLIENT_CACHE:
+                _CLIENT_CACHE[cache_key] = OpenAI(api_key=resolved_key or "local", base_url=base_url)
+            return _CLIENT_CACHE[cache_key]
     cache_key = (resolved_provider, resolved_key)
     factory = _client_factory(resolved_provider)
 
@@ -451,7 +495,7 @@ def call_llm_text(
             max_web_search_uses=max_web_search_uses,
             reasoning_effort=reasoning_effort,
         )
-    elif resolved_provider == PROVIDER_OPENAI:
+    elif resolved_provider in {PROVIDER_OPENAI, PROVIDER_LOCAL}:
         response = _call_openai_response(
             input_items=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
             model=model,
@@ -459,6 +503,7 @@ def call_llm_text(
             max_tokens=max_tokens,
             system=system,
             allowed_domains=allowed_domains,
+            provider=resolved_provider,
             reasoning_effort=reasoning_effort,
         )
     else:
@@ -512,7 +557,7 @@ def call_llm_pdf_text(
             system=system,
             reasoning_effort=reasoning_effort,
         )
-    elif resolved_provider == PROVIDER_OPENAI:
+    elif resolved_provider in {PROVIDER_OPENAI, PROVIDER_LOCAL}:
         response = _call_openai_response(
             input_items=[
                 {
@@ -531,6 +576,7 @@ def call_llm_pdf_text(
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
+            provider=resolved_provider,
             reasoning_effort=reasoning_effort,
         )
     else:
@@ -648,10 +694,12 @@ def _call_openai_response(
     max_tokens: int,
     system: str | None = None,
     allowed_domains: Sequence[str] | None = None,
+    provider: str = PROVIDER_OPENAI,
     reasoning_effort: str | None = None,
 ) -> Any:
-    client = get_llm_client(PROVIDER_OPENAI, api_key=api_key)
-    resolved_model = resolve_model(model, PROVIDER_OPENAI)
+    resolved_provider = _normalize_provider(provider)
+    client = get_llm_client(resolved_provider, api_key=api_key)
+    resolved_model = resolve_model(model, resolved_provider)
     kwargs: dict[str, Any] = {
         "model": resolved_model,
         "input": input_items,
@@ -659,14 +707,14 @@ def _call_openai_response(
     }
     apply_reasoning_config(
         kwargs,
-        provider=PROVIDER_OPENAI,
+        provider=resolved_provider,
         model=resolved_model,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
     )
     if system:
         kwargs["instructions"] = system
-    if allowed_domains is not None:
+    if allowed_domains is not None and resolved_provider == PROVIDER_OPENAI:
         kwargs["tools"] = [
             {
                 "type": "web_search",
@@ -675,6 +723,8 @@ def _call_openai_response(
             }
         ]
         kwargs["include"] = ["web_search_call.action.sources"]
+    elif allowed_domains is not None:
+        raise RuntimeError("Local LLM provider does not support managed web search in llm_utils")
     return client.responses.create(**kwargs)
 
 
@@ -728,6 +778,9 @@ def apply_reasoning_config(
         kwargs["reasoning"] = {"effort": effort}
         return
 
+    if resolved_provider == PROVIDER_LOCAL:
+        return
+
     if resolved_provider == PROVIDER_GEMINI:
         config = dict(kwargs.get("config") or {})
         config["thinking_config"] = {"thinking_level": effort}
@@ -754,7 +807,7 @@ def apply_reasoning_config(
 def _normalize_provider(provider: str | None) -> str:
     resolved = selected_provider() if provider is None else provider.strip().lower()
     if resolved not in PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'local'")
     return resolved
 
 
@@ -791,7 +844,9 @@ def _normalize_reasoning_effort(
     if resolved_provider == PROVIDER_ANTHROPIC and normalized == REASONING_NONE:
         return None
     options: Sequence[str]
-    if resolved_provider == PROVIDER_OPENAI:
+    if resolved_provider == PROVIDER_LOCAL:
+        options = (REASONING_NONE,)
+    elif resolved_provider == PROVIDER_OPENAI:
         options = OPENAI_REASONING_EFFORTS
     elif resolved_provider == PROVIDER_GEMINI:
         if normalized == REASONING_NONE:

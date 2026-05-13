@@ -48,6 +48,12 @@ class AgentDLPError(AgentGovernanceError):
         super().__init__(message, code="dlp_denied")
 
 
+class ModelGatewayDenied(AgentGovernanceError):
+    def __init__(self, message: str, *, manifest: Mapping[str, Any]):
+        super().__init__(message, code="model_gateway_denied")
+        self.manifest = dict(manifest)
+
+
 class ToolPolicyDenied(AgentGovernanceError):
     def __init__(self, message: str):
         super().__init__(message, code="tool_policy_denied")
@@ -90,6 +96,15 @@ class ToolPolicyDecision:
     data_sensitivity: str
     provider_egress: str
     audit_level: str
+
+
+@dataclass(frozen=True)
+class ModelGatewayDecision:
+    decision: str
+    reason: str
+    provider_egress: str
+    lifecycle_state: str
+    local_only_required: bool
 
 
 @dataclass
@@ -293,6 +308,161 @@ def classify_model_payload(payload: Mapping[str, Any]) -> str:
     return "public_market"
 
 
+_SENSITIVITY_ORDER = {
+    "public_market": 0,
+    "operational_private": 1,
+    "research_private": 2,
+    "portfolio_private": 3,
+    "account_private": 4,
+}
+_PRIVATE_SENSITIVITIES = {"portfolio_private", "research_private", "account_private", "operational_private"}
+
+
+def _max_sensitivity(values: list[str]) -> str:
+    return max(values or ["public_market"], key=lambda item: _SENSITIVITY_ORDER.get(item, 0))
+
+
+def _extract_tool_names(value: Any) -> set[str]:
+    names: set[str] = set()
+
+    def walk(item: Any) -> None:
+        if isinstance(item, Mapping):
+            name = item.get("name")
+            if isinstance(name, str) and name:
+                names.add(name)
+            function = item.get("function")
+            if isinstance(function, Mapping):
+                function_name = function.get("name")
+                if isinstance(function_name, str) and function_name:
+                    names.add(function_name)
+            for child in item.values():
+                walk(child)
+        elif isinstance(item, list | tuple):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return names
+
+
+def _tool_egress_requirements(stream_kwargs: Mapping[str, Any]) -> tuple[list[str], bool]:
+    tool_values: list[Any] = []
+    if stream_kwargs.get("tools") is not None:
+        tool_values.append(stream_kwargs.get("tools"))
+    config = stream_kwargs.get("config")
+    if isinstance(config, Mapping) and config.get("tools") is not None:
+        tool_values.append(config.get("tools"))
+
+    sensitivities: list[str] = []
+    local_only_required = False
+    for tool_name in set().union(*(_extract_tool_names(value) for value in tool_values)) if tool_values else set():
+        try:
+            from ontology.action_registry import get_tool_exposure
+
+            exposure = get_tool_exposure(tool_name)
+        except Exception:
+            continue
+        sensitivities.append(exposure.data_sensitivity)
+        if exposure.provider_egress == "local_only":
+            local_only_required = True
+    return sensitivities, local_only_required
+
+
+def _rule_matches(rule: Mapping[str, Any], *, provider: str, model: str | None, sensitivity: str) -> bool:
+    rule_provider = str(rule.get("provider") or "*").strip().lower()
+    rule_model = str(rule.get("model") or "*").strip()
+    rule_sensitivity = str(rule.get("data_sensitivity") or rule.get("sensitivity") or "").strip().lower()
+    provider_ok = rule_provider in {"*", provider.lower()}
+    model_ok = rule_model == "*" or (model is not None and rule_model == str(model))
+    sensitivity_ok = rule_sensitivity == sensitivity
+    return provider_ok and model_ok and sensitivity_ok
+
+
+def _model_gateway_decision(
+    *,
+    provider: str,
+    model: str | None,
+    sensitivity: str,
+    stream_kwargs: Mapping[str, Any],
+) -> ModelGatewayDecision:
+    try:
+        from api.llm_settings import get_gateway_policy_setting
+    except Exception:
+        policy = {
+            "private_egress_mode": "allow_with_warning",
+            "provider_lifecycle": {},
+            "model_lifecycle": {},
+            "denied_rules": [],
+        }
+    else:
+        policy = get_gateway_policy_setting()
+
+    provider_lifecycle = dict(policy.get("provider_lifecycle") or {})
+    model_lifecycle = dict(policy.get("model_lifecycle") or {})
+    lifecycle_state = str(
+        model_lifecycle.get(f"{provider}:{model}")
+        or model_lifecycle.get(str(model or ""))
+        or provider_lifecycle.get(provider)
+        or "enabled"
+    ).lower()
+    tool_sensitivities, tool_local_only = _tool_egress_requirements(stream_kwargs)
+    resolved_sensitivity = _max_sensitivity([sensitivity, *tool_sensitivities])
+    local_only_required = bool(stream_kwargs.get("local_only_required") or tool_local_only)
+    provider_l = provider.lower()
+
+    if lifecycle_state == "disabled":
+        return ModelGatewayDecision(
+            decision="blocked",
+            reason="model_or_provider_disabled",
+            provider_egress="external_blocked",
+            lifecycle_state=lifecycle_state,
+            local_only_required=local_only_required,
+        )
+    if local_only_required and provider_l != "local":
+        return ModelGatewayDecision(
+            decision="blocked",
+            reason="local_only_required",
+            provider_egress="external_blocked",
+            lifecycle_state=lifecycle_state,
+            local_only_required=True,
+        )
+    for rule in policy.get("denied_rules") or []:
+        if isinstance(rule, Mapping) and _rule_matches(
+            rule, provider=provider_l, model=model, sensitivity=resolved_sensitivity
+        ):
+            return ModelGatewayDecision(
+                decision="blocked",
+                reason="explicit_denied_rule",
+                provider_egress="external_blocked",
+                lifecycle_state=lifecycle_state,
+                local_only_required=local_only_required,
+            )
+
+    if provider_l == "local" or local_only_required:
+        provider_egress = "local_only"
+    elif resolved_sensitivity in _PRIVATE_SENSITIVITIES:
+        provider_egress = "external_allowed_raw_private"
+    else:
+        provider_egress = "external_allowed"
+
+    if lifecycle_state == "deprecated":
+        decision = "allowed_with_warning"
+        reason = "model_or_provider_deprecated"
+    elif provider_egress == "external_allowed_raw_private":
+        decision = "allowed_with_warning"
+        reason = "private_external_egress_allowed_with_warning"
+    else:
+        decision = "allowed"
+        reason = "allowed"
+    return ModelGatewayDecision(
+        decision=decision,
+        reason=reason,
+        provider_egress=provider_egress,
+        lifecycle_state=lifecycle_state,
+        local_only_required=local_only_required,
+    )
+
+
 def _estimate_model_cost_usd(provider: str, input_tokens: int, max_output_tokens: int) -> float:
     # Conservative estimate only; actual provider usage is recorded separately.
     provider_l = provider.lower()
@@ -316,7 +486,7 @@ def prepare_model_egress(
 
     sanitized_kwargs, findings = redact_secrets(dict(stream_kwargs))
     config = sanitized_kwargs.get("config") if isinstance(sanitized_kwargs.get("config"), Mapping) else {}
-    sensitivity = classify_model_payload(
+    payload_sensitivity = classify_model_payload(
         {
             "instructions": sanitized_kwargs.get("instructions")
             or sanitized_kwargs.get("system")
@@ -326,8 +496,13 @@ def prepare_model_egress(
             or sanitized_kwargs.get("contents"),
         }
     )
-    provider_egress = "external_allowed_raw_private" if sensitivity != "public_market" else "external_allowed"
     model = sanitized_kwargs.get("model")
+    gateway_decision = _model_gateway_decision(
+        provider=provider,
+        model=str(model) if model is not None else None,
+        sensitivity=payload_sensitivity,
+        stream_kwargs=sanitized_kwargs,
+    )
     max_output_tokens = int(
         sanitized_kwargs.get("max_tokens")
         or sanitized_kwargs.get("max_output_tokens")
@@ -346,8 +521,6 @@ def prepare_model_egress(
         }
     )
     estimated_cost_usd = _estimate_model_cost_usd(provider, estimated_input_tokens, max_output_tokens)
-    if budget is not None:
-        budget.check_model_call(estimated_input_tokens=estimated_input_tokens, estimated_cost_usd=estimated_cost_usd)
 
     context = execution_context_for_actor(actor)
     decision_id = _decision_id("egress")
@@ -356,8 +529,12 @@ def prepare_model_egress(
         "provider": provider,
         "model": model,
         "purpose": purpose,
-        "data_sensitivity": sensitivity,
-        "provider_egress": provider_egress,
+        "data_sensitivity": _max_sensitivity([payload_sensitivity, *_tool_egress_requirements(sanitized_kwargs)[0]]),
+        "provider_egress": gateway_decision.provider_egress,
+        "decision": gateway_decision.decision,
+        "decision_reason": gateway_decision.reason,
+        "lifecycle_state": gateway_decision.lifecycle_state,
+        "local_only_required": gateway_decision.local_only_required,
         "redaction_policy": REDACTION_POLICY,
         "egress_policy_version": EGRESS_POLICY_VERSION,
         "dlp_findings": findings,
@@ -368,12 +545,27 @@ def prepare_model_egress(
         "session_id": session_id,
         "workflow_run_id": workflow_run_id,
         "parent_event_id": parent_event_id,
-        "status": "allowed",
+        "status": "blocked" if gateway_decision.decision == "blocked" else "allowed",
     }
+    if gateway_decision.decision == "blocked":
+        _record_audit(
+            "agent.provider_egress",
+            "agent_governance",
+            "blocked",
+            actor=actor,
+            after_summary=manifest,
+            metadata={"decision_id": decision_id},
+            error=gateway_decision.reason,
+        )
+        raise ModelGatewayDenied(f"Model egress blocked: {gateway_decision.reason}", manifest=manifest)
+
+    if budget is not None:
+        budget.check_model_call(estimated_input_tokens=estimated_input_tokens, estimated_cost_usd=estimated_cost_usd)
+
     _record_audit(
         "agent.provider_egress",
         "agent_governance",
-        "allowed",
+        gateway_decision.decision,
         actor=actor,
         after_summary=manifest,
         metadata={"decision_id": decision_id},
@@ -389,6 +581,8 @@ def evaluate_tool_call(
     budget: AgentBudgetState | None = None,
 ) -> ToolPolicyDecision:
     context = execution_context_for_actor(actor)
+    if tool.lifecycle_state == "disabled":
+        raise ToolPolicyDenied(f"Tool {tool.tool_name} is disabled")
     roles = {role.lower() for role in context.roles}
     if "admin" not in roles and context.actor_type != "system":
         raise ToolPolicyDenied("Agent tool calls require the single-admin role")
@@ -467,6 +661,7 @@ def tool_governance_meta(tool: ToolExposure, decision: ToolPolicyDecision | None
         "rate_limit": dict(tool.rate_limit),
         "audit_level": tool.audit_level,
         "failure_mode": tool.failure_mode,
+        "lifecycle_state": tool.lifecycle_state,
     }
     if decision is not None:
         meta.update(

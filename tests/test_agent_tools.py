@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ import pytest
 
 from api import agent_tools
 from api.routers import agent as agent_router
+from ontology import action_registry
 from ontology.action_registry import ActionValidationError, iter_tool_exposures
 from ontology.policy import admin_actor, agent_actor
 
@@ -374,6 +376,7 @@ def test_agent_tool_exposures_have_complete_governance_metadata():
         assert tool.rate_limit.get("label")
         assert tool.audit_level in {"standard", "enhanced", "financial_critical"}
         assert tool.failure_mode in {"fail_closed", "partial_allowed"}
+        assert tool.lifecycle_state in {"draft", "enabled", "deprecated", "disabled"}
 
 
 def test_agent_capability_registry_does_not_expose_direct_mutations():
@@ -406,7 +409,29 @@ def test_execute_tool_rejects_non_exposed_direct_mutation():
     )
 
     assert "not exposed to the agent" in payload["error"]
-    assert payload["_meta"]["status"] == "error"
+    assert payload["_meta"]["status"] == "blocked"
+
+
+def test_disabled_tools_are_not_exposed_and_return_blocked(monkeypatch):
+    original = action_registry.get_tool_exposure("get_liquidity")
+    monkeypatch.setitem(action_registry._TOOL_EXPOSURES, "get_liquidity", replace(original, lifecycle_state="disabled"))
+
+    assert "get_liquidity" not in {tool.tool_name for tool in iter_tool_exposures(agent_exposed_only=True)}
+    assert action_registry.is_agent_tool_exposed("get_liquidity") is False
+    payload = json.loads(agent_tools.execute_tool("get_liquidity", {}))
+
+    assert payload["_meta"]["status"] == "blocked"
+    assert "not exposed to the agent" in payload["error"]
+
+
+def test_deprecated_tools_remain_exposed(monkeypatch):
+    original = action_registry.get_tool_exposure("get_liquidity")
+    monkeypatch.setitem(
+        action_registry._TOOL_EXPOSURES, "get_liquidity", replace(original, lifecycle_state="deprecated")
+    )
+
+    assert "get_liquidity" in {tool.tool_name for tool in iter_tool_exposures(agent_exposed_only=True)}
+    assert action_registry.is_agent_tool_exposed("get_liquidity") is True
 
 
 def test_agent_dispatch_proposal_tools_use_canonical_helper(monkeypatch):

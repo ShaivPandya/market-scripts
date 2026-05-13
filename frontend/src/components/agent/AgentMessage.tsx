@@ -1,7 +1,7 @@
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import type { ToolCall, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
-import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw } from "lucide-react"
+import type { ToolCall, EgressRecord, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
+import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw, ShieldAlert } from "lucide-react"
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 
 // ---------------------------------------------------------------------------
@@ -165,6 +165,32 @@ function ToolCallChip({ tc }: { tc: ToolCall }) {
   )
 }
 
+function EgressChip({ record }: { record: EgressRecord }) {
+  if (record.decision !== "allowed_with_warning" && record.decision !== "blocked") return null
+  const blocked = record.decision === "blocked"
+  const label = blocked ? "Model egress blocked" : "Private context sent"
+  const title = [
+    record.decisionReason,
+    record.dataSensitivity ? `Sensitivity: ${record.dataSensitivity}` : null,
+    record.provider ? `Provider: ${record.provider}` : null,
+    record.model ? `Model: ${record.model}` : null,
+    record.policyDecisionId ? `Policy decision: ${record.policyDecisionId}` : null,
+  ].filter(Boolean).join("\n")
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs mr-1.5 mb-1.5 ${
+        blocked
+          ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      }`}
+      title={title}
+    >
+      <ShieldAlert size={10} aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Message component
 // ---------------------------------------------------------------------------
@@ -199,6 +225,13 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
           <div className="flex flex-wrap mb-2">
             {message.toolCalls.map(tc => (
               <ToolCallChip key={tc.id} tc={tc} />
+            ))}
+          </div>
+        )}
+        {message.egressRecords && message.egressRecords.length > 0 && (
+          <div className="flex flex-wrap mb-2">
+            {message.egressRecords.map(record => (
+              <EgressChip key={record.id} record={record} />
             ))}
           </div>
         )}

@@ -26,6 +26,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from api.agent_governance import (
     AgentGovernanceError,
+    ToolPolicyDenied,
     ToolTimeoutError,
     blocked_tool_payload,
     evaluate_tool_call,
@@ -772,6 +773,7 @@ class AgentCapability:
     rate_limit: dict[str, Any] | None = None
     audit_level: str = "standard"
     failure_mode: str = "partial_allowed"
+    lifecycle_state: str = "enabled"
 
     @property
     def schema_safe(self) -> bool:
@@ -1300,6 +1302,7 @@ def _capability_from_exposure(tool) -> AgentCapability:
         rate_limit=dict(tool.rate_limit),
         audit_level=tool.audit_level,
         failure_mode=tool.failure_mode,
+        lifecycle_state=tool.lifecycle_state,
     )
 
 
@@ -1345,6 +1348,7 @@ def list_agent_capabilities() -> list[dict[str, Any]]:
                 "rate_limit": cap.rate_limit or {},
                 "audit_level": cap.audit_level,
                 "failure_mode": cap.failure_mode,
+                "lifecycle_state": cap.lifecycle_state,
             },
         }
         for cap in AGENT_CAPABILITIES
@@ -2396,7 +2400,7 @@ def execute_tool(
             return _stable_json_dumps(payload)
     try:
         if not is_agent_tool_exposed(name):
-            raise ValueError(f"Tool '{name}' is not exposed to the agent")
+            raise ToolPolicyDenied(f"Tool '{name}' is not exposed to the agent")
         exposure = get_tool_exposure(name)
         safe_args = _validated_tool_args(name, safe_args)
         decision = evaluate_tool_call(exposure, actor=actor, raw_args=safe_args)

@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from api.agent_governance import (
     AgentBudgetExceeded,
     AgentBudgetState,
+    ModelGatewayDenied,
     blocked_tool_payload,
     prepare_model_egress,
 )
@@ -48,12 +49,14 @@ from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
+    PROVIDER_LOCAL,
     PROVIDER_OPENAI,
     api_key_env,
     apply_reasoning_config,
     extract_text,
     get_llm_client,
     reasoning_effort_for_tier,
+    require_api_key,
     resolve_model,
     selected_provider,
 )
@@ -494,18 +497,10 @@ def _read_llm_api_key() -> tuple[str, str]:
         provider = selected_provider()
     except ValueError as exc:
         raise ConfigurationError(str(exc)) from exc
-    key_env = api_key_env(provider)
-    api_key = (os.environ.get(key_env) or "").strip().strip("\"'")
-    if not api_key:
-        raise ConfigurationError(key_env)
-
-    # A common misconfiguration is placing an OpenAI key into ANTHROPIC_API_KEY.
-    if provider == PROVIDER_ANTHROPIC and (
-        api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-"))
-    ):
-        raise ConfigurationError("ANTHROPIC_API_KEY (must be an Anthropic key beginning with sk-ant-)")
-
-    return provider, api_key
+    try:
+        return provider, require_api_key(provider)
+    except RuntimeError as exc:
+        raise ConfigurationError(str(exc)) from exc
 
 
 def _get_provider_client(provider: str, api_key: str):
@@ -1090,6 +1085,23 @@ def _blocked_tool_result(name: str, exc: Exception, *, status: str = "blocked") 
     return json.dumps(payload, sort_keys=True, default=str)
 
 
+def _blocked_model_egress_payload(exc: ModelGatewayDenied) -> dict[str, Any]:
+    manifest = exc.manifest
+    decision_id = str(manifest.get("policy_decision_id") or "model_egress")
+    return {
+        "name": "model_egress",
+        "id": decision_id,
+        "status": "blocked",
+        "message": str(exc),
+        "policy_decision_id": decision_id,
+        "decision": manifest.get("decision"),
+        "decision_reason": manifest.get("decision_reason"),
+        "data_sensitivity": manifest.get("data_sensitivity"),
+        "provider": manifest.get("provider"),
+        "model": manifest.get("model"),
+    }
+
+
 def _capability_names_from_search_result(result_str: str) -> list[str]:
     try:
         payload = json.loads(result_str)
@@ -1302,7 +1314,7 @@ def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
                     "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
                 }
             )
-        elif provider == PROVIDER_OPENAI:
+        elif provider in {PROVIDER_OPENAI, PROVIDER_LOCAL}:
             tools.append(
                 {
                     "type": "function",
@@ -1388,7 +1400,7 @@ def _model_stream_kwargs(
         kwargs["config"] = config
         return kwargs
 
-    resolved_model = resolve_model(MODEL_MID, PROVIDER_OPENAI)
+    resolved_model = resolve_model(MODEL_MID, provider)
     kwargs = {
         "model": resolved_model,
         "max_output_tokens": max_tokens,
@@ -1397,7 +1409,7 @@ def _model_stream_kwargs(
     }
     apply_reasoning_config(
         kwargs,
-        provider=PROVIDER_OPENAI,
+        provider=provider,
         model=resolved_model,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
@@ -1925,6 +1937,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         budget.record_model_usage(_usage_dict(final_message))
                         yield _sse("budget_update", budget.to_meta())
                         break
+                    except ModelGatewayDenied as exc:
+                        yield _sse("egress_recorded", exc.manifest)
+                        yield _sse("blocked", _blocked_model_egress_payload(exc))
+                        raise
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
                             locals().get("model_event_id"),
@@ -2058,6 +2074,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         budget.record_model_usage(_usage_dict(final_message))
                         yield _sse("budget_update", budget.to_meta())
                         break
+                    except ModelGatewayDenied as exc:
+                        yield _sse("egress_recorded", exc.manifest)
+                        yield _sse("blocked", _blocked_model_egress_payload(exc))
+                        raise
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
                             model_event_id,
@@ -2600,6 +2620,10 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     budget.record_model_usage(_usage_dict(final_message))
                     yield _sse("budget_update", budget.to_meta())
                     break
+                except ModelGatewayDenied as exc:
+                    yield _sse("egress_recorded", exc.manifest)
+                    yield _sse("blocked", _blocked_model_egress_payload(exc))
+                    raise
                 except Exception as retry_exc:
                     _record_model_timing(
                         timings,
@@ -2767,6 +2791,10 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         budget.record_model_usage(_usage_dict(final_message))
                         yield _sse("budget_update", budget.to_meta())
                         break
+                    except ModelGatewayDenied as exc:
+                        yield _sse("egress_recorded", exc.manifest)
+                        yield _sse("blocked", _blocked_model_egress_payload(exc))
+                        raise
                     except Exception as retry_exc:
                         _record_model_timing(
                             timings,
@@ -2946,6 +2974,10 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         budget.record_model_usage(_usage_dict(final_message))
                         yield _sse("budget_update", budget.to_meta())
                         break
+                    except ModelGatewayDenied as exc:
+                        yield _sse("egress_recorded", exc.manifest)
+                        yield _sse("blocked", _blocked_model_egress_payload(exc))
+                        raise
                     except Exception as retry_exc:
                         _record_model_timing(
                             timings,
