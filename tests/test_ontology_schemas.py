@@ -140,6 +140,34 @@ def test_account_schema_drops_deprecated_tax_lot_field():
     assert "tax_lot_data_available" not in account.properties
 
 
+def test_workflow_run_schema_accepts_persisted_timestamps():
+    run = normalize_node(
+        OntologyNode(
+            id="workflow_run:workflow_thesis_review_unit",
+            type="WorkflowRun",
+            label="thesis_review",
+            properties={
+                "schema_version": 1,
+                "run_id": "workflow:thesis_review:unit",
+                "workflow_name": "thesis_review",
+                "ticker": "mu",
+                "status": "running",
+                "started_at": "2026-05-13T16:08:59.403662+00:00",
+                "created_at": "2026-05-13T16:08:59.403662+00:00",
+                "updated_at": "2026-05-13T16:08:59.403662+00:00",
+                "ontology_run_id": "operational",
+            },
+            schema_name="WorkflowRun",
+            schema_version=1,
+        ),
+        allow_legacy=False,
+    )
+
+    assert run.properties["ticker"] == "MU"
+    assert run.properties["created_at"] == "2026-05-13T16:08:59.403662+00:00"
+    assert run.properties["updated_at"] == "2026-05-13T16:08:59.403662+00:00"
+
+
 def test_runtime_migration_schema_rejects_unregistered_fields():
     with pytest.raises(ValidationError):
         InvestmentIdeaV1(

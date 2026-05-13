@@ -1290,6 +1290,8 @@ class WorkflowRunV1(OntologySchemaBase):
     status: NonBlankStr = "running"
     started_at: str | None = None
     completed_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
     synthesis: str | None = None
     artifacts: dict[str, Any] | None = None
     tool_sections: list[Any] | None = None
@@ -1307,7 +1309,16 @@ class WorkflowRunV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("started_at", "completed_at", "synthesis", "provenance_event_id", "error", mode="before")
+    @field_validator(
+        "started_at",
+        "completed_at",
+        "created_at",
+        "updated_at",
+        "synthesis",
+        "provenance_event_id",
+        "error",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
