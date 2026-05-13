@@ -81,5 +81,6 @@ cloud-sql-proxy
 infra/gcp/config.sh
 
 # Local editor/agent config
-.claude/settings.local.json
+.claude/
+.jules/
 .vscode/
