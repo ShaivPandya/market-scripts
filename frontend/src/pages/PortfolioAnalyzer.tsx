@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { Bell, ChevronDown, ChevronRight, Play, Send, Sparkles, Square } from "lucide-react"
+import { Bell, ChevronDown, ChevronRight, Info, Play, Send, Sparkles, Square } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput } from "@/components/shared/FormControls"
@@ -1202,6 +1202,7 @@ export interface AnalyzerWorkbenchProps {
   universeMode?: "portfolio" | "portfolio_plus_ideas"
   title?: string
   subtitle?: string
+  infoText?: ReactNode
   stateKey?: readonly unknown[]
   showPageHeader?: boolean
   showContinuousOptimization?: boolean
@@ -1211,6 +1212,7 @@ export function AnalyzerWorkbench({
   universeMode = "portfolio",
   title = "Portfolio Analyzer",
   subtitle = "Course-of-action recommender for current portfolio directions. Analysis only; sizing remains in Portfolio Sizer.",
+  infoText,
   stateKey = ANALYZER_STATE_KEY,
   showPageHeader = true,
   showContinuousOptimization = false,
@@ -1235,6 +1237,7 @@ export function AnalyzerWorkbench({
   const [missionError, setMissionError] = useState<string | null>(null)
   const [missionNotice, setMissionNotice] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [showInfo, setShowInfo] = useState(false)
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
   const [briefTicker, setBriefTicker] = useState<string | null>(null)
   const [recommendedScenario, setRecommendedScenario] = useState<AnalyzerRecommendedScenarioResponse | null>(null)
@@ -1543,8 +1546,24 @@ export function AnalyzerWorkbench({
     <div>
       {showPageHeader && (
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">{title}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">{title}</h1>
+            {infoText && (
+              <button
+                onClick={() => setShowInfo(v => !v)}
+                className="text-gray-300 hover:text-gray-500 transition-colors"
+                title="What is this?"
+              >
+                <Info size={16} />
+              </button>
+            )}
+          </div>
           <p className="text-sm text-gray-400 mt-0.5">{subtitle}</p>
+          {showInfo && infoText && (
+            <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
+              {infoText}
+            </p>
+          )}
         </div>
       )}
 
@@ -1823,5 +1842,17 @@ export function AnalyzerWorkbench({
 }
 
 export function PortfolioAnalyzer() {
-  return <AnalyzerWorkbench showContinuousOptimization />
+  return (
+    <AnalyzerWorkbench
+      showContinuousOptimization
+      infoText={
+        <>
+          Scores current positions under a selected mission using momentum, value, quality, qualitative evidence, and
+          risk brakes to rank a course of action queue. The <strong>AI Recommended</strong> preset adapts metric scores
+          from the latest Signal Aggregator context. Results are analysis only; staging an action creates an internal
+          proposal, not a trade.
+        </>
+      }
+    />
+  )
 }

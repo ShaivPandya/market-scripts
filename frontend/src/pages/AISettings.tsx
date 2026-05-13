@@ -7,12 +7,16 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchLLMSettings,
   updateLLMSettings,
+  type GatewayDataSensitivity,
+  type GatewayDeniedRule,
+  type GatewayPolicySettings,
   type LLMModelTier,
   type LLMProvider,
   type LLMProviderStatus,
   type LLMReasoningEffort,
   type LLMReasoningEffortMap,
   type LLMSettings,
+  type ToolLifecycleState,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { PageHeader } from "@/components/shared/PageHeader"
@@ -42,22 +46,112 @@ const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEff
     mid: "high",
     high: "high",
   },
+  local: {
+    low: "none",
+    mid: "none",
+    high: "none",
+  },
 }
 
 const PROVIDER_DESCRIPTIONS: Record<LLMProvider, string> = {
   anthropic: "Claude runtime requests",
   openai: "OpenAI runtime requests",
   gemini: "Gemini runtime requests",
+  local: "OpenAI-compatible localhost runtime",
 }
 
 const PROVIDER_FALLBACK_LABELS: Record<LLMProvider, string> = {
   anthropic: "Claude",
   openai: "OpenAI",
   gemini: "Gemini",
+  local: "Local",
 }
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "claude-haiku-4-5": "Claude Haiku 4.5",
+  "claude-sonnet-4-6": "Claude Sonnet 4.6",
+  "claude-opus-4-7": "Claude Opus 4.7",
+  "gpt-5.4-mini": "GPT 5.4 Mini",
+  "gpt-5.4": "GPT 5.4",
+  "gpt-5.5": "GPT 5.5",
+  "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
+  "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
+  "gemini-3.1-pro-preview-customtools": "Gemini 3.1 Pro Preview (Custom Tools)",
+  "local-low": "Local Low",
+  "local-mid": "Local Mid",
+  "local-high": "Local High",
+}
+const MODEL_DISPLAY_TOKEN_NAMES: Record<string, string> = {
+  api: "API",
+  chatgpt: "ChatGPT",
+  claude: "Claude",
+  customtools: "Custom Tools",
+  flash: "Flash",
+  gemini: "Gemini",
+  gpt: "GPT",
+  haiku: "Haiku",
+  high: "High",
+  lite: "Lite",
+  local: "Local",
+  low: "Low",
+  mid: "Mid",
+  mini: "Mini",
+  o: "O",
+  opus: "Opus",
+  preview: "Preview",
+  pro: "Pro",
+  sonnet: "Sonnet",
+}
+const LIFECYCLE_STATES: ToolLifecycleState[] = ["draft", "enabled", "deprecated", "disabled"]
+const DATA_SENSITIVITIES: GatewayDataSensitivity[] = [
+  "public_market",
+  "portfolio_private",
+  "research_private",
+  "account_private",
+  "operational_private",
+]
 
 function providerDescription(provider: LLMProvider) {
   return PROVIDER_DESCRIPTIONS[provider]
+}
+
+function providerDisplayName(provider: LLMProvider | "*") {
+  return provider === "*" ? "Any provider" : PROVIDER_FALLBACK_LABELS[provider]
+}
+
+function titleCaseModelToken(token: string) {
+  if (!token) return ""
+  const known = MODEL_DISPLAY_TOKEN_NAMES[token.toLowerCase()]
+  if (known) return known
+  if (/^\d/.test(token)) return token
+  return token.charAt(0).toUpperCase() + token.slice(1)
+}
+
+function modelDisplayName(model: string) {
+  const normalized = model.trim()
+  const exact = MODEL_DISPLAY_NAMES[normalized]
+  if (exact) return exact
+
+  const rawTokens = normalized.split(/[-_\s]+/).filter(Boolean)
+  const tokens: string[] = []
+  for (let index = 0; index < rawTokens.length; index += 1) {
+    const token = rawTokens[index]
+    const nextToken = rawTokens[index + 1]
+    if (
+      nextToken &&
+      /^\d{1,2}$/.test(token) &&
+      /^\d{1,2}$/.test(nextToken)
+    ) {
+      tokens.push(`${token}.${nextToken}`)
+      index += 1
+      continue
+    }
+    tokens.push(titleCaseModelToken(token))
+  }
+  return tokens.length ? tokens.join(" ") : normalized
+}
+
+function gatewayRuleModelDisplayName(model: string) {
+  return model === "*" ? "Any model" : modelDisplayName(model)
 }
 
 function statusBadge(provider: LLMProviderStatus) {
@@ -65,7 +159,15 @@ function statusBadge(provider: LLMProviderStatus) {
     return <StatusBadge tone="success">Configured</StatusBadge>
   }
 
-  return <StatusBadge tone="warning">Missing {provider.api_key_env}</StatusBadge>
+  return <StatusBadge tone="warning">Missing {provider.provider === "local" ? provider.base_url_env : provider.api_key_env}</StatusBadge>
+}
+
+function policiesEqual(a: GatewayPolicySettings | undefined, b: GatewayPolicySettings | undefined) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
+function lifecycleLabel(state: ToolLifecycleState) {
+  return state.replace("_", " ")
 }
 
 export function AISettings() {
@@ -74,6 +176,13 @@ export function AISettings() {
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null)
   const [draftReasoningEfforts, setDraftReasoningEfforts] =
     useState<Record<LLMProvider, LLMReasoningEffortMap> | null>(null)
+  const [draftGatewayPolicy, setDraftGatewayPolicy] = useState<GatewayPolicySettings | null>(null)
+  const [gatewayNote, setGatewayNote] = useState("")
+  const [newDeniedRule, setNewDeniedRule] = useState<GatewayDeniedRule>({
+    provider: "*",
+    model: "*",
+    data_sensitivity: "portfolio_private",
+  })
   const effectiveProvider = selectedProvider ?? data?.provider ?? "anthropic"
 
   const selectedStatus = useMemo(
@@ -86,6 +195,7 @@ export function AISettings() {
   const providerDefaultReasoningEfforts = DEFAULT_REASONING_EFFORTS_BY_PROVIDER[effectiveProvider]
   const savedReasoningEfforts = data?.reasoning_efforts?.[effectiveProvider] ?? providerDefaultReasoningEfforts
   const effectiveReasoningEfforts = draftReasoningEfforts?.[effectiveProvider] ?? savedReasoningEfforts
+  const effectiveGatewayPolicy = draftGatewayPolicy ?? data?.gateway_policy
 
   const mutation = useMutation({
     mutationFn: updateLLMSettings,
@@ -93,14 +203,22 @@ export function AISettings() {
       queryClient.setQueryData(QUERY_KEY, settings)
       setSelectedProvider(null)
       setDraftReasoningEfforts(null)
+      setDraftGatewayPolicy(null)
+      setGatewayNote("")
     },
   })
 
   const hasReasoningChanges = data
     ? MODEL_TIERS.some(tier => effectiveReasoningEfforts[tier.key] !== savedReasoningEfforts[tier.key])
     : false
-  const hasChanges = data ? effectiveProvider !== data.provider || hasReasoningChanges : false
-  const canSave = Boolean(hasChanges && selectedStatus?.configured && !mutation.isPending)
+  const hasGatewayChanges = data ? !policiesEqual(effectiveGatewayPolicy, data.gateway_policy) : false
+  const hasChanges = data ? effectiveProvider !== data.provider || hasReasoningChanges || hasGatewayChanges : false
+  const canSave = Boolean(
+    hasChanges &&
+    selectedStatus?.configured &&
+    !mutation.isPending &&
+    (!hasGatewayChanges || gatewayNote.trim()),
+  )
 
   const updateReasoningEffort = (tier: LLMModelTier, effort: LLMReasoningEffort) => {
     if (!data) return
@@ -114,6 +232,39 @@ export function AISettings() {
         },
       }
     })
+  }
+
+  const updateGatewayPolicy = (updater: (policy: GatewayPolicySettings) => GatewayPolicySettings) => {
+    if (!data?.gateway_policy) return
+    setDraftGatewayPolicy(prev => updater(prev ?? data.gateway_policy))
+  }
+
+  const updateProviderLifecycle = (provider: LLMProvider, lifecycle: ToolLifecycleState) => {
+    updateGatewayPolicy(policy => ({
+      ...policy,
+      provider_lifecycle: { ...policy.provider_lifecycle, [provider]: lifecycle },
+    }))
+  }
+
+  const updateModelLifecycle = (model: string, lifecycle: ToolLifecycleState) => {
+    updateGatewayPolicy(policy => ({
+      ...policy,
+      model_lifecycle: { ...policy.model_lifecycle, [model]: lifecycle },
+    }))
+  }
+
+  const addDeniedRule = () => {
+    updateGatewayPolicy(policy => ({
+      ...policy,
+      denied_rules: [...policy.denied_rules, { ...newDeniedRule }],
+    }))
+  }
+
+  const removeDeniedRule = (index: number) => {
+    updateGatewayPolicy(policy => ({
+      ...policy,
+      denied_rules: policy.denied_rules.filter((_rule, ruleIndex) => ruleIndex !== index),
+    }))
   }
 
   if (isLoading) return <LoadingSpinner message="Loading AI settings..." />
@@ -139,6 +290,9 @@ export function AISettings() {
             onClick={() => mutation.mutate({
               provider: effectiveProvider,
               reasoning_efforts: effectiveReasoningEfforts,
+              ...(hasGatewayChanges && effectiveGatewayPolicy
+                ? { gateway_policy: effectiveGatewayPolicy, gateway_note: gatewayNote.trim() }
+                : {}),
             })}
             disabled={!canSave}
             className="theme-button-base theme-button-primary px-4 disabled:cursor-not-allowed disabled:opacity-50"
@@ -210,8 +364,8 @@ export function AISettings() {
               <div key={tier.key} className="theme-surface-muted px-3 py-3">
                 <div className="min-h-[4.5rem]">
                   <p className="label-text">{tier.label}</p>
-                  <p className="mt-2 break-words font-mono text-sm text-app">
-                    {effectiveModels?.[tier.key] ?? data.models[tier.key]}
+                  <p className="mt-2 break-words text-sm text-app">
+                    {modelDisplayName(effectiveModels?.[tier.key] ?? data.models[tier.key])}
                   </p>
                 </div>
                 <select
@@ -230,6 +384,126 @@ export function AISettings() {
           })}
         </div>
       </SurfaceCard>
+
+      {effectiveGatewayPolicy && (
+        <SurfaceCard className="mt-5 p-5">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="section-title">Gateway</h2>
+              <p className="mt-1 text-xs text-muted">
+                Private egress: {effectiveGatewayPolicy.private_egress_mode.replace(/_/g, " ")}
+              </p>
+            </div>
+            <StatusBadge tone={data.local_provider.configured ? "success" : "warning"}>
+              Local {data.local_provider.configured ? "configured" : `missing ${data.local_provider.base_url_env}`}
+            </StatusBadge>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            {data.available_providers.map(provider => (
+              <div key={provider.provider} className="theme-surface-muted px-3 py-3">
+                <p className="label-text">{provider.label}</p>
+                <select
+                  value={effectiveGatewayPolicy.provider_lifecycle[provider.provider] ?? "enabled"}
+                  onChange={event => updateProviderLifecycle(provider.provider, event.target.value as ToolLifecycleState)}
+                  className="theme-input mt-3 w-full px-3 py-2 text-sm"
+                >
+                  {LIFECYCLE_STATES.map(state => (
+                    <option key={state} value={state}>{lifecycleLabel(state)}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5">
+            <h3 className="label-text">Current Models</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {MODEL_TIERS.map(tier => {
+                const model = effectiveModels?.[tier.key] ?? data.models[tier.key]
+                return (
+                  <div key={tier.key} className="theme-surface-muted px-3 py-3">
+                    <p className="label-text">{tier.label}</p>
+                    <p className="mt-2 break-words text-sm text-app" title={model}>
+                      {modelDisplayName(model)}
+                    </p>
+                    <select
+                      value={effectiveGatewayPolicy.model_lifecycle[model] ?? "enabled"}
+                      onChange={event => updateModelLifecycle(model, event.target.value as ToolLifecycleState)}
+                      className="theme-input mt-3 w-full px-3 py-2 text-sm"
+                    >
+                      {LIFECYCLE_STATES.map(state => (
+                        <option key={state} value={state}>{lifecycleLabel(state)}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <h3 className="label-text">Denied Egress Rules</h3>
+            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]">
+              <select
+                value={newDeniedRule.provider}
+                onChange={event => setNewDeniedRule(prev => ({ ...prev, provider: event.target.value as LLMProvider | "*" }))}
+                className="theme-input px-3 py-2 text-sm"
+              >
+                <option value="*">Any provider</option>
+                {data.available_providers.map(provider => (
+                  <option key={provider.provider} value={provider.provider}>{provider.label}</option>
+                ))}
+              </select>
+              <input
+                value={newDeniedRule.model}
+                onChange={event => setNewDeniedRule(prev => ({ ...prev, model: event.target.value || "*" }))}
+                className="theme-input px-3 py-2 text-sm"
+                placeholder="Model or *"
+              />
+              <select
+                value={newDeniedRule.data_sensitivity}
+                onChange={event => setNewDeniedRule(prev => ({ ...prev, data_sensitivity: event.target.value as GatewayDataSensitivity }))}
+                className="theme-input px-3 py-2 text-sm"
+              >
+                {DATA_SENSITIVITIES.map(sensitivity => (
+                  <option key={sensitivity} value={sensitivity}>{sensitivity.replace(/_/g, " ")}</option>
+                ))}
+              </select>
+              <button type="button" onClick={addDeniedRule} className="theme-button-base theme-button-secondary px-3">
+                Add
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {effectiveGatewayPolicy.denied_rules.map((rule, index) => (
+                <div key={`${rule.provider}-${rule.model}-${rule.data_sensitivity}-${index}`} className="theme-surface-muted flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                  <span>{providerDisplayName(rule.provider)}</span>
+                  <span title={rule.model}>{gatewayRuleModelDisplayName(rule.model)}</span>
+                  <span>{rule.data_sensitivity.replace(/_/g, " ")}</span>
+                  <button type="button" onClick={() => removeDeniedRule(index)} className="ml-auto text-xs text-muted hover:text-app">
+                    Remove
+                  </button>
+                </div>
+              ))}
+              {!effectiveGatewayPolicy.denied_rules.length && (
+                <p className="text-xs text-muted">No explicit deny rules.</p>
+              )}
+            </div>
+          </div>
+
+          {hasGatewayChanges && (
+            <label className="mt-5 block">
+              <span className="label-text">Change Note</span>
+              <textarea
+                value={gatewayNote}
+                onChange={event => setGatewayNote(event.target.value)}
+                className="theme-input mt-2 min-h-[5rem] w-full px-3 py-2 text-sm"
+                placeholder="Required before saving gateway policy changes."
+              />
+            </label>
+          )}
+        </SurfaceCard>
+      )}
     </div>
   )
 }

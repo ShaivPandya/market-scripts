@@ -65,6 +65,7 @@ RESEARCH_ACTION_IDS = {
     "create_research_note",
     "create_portfolio_news_digest",
     "delete_portfolio_news_digest",
+    "create_analyst_feedback",
     "create_action_item",
     "complete_action_item",
     "dismiss_action_item",
@@ -935,7 +936,7 @@ class OntologyCommandService:
                     "source": context.source_type,
                     "category": payload.get("category"),
                     "target_date": payload.get("target_date"),
-                    "status": payload.get("status") or "active",
+                    "status": payload.get("status") or existing.get("status") or "pending",
                     "evidence": payload.get("evidence"),
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
@@ -1049,6 +1050,51 @@ class OntologyCommandService:
                     "created_at": now,
                     "updated_at": now,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_analyst_feedback":
+            target_uid = _non_blank(payload.get("target_object_uid"), "target_object_uid")
+            target_type = _non_blank(payload.get("target_object_type"), "target_object_type")
+            decision = _non_blank(payload.get("decision"), "decision")
+            feedback_key = payload.get("feedback_id") or f"{target_uid}:{decision}:{_stable_hash(payload)}"
+            row = self.objects.write_object(
+                "AnalystFeedback",
+                str(feedback_key),
+                {
+                    "feedback_id": str(feedback_key),
+                    "target_object_uid": target_uid,
+                    "target_object_type": target_type,
+                    "decision": decision,
+                    "note": payload.get("note") or payload.get("reason"),
+                    "correction": _dict(payload.get("correction")),
+                    "confidence": payload.get("confidence"),
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "approval_id": approval_object_id,
+                    "created_by": context.actor.actor_id,
+                    "created_at": now,
+                    "status": "submitted",
+                    "metadata": {"action_run_id": action_run_id},
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            self.objects.write_relation(
+                "analyst_feedback_targets_object",
+                str(row.get("object_uid")),
+                target_uid,
+                {
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    "target_object_uid": target_uid,
                 },
                 now,
                 actor=actor,
@@ -1746,6 +1792,7 @@ class OntologyCommandService:
                     "factor": item.get("factor"),
                     "sensitivity": item.get("sensitivity"),
                     "capacity": item.get("capacity"),
+                    "rationale": item.get("rationale"),
                     "ordinal": index,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
@@ -2628,6 +2675,8 @@ def _entity_type_for_action(action_id: str) -> str:
         return "news_digest_create"
     if action_id == "delete_portfolio_news_digest":
         return "news_digest_delete"
+    if action_id == "create_analyst_feedback":
+        return "analyst_feedback"
     if action_id in RESEARCH_ACTION_IDS:
         return "research_object"
     return "ontology_action"
@@ -2657,6 +2706,11 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         digest_id = str(payload.get("digest_id") or "").strip()
         if digest_id:
             return document_artifact_id("news_digest", digest_id), "DocumentArtifact"
+    if action_id == "create_analyst_feedback":
+        target_uid = str(payload.get("target_object_uid") or "").strip()
+        target_type = str(payload.get("target_object_type") or "").strip()
+        if target_uid and target_type:
+            return target_uid, target_type
     return None, None
 
 
@@ -2671,6 +2725,10 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
     if action_id == "create_recommendation":
         record = _dict(payload.get("record") or payload)
         _non_blank(record.get("action"), "action")
+    if action_id == "create_analyst_feedback":
+        _non_blank(payload.get("target_object_uid"), "target_object_uid")
+        _non_blank(payload.get("target_object_type"), "target_object_type")
+        _non_blank(payload.get("decision"), "decision")
 
 
 def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,21 @@
 import { type FormEvent, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import {
+  Activity,
+  ArrowRight,
+  CheckCircle2,
+  Cloud,
+  Database,
+  FileText,
+  GitBranch,
+  Lock,
+  Server,
+  ShieldCheck,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
+import { SegmentedControl } from "@/components/shared/FormControls"
 import { Notice } from "@/components/shared/Notice"
 import { SurfaceCard } from "@/components/shared/SurfaceCard"
 
@@ -12,6 +27,13 @@ import laborMarketImg from "@/assets/labor-market.jpg"
 import marketTechnicalsImg from "@/assets/market-technicals.jpg"
 import portfolioImg from "@/assets/portfolio.jpg"
 import sentimentImg from "@/assets/sentiment.jpg"
+
+type PublicTab = "product" | "architecture"
+
+const publicTabs: { value: PublicTab; label: string }[] = [
+  { value: "product", label: "Product" },
+  { value: "architecture", label: "Architecture" },
+]
 
 const features = [
   {
@@ -64,6 +86,96 @@ const features = [
   },
 ]
 
+const systemMapNodes: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Control room",
+    description: "The React app on Firebase gives every workflow a fast, polished operating surface.",
+    icon: Activity,
+  },
+  {
+    title: "Request brain",
+    description: "FastAPI on Cloud Run receives each question and routes it to the right research capability.",
+    icon: Server,
+  },
+  {
+    title: "Research engines",
+    description: "Python modules combine market data, macro signals, portfolio context, filings, and documents.",
+    icon: Workflow,
+  },
+  {
+    title: "Durable memory",
+    description: "Cloud SQL and Cloud Storage keep state, versions, artifacts, and generated research recoverable.",
+    icon: Database,
+  },
+]
+
+const researchLoopSteps: {
+  label: string
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    label: "01",
+    title: "Ingest",
+    description: "Fresh prices, macro releases, transcripts, PDFs, and portfolio changes enter as source records.",
+    icon: Cloud,
+  },
+  {
+    label: "02",
+    title: "Analyze",
+    description: "Dashboards, models, and LLM workflows turn raw inputs into comparisons, risks, and hypotheses.",
+    icon: Activity,
+  },
+  {
+    label: "03",
+    title: "Decide",
+    description: "Recommendations become structured decision objects instead of loose notes or hidden chat output.",
+    icon: FileText,
+  },
+  {
+    label: "04",
+    title: "Approve",
+    description: "Important portfolio and research changes pause for human review before they become official.",
+    icon: ShieldCheck,
+  },
+  {
+    label: "05",
+    title: "Record",
+    description: "The system writes the final version with evidence, timing, actor, and provenance attached.",
+    icon: GitBranch,
+  },
+]
+
+const trustPanels: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Evidence stays attached",
+    description:
+      "Research outputs can point back to the market data, documents, workflow runs, and snapshots that supported them.",
+    icon: FileText,
+  },
+  {
+    title: "History is versioned",
+    description:
+      "The ontology records what Talisman believed at the time, then preserves later corrections as new versions.",
+    icon: GitBranch,
+  },
+  {
+    title: "Automation has guardrails",
+    description:
+      "Agents can draft and propose, but governed actions require approval before changing user-visible state.",
+    icon: Lock,
+  },
+]
+
 function FeatureShowcase() {
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-24 sm:px-6">
@@ -94,6 +206,174 @@ function FeatureShowcase() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+function DiagramNode({
+  title,
+  description,
+  icon: Icon,
+}: {
+  title: string
+  description: string
+  icon: LucideIcon
+}) {
+  return (
+    <div className="theme-surface flex min-h-[11rem] flex-col gap-3 p-4">
+      <div className="flex h-11 w-11 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </div>
+      <div>
+        <h4 className="text-base font-semibold text-app">{title}</h4>
+        <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+function ArchitectureShowcase() {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 pb-24 sm:px-6">
+      <div className="mb-10 text-center">
+        <p className="theme-eyebrow">Backend architecture</p>
+        <h2 className="page-title text-center !text-[clamp(1.7rem,1.4rem+1vw,2.3rem)]">
+          A trust engine for investment research
+        </h2>
+        <p className="mx-auto mt-3 max-w-3xl body-copy">
+          Talisman is designed like a research desk with memory. The front end feels simple, but behind every
+          dashboard is a governed system that gathers evidence, runs deeper analysis in the background, and keeps
+          a clear record of how decisions were formed.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-10">
+        <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr] lg:items-center">
+          <div>
+            <p className="theme-eyebrow">System map</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">From one click to a research system</h3>
+            <p className="mt-3 body-copy">
+              A visitor sees a clean dashboard. The signed-in app sees a production pipeline: requests are routed,
+              jobs are dispatched, state is stored durably, and every important output can be traced.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {systemMapNodes.map((node, index) => (
+              <div key={node.title} className="relative">
+                <DiagramNode {...node} />
+                {index < systemMapNodes.length - 1 && (
+                  <ArrowRight
+                    className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full bg-app text-subtle xl:block"
+                    aria-hidden="true"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-6 max-w-3xl">
+            <p className="theme-eyebrow">Research loop</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Slow work moves off the main path</h3>
+            <p className="mt-3 body-copy">
+              Heavy analysis does not block the interface. Durable async jobs and warm worker pools handle portfolio
+              sizing, agent turns, ontology queries, and deeper model runs while the app keeps showing progress.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            {researchLoopSteps.map((step, index) => {
+              const Icon = step.icon
+              return (
+                <div key={step.title} className="theme-surface relative p-4">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <span className="rounded-full border border-app bg-card px-2.5 py-1 text-xs font-semibold text-subtle">
+                      {step.label}
+                    </span>
+                    <Icon className="h-5 w-5 text-[hsl(var(--accent))]" aria-hidden="true" />
+                  </div>
+                  <h4 className="text-base font-semibold text-app">{step.title}</h4>
+                  <p className="mt-2 text-sm leading-6 text-muted">{step.description}</p>
+                  {index < researchLoopSteps.length - 1 && (
+                    <ArrowRight
+                      className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full bg-app text-subtle xl:block"
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p className="theme-eyebrow">Why it matters</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">AI is useful only when it is accountable</h3>
+            <p className="mt-3 body-copy">
+              Talisman treats generated research as a proposal, not a command. The ontology and provenance layers
+              turn analysis into structured objects with evidence, timestamps, approvals, and version history.
+            </p>
+          </div>
+
+          <div className="grid gap-3">
+            {trustPanels.map(panel => {
+              const Icon = panel.icon
+              return (
+                <div key={panel.title} className="theme-surface flex gap-3 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-app">{panel.title}</h4>
+                    <p className="mt-1 text-sm leading-6 text-muted">{panel.description}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr] lg:items-center">
+          <div>
+            <p className="theme-eyebrow">Production backbone</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Built for research that compounds</h3>
+            <p className="mt-3 body-copy">
+              The system is not a collection of one-off scripts. It is a durable operating layer where dashboards,
+              documents, workflows, jobs, and approvals share the same memory.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[
+              "Cloud Run scales the API and job runners.",
+              "Cloud SQL stores structured portfolio and workflow state.",
+              "Cloud Storage preserves generated documents and artifacts.",
+              "Cloud Scheduler refreshes market snapshots and maintenance jobs.",
+            ].map(item => (
+              <div key={item} className="theme-surface flex min-h-[5rem] gap-2 p-3 text-sm leading-6 text-muted">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-positive" aria-hidden="true" />
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function PublicShowcase() {
+  const [activeTab, setActiveTab] = useState<PublicTab>("product")
+
+  return (
+    <div className="w-full">
+      <div className="mb-10 flex justify-center px-4 sm:px-6">
+        <SegmentedControl options={publicTabs} value={activeTab} onChange={setActiveTab} />
+      </div>
+      {activeTab === "product" ? <FeatureShowcase /> : <ArchitectureShowcase />}
     </div>
   )
 }
@@ -175,7 +455,7 @@ export function LoginPage() {
             )}
           </SurfaceCard>
 
-          <FeatureShowcase />
+          <PublicShowcase />
         </div>
       </div>
     </div>

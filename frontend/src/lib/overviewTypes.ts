@@ -28,6 +28,7 @@ export interface SensitivityRow {
   factor: string
   sensitivity: string
   capacity: string
+  rationale?: string
 }
 
 export interface PorterForce {

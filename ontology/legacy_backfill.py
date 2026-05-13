@@ -1389,6 +1389,7 @@ def _overview_rows(
                         "factor": item.get("factor"),
                         "sensitivity": item.get("sensitivity"),
                         "capacity": item.get("capacity"),
+                        "rationale": item.get("rationale"),
                         "ordinal": index,
                     },
                     cutover_time,

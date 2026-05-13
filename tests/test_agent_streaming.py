@@ -8,6 +8,7 @@ from typing import Any
 
 import api.agent_chat_worker as agent_chat_worker
 import api.routers.agent as agent_router
+from api.agent_domain_policy import DOMAIN_BLOCK_RESPONSE, DOMAIN_CLARIFY_RESPONSE, AgentDomainClassification
 
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
@@ -255,7 +256,7 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -309,7 +310,7 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -360,7 +361,7 @@ def test_agent_stream_gemini_function_call_roundtrip(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -369,7 +370,7 @@ def test_agent_stream_gemini_function_call_roundtrip(auth_client, monkeypatch):
     assert first_config["tool_config"]["function_calling_config"]["mode"] == "ANY"
     assert second_config["tool_config"]["function_calling_config"]["mode"] == "AUTO"
     assert first_config["tools"][0]["function_declarations"][0]["name"]
-    assert fake_client.models.kwargs_history[0]["contents"] == [{"role": "user", "parts": [{"text": "test"}]}]
+    assert fake_client.models.kwargs_history[0]["contents"] == [{"role": "user", "parts": [{"text": "portfolio test"}]}]
     assert fake_client.models.kwargs_history[1]["contents"][-1] == {
         "role": "tool",
         "parts": [{"function_response": {"name": "query_ontology", "response": {"result": json.dumps({"ok": True})}}}],
@@ -456,7 +457,7 @@ def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, mo
     resp = auth_client.post(
         "/api/v1/agent/chat",
         json={
-            "messages": [{"role": "user", "content": "test"}],
+            "messages": [{"role": "user", "content": "portfolio test"}],
             "response_preferences": {"thinking_enabled": True},
         },
     )
@@ -487,7 +488,7 @@ def test_agent_stream_anthropic_thinking_relaxes_forced_tool_choice(auth_client,
     resp = auth_client.post(
         "/api/v1/agent/chat",
         json={
-            "messages": [{"role": "user", "content": "test"}],
+            "messages": [{"role": "user", "content": "portfolio test"}],
             "response_preferences": {"thinking_enabled": True},
         },
     )
@@ -526,7 +527,7 @@ def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -570,7 +571,7 @@ def test_agent_stream_synthesizes_when_tool_loop_limit_is_reached(auth_client, m
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -589,7 +590,7 @@ def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -606,7 +607,7 @@ def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 503
@@ -681,7 +682,7 @@ def test_agent_stream_dedupes_identical_tool_calls(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "test"}]},
+        json={"messages": [{"role": "user", "content": "portfolio test"}]},
     )
 
     assert resp.status_code == 200
@@ -1053,6 +1054,137 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     done_events = [p for e, p in parsed if e == "done"]
     assert done_events[-1]["session_id"] == "casual-session"
     assert finalized
+
+
+def test_agent_chat_v2_blocks_off_domain_before_provider_context_or_tools(auth_client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        agent_router,
+        "selected_provider",
+        lambda: (_ for _ in ()).throw(AssertionError("no provider selection")),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_build_agent_instructions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_get_provider_client",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no client")),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no tools")),
+    )
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no retrieval/context build")),
+    )
+    monkeypatch.setattr(
+        "api.memory_db.get_or_create_session",
+        lambda _session_id=None: {"session_id": "guardrail-session", "server_messages": [], "rolling_summary": None},
+    )
+    finalized: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, user_msg, assistant_msg: finalized.append((user_msg, assistant_msg)),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "give me a chicken recipe"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and p.get("text") == DOMAIN_BLOCK_RESPONSE for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "guardrail-session"
+    assert done_events[-1]["domain_decision"] == "block"
+    assert finalized[0][0]["content"] == "give me a chicken recipe"
+    assert finalized[0][1]["content"] == DOMAIN_BLOCK_RESPONSE
+
+
+def test_agent_chat_v2_clarifies_ambiguous_prompt_before_provider_context_or_tools(auth_client, monkeypatch):
+    monkeypatch.setattr(
+        agent_router,
+        "selected_provider",
+        lambda: (_ for _ in ()).throw(AssertionError("no provider selection")),
+    )
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no retrieval/context build")),
+    )
+    monkeypatch.setattr(
+        "api.memory_db.get_or_create_session",
+        lambda _session_id=None: {"session_id": "clarify-session", "server_messages": [], "rolling_summary": None},
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "what do you think?"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert any(e == "delta" and p.get("text") == DOMAIN_CLARIFY_RESPONSE for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "clarify-session"
+    assert done_events[-1]["domain_decision"] == "clarify"
+    assert finalized[0]["content"] == DOMAIN_CLARIFY_RESPONSE
+
+
+def test_agent_chat_legacy_blocks_off_domain_without_api_key(auth_client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        agent_router,
+        "_read_llm_api_key",
+        lambda: (_ for _ in ()).throw(AssertionError("no api key read")),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_build_agent_instructions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "plan a trip to Tokyo"}]},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and p.get("text") == DOMAIN_BLOCK_RESPONSE for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["domain_decision"] == "block"
+
+
+def test_agent_tool_execution_blocks_when_domain_decision_is_not_allow(monkeypatch):
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("tool should not execute")),
+    )
+
+    result = agent_router._execute_tool_for_actor(
+        "get_portfolio",
+        {},
+        actor=None,
+        domain_classification=AgentDomainClassification("block", "unsupported_domain"),
+    )
+
+    payload = json.loads(result)
+    assert payload["type"] == "RuntimeError"
+    assert payload["_meta"]["status"] == "blocked"
 
 
 def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeypatch):

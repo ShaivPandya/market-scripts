@@ -15,6 +15,16 @@ export interface ToolCall {
   elapsedMs?: number
 }
 
+export interface EgressRecord {
+  id: string
+  decision: "allowed" | "allowed_with_warning" | "blocked" | string
+  decisionReason?: string
+  dataSensitivity?: string
+  provider?: string
+  model?: string
+  policyDecisionId?: string
+}
+
 export interface AgentMessage {
   id: string
   role: "user" | "assistant"
@@ -24,6 +34,7 @@ export interface AgentMessage {
   toolCalls?: ToolCall[]
   isStreaming?: boolean
   statusText?: string
+  egressRecords?: EgressRecord[]
 }
 
 export interface SessionSummary {
@@ -174,6 +185,28 @@ function mergeToolCalls(existing: ToolCall[] | undefined, incoming: ToolCall[]):
   for (const call of existing ?? []) byId.set(call.id, call)
   for (const call of incoming) byId.set(call.id, { ...byId.get(call.id), ...call })
   return [...byId.values()]
+}
+
+function normalizeEgressRecord(value: Record<string, unknown>): EgressRecord | null {
+  const policyDecisionId = typeof value.policy_decision_id === "string" ? value.policy_decision_id : undefined
+  const decision = typeof value.decision === "string" ? value.decision : undefined
+  if (!policyDecisionId || !decision) return null
+  return {
+    id: policyDecisionId,
+    policyDecisionId,
+    decision,
+    decisionReason: typeof value.decision_reason === "string" ? value.decision_reason : undefined,
+    dataSensitivity: typeof value.data_sensitivity === "string" ? value.data_sensitivity : undefined,
+    provider: typeof value.provider === "string" ? value.provider : undefined,
+    model: typeof value.model === "string" ? value.model : undefined,
+  }
+}
+
+function mergeEgressRecords(existing: EgressRecord[] | undefined, incoming: EgressRecord): EgressRecord[] {
+  const byId = new Map<string, EgressRecord>()
+  for (const record of existing ?? []) byId.set(record.id, record)
+  byId.set(incoming.id, { ...byId.get(incoming.id), ...incoming })
+  return [...byId.values()].slice(-6)
 }
 
 function toolCallsFromDonePayload(data: Record<string, unknown>): ToolCall[] {
@@ -572,8 +605,20 @@ export function useAgentChat() {
             }
             break
           case "budget_update":
-          case "egress_recorded":
             break
+          case "egress_recorded": {
+            const record = normalizeEgressRecord(data)
+            if (!record) break
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? { ...m, egressRecords: mergeEgressRecords(m.egressRecords, record) }
+                  : m,
+              ),
+            }
+            break
+          }
           case "tool_result":
             next = {
               ...next,

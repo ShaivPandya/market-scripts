@@ -1,7 +1,7 @@
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import type { ToolCall, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
-import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw } from "lucide-react"
+import type { ToolCall, EgressRecord, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
+import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw, ShieldAlert } from "lucide-react"
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 
 // ---------------------------------------------------------------------------
@@ -27,8 +27,15 @@ const TOOL_LABELS: Record<string, string> = {
   query_ontology: "Ontology Query",
   search_web: "Web Search",
   search_knowledge_base: "Knowledge Base",
+  get_dossier: "Position Dossier",
+  get_catalysts: "Catalysts",
   propose_thesis_status_change: "Thesis Status Proposal",
   propose_action_item: "Action Item Proposal",
+  propose_catalyst: "Catalyst Proposal",
+  propose_catalyst_status_change: "Catalyst Status Proposal",
+  propose_kill_condition: "Kill Condition Proposal",
+  propose_kill_condition_status_change: "Kill Condition Status Proposal",
+  propose_watch_trigger: "Watch Trigger Proposal",
   propose_portfolio_positions_update: "Portfolio Update Proposal",
   propose_hedge_positions_update: "Hedge Update Proposal",
   propose_thesis_content_update: "Thesis Content Proposal",
@@ -158,6 +165,32 @@ function ToolCallChip({ tc }: { tc: ToolCall }) {
   )
 }
 
+function EgressChip({ record }: { record: EgressRecord }) {
+  if (record.decision !== "allowed_with_warning" && record.decision !== "blocked") return null
+  const blocked = record.decision === "blocked"
+  const label = blocked ? "Model egress blocked" : "Private context sent"
+  const title = [
+    record.decisionReason,
+    record.dataSensitivity ? `Sensitivity: ${record.dataSensitivity}` : null,
+    record.provider ? `Provider: ${record.provider}` : null,
+    record.model ? `Model: ${record.model}` : null,
+    record.policyDecisionId ? `Policy decision: ${record.policyDecisionId}` : null,
+  ].filter(Boolean).join("\n")
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs mr-1.5 mb-1.5 ${
+        blocked
+          ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      }`}
+      title={title}
+    >
+      <ShieldAlert size={10} aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Message component
 // ---------------------------------------------------------------------------
@@ -174,20 +207,31 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
   }
 
   const displayContent = stripArtifactBlocks(message.content)
+  const messageScope = message.toolCalls?.some(tc => toolEffectScope(tc.name) === "internal_state")
+    ? "internal_state"
+    : "read_only"
+  const messageDecisionState = messageScope === "internal_state" ? "proposal" : "analysis"
 
   // Assistant message
   return (
     <div className="flex justify-start mb-3">
       <div className="max-w-[85%] rounded-2xl bg-card border border-app px-4 py-2.5 text-sm text-app leading-relaxed">
         <div className="mb-2 flex flex-wrap gap-2">
-          <DecisionStateBadge state="analysis" />
-          <EffectScopeBadge scope="read_only" />
+          <DecisionStateBadge state={messageDecisionState} />
+          <EffectScopeBadge scope={messageScope} />
         </div>
         {/* Tool call indicators */}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <div className="flex flex-wrap mb-2">
             {message.toolCalls.map(tc => (
               <ToolCallChip key={tc.id} tc={tc} />
+            ))}
+          </div>
+        )}
+        {message.egressRecords && message.egressRecords.length > 0 && (
+          <div className="flex flex-wrap mb-2">
+            {message.egressRecords.map(record => (
+              <EgressChip key={record.id} record={record} />
             ))}
           </div>
         )}

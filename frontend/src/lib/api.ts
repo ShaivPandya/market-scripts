@@ -445,22 +445,45 @@ export const authApi = {
   me: () => client.get("/auth/me").then(r => r.data),
 }
 
-export type LLMProvider = "anthropic" | "openai" | "gemini"
+export type LLMProvider = "anthropic" | "openai" | "gemini" | "local"
 export type LLMModelTier = "low" | "mid" | "high"
 export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 export type LLMModelTierMap = Record<LLMModelTier, string>
 export type LLMReasoningEffortMap = Record<LLMModelTier, LLMReasoningEffort>
+export type ToolLifecycleState = "draft" | "enabled" | "deprecated" | "disabled"
+export type GatewayDecision = "allowed" | "allowed_with_warning" | "blocked"
+export type GatewayDataSensitivity =
+  | "public_market"
+  | "portfolio_private"
+  | "research_private"
+  | "account_private"
+  | "operational_private"
 
 export interface LLMProviderStatus {
   provider: LLMProvider
   label: string
   configured: boolean
   api_key_env: string
+  base_url_env?: string
+  base_url_configured?: boolean
 }
 
 export interface LLMReasoningEffortOption {
   effort: LLMReasoningEffort
   label: string
+}
+
+export interface GatewayDeniedRule {
+  provider: LLMProvider | "*"
+  model: string
+  data_sensitivity: GatewayDataSensitivity
+}
+
+export interface GatewayPolicySettings {
+  private_egress_mode: "allow_with_warning"
+  provider_lifecycle: Record<LLMProvider, ToolLifecycleState>
+  model_lifecycle: Record<string, ToolLifecycleState>
+  denied_rules: GatewayDeniedRule[]
 }
 
 export interface LLMSettings {
@@ -470,6 +493,12 @@ export interface LLMSettings {
   models_by_provider: Record<LLMProvider, LLMModelTierMap>
   reasoning_efforts: Record<LLMProvider, LLMReasoningEffortMap>
   reasoning_options: Record<LLMProvider, Record<LLMModelTier, LLMReasoningEffortOption[]>>
+  gateway_policy: GatewayPolicySettings
+  local_provider: {
+    configured: boolean
+    base_url_env: string
+    api_key_env: string
+  }
 }
 
 export const fetchLLMSettings = () =>
@@ -478,6 +507,8 @@ export const fetchLLMSettings = () =>
 export const updateLLMSettings = (settings: {
   provider: LLMProvider
   reasoning_efforts?: LLMReasoningEffortMap
+  gateway_policy?: GatewayPolicySettings
+  gateway_note?: string
 }) =>
   client.put("/settings/llm", settings).then(r => r.data as LLMSettings)
 
@@ -518,6 +549,7 @@ export interface AgentToolGovernanceMetadata {
   rate_limit: Record<string, unknown>
   audit_level: string
   failure_mode: string
+  lifecycle_state: ToolLifecycleState
 }
 
 export interface AgentCapability {
@@ -2079,12 +2111,15 @@ export interface PositionValuation {
 
 export interface PositionValueRangeScenario {
   multiple?: number | null
+  terminal_growth?: number | null
+  wacc?: number | null
   denominator?: number | null
   denominator_currency?: string | null
   denominator_converted?: number | null
   denominator_converted_currency?: string | null
   denominator_to_output_fx_rate?: number | null
   fx_rate_as_of?: string | null
+  enterprise_value?: number | null
   equity_value?: number | null
   expected_price?: number | null
   percent_change?: number | null
@@ -2096,7 +2131,8 @@ export interface PositionValueRangeScenario {
 export interface PositionValueRangeAssumption {
   denominator_currency?: string | null
   legacy_denominator_currency?: boolean
-  scenarios: Record<string, { multiple?: number | null; denominator?: number | null }>
+  wacc?: number | null
+  scenarios: Record<string, { multiple?: number | null; terminal_growth?: number | null; denominator?: number | null }>
   computed_scenarios?: Record<string, PositionValueRangeScenario>
 }
 
@@ -2111,6 +2147,7 @@ export interface PositionValueRange {
   denominator_currency?: string | null
   stored_denominator_currency?: string | null
   legacy_denominator_currency?: boolean
+  wacc?: number | null
   denominator_to_price_fx_rate?: number | null
   fx_rate_as_of?: string | null
   calculation_method: string
@@ -2125,7 +2162,8 @@ export interface PositionValueRange {
 export interface PositionValueRangeRequest {
   metric: string
   denominator_currency?: string | null
-  scenarios: Record<string, { multiple: number; denominator: number }>
+  wacc?: number | null
+  scenarios: Record<string, { multiple?: number; terminal_growth?: number; denominator: number }>
 }
 
 export const fetchPositionValuation = (ticker: string) =>
@@ -2540,8 +2578,13 @@ export const fetchWorkflowRun = (runId: string) =>
   client.get(`/workflow-runs/${runId}`).then(r => r.data)
 
 export interface ProvenanceSelector {
+  recommendation_id?: string
   workflow_run_id?: string
   ontology_run_id?: string
+  object_version_id?: string
+  relation_version_id?: string
+  source_record_id?: string
+  snapshot_id?: string
   approval_id?: string
   action_run_id?: string
   agent_session_id?: string
@@ -2549,41 +2592,79 @@ export interface ProvenanceSelector {
   ref_type?: string
   ref_id?: string
   max_depth?: number
+  direction?: "both" | "upstream" | "downstream"
+  max_nodes?: number
+  max_edges?: number
 }
 
-export interface ProvenanceEvent {
+export interface ProvenanceGraphWarning {
+  code:
+    | "empty_trace"
+    | "seed_not_found"
+    | "node_limit_reached"
+    | "edge_limit_reached"
+    | "legacy_adapted"
+    | "sqlite_fallback"
+    | "redacted_metadata"
+  detail?: string
+}
+
+export interface ProvenanceGraphNode {
   id: string
-  event_type: string
-  event_name?: string | null
+  node_type: string
+  label?: string | null
+  timestamp?: string | null
   status?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  actor_type?: string | null
-  actor_id?: string | null
-  summary?: Record<string, unknown> | null
-  metadata?: Record<string, unknown> | null
+  ref_type?: string | null
+  ref_id?: string | null
+  ref_version?: string | null
+  object_uid?: string | null
+  event_id?: string | null
+  event_type?: string | null
+  event_name?: string | null
+  redaction_policy?: string | null
+  retention_class?: string | null
+  payload?: Record<string, unknown> | unknown
 }
 
-export interface ProvenanceLink {
-  id?: string
+export interface ProvenanceGraphEdge {
+  id: string
+  source_node_id: string
+  target_node_id: string
+  edge_type?: string | null
+  relation_type?: string | null
+  link_type?: string | null
   event_id?: string | null
-  source_ref_type: string
-  source_ref_id: string
-  target_ref_type: string
-  target_ref_id: string
-  link_type: string
-  created_at?: string | null
+  depth?: number | null
+  timestamp?: string | null
+  retention_class?: string | null
+  redaction_policy?: string | null
+  metadata?: Record<string, unknown> | unknown
+  lineage_root_id?: string | null
+  source_ref_type?: string | null
+  source_ref_id?: string | null
+  target_ref_type?: string | null
+  target_ref_id?: string | null
 }
 
 export interface ProvenanceTrace {
   seed: Record<string, unknown>
-  events?: ProvenanceEvent[]
-  links?: ProvenanceLink[]
-  source_records?: Record<string, unknown>[]
-  workflow_artifacts?: Record<string, unknown>[]
-  references?: Record<string, unknown>[]
-  relations?: Record<string, unknown>[]
+  selector?: Record<string, unknown>
+  direction?: "both" | "upstream" | "downstream"
+  max_depth?: number
+  lineage_state?: string
+  nodes?: ProvenanceGraphNode[]
+  edges?: ProvenanceGraphEdge[]
   timeline?: Record<string, unknown>[]
+  counts?: {
+    nodes: number
+    edges: number
+    events: number
+    references: number
+    warnings: number
+  }
+  truncated?: boolean
+  warnings?: ProvenanceGraphWarning[]
 }
 
 export const fetchProvenanceTrace = (params: ProvenanceSelector) =>

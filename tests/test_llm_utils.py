@@ -13,6 +13,8 @@ def test_provider_and_model_resolution_defaults(monkeypatch):
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "openai") == "gpt-5.4"
     assert llm_utils.model_for_tier(llm_utils.MODEL_LOW, "gemini") == "gemini-3.1-flash-lite"
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "gemini") == "gemini-3.1-pro-preview-customtools"
+    assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "local") == "local-mid"
+    assert llm_utils.reasoning_effort_options("local") == ["none"]
     assert llm_utils.resolve_model("claude-opus-4-7", "openai") == "gpt-5.5"
 
 
@@ -22,6 +24,9 @@ def test_provider_model_overrides(monkeypatch):
 
     monkeypatch.setenv("GEMINI_MODEL_MID", "gemini-custom-mid")
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "gemini") == "gemini-custom-mid"
+
+    monkeypatch.setenv("LOCAL_LLM_MODEL_MID", "local-custom-mid")
+    assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "local") == "local-custom-mid"
 
 
 def test_required_key_validation(monkeypatch):
@@ -51,6 +56,19 @@ def test_required_key_validation(monkeypatch):
         assert "GEMINI_API_KEY" in str(exc)
     else:
         raise AssertionError("missing Gemini key should fail")
+
+    monkeypatch.setenv("LLM_PROVIDER", "local")
+    monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
+    try:
+        llm_utils.require_api_key()
+    except RuntimeError as exc:
+        assert "LOCAL_LLM_BASE_URL" in str(exc)
+    else:
+        raise AssertionError("missing local base URL should fail")
+
+    monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:11434/v1")
+    monkeypatch.delenv("LOCAL_LLM_API_KEY", raising=False)
+    assert llm_utils.require_api_key("local") == "local"
 
 
 def _install_fake_gemini(monkeypatch, fake_client):

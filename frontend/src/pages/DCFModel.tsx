@@ -1001,7 +1001,7 @@ export function DCFModel() {
               {projTable && projTable.columns.length > 0 && (
                 <>
                   <TransposedTable
-                    title="5-Year Projection"
+                    title={`${projTable.columns.length}-Year Projection`}
                     columns={projTable.columns}
                     rows={projTable.rows}
                   />

@@ -36,7 +36,16 @@ VALUATION_COLUMNS = (
     "price_earnings",
     "price_book",
 )
+DCF_VALUE_RANGE_METRICS = (
+    "dcf_gordon_growth",
+    "dcf_ev_ebitda",
+    "dcf_ev_revenue",
+)
+VALUE_RANGE_METRICS = (*VALUATION_COLUMNS, *DCF_VALUE_RANGE_METRICS)
 ENTERPRISE_VALUE_METRICS = {"price_sales", "price_ebitda", "price_operating_income", "price_fcf"}
+DCF_GORDON_GROWTH_METRICS = {"dcf_gordon_growth"}
+DCF_EXIT_MULTIPLE_METRICS = {"dcf_ev_ebitda", "dcf_ev_revenue"}
+ENTERPRISE_VALUE_RANGE_METRICS = ENTERPRISE_VALUE_METRICS | DCF_EXIT_MULTIPLE_METRICS | DCF_GORDON_GROWTH_METRICS
 PER_SHARE_VALUE_RANGE_METRICS = {"price_earnings"}
 VALUE_RANGE_SCENARIOS = ("bear", "base", "bull")
 
@@ -47,6 +56,9 @@ VALUATION_LABELS = {
     "price_fcf": "EV/FCF",
     "price_earnings": "P/E",
     "price_book": "P/B",
+    "dcf_gordon_growth": "DCF (Gordon Growth)",
+    "dcf_ev_ebitda": "DCF (EV/EBITDA)",
+    "dcf_ev_revenue": "DCF (EV/Revenue)",
 }
 
 VALUATION_PERIODS = {
@@ -56,6 +68,9 @@ VALUATION_PERIODS = {
     "price_fcf": "TTM",
     "price_earnings": "TTM",
     "price_book": "MRQ/latest",
+    "dcf_gordon_growth": "User terminal",
+    "dcf_ev_ebitda": "User terminal",
+    "dcf_ev_revenue": "User terminal",
 }
 
 DENOMINATOR_LABELS = {
@@ -65,6 +80,9 @@ DENOMINATOR_LABELS = {
     "price_fcf": "TTM free cash flow",
     "price_earnings": "TTM EPS",
     "price_book": "latest book value",
+    "dcf_gordon_growth": "terminal unlevered free cash flow",
+    "dcf_ev_ebitda": "terminal EBITDA",
+    "dcf_ev_revenue": "terminal revenue",
 }
 NUMERATOR_LABELS = {
     "price_sales": "enterprise value",
@@ -542,7 +560,7 @@ def _write_profile_overrides(overrides: Mapping[str, str]) -> None:
 
 def normalize_value_range_metric(value: Any) -> str:
     text = str(value or "").strip()
-    if text not in VALUATION_COLUMNS:
+    if text not in VALUE_RANGE_METRICS:
         raise ValueError(f"Unsupported valuation metric: {value}")
     return text
 
@@ -602,16 +620,22 @@ def _empty_value_range_storage() -> dict[str, Any]:
 
 
 def _first_value_range_metric(metric_assumptions: Mapping[str, Any]) -> str | None:
-    for metric in VALUATION_COLUMNS:
+    for metric in VALUE_RANGE_METRICS:
         if metric in metric_assumptions:
             return metric
     return None
 
 
-def _normalize_value_range_scenarios(raw_scenarios: Any, *, require_complete: bool) -> dict[str, dict[str, float]]:
+def _normalize_value_range_scenarios(
+    metric: str,
+    raw_scenarios: Any,
+    *,
+    require_complete: bool,
+) -> dict[str, dict[str, float]]:
     if not isinstance(raw_scenarios, Mapping):
         raise ValueError("Value range scenarios are required")
 
+    normalized_metric = normalize_value_range_metric(metric)
     scenarios: dict[str, dict[str, float]] = {}
     for scenario in VALUE_RANGE_SCENARIOS:
         raw = raw_scenarios.get(scenario)
@@ -619,13 +643,23 @@ def _normalize_value_range_scenarios(raw_scenarios: Any, *, require_complete: bo
             if require_complete:
                 raise ValueError(f"Missing {scenario} scenario")
             continue
-        multiple = _positive_float(raw.get("multiple"))
         denominator = _positive_float(raw.get("denominator"))
-        if multiple is None or denominator is None:
-            if require_complete:
-                raise ValueError(f"{scenario.title()} scenario requires positive multiple and denominator")
-            continue
-        scenarios[scenario] = {"multiple": multiple, "denominator": denominator}
+        if normalized_metric in DCF_GORDON_GROWTH_METRICS:
+            terminal_growth = _safe_float(raw.get("terminal_growth"))
+            if terminal_growth is None or terminal_growth <= -1.0 or denominator is None:
+                if require_complete:
+                    raise ValueError(
+                        f"{scenario.title()} scenario requires terminal growth above -100% and positive denominator"
+                    )
+                continue
+            scenarios[scenario] = {"terminal_growth": terminal_growth, "denominator": denominator}
+        else:
+            multiple = _positive_float(raw.get("multiple"))
+            if multiple is None or denominator is None:
+                if require_complete:
+                    raise ValueError(f"{scenario.title()} scenario requires positive multiple and denominator")
+                continue
+            scenarios[scenario] = {"multiple": multiple, "denominator": denominator}
 
     if require_complete and set(scenarios) != set(VALUE_RANGE_SCENARIOS):
         raise ValueError("Bear, base, and bull scenarios are required")
@@ -633,6 +667,7 @@ def _normalize_value_range_scenarios(raw_scenarios: Any, *, require_complete: bo
 
 
 def _normalize_value_range_metric_assumption(
+    metric: str,
     payload: Mapping[str, Any] | None,
     *,
     require_complete: bool,
@@ -641,8 +676,13 @@ def _normalize_value_range_metric_assumption(
     if not isinstance(payload, Mapping):
         raise ValueError("Value range metric assumption is required")
 
+    normalized_metric = normalize_value_range_metric(metric)
     denominator_currency = _clean_currency(payload.get("denominator_currency"))
-    scenarios = _normalize_value_range_scenarios(payload.get("scenarios"), require_complete=require_complete)
+    scenarios = _normalize_value_range_scenarios(
+        normalized_metric,
+        payload.get("scenarios"),
+        require_complete=require_complete,
+    )
     legacy_denominator_currency = bool(payload.get("legacy_denominator_currency")) or (
         legacy_without_currency and not denominator_currency
     )
@@ -651,6 +691,13 @@ def _normalize_value_range_metric_assumption(
         "scenarios": scenarios,
         "legacy_denominator_currency": legacy_denominator_currency,
     }
+    if normalized_metric in DCF_GORDON_GROWTH_METRICS:
+        wacc = _safe_float(payload.get("wacc"))
+        if wacc is None or wacc <= 0.0 or wacc >= 1.0:
+            if require_complete:
+                raise ValueError("DCF Gordon Growth requires WACC > 0 and < 100%")
+        else:
+            out["wacc"] = wacc
     if denominator_currency:
         out["denominator_currency"] = denominator_currency
     return out
@@ -661,6 +708,7 @@ def _normalize_value_range_update_payload(payload: Mapping[str, Any] | None) -> 
         raise ValueError("Value range payload is required")
     metric = normalize_value_range_metric(payload.get("metric"))
     return metric, _normalize_value_range_metric_assumption(
+        metric,
         payload,
         require_complete=True,
         legacy_without_currency=False,
@@ -678,6 +726,7 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
             try:
                 metric = normalize_value_range_metric(key)
                 metric_assumptions[metric] = _normalize_value_range_metric_assumption(
+                    metric,
                     value if isinstance(value, Mapping) else None,
                     require_complete=require_complete,
                     legacy_without_currency=False,
@@ -700,6 +749,7 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
 
     metric = normalize_value_range_metric(payload.get("metric"))
     assumption = _normalize_value_range_metric_assumption(
+        metric,
         payload,
         require_complete=require_complete,
         legacy_without_currency=True,
@@ -854,7 +904,7 @@ def value_range_payload(
     selected_metric = stored.get("selected_metric")
     metric = (
         normalize_value_range_metric(selected_metric)
-        if selected_metric in VALUATION_COLUMNS
+        if selected_metric in VALUE_RANGE_METRICS
         else (_first_value_range_metric(metric_assumptions) or _default_value_range_metric(metrics, effective_weights))
     )
     raw_assumption = metric_assumptions.get(metric)
@@ -867,7 +917,7 @@ def value_range_payload(
         market_data=market_data,
     )
     computed_metric_assumptions: dict[str, Any] = {}
-    for saved_metric in VALUATION_COLUMNS:
+    for saved_metric in VALUE_RANGE_METRICS:
         raw_saved_assumption = metric_assumptions.get(saved_metric)
         if not isinstance(raw_saved_assumption, Mapping):
             continue
@@ -893,6 +943,7 @@ def value_range_payload(
         "denominator_currency": calculation["denominator_currency"],
         "stored_denominator_currency": calculation["stored_denominator_currency"],
         "legacy_denominator_currency": calculation["legacy_denominator_currency"],
+        "wacc": calculation["wacc"],
         "denominator_to_price_fx_rate": calculation["denominator_to_price_fx_rate"],
         "fx_rate_as_of": calculation["fx_rate_as_of"],
         "calculation_method": _value_range_calculation_method(metric),
@@ -919,6 +970,7 @@ def _value_range_metric_calculation(
     financial_currency = _clean_currency(currency_context.get("financial_currency")) or price_currency
     assumption_currency = _clean_currency(assumption.get("denominator_currency")) if assumption else None
     legacy_denominator_currency = bool(assumption.get("legacy_denominator_currency")) if assumption else False
+    wacc = _safe_float(assumption.get("wacc")) if assumption else None
     stored_denominator_currency = assumption_currency or (
         price_currency if legacy_denominator_currency else financial_currency
     )
@@ -953,6 +1005,7 @@ def _value_range_metric_calculation(
             output_currency=price_currency,
             denominator_to_output_fx_rate=denominator_to_price_rate,
             fx_rate_as_of=denominator_to_price.get("as_of"),
+            wacc=wacc,
         )
         for scenario, row in scenario_rows.items()
         if scenario in VALUE_RANGE_SCENARIOS and isinstance(row, Mapping)
@@ -971,6 +1024,7 @@ def _value_range_metric_calculation(
                 output_currency=price_currency,
                 denominator_to_output_fx_rate=denominator_to_price_rate,
                 fx_rate_as_of=denominator_to_price.get("as_of"),
+                wacc=wacc,
             ),
         )
 
@@ -978,6 +1032,7 @@ def _value_range_metric_calculation(
         "denominator_currency": display_denominator_currency,
         "stored_denominator_currency": stored_denominator_currency,
         "legacy_denominator_currency": legacy_denominator_currency,
+        "wacc": wacc,
         "denominator_to_price_fx_rate": denominator_to_price_rate,
         "fx_rate_as_of": denominator_to_price.get("as_of"),
         "output_currency": price_currency,
@@ -1015,9 +1070,12 @@ def compute_value_range_scenario(
     output_currency: Any = None,
     denominator_to_output_fx_rate: Any = 1.0,
     fx_rate_as_of: Any = None,
+    wacc: Any = None,
 ) -> dict[str, Any]:
     normalized_metric = normalize_value_range_metric(metric)
     multiple = _positive_float(scenario.get("multiple"))
+    terminal_growth = _safe_float(scenario.get("terminal_growth"))
+    wacc_value = _positive_float(wacc)
     denominator = _positive_float(scenario.get("denominator"))
     denominator_fx_rate = _positive_float(denominator_to_output_fx_rate)
     denominator_converted = (
@@ -1029,11 +1087,51 @@ def compute_value_range_scenario(
 
     status = "ok"
     reason = None
+    enterprise_value = None
     equity_value = None
     expected_price = None
     percent_change = None
 
-    if multiple is None:
+    if normalized_metric in DCF_GORDON_GROWTH_METRICS:
+        if terminal_growth is None:
+            status = "missing"
+            reason = "missing_terminal_growth"
+        elif terminal_growth <= -1.0:
+            status = "not_meaningful"
+            reason = "terminal_growth_too_low"
+        elif wacc_value is None:
+            status = "missing"
+            reason = "missing_wacc"
+        elif denominator is None:
+            status = "missing"
+            reason = "missing_denominator"
+        elif denominator_fx_rate is None:
+            status = "missing"
+            reason = "missing_fx_rate"
+        elif share_count is None:
+            status = "missing"
+            reason = "missing_shares"
+        elif net_debt_value is None:
+            status = "missing"
+            reason = "missing_net_debt"
+        elif wacc_value <= terminal_growth:
+            status = "not_meaningful"
+            reason = "wacc_not_above_terminal_growth"
+        else:
+            enterprise_value = (denominator_converted or 0.0) * (1.0 + terminal_growth) / (wacc_value - terminal_growth)
+            equity_value = enterprise_value - (net_debt_value or 0.0)
+            if enterprise_value <= 0:
+                status = "not_meaningful"
+                reason = "non_positive_enterprise_value"
+                equity_value = None
+            elif equity_value <= 0:
+                status = "not_meaningful"
+                reason = "non_positive_equity_value"
+            else:
+                expected_price = equity_value / share_count
+                if current_price_value is not None:
+                    percent_change = (expected_price / current_price_value - 1.0) * 100.0
+    elif multiple is None:
         status = "missing"
         reason = "missing_multiple"
     elif denominator is None:
@@ -1045,7 +1143,7 @@ def compute_value_range_scenario(
     elif normalized_metric not in PER_SHARE_VALUE_RANGE_METRICS and share_count is None:
         status = "missing"
         reason = "missing_shares"
-    elif normalized_metric in ENTERPRISE_VALUE_METRICS and net_debt_value is None:
+    elif normalized_metric in ENTERPRISE_VALUE_RANGE_METRICS and net_debt_value is None:
         status = "missing"
         reason = "missing_net_debt"
     elif normalized_metric in PER_SHARE_VALUE_RANGE_METRICS:
@@ -1060,9 +1158,10 @@ def compute_value_range_scenario(
     else:
         assert share_count is not None
         enterprise_or_equity_value = multiple * (denominator_converted or 0.0)
+        enterprise_value = enterprise_or_equity_value if normalized_metric in ENTERPRISE_VALUE_RANGE_METRICS else None
         equity_value = (
             enterprise_or_equity_value - (net_debt_value or 0.0)
-            if normalized_metric in ENTERPRISE_VALUE_METRICS
+            if normalized_metric in ENTERPRISE_VALUE_RANGE_METRICS
             else enterprise_or_equity_value
         )
         if equity_value <= 0:
@@ -1075,12 +1174,15 @@ def compute_value_range_scenario(
 
     return {
         "multiple": multiple,
+        "terminal_growth": _round_float(terminal_growth, 6),
+        "wacc": _round_float(wacc_value, 6),
         "denominator": denominator,
         "denominator_currency": _clean_currency(denominator_currency),
         "denominator_converted": _round_float(denominator_converted),
         "denominator_converted_currency": _clean_currency(output_currency),
         "denominator_to_output_fx_rate": _round_float(denominator_fx_rate, 10),
         "fx_rate_as_of": fx_rate_as_of,
+        "enterprise_value": _round_float(enterprise_value),
         "equity_value": _round_float(equity_value),
         "expected_price": _round_float(expected_price, 4),
         "percent_change": _round_float(percent_change, 2),
@@ -1092,6 +1194,10 @@ def compute_value_range_scenario(
 
 def _value_range_calculation_method(metric: str) -> str:
     normalized_metric = normalize_value_range_metric(metric)
+    if normalized_metric in DCF_GORDON_GROWTH_METRICS:
+        return "dcf_gordon_growth_to_equity"
+    if normalized_metric in DCF_EXIT_MULTIPLE_METRICS:
+        return "dcf_exit_multiple_to_equity"
     if normalized_metric in ENTERPRISE_VALUE_METRICS:
         return "enterprise_value_to_equity"
     if normalized_metric in PER_SHARE_VALUE_RANGE_METRICS:

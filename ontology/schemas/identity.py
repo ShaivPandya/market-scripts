@@ -293,6 +293,55 @@ def document_artifact_id(kind: object, identifier: object) -> str:
     return f"document_artifact:{slug(kind)}:{slug(identifier)}"
 
 
+def source_manifest_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("source_manifest:"):
+        text = text.split(":", 1)[1]
+    return f"source_manifest:{slug(text)}"
+
+
+def media_artifact_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("media_artifact:"):
+        text = text.split(":", 1)[1]
+    return f"media_artifact:{slug(text)}"
+
+
+def extraction_run_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("extraction_run:"):
+        text = text.split(":", 1)[1]
+    return f"extraction_run:{slug(text)}"
+
+
+def observation_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("observation:"):
+        text = text.split(":", 1)[1]
+    return f"observation:{slug(text)}"
+
+
+def classification_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("classification:"):
+        text = text.split(":", 1)[1]
+    return f"classification:{slug(text)}"
+
+
+def pattern_detection_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("pattern_detection:"):
+        text = text.split(":", 1)[1]
+    return f"pattern_detection:{slug(text)}"
+
+
+def analyst_feedback_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("analyst_feedback:"):
+        text = text.split(":", 1)[1]
+    return f"analyst_feedback:{slug(text)}"
+
+
 def equity_overview_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("equity_overview:"):

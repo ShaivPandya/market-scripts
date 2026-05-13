@@ -153,6 +153,7 @@ ProviderEgressMode = Literal[
 ]
 ToolAuditLevel = Literal["standard", "enhanced", "financial_critical"]
 ToolFailureMode = Literal["fail_closed", "partial_allowed"]
+ToolLifecycleState = Literal["draft", "enabled", "deprecated", "disabled"]
 ActionEffectKind = Literal["read_only", "approval_gated", "direct_mutation"]
 ActionRiskClass = Literal["none", "low", "financial"]
 ActionExecutionMode = Literal["direct", "approval_required", "break_glass"]
@@ -798,6 +799,32 @@ class CreateResearchNoteInput(OptionalTickerMixin):
     def _validate_body(self) -> CreateResearchNoteInput:
         if not any(str(value or "").strip() for value in (self.note, self.content, self.body, self.text, self.summary)):
             raise ValueError("Research note content cannot be empty.")
+        return self
+
+
+class CreateAnalystFeedbackInput(BaseModel):
+    target_object_uid: str
+    target_object_type: str
+    decision: Literal["confirm", "correct", "reject", "needs_review"]
+    note: str | None = None
+    correction: dict[str, Any] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    reason: str | None = None
+
+    @field_validator("target_object_uid", "target_object_type")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("target_object_uid and target_object_type are required.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_feedback_content(self) -> CreateAnalystFeedbackInput:
+        if self.decision in {"correct", "reject", "needs_review"} and not str(self.note or "").strip():
+            raise ValueError("note is required for correct, reject, and needs_review feedback.")
+        if self.decision == "correct" and not self.correction:
+            raise ValueError("correction is required for correct feedback.")
         return self
 
 
@@ -2748,6 +2775,11 @@ def _create_research_note(input_model: BaseModel, _context: ActionContext) -> Ac
     return ActionResult({"status": "ok", **typed.model_dump()})
 
 
+def _create_analyst_feedback(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CreateAnalystFeedbackInput, input_model)
+    return ActionResult({"status": "ok", **typed.model_dump(exclude_none=True)})
+
+
 def _delete_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
     typed = cast(DeletePortfolioNewsDigestInput, input_model)
     from api.routers.portfolio_news import _delete_digest_index_best_effort
@@ -3064,6 +3096,14 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_ticker=_ticker_from_model,
         effect_kind="approval_gated",
     ),
+    "create_analyst_feedback": DomainAction(
+        action_id="create_analyst_feedback",
+        input_model=CreateAnalystFeedbackInput,
+        handler=_create_analyst_feedback,
+        approval_entity_type="analyst_feedback",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
     "create_portfolio_news_digest": DomainAction(
         action_id="create_portfolio_news_digest",
         input_model=CreatePortfolioNewsDigestInput,
@@ -3286,6 +3326,7 @@ class ToolExposure:
     rate_limit: Mapping[str, Any] = field(default_factory=dict)
     audit_level: ToolAuditLevel = "standard"
     failure_mode: ToolFailureMode = "partial_allowed"
+    lifecycle_state: ToolLifecycleState = "enabled"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -3474,6 +3515,14 @@ def _proposal_news_digest_delete_payload(model: BaseModel) -> dict[str, Any]:
     return {"digest_id": payload["digest_id"]}
 
 
+def _proposal_analyst_feedback_payload(model: BaseModel) -> dict[str, Any]:
+    payload = model.model_dump(exclude_none=True)
+    reason = payload.pop("reason", None)
+    if reason and not payload.get("note"):
+        payload["note"] = reason
+    return payload
+
+
 _PROPOSAL_TOOL_BINDINGS: dict[str, dict[str, Any]] = {
     "propose_thesis_status_change": {"action_id": "change_thesis_status", "adapter": _proposal_thesis_status_payload},
     "propose_action_item": {"action_id": "create_action_item", "adapter": _proposal_action_item_payload},
@@ -3499,6 +3548,10 @@ _PROPOSAL_TOOL_BINDINGS: dict[str, dict[str, Any]] = {
     "propose_news_digest_delete": {
         "action_id": "delete_portfolio_news_digest",
         "adapter": _proposal_news_digest_delete_payload,
+    },
+    "propose_analyst_feedback": {
+        "action_id": "create_analyst_feedback",
+        "adapter": _proposal_analyst_feedback_payload,
     },
 }
 
@@ -3599,6 +3652,9 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_portfolio_positions', 'description': 'Fetch editable portfolio positions, optionally including hedges.', 'parameters': {'type': 'object', 'properties': {'include_hedges': {'type': 'boolean'}}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('portfolio positions', 'editable holdings'), 'selectable': True}
 {'name': 'get_hedge_positions', 'description': 'Fetch hedge positions from the portfolio editor.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('hedge positions', 'hedges'), 'selectable': True}
 {'name': 'get_portfolio_news', 'description': 'List uploaded news digests, or fetch one digest when digest_id is provided.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string', 'description': 'Optional digest id for detail.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('news digests', 'portfolio news', 'uploaded news'), 'selectable': True}
+{'name': 'list_source_artifacts', 'description': 'List governed multimodal source artifacts ingested through the source-ingestion plane. Returns document and image artifact metadata, source record ids, manifests, status, and extraction state. Use this to inspect uploaded source material before reasoning from it.', 'parameters': {'type': 'object', 'properties': {'artifact_type': {'type': 'string', 'description': "Filter: all, document, or media. Default all."}, 'manifest_id': {'type': 'string', 'description': 'Optional source manifest id filter.'}, 'ticker': {'type': 'string', 'description': 'Optional ticker filter.'}, 'limit': {'type': 'integer', 'description': 'Maximum artifacts to return. Default 25.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('source artifacts', 'uploaded artifacts', 'multimodal sources'), 'selectable': True}
+{'name': 'get_source_artifact', 'description': 'Fetch one governed source artifact with linked source record, extraction runs, and extracted observations/classifications/pattern detections.', 'parameters': {'type': 'object', 'properties': {'artifact_uid': {'type': 'string', 'description': 'Ontology object uid for a DocumentArtifact or MediaArtifact.'}}, 'required': ['artifact_uid']}, 'category': 'research', 'access_mode': 'read', 'aliases': ('source artifact detail', 'artifact extraction detail'), 'selectable': True}
+{'name': 'summarize_extracted_observations', 'description': 'Summarize extracted observations, classifications, and pattern detections from multimodal source artifacts. Optionally filter to one artifact.', 'parameters': {'type': 'object', 'properties': {'artifact_uid': {'type': 'string', 'description': 'Optional artifact uid filter.'}, 'limit': {'type': 'integer', 'description': 'Maximum rows per object type. Default 20.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('extracted observations', 'artifact observations', 'source observations'), 'selectable': True}
 {'name': 'get_workflow_run', 'description': 'Fetch one persisted workflow run by run_id.', 'parameters': {'type': 'object', 'properties': {'run_id': {'type': 'string'}}, 'required': ['run_id']}, 'category': 'workflows', 'access_mode': 'read', 'aliases': ('workflow run detail', 'run detail'), 'selectable': True}
 {'name': 'get_commodities', 'description': 'Fetch the commodity dashboard across major commodities for a timeframe.', 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': 'This Week, Daily, Weekly, or Monthly. Default Daily.'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities dashboard', 'commodity prices'), 'selectable': True}
 {'name': 'get_commodities_curve', 'description': 'Fetch futures curve data for CL, BZ, NG, or TTF.', 'parameters': {'type': 'object', 'properties': {'commodity': {'type': 'string'}, 'lookback_days': {'type': 'integer'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities curve', 'oil curve', 'gas curve', 'futures curve'), 'selectable': True}
@@ -3634,6 +3690,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'propose_catalyst', 'description': 'Propose creating a catalyst. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'description': {'type': 'string'}, 'category': {'type': 'string'}, 'target_date': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['ticker', 'description', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose catalyst', 'create catalyst'), 'selectable': True}
 {'name': 'propose_kill_condition', 'description': 'Propose creating a kill condition. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'condition': {'type': 'string'}, 'metric': {'type': 'string'}, 'threshold': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['ticker', 'condition', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose kill condition', 'create kill condition'), 'selectable': True}
 {'name': 'propose_news_digest_delete', 'description': 'Propose deleting an uploaded news digest. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['digest_id', 'reason']}, 'category': 'research', 'access_mode': 'proposal', 'aliases': ('delete news digest', 'remove digest'), 'selectable': True}
+{'name': 'propose_analyst_feedback', 'description': 'Propose analyst feedback on an extracted source object. Creates a pending approval; it does not directly rewrite observations, classifications, or pattern detections.', 'parameters': {'type': 'object', 'properties': {'target_object_uid': {'type': 'string'}, 'target_object_type': {'type': 'string'}, 'decision': {'type': 'string', 'description': 'confirm, correct, reject, or needs_review'}, 'note': {'type': 'string'}, 'correction': {'type': 'object'}, 'confidence': {'type': 'number'}, 'reason': {'type': 'string'}}, 'required': ['target_object_uid', 'target_object_type', 'decision', 'reason']}, 'category': 'research', 'access_mode': 'proposal', 'aliases': ('propose source feedback', 'correct extracted observation', 'reject extracted observation'), 'selectable': True}
 """.strip()
 
 
@@ -3818,6 +3875,7 @@ def _build_tool_exposure(spec: dict[str, Any]) -> ToolExposure:
         rate_limit=dict(spec.get("rate_limit") or _tool_rate_limit(access_mode)),
         audit_level=cast(ToolAuditLevel, str(spec.get("audit_level") or _tool_audit_level(access_mode, sensitivity))),
         failure_mode=cast(ToolFailureMode, str(spec.get("failure_mode") or _tool_failure_mode(access_mode))),
+        lifecycle_state=cast(ToolLifecycleState, str(spec.get("lifecycle_state") or "enabled")),
     )
 
 
@@ -3843,7 +3901,7 @@ def iter_tool_exposures(*, agent_exposed_only: bool = False) -> list[ToolExposur
     exposures = list(_TOOL_EXPOSURES.values())
     if not agent_exposed_only:
         return exposures
-    return [tool for tool in exposures if tool.agent_exposed]
+    return [tool for tool in exposures if tool.agent_exposed and tool.lifecycle_state != "disabled"]
 
 
 def agent_tool_names() -> set[str]:
@@ -3852,7 +3910,7 @@ def agent_tool_names() -> set[str]:
 
 def is_agent_tool_exposed(tool_name: str) -> bool:
     exposure = _TOOL_EXPOSURES.get(tool_name)
-    return bool(exposure and exposure.agent_exposed)
+    return bool(exposure and exposure.agent_exposed and exposure.lifecycle_state != "disabled")
 
 
 def list_tool_exposures(*, agent_exposed_only: bool = False) -> list[dict[str, Any]]:
@@ -3881,6 +3939,7 @@ def list_tool_exposures(*, agent_exposed_only: bool = False) -> list[dict[str, A
                 "rate_limit": dict(tool.rate_limit),
                 "audit_level": tool.audit_level,
                 "failure_mode": tool.failure_mode,
+                "lifecycle_state": tool.lifecycle_state,
             }
         )
     return rows

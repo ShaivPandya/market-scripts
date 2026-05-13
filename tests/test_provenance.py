@@ -406,6 +406,188 @@ def test_primary_record_source_ref_canonicalizes_logical_source_record_uid(monke
     assert repo.object_writes[0].properties["source_record_id"] == logical_id
 
 
+def _graph_relation(
+    link_type: str,
+    source_ref_type: str,
+    source_ref_id: str,
+    target_ref_type: str,
+    target_ref_id: str,
+    event_id: str,
+) -> dict:
+    relation_type = provenance.LINK_RELATION_TYPES[link_type]
+    return {
+        "relation_uid": f"{relation_type}:{source_ref_id}:{target_ref_id}:{event_id}",
+        "relation_type": relation_type,
+        "source_object_uid": provenance.ref_object_uid_for(source_ref_type, source_ref_id),
+        "target_object_uid": provenance.ref_object_uid_for(target_ref_type, target_ref_id),
+        "properties_json": {
+            "event_id": event_id,
+            "source_ref_type": source_ref_type,
+            "source_ref_id": source_ref_id,
+            "target_ref_type": target_ref_type,
+            "target_ref_id": target_ref_id,
+            "redaction_policy": "audit_summary_v1",
+            "retention_class": "provenance_365d",
+            "metadata": {"safe": True},
+        },
+        "_meta": {"temporal": {"valid_from": "2026-05-01T00:00:00Z"}},
+    }
+
+
+class _FakeGraphObjects:
+    def __init__(self, relations: list[dict]):
+        self.relations = relations
+
+    def query_relations(self, relation_type, include_history=False, limit=100, offset=0, **_kwargs):
+        rows = [row for row in self.relations if row["relation_type"] == relation_type]
+        return rows[offset : offset + limit]
+
+
+class _FakeGraphReads:
+    def __init__(self, relations: list[dict], events: list[dict] | None = None):
+        self.objects = _FakeGraphObjects(relations)
+        self.events = events or []
+
+    def list_objects(self, object_type, filters=None, limit=100, **_kwargs):
+        if object_type != "ProvenanceEvent":
+            return []
+        rows = list(self.events)
+        if filters and filters.get("event_id"):
+            rows = [row for row in rows if row.get("event_id") == filters["event_id"]]
+        return rows[:limit]
+
+
+def test_provenance_graph_exact_seed_direction_depth_and_recommendation(monkeypatch):
+    from api import provenance_graph
+    from api.provenance_graph import ProvenanceGraphService
+
+    monkeypatch.setattr(provenance_graph, "use_postgres_state", lambda: False)
+    relations = [
+        _graph_relation(
+            provenance.LINK_USED,
+            provenance.REF_WORKFLOW_RUN,
+            "wf-1",
+            provenance.REF_TOOL_CALL,
+            "tool-1",
+            "pv:wf-1",
+        ),
+        _graph_relation(
+            provenance.LINK_USED,
+            provenance.REF_WORKFLOW_RUN,
+            "wf-10",
+            provenance.REF_TOOL_CALL,
+            "tool-10",
+            "pv:wf-10",
+        ),
+        _graph_relation(
+            provenance.LINK_USED,
+            provenance.REF_SOURCE_RECORD,
+            "source-1",
+            provenance.REF_MODEL_CALL,
+            "model-1",
+            "pv:model",
+        ),
+        _graph_relation(
+            provenance.LINK_PRODUCED,
+            provenance.REF_MODEL_CALL,
+            "model-1",
+            "recommendation",
+            "42",
+            "pv:model",
+        ),
+        _graph_relation(
+            provenance.LINK_PRODUCED,
+            "recommendation",
+            "42",
+            provenance.REF_APPROVAL,
+            "7",
+            "pv:approval",
+        ),
+    ]
+    service = ProvenanceGraphService(reads=_FakeGraphReads(relations))
+
+    exact = service.trace(
+        selector={"ref_type": provenance.REF_WORKFLOW_RUN, "ref_id": "wf-1"},
+        max_depth=1,
+    )
+    assert any(edge["target_ref_id"] == "tool-1" for edge in exact["edges"])
+    assert not any(edge["target_ref_id"] == "tool-10" for edge in exact["edges"])
+
+    upstream = service.trace(
+        selector={"ref_type": provenance.REF_MODEL_CALL, "ref_id": "model-1"}, direction="upstream"
+    )
+    downstream = service.trace(
+        selector={"ref_type": provenance.REF_MODEL_CALL, "ref_id": "model-1"},
+        direction="downstream",
+    )
+    assert any(edge["source_ref_type"] == provenance.REF_SOURCE_RECORD for edge in upstream["edges"])
+    assert not any(edge["target_ref_type"] == "recommendation" for edge in upstream["edges"])
+    assert any(edge["target_ref_type"] == "recommendation" for edge in downstream["edges"])
+    assert not any(edge["source_ref_type"] == provenance.REF_SOURCE_RECORD for edge in downstream["edges"])
+
+    one_hop = service.trace(selector={"recommendation_id": "42"}, direction="downstream", max_depth=1)
+    two_hop = service.trace(selector={"recommendation_id": "42"}, direction="both", max_depth=2)
+    assert any(edge["target_ref_type"] == provenance.REF_APPROVAL for edge in one_hop["edges"])
+    assert not any(edge["source_ref_type"] == provenance.REF_SOURCE_RECORD for edge in one_hop["edges"])
+    assert any(edge["source_ref_type"] == provenance.REF_SOURCE_RECORD for edge in two_hop["edges"])
+
+
+def test_provenance_graph_limits_cycles_and_parent_edges(monkeypatch):
+    from api import provenance_graph
+    from api.provenance_graph import ProvenanceGraphService
+
+    monkeypatch.setattr(provenance_graph, "use_postgres_state", lambda: False)
+    relations = [
+        _graph_relation(
+            provenance.LINK_USED,
+            provenance.REF_TOOL_CALL,
+            "a",
+            provenance.REF_TOOL_CALL,
+            "b",
+            "pv:child",
+        ),
+        _graph_relation(
+            provenance.LINK_USED,
+            provenance.REF_TOOL_CALL,
+            "b",
+            provenance.REF_TOOL_CALL,
+            "a",
+            "pv:child",
+        ),
+    ]
+    events = [
+        {
+            "event_id": "pv:child",
+            "event_type": "tool_call",
+            "event_name": "child",
+            "status": "succeeded",
+            "started_at": "2026-05-01T00:00:00Z",
+            "parent_event_id": "pv:parent",
+        },
+        {
+            "event_id": "pv:parent",
+            "event_type": "workflow_run",
+            "event_name": "parent",
+            "status": "succeeded",
+            "started_at": "2026-05-01T00:00:00Z",
+        },
+    ]
+    service = ProvenanceGraphService(reads=_FakeGraphReads(relations, events=events))
+
+    graph = service.trace(
+        selector={"ref_type": provenance.REF_TOOL_CALL, "ref_id": "a"},
+        max_depth=8,
+        max_edges=1,
+    )
+
+    assert graph["truncated"] is True
+    assert any(warning["code"] == "edge_limit_reached" for warning in graph["warnings"])
+    assert len({edge["id"] for edge in graph["edges"]}) == len(graph["edges"])
+
+    parent_graph = service.trace(selector={"event_id": "pv:child"})
+    assert sum(1 for edge in parent_graph["edges"] if edge["edge_type"] == "event_parent") == 1
+
+
 def test_provenance_trace_api_accepts_entity_selector(auth_client):
     provenance.start_event(
         event_id="pv:test:workflow",
@@ -432,7 +614,9 @@ def test_provenance_trace_api_accepts_entity_selector(auth_client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["seed"]["ref_type"] == "workflow_run"
-    assert any(event["id"] == "pv:test:workflow" for event in body["events"])
+    assert any(node["id"] == "event:pv:test:workflow" for node in body["nodes"])
+    assert any(edge["source_ref_type"] == "workflow_run" for edge in body["edges"])
+    assert body["counts"]["events"] >= 1
     assert body["timeline"]
 
 
@@ -501,11 +685,11 @@ def test_provenance_trace_api_is_admin_only_and_ontology_shaped(monkeypatch):
 
     assert body["lineage_state"] == "ontology"
     assert body["selector"] == {"event_id": "pv:trace"}
-    assert body["seed"] == {"selector_type": "event_id", "selector_id": "pv:trace"}
-    assert body["events"][0]["event_id"] == "pv:trace"
-    assert body["references"][0]["ref_id"] == "version:1"
-    assert body["relations"][0]["relation_type"] == "provenance_produced"
-    assert body["relations"][0]["properties"]["relation_uid"] == "provenance_produced:unit"
+    assert body["seed"] == {"seed_type": "event", "event_id": "pv:trace"}
+    assert any(node["event_id"] == "pv:trace" for node in body["nodes"])
+    assert any(node.get("ref_id") == "version:1" for node in body["nodes"])
+    assert body["edges"][0]["relation_type"] == "provenance_produced"
+    assert body["edges"][0]["id"] == "provenance_produced:unit"
     assert body["timeline"]
 
 

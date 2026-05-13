@@ -44,6 +44,7 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
 
     response = auth_client.get("/api/v1/settings/llm")
 
@@ -53,6 +54,7 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert payload["models"]["low"] == "claude-haiku-4-5"
     assert payload["models_by_provider"]["openai"]["mid"] == "gpt-5.4"
     assert payload["models_by_provider"]["gemini"]["mid"] == "gemini-3.1-pro-preview-customtools"
+    assert payload["models_by_provider"]["local"]["mid"] == "local-mid"
     assert payload["reasoning_efforts"]["anthropic"] == {
         "low": "high",
         "mid": "high",
@@ -87,6 +89,7 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     anthropic = next(item for item in payload["available_providers"] if item["provider"] == "anthropic")
     openai = next(item for item in payload["available_providers"] if item["provider"] == "openai")
     gemini = next(item for item in payload["available_providers"] if item["provider"] == "gemini")
+    local = next(item for item in payload["available_providers"] if item["provider"] == "local")
     assert anthropic == {
         "provider": "anthropic",
         "label": "Claude",
@@ -100,6 +103,11 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
         "configured": False,
         "api_key_env": "GEMINI_API_KEY",
     }
+    assert local["configured"] is False
+    assert local["base_url_env"] == "LOCAL_LLM_BASE_URL"
+    assert payload["local_provider"]["configured"] is False
+    assert payload["gateway_policy"]["private_egress_mode"] == "allow_with_warning"
+    assert payload["gateway_policy"]["provider_lifecycle"]["local"] == "enabled"
     assert "sk-ant-test" not in response.text
 
 
@@ -130,6 +138,7 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
     assert len(calls) == 1
     assert calls[0] == [
         "llm.provider",
+        "llm.gateway_policy",
         "llm.reasoning_effort.anthropic.low",
         "llm.reasoning_effort.anthropic.mid",
         "llm.reasoning_effort.anthropic.high",
@@ -139,6 +148,9 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
         "llm.reasoning_effort.gemini.low",
         "llm.reasoning_effort.gemini.mid",
         "llm.reasoning_effort.gemini.high",
+        "llm.reasoning_effort.local.low",
+        "llm.reasoning_effort.local.mid",
+        "llm.reasoning_effort.local.high",
     ]
 
 
@@ -225,6 +237,19 @@ def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_clien
     assert temp_llm_settings.get_llm_reasoning_effort_setting("gemini", "low") == "minimal"
 
 
+def test_put_llm_settings_persists_local_provider(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:11434/v1")
+    monkeypatch.delenv("LOCAL_LLM_API_KEY", raising=False)
+
+    response = auth_client.put("/api/v1/settings/llm", json={"provider": "local"})
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "local"
+    assert response.json()["local_provider"]["configured"] is True
+    assert temp_llm_settings.get_llm_provider_setting() == "local"
+
+
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):
     response = auth_client.put("/api/v1/settings/llm", json={"provider": "other"})
 
@@ -247,6 +272,61 @@ def test_put_llm_settings_rejects_missing_gemini_key(temp_llm_settings, auth_cli
 
     assert response.status_code == 422
     assert "GEMINI_API_KEY" in response.text
+
+
+def test_put_llm_settings_rejects_missing_local_base_url(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
+
+    response = auth_client.put("/api/v1/settings/llm", json={"provider": "local"})
+
+    assert response.status_code == 422
+    assert "LOCAL_LLM_BASE_URL" in response.text
+
+
+def test_put_llm_settings_gateway_policy_requires_note(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["denied_rules"] = [
+        {"provider": "anthropic", "model": "claude-test", "data_sensitivity": "portfolio_private"}
+    ]
+
+    response = auth_client.put("/api/v1/settings/llm", json={"provider": "anthropic", "gateway_policy": policy})
+
+    assert response.status_code == 422
+    assert "gateway_note" in response.text
+
+
+def test_put_llm_settings_gateway_policy_persists_with_audit(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["denied_rules"] = [
+        {"provider": "anthropic", "model": "claude-test", "data_sensitivity": "portfolio_private"}
+    ]
+
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={"provider": "anthropic", "gateway_policy": policy, "gateway_note": "Block this model for tests."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["gateway_policy"]["denied_rules"] == policy["denied_rules"]
+    assert temp_llm_settings.get_gateway_policy_setting()["denied_rules"] == policy["denied_rules"]
+
+
+def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["denied_rules"] = [{"provider": "unknown", "model": "*", "data_sensitivity": "portfolio_private"}]
+
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={"provider": "anthropic", "gateway_policy": policy, "gateway_note": "Invalid policy."},
+    )
+
+    assert response.status_code == 422
 
 
 def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):

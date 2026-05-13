@@ -509,6 +509,24 @@ def test_id_only_ontology_update_approvals_apply_without_ticker_context(action_i
     assert any(row["object_type"] == expected_type for row in repo.objects.values())
 
 
+def test_create_catalyst_approval_defaults_to_pending_status():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_catalyst",
+        {"ticker": "META", "description": "AI ads: Monetization improves", "category": "fundamental"},
+        context,
+        reason="Create catalyst",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+    catalyst = next(row for row in repo.objects.values() if row["object_type"] == "Catalyst")
+
+    assert applied["application_status"] == "applied"
+    assert catalyst["properties_json"]["status"] == "pending"
+
+
 def test_create_recommendation_approval_applies_with_real_schema_normalization():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]

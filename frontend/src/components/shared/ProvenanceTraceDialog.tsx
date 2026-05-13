@@ -1,9 +1,16 @@
+import { useMemo, useState } from "react"
 import { GitBranch, Link2, ShieldCheck } from "lucide-react"
 
 import { Dialog } from "@/components/shared/Dialog"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchProvenanceTrace, type ProvenanceEvent, type ProvenanceLink, type ProvenanceSelector, type ProvenanceTrace } from "@/lib/api"
+import {
+  fetchProvenanceTrace,
+  type ProvenanceGraphEdge,
+  type ProvenanceGraphNode,
+  type ProvenanceSelector,
+  type ProvenanceTrace,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 interface ProvenanceTraceDialogProps {
@@ -33,21 +40,8 @@ function traceItems<T>(value: unknown): T[] {
 
 function timelineLabel(item: Record<string, unknown>): string {
   const kind = String(item.kind ?? "")
-  if (kind === "event") {
-    return [item.event_type, item.event_name].filter(Boolean).join(" · ") || "event"
-  }
-  if (kind === "link") {
-    return `${String(item.source_ref_type ?? "")}:${String(item.source_ref_id ?? "")} ${String(item.link_type ?? "")} ${String(item.target_ref_type ?? "")}:${String(item.target_ref_id ?? "")}`
-  }
-  if (kind === "source_record") {
-    return `${String(item.source_name ?? "")}:${String(item.record_kind ?? "")}`
-  }
-  if (kind === "workflow_artifact") {
-    return `workflow artifact ${String(item.artifact_type ?? "")}`
-  }
-  if (kind === "relation") {
-    return [item.relation_type, item.id].filter(Boolean).map(String).join(" · ") || "relation"
-  }
+  if (kind === "node") return [item.node_type, item.label, item.id].filter(Boolean).join(" · ") || "node"
+  if (kind === "edge") return [item.edge_type, item.source_node_id, "->", item.target_node_id].filter(Boolean).join(" ")
   return kind || "timeline item"
 }
 
@@ -59,9 +53,15 @@ function statusClass(status: unknown): string {
 }
 
 function TraceBody({ selector }: { selector: ProvenanceSelector }) {
+  const [direction, setDirection] = useState<"both" | "upstream" | "downstream">(selector.direction ?? "both")
+  const [depth, setDepth] = useState<number>(selector.max_depth ?? 3)
+  const querySelector = useMemo(
+    () => ({ ...selector, direction, max_depth: depth }),
+    [selector, direction, depth],
+  )
   const { data, isPending, error } = useApiQuery<ProvenanceTrace>(
-    ["provenance", selector],
-    () => fetchProvenanceTrace({ max_depth: 4, ...selector }),
+    ["provenance", querySelector],
+    () => fetchProvenanceTrace(querySelector),
     30_000,
   )
 
@@ -69,23 +69,59 @@ function TraceBody({ selector }: { selector: ProvenanceSelector }) {
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
-  const events = traceItems<ProvenanceEvent>(data.events)
-  const links = traceItems<ProvenanceLink>(data.links)
-  const sourceRecords = traceItems<Record<string, unknown>>(data.source_records)
-  const workflowArtifacts = traceItems<Record<string, unknown>>(data.workflow_artifacts)
-  const relations = traceItems<Record<string, unknown>>(data.relations)
-  const references = traceItems<Record<string, unknown>>(data.references)
-  const linkedRefs: Record<string, unknown>[] = links.length ? links.map(link => ({ ...link })) : relations
-  const sourceLikeRecords = sourceRecords.length ? sourceRecords : references
+  const nodes = traceItems<ProvenanceGraphNode>(data.nodes)
+  const edges = traceItems<ProvenanceGraphEdge>(data.edges)
+  const eventNodes = nodes.filter(node => node.node_type === "event")
+  const referenceNodes = nodes.filter(node => node.node_type !== "event")
   const timeline = traceItems<Record<string, unknown>>(data.timeline)
+  const warnings = Array.isArray(data.warnings) ? data.warnings : []
+  const counts = data.counts
   return (
     <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-app px-3 py-2">
+        <label className="flex items-center gap-2 text-xs font-medium text-muted">
+          Direction
+          <select
+            className="rounded-md border border-app bg-app px-2 py-1 text-xs text-app"
+            value={direction}
+            onChange={event => setDirection(event.target.value as "both" | "upstream" | "downstream")}
+          >
+            <option value="both">Both</option>
+            <option value="upstream">Upstream</option>
+            <option value="downstream">Downstream</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-xs font-medium text-muted">
+          Depth
+          <select
+            className="rounded-md border border-app bg-app px-2 py-1 text-xs text-app"
+            value={depth}
+            onChange={event => setDepth(Number(event.target.value))}
+          >
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(value => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+        {data.truncated && <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Trace truncated</span>}
+      </div>
+
+      {warnings.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {warnings.map((warning, index) => (
+            <span key={`${warning.code}-${index}`} className="rounded-md border border-app px-2 py-1 text-xs text-muted">
+              {warning.code.replace(/_/g, " ")}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          ["Events", events.length],
-          [links.length ? "Links" : "Relations", linkedRefs.length],
-          [sourceRecords.length ? "Sources" : "References", sourceLikeRecords.length],
-          ["Artifacts", workflowArtifacts.length],
+          ["Nodes", counts?.nodes ?? nodes.length],
+          ["Edges", counts?.edges ?? edges.length],
+          ["Events", counts?.events ?? eventNodes.length],
+          ["References", counts?.references ?? referenceNodes.length],
         ].map(([label, value]) => (
           <div key={String(label)} className="rounded-lg border border-app px-3 py-2">
             <div className="text-[11px] font-medium uppercase tracking-wide text-subtle">{label}</div>
@@ -114,17 +150,17 @@ function TraceBody({ selector }: { selector: ProvenanceSelector }) {
         </div>
       </section>
 
-      {events.length > 0 && (
+      {eventNodes.length > 0 && (
         <section>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-app">
             <ShieldCheck size={15} />
-            Event Path
+            Events
           </h3>
           <div className="space-y-1 text-xs text-muted">
-            {events.slice(0, 8).map((event, index) => (
+            {eventNodes.slice(0, 8).map((event, index) => (
               <div key={event.id} className="flex flex-wrap gap-x-2 gap-y-1">
                 <span className="font-medium text-app">{event.event_type ?? "event"}</span>
-                <span>{event.event_name ?? event.id ?? `#${index + 1}`}</span>
+                <span>{event.event_name ?? event.label ?? `#${index + 1}`}</span>
                 <span className={statusClass(event.status)}>{event.status}</span>
                 <span className="font-mono text-[11px] text-subtle">{event.id}</span>
               </div>
@@ -133,21 +169,21 @@ function TraceBody({ selector }: { selector: ProvenanceSelector }) {
         </section>
       )}
 
-      {linkedRefs.length > 0 && (
+      {edges.length > 0 && (
         <section>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-app">
             <Link2 size={15} />
-            {links.length ? "Linked Refs" : "Relations"}
+            Edges
           </h3>
           <div className="space-y-1 text-xs text-muted">
-            {linkedRefs.slice(0, 12).map((link, index) => (
-              <div key={String(link.id ?? link.relation_uid ?? index)} className="break-words">
+            {edges.slice(0, 12).map((edge, index) => (
+              <div key={String(edge.id ?? index)} className="break-words">
                 <span className="font-mono text-[11px] text-subtle">
-                  {String(link.source_ref_type ?? link.source_uid ?? "source")}:{String(link.source_ref_id ?? link.source_id ?? "")}
+                  {String(edge.source_ref_type ?? edge.source_node_id ?? "source")}:{String(edge.source_ref_id ?? "")}
                 </span>{" "}
-                <span className="font-medium text-app">{String(link.link_type ?? link.relation_type ?? "relates")}</span>{" "}
+                <span className="font-medium text-app">{String(edge.link_type ?? edge.relation_type ?? "relates")}</span>{" "}
                 <span className="font-mono text-[11px] text-subtle">
-                  {String(link.target_ref_type ?? link.target_uid ?? "target")}:{String(link.target_ref_id ?? link.target_id ?? "")}
+                  {String(edge.target_ref_type ?? edge.target_node_id ?? "target")}:{String(edge.target_ref_id ?? "")}
                 </span>
               </div>
             ))}

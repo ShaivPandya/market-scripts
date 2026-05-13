@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ import pytest
 
 from api import agent_tools
 from api.routers import agent as agent_router
+from ontology import action_registry
 from ontology.action_registry import ActionValidationError, iter_tool_exposures
 from ontology.policy import admin_actor, agent_actor
 
@@ -374,6 +376,7 @@ def test_agent_tool_exposures_have_complete_governance_metadata():
         assert tool.rate_limit.get("label")
         assert tool.audit_level in {"standard", "enhanced", "financial_critical"}
         assert tool.failure_mode in {"fail_closed", "partial_allowed"}
+        assert tool.lifecycle_state in {"draft", "enabled", "deprecated", "disabled"}
 
 
 def test_agent_capability_registry_does_not_expose_direct_mutations():
@@ -406,7 +409,29 @@ def test_execute_tool_rejects_non_exposed_direct_mutation():
     )
 
     assert "not exposed to the agent" in payload["error"]
-    assert payload["_meta"]["status"] == "error"
+    assert payload["_meta"]["status"] == "blocked"
+
+
+def test_disabled_tools_are_not_exposed_and_return_blocked(monkeypatch):
+    original = action_registry.get_tool_exposure("get_liquidity")
+    monkeypatch.setitem(action_registry._TOOL_EXPOSURES, "get_liquidity", replace(original, lifecycle_state="disabled"))
+
+    assert "get_liquidity" not in {tool.tool_name for tool in iter_tool_exposures(agent_exposed_only=True)}
+    assert action_registry.is_agent_tool_exposed("get_liquidity") is False
+    payload = json.loads(agent_tools.execute_tool("get_liquidity", {}))
+
+    assert payload["_meta"]["status"] == "blocked"
+    assert "not exposed to the agent" in payload["error"]
+
+
+def test_deprecated_tools_remain_exposed(monkeypatch):
+    original = action_registry.get_tool_exposure("get_liquidity")
+    monkeypatch.setitem(
+        action_registry._TOOL_EXPOSURES, "get_liquidity", replace(original, lifecycle_state="deprecated")
+    )
+
+    assert "get_liquidity" in {tool.tool_name for tool in iter_tool_exposures(agent_exposed_only=True)}
+    assert action_registry.is_agent_tool_exposed("get_liquidity") is True
 
 
 def test_agent_dispatch_proposal_tools_use_canonical_helper(monkeypatch):
@@ -561,6 +586,17 @@ def test_agent_selector_finds_new_full_app_capabilities():
         assert "search_agent_capabilities" in selected
 
 
+def test_agent_selector_includes_catalyst_proposal_for_thesis_catalyst_creation():
+    selected = agent_router._select_tool_names(
+        "Take the catalysts from the META thesis and generate action items to create the catalysts"
+    )
+
+    assert "get_thesis" in selected
+    assert "get_catalysts" in selected
+    assert "propose_catalyst" in selected
+    assert "search_agent_capabilities" in selected
+
+
 def test_agent_capability_search_returns_fallback_matches():
     result = agent_tools.search_agent_capabilities("commodity proxy screener", top_k=5)
     names = [row["name"] for row in result["matches"]]
@@ -585,7 +621,7 @@ def test_get_catalysts_tool_returns_object_payload(monkeypatch):
     rows = [
         {
             "id": 1,
-            "ticker": "APO",
+            "ticker": "ZZZZ",
             "description": "Origination recovery",
             "status": "pending",
         }
@@ -598,14 +634,14 @@ def test_get_catalysts_tool_returns_object_payload(monkeypatch):
 
     monkeypatch.setattr(OntologyRuntimeReadService, "catalysts", fake_catalysts)
 
-    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "apo"}))
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "zzzz"}))
 
     assert payload.get("error") is None
-    assert payload["ticker"] == "APO"
+    assert payload["ticker"] == "ZZZZ"
     assert payload["catalysts"] == rows
     assert payload["count"] == 1
     assert payload["_meta"]["status"] == "ok"
-    assert seen["ticker"] == "APO"
+    assert seen["ticker"] == "ZZZZ"
 
 
 def test_get_catalysts_tool_empty_result_is_not_blocked(monkeypatch):
@@ -613,13 +649,127 @@ def test_get_catalysts_tool_empty_result_is_not_blocked(monkeypatch):
 
     monkeypatch.setattr(OntologyRuntimeReadService, "catalysts", lambda self, ticker, status=None, limit=100: [])
 
-    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "APO"}))
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "ZZZZ"}))
 
     assert payload.get("error") is None
-    assert payload["ticker"] == "APO"
+    assert payload["ticker"] == "ZZZZ"
     assert payload["catalysts"] == []
     assert payload["count"] == 0
     assert payload["_meta"]["status"] == "ok"
+
+
+def test_get_thesis_tool_reads_state_storage(monkeypatch, tmp_path):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(agent_tools, "_THESES_DIR", tmp_path / "investment_theses")
+    monkeypatch.setattr(
+        OntologyRuntimeReadService, "thesis", lambda self, ticker: {"ticker": ticker, "status": "active"}
+    )
+
+    def fake_exists(local_path, gcs_key):
+        seen["exists_path"] = local_path
+        seen["exists_key"] = gcs_key
+        return True
+
+    def fake_read(local_path, gcs_key, *, encoding="utf-8"):
+        seen["read_path"] = local_path
+        seen["read_key"] = gcs_key
+        seen["encoding"] = encoding
+        return "# META\n\n## Key Catalysts\n- **AI ads:** Monetization improves.\n"
+
+    monkeypatch.setattr("api.state_storage.exists_text", fake_exists)
+    monkeypatch.setattr("api.state_storage.read_text", fake_read)
+
+    payload = json.loads(agent_tools.execute_tool("get_thesis", {"ticker": "meta"}))
+
+    assert payload.get("error") is None
+    assert payload["ticker"] == "META"
+    assert "AI ads" in payload["content"]
+    assert payload["source_key"] == "live/theses/META.md"
+    assert seen["exists_key"] == "live/theses/META.md"
+    assert seen["read_key"] == "live/theses/META.md"
+
+
+def test_get_catalysts_tool_adds_markdown_fallback_candidates(monkeypatch, tmp_path):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    monkeypatch.setattr(agent_tools, "_THESES_DIR", tmp_path / "investment_theses")
+    monkeypatch.setattr(OntologyRuntimeReadService, "catalysts", lambda self, ticker, status=None, limit=100: [])
+    monkeypatch.setattr("api.state_storage.exists_text", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "api.state_storage.read_text",
+        lambda *_args, **_kwargs: (
+            "# META\n\n"
+            "## Key Catalysts\n"
+            "- **AI ads:** Llama and ranking tools improve monetization.\n"
+            "- **Regulatory approval:** EU signs off on data usage.\n"
+        ),
+    )
+
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "META"}))
+
+    assert payload.get("error") is None
+    assert payload["count"] == 2
+    assert [row["persisted"] for row in payload["catalysts"]] == [False, False]
+    assert payload["catalysts"][0]["id"] == "thesis_markdown:META:catalyst:1"
+    assert payload["catalysts"][0]["source"] == "thesis_markdown"
+    assert payload["catalysts"][0]["provenance"]["section"] == "Key Catalysts"
+    assert payload["catalysts"][1]["category"] == "regulatory"
+
+
+def test_get_catalysts_tool_dedupes_structured_rows_against_markdown(monkeypatch, tmp_path):
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    structured = [
+        {
+            "id": 7,
+            "ticker": "META",
+            "description": "AI ads: Llama and ranking tools improve monetization.",
+            "status": "pending",
+        }
+    ]
+    monkeypatch.setattr(agent_tools, "_THESES_DIR", tmp_path / "investment_theses")
+    monkeypatch.setattr(
+        OntologyRuntimeReadService, "catalysts", lambda self, ticker, status=None, limit=100: structured
+    )
+    monkeypatch.setattr("api.state_storage.exists_text", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "api.state_storage.read_text",
+        lambda *_args, **_kwargs: (
+            "# META\n\n"
+            "## Key Catalysts\n"
+            "- **AI ads:** Llama and ranking tools improve monetization.\n"
+            "- **Reality Labs discipline:** Capex gets tied to clearer return thresholds.\n"
+        ),
+    )
+
+    payload = json.loads(agent_tools.execute_tool("get_catalysts", {"ticker": "META"}))
+
+    assert payload["count"] == 2
+    assert payload["catalysts"][0] == structured[0]
+    assert payload["catalysts"][1]["description"].startswith("Reality Labs discipline:")
+    assert payload["catalysts"][1]["persisted"] is False
+
+
+def test_get_dossier_tool_adds_markdown_catalyst_fallback(monkeypatch, tmp_path):
+    import api.routers.dossier as dossier_router
+
+    monkeypatch.setattr(agent_tools, "_THESES_DIR", tmp_path / "investment_theses")
+    monkeypatch.setattr(dossier_router, "get_dossier", lambda ticker: {"ticker": ticker, "catalysts": []})
+    monkeypatch.setattr("api.state_storage.exists_text", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "api.state_storage.read_text",
+        lambda *_args, **_kwargs: "# META\n\n## Key Catalysts\n- **AI ads:** Monetization improves.\n",
+    )
+
+    payload, meta = agent_tools._dispatch("get_dossier", {"ticker": "meta"})
+
+    assert meta == {"cache": "n/a"}
+    assert payload["ticker"] == "META"
+    assert payload["catalysts"][0]["description"] == "AI ads: Monetization improves."
+    assert payload["catalysts"][0]["persisted"] is False
 
 
 @pytest.mark.parametrize(

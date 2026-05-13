@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
@@ -15,13 +16,34 @@ DB_PATH = Path(__file__).parent / "app_settings.db"
 
 LLM_PROVIDER_KEY = "llm.provider"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
-ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+LLM_GATEWAY_POLICY_KEY = "llm.gateway_policy"
+ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "local"}
 MODEL_TIERS = {"low", "mid", "high"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 DEFAULT_REASONING_EFFORTS = {
     "anthropic": {"low": "high", "mid": "high", "high": "high"},
     "openai": {"low": "medium", "mid": "medium", "high": "medium"},
     "gemini": {"low": "minimal", "mid": "high", "high": "high"},
+    "local": {"low": "none", "mid": "none", "high": "none"},
+}
+LIFECYCLE_STATES = {"draft", "enabled", "deprecated", "disabled"}
+DATA_SENSITIVITIES = {
+    "public_market",
+    "portfolio_private",
+    "research_private",
+    "account_private",
+    "operational_private",
+}
+DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
+    "private_egress_mode": "allow_with_warning",
+    "provider_lifecycle": {
+        "anthropic": "enabled",
+        "openai": "enabled",
+        "gemini": "enabled",
+        "local": "enabled",
+    },
+    "model_lifecycle": {},
+    "denied_rules": [],
 }
 
 _lock = threading.Lock()
@@ -134,6 +156,76 @@ def set_setting(key: str, value: str) -> dict[str, Any]:
     return _row_to_dict(row)
 
 
+def default_gateway_policy() -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(json.dumps(DEFAULT_GATEWAY_POLICY)))
+
+
+def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(value or {})
+    policy = default_gateway_policy()
+    private_mode = str(raw.get("private_egress_mode") or policy["private_egress_mode"]).strip().lower()
+    if private_mode != "allow_with_warning":
+        raise ValueError("private_egress_mode must be 'allow_with_warning'")
+    policy["private_egress_mode"] = private_mode
+
+    provider_lifecycle = dict(policy["provider_lifecycle"])
+    for provider, state in dict(raw.get("provider_lifecycle") or {}).items():
+        normalized_provider = str(provider or "").strip().lower()
+        normalized_state = str(state or "").strip().lower()
+        if normalized_provider not in ALLOWED_LLM_PROVIDERS:
+            raise ValueError("Gateway provider lifecycle contains an unsupported provider")
+        if normalized_state not in LIFECYCLE_STATES:
+            raise ValueError("Gateway provider lifecycle contains an unsupported lifecycle state")
+        provider_lifecycle[normalized_provider] = normalized_state
+    policy["provider_lifecycle"] = provider_lifecycle
+
+    model_lifecycle: dict[str, str] = {}
+    for model, state in dict(raw.get("model_lifecycle") or {}).items():
+        normalized_model = str(model or "").strip()
+        normalized_state = str(state or "").strip().lower()
+        if not normalized_model:
+            raise ValueError("Gateway model lifecycle keys cannot be empty")
+        if normalized_state not in LIFECYCLE_STATES:
+            raise ValueError("Gateway model lifecycle contains an unsupported lifecycle state")
+        model_lifecycle[normalized_model] = normalized_state
+    policy["model_lifecycle"] = model_lifecycle
+
+    denied_rules: list[dict[str, str]] = []
+    for item in list(raw.get("denied_rules") or []):
+        if not isinstance(item, dict):
+            raise ValueError("Gateway denied_rules must contain objects")
+        provider = str(item.get("provider") or "*").strip().lower()
+        model = str(item.get("model") or "*").strip()
+        sensitivity = str(item.get("data_sensitivity") or item.get("sensitivity") or "").strip().lower()
+        if provider != "*" and provider not in ALLOWED_LLM_PROVIDERS:
+            raise ValueError("Gateway denied rule contains an unsupported provider")
+        if not model:
+            raise ValueError("Gateway denied rule model cannot be empty")
+        if sensitivity not in DATA_SENSITIVITIES:
+            raise ValueError("Gateway denied rule contains an unsupported data_sensitivity")
+        denied_rules.append({"provider": provider, "model": model, "data_sensitivity": sensitivity})
+    policy["denied_rules"] = denied_rules
+    return policy
+
+
+def get_gateway_policy_setting(rows: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    row = (rows or {}).get(LLM_GATEWAY_POLICY_KEY) if rows is not None else get_setting(LLM_GATEWAY_POLICY_KEY)
+    if not row:
+        return default_gateway_policy()
+    try:
+        raw = json.loads(str(row.get("value") or "{}"))
+        if not isinstance(raw, dict):
+            return default_gateway_policy()
+        return normalize_gateway_policy(raw)
+    except (TypeError, json.JSONDecodeError, ValueError):
+        return default_gateway_policy()
+
+
+def set_gateway_policy_setting(policy: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_gateway_policy(policy)
+    return set_setting(LLM_GATEWAY_POLICY_KEY, json.dumps(normalized, sort_keys=True))
+
+
 def get_llm_provider_setting() -> str | None:
     row = get_setting(LLM_PROVIDER_KEY)
     if not row:
@@ -145,7 +237,7 @@ def get_llm_provider_setting() -> str | None:
 def set_llm_provider_setting(provider: str) -> dict[str, Any]:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'local'")
     return set_setting(LLM_PROVIDER_KEY, normalized)
 
 
@@ -156,7 +248,7 @@ def _reasoning_key(provider: str, tier: str) -> str:
 def _normalize_reasoning_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'local'")
     return normalized
 
 

@@ -17,12 +17,14 @@ from ontology.schemas.identity import (
     action_item_id,
     action_run_id,
     agent_session_ref_id,
+    analyst_feedback_id,
     approval_id,
     asset_id,
     audit_event_id,
     canonical_ticker,
     catalyst_id,
     citation_id,
+    classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
     document_artifact_id,
@@ -31,6 +33,7 @@ from ontology.schemas.identity import (
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    extraction_run_id,
     extrinsic_sensitivity_id,
     factor_score_id,
     forward_outlook_id,
@@ -51,14 +54,17 @@ from ontology.schemas.identity import (
     management_quality_scorecard_row_id,
     management_quality_setback_id,
     market_regime_snapshot_id,
+    media_artifact_id,
     missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
+    observation_id,
     ontology_run_ref_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
     optimization_run_id,
+    pattern_detection_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
@@ -77,6 +83,7 @@ from ontology.schemas.identity import (
     signal_factor_score_id,
     signal_id,
     source_freshness_id,
+    source_manifest_id,
     source_record_object_id,
     supply_chain_relationship_id,
     supply_demand_outlook_id,
@@ -103,15 +110,18 @@ logger = logging.getLogger(__name__)
 
 _GOVERNED_OBJECT_TYPES = {
     "ActionRun",
+    "AnalystFeedback",
     "Approval",
     "AuditEvent",
     "Catalyst",
     "Citation",
+    "Classification",
     "DocumentArtifact",
     "Evidence",
     "Evaluation",
     "ExecutedAction",
     "ExecutedDecisionRecord",
+    "ExtractionRun",
     "FactorScore",
     "HedgePosition",
     "IdeaComparisonRanking",
@@ -121,8 +131,11 @@ _GOVERNED_OBJECT_TYPES = {
     "ManagementQualityScorecardRow",
     "ManagementQualitySetback",
     "MarketRegimeSnapshot",
+    "MediaArtifact",
     "MissingInformationRequirement",
     "ObjectVersionRef",
+    "Observation",
+    "PatternDetection",
     "PolicyGateResult",
     "PortfolioRiskSnapshot",
     "Position",
@@ -130,6 +143,8 @@ _GOVERNED_OBJECT_TYPES = {
     "Recommendation",
     "RegimeEpisode",
     "SignalFactorScore",
+    "SourceManifest",
+    "SourceRecord",
     "ForwardOutlook",
     "Thesis",
     "ThesisClaim",
@@ -147,6 +162,7 @@ _GOVERNED_OBJECT_TYPES = {
 }
 _GOVERNED_RELATION_TYPES = {
     "action_run_mutates_object_version",
+    "analyst_feedback_targets_object",
     "approval_applies_action_run",
     "action_run_produces_executed_action",
     "approval_targets_recommendation",
@@ -184,6 +200,13 @@ _GOVERNED_RELATION_TYPES = {
     "market_regime_has_episode",
     "factor_score_uses_source_record",
     "factor_score_uses_computed_snapshot",
+    "source_manifest_governs_source_record",
+    "source_record_produces_document_artifact",
+    "source_record_produces_media_artifact",
+    "artifact_has_extraction_run",
+    "extraction_run_produces_observation",
+    "extraction_run_produces_classification",
+    "extraction_run_produces_pattern_detection",
 }
 
 
@@ -696,10 +719,38 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("report_run:"):
             return key
         return report_run_id(props.get("report_id") or key)
+    if object_type == "SourceManifest":
+        if key.startswith("source_manifest:"):
+            return key
+        return source_manifest_id(props.get("manifest_id") or key)
     if object_type == "DocumentArtifact":
         if key.startswith("document_artifact:"):
             return key
         return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
+    if object_type == "MediaArtifact":
+        if key.startswith("media_artifact:"):
+            return key
+        return media_artifact_id(props.get("media_id") or key)
+    if object_type == "ExtractionRun":
+        if key.startswith("extraction_run:"):
+            return key
+        return extraction_run_id(props.get("extraction_run_id") or key)
+    if object_type == "Observation":
+        if key.startswith("observation:"):
+            return key
+        return observation_id(props.get("observation_id") or key)
+    if object_type == "Classification":
+        if key.startswith("classification:"):
+            return key
+        return classification_id(props.get("classification_id") or key)
+    if object_type == "PatternDetection":
+        if key.startswith("pattern_detection:"):
+            return key
+        return pattern_detection_id(props.get("pattern_id") or key)
+    if object_type == "AnalystFeedback":
+        if key.startswith("analyst_feedback:"):
+            return key
+        return analyst_feedback_id(props.get("feedback_id") or key)
     if object_type == "EquityOverview":
         if key.startswith("equity_overview:"):
             return key
@@ -932,6 +983,20 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("call_id", out.get("id") or key)
     elif object_type == "ComputedSnapshotRef":
         out.setdefault("snapshot_key", out.get("snapshot_id") or out.get("id") or key)
+    elif object_type == "SourceManifest":
+        out.setdefault("manifest_id", out.get("id") or key)
+    elif object_type == "MediaArtifact":
+        out.setdefault("media_id", out.get("id") or key)
+    elif object_type == "ExtractionRun":
+        out.setdefault("extraction_run_id", out.get("run_id") or out.get("id") or key)
+    elif object_type == "Observation":
+        out.setdefault("observation_id", out.get("id") or key)
+    elif object_type == "Classification":
+        out.setdefault("classification_id", out.get("id") or key)
+    elif object_type == "PatternDetection":
+        out.setdefault("pattern_id", out.get("id") or key)
+    elif object_type == "AnalystFeedback":
+        out.setdefault("feedback_id", out.get("id") or key)
     elif object_type == "MarketRegimeSnapshot":
         out.setdefault("snapshot_id", out.get("id") or key)
     elif object_type == "SignalFactorScore":

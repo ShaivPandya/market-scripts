@@ -444,6 +444,104 @@ def test_value_range_scenario_uses_equity_value_for_pb():
     assert row["percent_change"] == -85.0
 
 
+def test_dcf_ev_ebitda_value_range_uses_enterprise_value_to_equity():
+    row = multiples.compute_value_range_scenario(
+        "dcf_ev_ebitda",
+        {"multiple": 8.0, "denominator": 200.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=300.0,
+    )
+
+    assert row["status"] == "ok"
+    assert row["enterprise_value"] == 1600.0
+    assert row["equity_value"] == 1300.0
+    assert row["expected_price"] == 13.0
+    assert row["percent_change"] == 30.0
+
+
+def test_dcf_ev_revenue_value_range_uses_enterprise_value_to_equity():
+    row = multiples.compute_value_range_scenario(
+        "dcf_ev_revenue",
+        {"multiple": 3.0, "denominator": 500.0},
+        current_price=12.0,
+        shares=100.0,
+        net_debt=200.0,
+    )
+
+    assert row["status"] == "ok"
+    assert row["enterprise_value"] == 1500.0
+    assert row["equity_value"] == 1300.0
+    assert row["expected_price"] == 13.0
+    assert row["percent_change"] == 8.33
+
+
+def test_dcf_gordon_growth_value_range_uses_terminal_ufcf_and_wacc():
+    row = multiples.compute_value_range_scenario(
+        "dcf_gordon_growth",
+        {"terminal_growth": 0.03, "denominator": 100.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=200.0,
+        wacc=0.08,
+    )
+
+    assert row["status"] == "ok"
+    assert row["terminal_growth"] == 0.03
+    assert row["wacc"] == 0.08
+    assert row["enterprise_value"] == 2060.0
+    assert row["equity_value"] == 1860.0
+    assert row["expected_price"] == 18.6
+    assert row["percent_change"] == 86.0
+
+
+def test_dcf_value_range_validates_missing_and_invalid_inputs():
+    missing_wacc = multiples.compute_value_range_scenario(
+        "dcf_gordon_growth",
+        {"terminal_growth": 0.03, "denominator": 100.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=200.0,
+    )
+    high_growth = multiples.compute_value_range_scenario(
+        "dcf_gordon_growth",
+        {"terminal_growth": 0.09, "denominator": 100.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=200.0,
+        wacc=0.08,
+    )
+    missing_denominator = multiples.compute_value_range_scenario(
+        "dcf_ev_ebitda",
+        {"multiple": 8.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=200.0,
+    )
+    missing_net_debt = multiples.compute_value_range_scenario(
+        "dcf_ev_revenue",
+        {"multiple": 3.0, "denominator": 500.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=None,
+    )
+    missing_shares = multiples.compute_value_range_scenario(
+        "dcf_ev_revenue",
+        {"multiple": 3.0, "denominator": 500.0},
+        current_price=10.0,
+        shares=None,
+        net_debt=200.0,
+    )
+
+    assert missing_wacc["status"] == "missing"
+    assert missing_wacc["reason"] == "missing_wacc"
+    assert high_growth["status"] == "not_meaningful"
+    assert high_growth["reason"] == "wacc_not_above_terminal_growth"
+    assert missing_denominator["reason"] == "missing_denominator"
+    assert missing_net_debt["reason"] == "missing_net_debt"
+    assert missing_shares["reason"] == "missing_shares"
+
+
 def test_value_range_assumption_persists_per_metric_and_updates_selected(tmp_path, monkeypatch):
     monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
     monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
@@ -520,6 +618,31 @@ def test_value_range_assumption_update_preserves_other_metric_currency_metadata(
     saved = multiples.read_value_range_assumption("ZZMETA")
     assert saved["selected_metric"] == "price_sales"
     assert saved["metric_assumptions"]["price_earnings"] == preserved
+
+
+def test_dcf_value_range_assumption_persists_with_wacc(tmp_path, monkeypatch):
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+
+    payload = {
+        "metric": "dcf_gordon_growth",
+        "denominator_currency": "USD",
+        "wacc": 0.08,
+        "scenarios": {
+            "bear": {"terminal_growth": 0.01, "denominator": 90.0},
+            "base": {"terminal_growth": 0.03, "denominator": 100.0},
+            "bull": {"terminal_growth": 0.04, "denominator": 110.0},
+        },
+    }
+
+    multiples.write_value_range_assumption("zzdcf", payload)
+    saved = multiples.read_value_range_assumption("ZZDCF")
+
+    assert saved["selected_metric"] == "dcf_gordon_growth"
+    assumption = saved["metric_assumptions"]["dcf_gordon_growth"]
+    assert assumption["wacc"] == 0.08
+    assert assumption["denominator_currency"] == "USD"
+    assert assumption["scenarios"]["base"] == {"terminal_growth": 0.03, "denominator": 100.0}
 
 
 def test_value_range_assumption_preserves_denominator_currency(tmp_path, monkeypatch):
@@ -701,6 +824,49 @@ def test_value_range_payload_computes_scenarios_for_each_saved_metric_with_metri
     assert earnings_base["denominator"] == 64.0
     assert earnings_base["denominator_converted"] == 2.0
     assert earnings_base["expected_price"] == 20.0
+
+
+def test_value_range_payload_computes_saved_dcf_methods():
+    payload = multiples.value_range_payload(
+        saved_assumption={
+            "selected_metric": "dcf_gordon_growth",
+            "metric_assumptions": {
+                "dcf_gordon_growth": {
+                    "denominator_currency": "USD",
+                    "wacc": 0.08,
+                    "scenarios": {
+                        "bear": {"terminal_growth": 0.01, "denominator": 90.0},
+                        "base": {"terminal_growth": 0.03, "denominator": 100.0},
+                        "bull": {"terminal_growth": 0.04, "denominator": 110.0},
+                    },
+                },
+                "dcf_ev_ebitda": {
+                    "denominator_currency": "USD",
+                    "scenarios": {
+                        "bear": {"multiple": 7.0, "denominator": 180.0},
+                        "base": {"multiple": 8.0, "denominator": 200.0},
+                        "bull": {"multiple": 9.0, "denominator": 220.0},
+                    },
+                },
+            },
+        },
+        metrics={},
+        peers=multiples._empty_peer_context(),
+        effective_weights={},
+        currency_context={"price_currency": "USD", "financial_currency": "USD"},
+        market_data={"current_price": 10.0, "shares": 100.0, "net_debt": 200.0, "currency": "USD"},
+    )
+
+    gordon_base = payload["scenarios"]["base"]
+    ebitda_base = payload["metric_assumptions"]["dcf_ev_ebitda"]["computed_scenarios"]["base"]
+
+    assert payload["metric"] == "dcf_gordon_growth"
+    assert payload["metric_label"] == "DCF (Gordon Growth)"
+    assert payload["wacc"] == 0.08
+    assert gordon_base["expected_price"] == 18.6
+    assert gordon_base["enterprise_value"] == 2060.0
+    assert ebitda_base["expected_price"] == 14.0
+    assert ebitda_base["enterprise_value"] == 1600.0
 
 
 def test_legacy_value_range_without_currency_is_computed_as_price_currency(monkeypatch):

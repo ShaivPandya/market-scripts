@@ -253,14 +253,66 @@ function PortersForcesSection({ forces }: { forces: PorterForce[] }) {
   )
 }
 
+type RatingKey = "low" | "low-medium" | "medium" | "medium-high" | "high"
+
+const RATING_LABEL: Record<RatingKey, string> = {
+  low: "Low",
+  "low-medium": "Low-medium",
+  medium: "Medium",
+  "medium-high": "Medium-high",
+  high: "High",
+}
+
+function ratingKey(val: unknown): RatingKey | "" {
+  const s = String(val)
+    .trim()
+    .toLowerCase()
+    .replace(/[–—]/g, "-")
+    .replace(/\s*-\s*/g, "-")
+  if (s === "low") return "low"
+  if (s === "low-medium") return "low-medium"
+  if (s === "medium") return "medium"
+  if (s === "medium-high") return "medium-high"
+  if (s === "high") return "high"
+  return ""
+}
+
 function sensitivityColor(val: unknown): string {
-  const s = String(val).toLowerCase()
+  const s = ratingKey(val)
   if (s === "low") return "#16a34a"
   if (s === "low-medium") return "#65a30d"
   if (s === "medium") return "#ca8a04"
   if (s === "medium-high") return "#ea580c"
   if (s === "high") return "#dc2626"
   return ""
+}
+
+function capacityColor(val: unknown): string {
+  const s = ratingKey(val)
+  if (s === "low") return "#dc2626"
+  if (s === "low-medium") return "#ea580c"
+  if (s === "medium") return "#ca8a04"
+  if (s === "medium-high") return "#65a30d"
+  if (s === "high") return "#16a34a"
+  return ""
+}
+
+function ratingLabel(val: unknown): string {
+  const key = ratingKey(val)
+  return key ? RATING_LABEL[key] : cleanDossierDisplayText(val)
+}
+
+function splitCapacityToDeal(capacity: string, explicitRationale: unknown): { rating: string; rationale: string } {
+  const rationale = cleanDossierDisplayText(explicitRationale)
+  if (rationale) return { rating: ratingLabel(capacity), rationale }
+
+  const match = capacity.match(/^(low(?:\s*[-–—]\s*medium)?|medium(?:\s*[-–—]\s*high)?|medium|high)(?:\s*(?:--|[-–—:;])\s*(.*)|\s*$)/i)
+  if (!match) return { rating: "", rationale: capacity }
+
+  return {
+    rating: ratingLabel(match[1]),
+    rationale: cleanDossierDisplayText(match[2] ?? ""),
+  }
 }
 
 function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
@@ -285,11 +337,14 @@ function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
         <table className="w-full table-fixed border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-card-muted">
             <tr>
-              <th className="w-[68%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+              <th className="w-[52%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                 Factor
               </th>
-              <th className="border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+              <th className="w-[22%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                 Sensitivity
+              </th>
+              <th className="w-[26%] border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                Capacity to Deal
               </th>
             </tr>
           </thead>
@@ -298,6 +353,7 @@ function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
               const factor = cleanDossierDisplayText(row.factor)
               const sensitivity = cleanDossierDisplayText(row.sensitivity)
               const capacity = cleanDossierDisplayText(row.capacity)
+              const capacityToDeal = splitCapacityToDeal(capacity, row.rationale)
               const key = `${factor || "factor"}-${sensitivity || "sensitivity"}-${index}`
               const expanded = expandedRows.has(key)
               const Icon = expanded ? ChevronDown : ChevronRight
@@ -306,7 +362,7 @@ function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
                 <Fragment key={key}>
                   <tr
                     aria-expanded={expanded}
-                    aria-label={`${expanded ? "Collapse" : "Expand"} capacity to deal for ${factor || "factor"}`}
+                    aria-label={`${expanded ? "Collapse" : "Expand"} rating rationale for ${factor || "factor"}`}
                     className="cursor-pointer border-b border-app transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[hsl(var(--accent))]"
                     role="button"
                     tabIndex={0}
@@ -330,12 +386,18 @@ function SensitivitySection({ rows }: { rows: SensitivityRow[] }) {
                     >
                       {sensitivity || "N/A"}
                     </td>
+                    <td
+                      className="whitespace-normal px-4 py-3 font-medium"
+                      style={{ color: capacityColor(capacityToDeal.rating) || undefined }}
+                    >
+                      {capacityToDeal.rating || "N/A"}
+                    </td>
                   </tr>
                   {expanded && (
                     <tr key={`${key}-detail`} className="border-b border-app bg-[hsl(var(--muted-2))]/45">
-                      <td colSpan={2} className="px-4 py-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Capacity to Deal</p>
-                        <p className="mt-1 whitespace-normal break-words text-sm leading-6 text-muted">{capacity || "N/A"}</p>
+                      <td colSpan={3} className="px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Rationale</p>
+                        <p className="mt-1 whitespace-normal break-words text-sm leading-6 text-muted">{capacityToDeal.rationale || "N/A"}</p>
                       </td>
                     </tr>
                   )}

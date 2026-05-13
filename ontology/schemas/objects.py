@@ -42,6 +42,9 @@ ApprovalResolutionState = Literal["pending", "approved", "rejected", "expired"]
 ApprovalApplicationState = Literal["pending", "applying", "applied", "failed", "not_applicable"]
 ActionRunState = Literal["running", "succeeded", "failed", "rolled_back", "denied"]
 WorkflowArtifactState = Literal["extracted", "ignored", "auto_recorded", "proposed", "approved", "rejected", "failed"]
+ArtifactExtractionStatus = Literal["not_requested", "pending", "running", "succeeded", "partial", "failed"]
+ExtractionRunStatus = Literal["queued", "running", "succeeded", "partial", "failed", "disabled"]
+AnalystFeedbackDecision = Literal["confirm", "correct", "reject", "needs_review"]
 
 
 class PositionV1(OntologySchemaBase):
@@ -539,6 +542,61 @@ class SourceRecordV1(OntologySchemaBase):
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+
+class SourceManifestV1(OntologySchemaBase):
+    manifest_id: NonBlankStr
+    name: NonBlankStr
+    source_kind: NonBlankStr = "document"
+    allowed_mime_types: list[str] = Field(default_factory=list)
+    dataset: NonBlankStr
+    sensitivity: NonBlankStr = "private"
+    extractor_ids: list[str] = Field(default_factory=list)
+    materialization_policy: NonBlankStr = "manual_review"
+    retention_class: NonBlankStr = "user_state"
+    status: NonBlankStr = "active"
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("manifest_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator(
+        "name",
+        "source_kind",
+        "dataset",
+        "sensitivity",
+        "materialization_policy",
+        "retention_class",
+        "status",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("allowed_mime_types", "extractor_ids", mode="before")
+    @classmethod
+    def _string_list(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw = [part.strip() for part in value.split(",")]
+        elif isinstance(value, list):
+            raw = [str(part).strip() for part in value]
+        else:
+            raise ValueError("Expected a list of strings")
+        return [part.lower() for part in raw if part]
 
 
 class ObjectVersionRefV1(OntologySchemaBase):
@@ -1397,13 +1455,19 @@ class DocumentArtifactV1(OntologySchemaBase):
     document_id: NonBlankStr
     title: str | None = None
     ticker: str | None = None
+    mime_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
     content_hash: str | None = None
     artifact_uri: str | None = None
+    source_record_id: str | None = None
+    manifest_id: str | None = None
+    extraction_status: ArtifactExtractionStatus | None = None
     status: NonBlankStr = "active"
     source_type: str | None = None
     source_id: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("ticker", mode="before")
@@ -1417,11 +1481,254 @@ class DocumentArtifactV1(OntologySchemaBase):
         return clean_text(value)
 
     @field_validator(
-        "title", "content_hash", "artifact_uri", "source_type", "source_id", "created_at", "updated_at", mode="before"
+        "title",
+        "mime_type",
+        "content_hash",
+        "artifact_uri",
+        "source_record_id",
+        "manifest_id",
+        "source_type",
+        "source_id",
+        "created_at",
+        "updated_at",
+        mode="before",
     )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+
+class MediaArtifactV1(OntologySchemaBase):
+    media_id: NonBlankStr
+    media_type: NonBlankStr = "image"
+    mime_type: NonBlankStr
+    content_hash: NonBlankStr
+    artifact_uri: NonBlankStr
+    byte_size: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    title: str | None = None
+    ticker: str | None = None
+    source_record_id: str | None = None
+    manifest_id: str | None = None
+    extraction_status: ArtifactExtractionStatus | None = None
+    status: NonBlankStr = "active"
+    source_type: str | None = None
+    source_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("media_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator(
+        "media_type", "mime_type", "content_hash", "artifact_uri", "status", "ontology_run_id", mode="before"
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "title",
+        "source_record_id",
+        "manifest_id",
+        "source_type",
+        "source_id",
+        "created_at",
+        "updated_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ExtractionRunV1(OntologySchemaBase):
+    extraction_run_id: NonBlankStr
+    extractor_id: NonBlankStr
+    extractor_version: NonBlankStr = "unknown"
+    artifact_uid: NonBlankStr
+    artifact_type: NonBlankStr
+    source_record_id: str | None = None
+    status: ExtractionRunStatus = "queued"
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: float | None = Field(default=None, ge=0)
+    output_hash: str | None = None
+    error: str | None = None
+    provenance_event_id: str | None = None
+    produced_object_uids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("extraction_run_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator(
+        "extractor_id", "extractor_version", "artifact_uid", "artifact_type", "ontology_run_id", mode="before"
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "source_record_id", "started_at", "completed_at", "output_hash", "error", "provenance_event_id", mode="before"
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ObservationV1(OntologySchemaBase):
+    observation_id: NonBlankStr
+    observation_type: NonBlankStr = "extracted_fact"
+    value: Any = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    observed_at: str | None = None
+    source_record_id: str | None = None
+    artifact_uid: str | None = None
+    extraction_run_id: str | None = None
+    span: dict[str, Any] | None = None
+    region: dict[str, Any] | None = None
+    status: NonBlankStr = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("observation_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("observation_type", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("observed_at", "source_record_id", "artifact_uid", "extraction_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ClassificationV1(OntologySchemaBase):
+    classification_id: NonBlankStr
+    label: NonBlankStr
+    classifier_id: str | None = None
+    taxonomy: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    observed_at: str | None = None
+    source_record_id: str | None = None
+    artifact_uid: str | None = None
+    extraction_run_id: str | None = None
+    status: NonBlankStr = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("classification_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("label", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "classifier_id",
+        "taxonomy",
+        "observed_at",
+        "source_record_id",
+        "artifact_uid",
+        "extraction_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class PatternDetectionV1(OntologySchemaBase):
+    pattern_id: NonBlankStr
+    pattern_type: NonBlankStr
+    summary: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    observed_at: str | None = None
+    source_record_id: str | None = None
+    artifact_uid: str | None = None
+    extraction_run_id: str | None = None
+    evidence: dict[str, Any] | list[Any] | None = None
+    region: dict[str, Any] | None = None
+    status: NonBlankStr = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("pattern_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("pattern_type", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("summary", "observed_at", "source_record_id", "artifact_uid", "extraction_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class AnalystFeedbackV1(OntologySchemaBase):
+    feedback_id: NonBlankStr
+    target_object_uid: NonBlankStr
+    target_object_type: NonBlankStr
+    decision: AnalystFeedbackDecision
+    note: str | None = None
+    correction: dict[str, Any] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    source_type: str | None = None
+    source_id: str | None = None
+    approval_id: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    status: NonBlankStr = "submitted"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("feedback_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("target_object_uid", "target_object_type", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("note", "source_type", "source_id", "approval_id", "created_by", "created_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @model_validator(mode="after")
+    def _feedback_payload_required(self) -> AnalystFeedbackV1:
+        if self.decision in {"correct", "reject", "needs_review"} and not (self.note or "").strip():
+            raise ValueError("note is required for correct, reject, and needs_review feedback")
+        if self.decision == "correct" and not self.correction:
+            raise ValueError("correction is required for correct feedback")
+        return self
 
 
 class ProvenanceEventV1(OntologySchemaBase):
@@ -1851,6 +2158,7 @@ class ExtrinsicSensitivityV1(OntologySchemaBase):
     factor: NonBlankStr
     sensitivity: str | None = None
     capacity: str | None = None
+    rationale: str | None = None
     ordinal: int = Field(default=0, ge=0)
     ontology_run_id: NonBlankStr = "operational"
 
@@ -1864,7 +2172,7 @@ class ExtrinsicSensitivityV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("sensitivity", "capacity", mode="before")
+    @field_validator("sensitivity", "capacity", "rationale", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -2643,7 +2951,14 @@ OntologyObjectV1 = (
     | WorkflowArtifactV1
     | RecommendationV1
     | ReportRunV1
+    | SourceManifestV1
     | DocumentArtifactV1
+    | MediaArtifactV1
+    | ExtractionRunV1
+    | ObservationV1
+    | ClassificationV1
+    | PatternDetectionV1
+    | AnalystFeedbackV1
     | EquityOverviewV1
     | CompanyFinancialProfileV1
     | ExtrinsicSensitivityV1
