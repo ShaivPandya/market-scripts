@@ -1,8 +1,41 @@
-import Markdown from "react-markdown"
+import Markdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { ToolCall, EgressRecord, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
 import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw, ShieldAlert } from "lucide-react"
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
+
+const MARKDOWN_COMPONENTS: Components = {
+  table({ children, ...props }) {
+    return (
+      <div className="my-3 max-w-full overflow-x-auto rounded-lg border border-app bg-card-muted">
+        <table {...props} className="min-w-full border-collapse text-sm">
+          {children}
+        </table>
+      </div>
+    )
+  },
+  th({ children, ...props }) {
+    return (
+      <th {...props} className="border-b border-app px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+        {children}
+      </th>
+    )
+  },
+  td({ children, ...props }) {
+    return (
+      <td {...props} className="border-t border-app px-3 py-2 align-top text-sm text-app">
+        {children}
+      </td>
+    )
+  },
+  pre({ children, ...props }) {
+    return (
+      <pre {...props} className="my-3 max-w-full overflow-x-auto rounded-lg border border-app bg-card-muted p-3 text-xs leading-5">
+        {children}
+      </pre>
+    )
+  },
+}
 
 // ---------------------------------------------------------------------------
 // Friendly tool labels
@@ -230,8 +263,8 @@ function EgressChip({ group }: { group: EgressRecordGroup }) {
 export function AgentMessage({ message }: { message: AgentMessageType }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end mb-3">
-        <div className="max-w-[85%] rounded-2xl bg-blue-600 text-white px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+      <div className="mb-4 flex justify-end">
+        <div className="max-w-[min(86%,42rem)] rounded-2xl rounded-br-md bg-[hsl(var(--accent))] px-4 py-2.5 text-sm leading-6 text-[hsl(var(--accent-foreground))] shadow-sm whitespace-pre-wrap">
           {message.content}
         </div>
       </div>
@@ -247,8 +280,8 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
 
   // Assistant message
   return (
-    <div className="flex justify-start mb-3">
-      <div className="max-w-[85%] rounded-2xl bg-card border border-app px-4 py-2.5 text-sm text-app leading-relaxed">
+    <div className="mb-4 flex justify-start">
+      <div className="max-w-[min(92%,48rem)] rounded-2xl rounded-bl-md border border-app bg-card px-4 py-3 text-sm leading-6 text-app shadow-sm">
         <div className="mb-2 flex flex-wrap gap-2">
           <DecisionStateBadge state={messageDecisionState} />
           <EffectScopeBadge scope={messageScope} />
@@ -276,8 +309,8 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
           </div>
         )}
         {displayContent && !message.isStreaming && (
-          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5 prose-ul:my-1.5 prose-li:my-0.5 prose-table:my-2 prose-pre:my-2 prose-pre:bg-muted-surface prose-pre:border prose-pre:border-app">
-            <Markdown remarkPlugins={[remarkGfm]}>{displayContent}</Markdown>
+          <div className="prose prose-sm max-w-none break-words dark:prose-invert prose-p:my-1.5 prose-p:leading-6 prose-headings:mt-3 prose-headings:mb-1.5 prose-ul:my-1.5 prose-li:my-0.5 prose-code:break-words">
+            <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{displayContent}</Markdown>
           </div>
         )}
 

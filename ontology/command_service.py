@@ -917,7 +917,8 @@ class OntologyCommandService:
             )
             return refs
         if action_id in {"create_catalyst", "update_catalyst_status"}:
-            existing = _legacy_object_context(self.objects, "Catalyst", payload.get("catalyst_id"))
+            catalyst_key = _canonical_object_key(payload.get("catalyst_id"))
+            existing = _object_context_by_uid(self.objects, catalyst_key)
             ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
             description = _non_blank(
                 payload.get("description")
@@ -928,7 +929,7 @@ class OntologyCommandService:
             )
             row = self.objects.write_object(
                 "Catalyst",
-                payload.get("catalyst_id") or f"{ticker}:{description}",
+                catalyst_key or f"{ticker}:{description}",
                 {
                     "ticker": ticker,
                     "name": str(payload.get("name") or description[:120]),
@@ -954,7 +955,8 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"create_kill_condition", "update_kill_condition_status"}:
-            existing = _legacy_object_context(self.objects, "KillCondition", payload.get("kill_condition_id"))
+            kill_condition_key = _canonical_object_key(payload.get("kill_condition_id"))
+            existing = _object_context_by_uid(self.objects, kill_condition_key)
             ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
             condition = _non_blank(
                 payload.get("condition")
@@ -965,7 +967,7 @@ class OntologyCommandService:
             )
             row = self.objects.write_object(
                 "KillCondition",
-                payload.get("kill_condition_id") or f"{ticker}:{condition}",
+                kill_condition_key or f"{ticker}:{condition}",
                 {
                     "ticker": ticker,
                     "condition": condition,
@@ -987,21 +989,20 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"create_thesis_claim", "update_thesis_claim"}:
-            claim_legacy_id = _legacy_int(
+            claim_object_key = _canonical_object_key(
                 payload.get("claim_id") or payload.get("thesis_claim_id") or payload.get("id")
             )
-            existing = _legacy_object_context(self.objects, "ThesisClaim", claim_legacy_id)
+            existing = _object_context_by_uid(self.objects, claim_object_key)
             ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
             claim = _non_blank(
                 payload.get("claim") or existing.get("claim") or payload.get("status") or "Thesis claim update", "claim"
             )
             row = self.objects.write_object(
                 "ThesisClaim",
-                str(claim_legacy_id) if claim_legacy_id is not None else f"{ticker}:{claim}",
+                claim_object_key or f"{ticker}:{claim}",
                 {
                     "ticker": ticker,
                     "claim": claim,
-                    "legacy_id": claim_legacy_id,
                     "expected_evidence": payload.get("expected_evidence"),
                     "disconfirming_evidence": payload.get("disconfirming_evidence"),
                     "source_requirements": _list(payload.get("source_requirements")),
@@ -1186,17 +1187,13 @@ class OntologyCommandService:
             return refs
         if action_id in {"complete_action_item", "dismiss_action_item"}:
             item_id = payload.get("item_id") or payload.get("id")
-            legacy_id = _legacy_int(item_id)
-            if legacy_id is None and str(item_id or "").startswith("action_item:"):
-                legacy_id = _legacy_int(str(item_id).removeprefix("action_item:"))
-            item_key = str(legacy_id) if legacy_id is not None else _strip_uid_prefix(item_id, "action_item")
+            item_key = _canonical_object_key(item_id, prefix="action_item")
             description = str(payload.get("description") or f"Action item {item_key}").strip()
             row = self.objects.write_object(
                 "ActionItem",
                 item_key or description,
                 {
                     "description": description,
-                    "legacy_id": legacy_id,
                     "action_type": str(payload.get("action_type") or "review"),
                     "ticker": _optional_ticker(payload),
                     "urgency": str(payload.get("urgency") or "normal"),
@@ -1245,8 +1242,7 @@ class OntologyCommandService:
             "update_watch_trigger_definition",
         }:
             trigger_id = payload.get("trigger_id") or payload.get("id")
-            legacy_id = _legacy_int(trigger_id)
-            trigger_key = str(legacy_id) if legacy_id is not None else _strip_uid_prefix(trigger_id, "watch_trigger")
+            trigger_key = _canonical_object_key(trigger_id, prefix="watch_trigger")
             status = "cancelled"
             if action_id == "fire_watch_trigger":
                 status = "fired"
@@ -1258,7 +1254,6 @@ class OntologyCommandService:
                 trigger_key or condition,
                 {
                     "condition": condition,
-                    "legacy_id": legacy_id,
                     "trigger_type": str(payload.get("trigger_type") or "custom"),
                     "ticker": _optional_ticker(payload),
                     "status": status,
@@ -2119,7 +2114,7 @@ class OntologyCommandService:
     ) -> list[dict[str, Any]]:
         """Project thesis markdown sections into ontology-native process objects."""
         from portfolio.thesis_backfill import _categorize_catalyst, _extract_label_and_description, _parse_bullets
-        from portfolio.thesis_sync import _normalize_match_text, _parse_legacy_claims, _parse_structured_claims
+        from portfolio.thesis_sync import _normalize_match_text, _parse_structured_claims, _parse_text_claims
 
         refs: list[dict[str, Any]] = []
         catalyst_by_label: dict[str, str] = {}
@@ -2225,14 +2220,14 @@ class OntologyCommandService:
                 )
 
         parsed_claims = _parse_structured_claims(content)
-        claim_records = parsed_claims if parsed_claims is not None else _parse_legacy_claims(content)
+        claim_records = parsed_claims if parsed_claims is not None else _parse_text_claims(content)
         for raw_record in claim_records:
             record = dict(raw_record)
             if _blank_markdown_item(record.get("claim")):
                 continue
             linked_catalyst_labels = list(record.pop("linked_catalyst_labels", []) or [])
             linked_kill_condition_labels = list(record.pop("linked_kill_condition_labels", []) or [])
-            record.pop("legacy_seed", None)
+            record.pop("parsed_from_text", None)
             record.pop("id", None)
             claim = _non_blank(record.get("claim"), "claim")
             row = self.objects.write_object(
@@ -2742,7 +2737,7 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
 def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     from pydantic import ValidationError as PydanticValidationError
 
-    from portfolio.action_registry import ActionValidationError, get_action
+    from ontology.action_registry import ActionValidationError, get_action
 
     try:
         action = get_action(action_id)
@@ -2766,7 +2761,7 @@ def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> 
 
 
 def _base_state_hash(action_id: str, payload: Mapping[str, Any]) -> str | None:
-    from portfolio.action_registry import compute_action_base_state_hash
+    from ontology.action_registry import compute_action_base_state_hash
 
     try:
         return compute_action_base_state_hash(action_id, dict(payload))
@@ -2801,10 +2796,6 @@ def _now() -> str:
 
 def _refresh_temporal_read_models_after_command() -> None:
     try:
-        from ontology.domain_write_service import ontology_read_model_enabled
-
-        if not ontology_read_model_enabled():
-            return
         from ontology.read_model import TemporalReadModelRepository
 
         TemporalReadModelRepository().refresh()
@@ -2836,53 +2827,28 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _legacy_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or ":" in text:
-        return None
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        return None
-
-
 def _strip_uid_prefix(value: Any, prefix: str) -> str:
     text = str(value or "").strip()
     marker = f"{prefix}:"
     return text.removeprefix(marker).strip() if text.startswith(marker) else text
 
 
-def _legacy_object_context(objects: Any, object_type: str, legacy_id: Any) -> dict[str, Any]:
-    raw_id = str(legacy_id or "").strip()
-    if raw_id:
-        try:
-            row = objects.get_object(raw_id)
-        except Exception:
-            row = None
-        if row:
-            return _flatten_object(row)
-    normalized_id = _legacy_int(legacy_id)
-    if normalized_id is None:
+def _canonical_object_key(value: Any, *, prefix: str | None = None) -> str:
+    text = str(value or "").strip()
+    if prefix:
+        return _strip_uid_prefix(text, prefix)
+    return text
+
+
+def _object_context_by_uid(objects: Any, object_uid: Any) -> dict[str, Any]:
+    raw_id = str(object_uid or "").strip()
+    if not raw_id:
         return {}
-    prefix = {
-        "Catalyst": "catalyst",
-        "KillCondition": "kill_condition",
-        "ThesisClaim": "thesis_claim",
-    }.get(object_type, object_type.lower())
-    for uid in (f"{prefix}:{normalized_id}", str(normalized_id)):
-        try:
-            row = objects.get_object(uid)
-        except Exception:
-            row = None
-        if row:
-            return _flatten_object(row)
     try:
-        rows = objects.query_objects(object_type, filters={"legacy_id": normalized_id}, limit=1)
+        row = objects.get_object(raw_id)
     except Exception:
         return {}
-    return _flatten_object(rows[0]) if rows else {}
+    return _flatten_object(row) if row else {}
 
 
 def _list(value: Any) -> list[Any]:

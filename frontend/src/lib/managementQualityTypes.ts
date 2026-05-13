@@ -13,7 +13,7 @@ export interface ManagementQualitySummary {
 
 export interface ManagementQualityScorecardRow {
   id?: string
-  legacy_id?: number | null
+  source_id?: number | null
   question: string
   rating: string
   evidence: string
@@ -21,7 +21,7 @@ export interface ManagementQualityScorecardRow {
 
 export interface ManagementQualityBullet {
   id?: string
-  legacy_id?: number | null
+  source_id?: number | null
   title: string | null
   text: string
   response_rating?: string
@@ -30,7 +30,7 @@ export interface ManagementQualityBullet {
 
 export interface ManagementQualityAssessment {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   issuer_id: string
   ticker?: string | null
   status: "active" | "superseded" | "archived" | string

@@ -255,8 +255,8 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -309,8 +309,8 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -360,8 +360,8 @@ def test_agent_stream_gemini_function_call_roundtrip(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -455,7 +455,7 @@ def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, mo
     monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args: json.dumps({"ok": True}))
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
+        "/api/agent/chat",
         json={
             "messages": [{"role": "user", "content": "portfolio test"}],
             "response_preferences": {"thinking_enabled": True},
@@ -486,7 +486,7 @@ def test_agent_stream_anthropic_thinking_relaxes_forced_tool_choice(auth_client,
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
+        "/api/agent/chat",
         json={
             "messages": [{"role": "user", "content": "portfolio test"}],
             "response_preferences": {"thinking_enabled": True},
@@ -526,8 +526,8 @@ def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args: json.dumps({"error": "boom"}))
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -570,8 +570,8 @@ def test_agent_stream_synthesizes_when_tool_loop_limit_is_reached(auth_client, m
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -589,8 +589,8 @@ def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):
     monkeypatch.setattr("anthropic.Anthropic", lambda *args, **kwargs: _RaiseInStreamClient())
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -606,8 +606,8 @@ def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 503
@@ -631,8 +631,8 @@ def test_agent_stream_skips_forced_tools_for_casual_prompt(auth_client, monkeypa
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "hello"}]},
+        "/api/agent/chat",
+        json={"message": "hello"},
     )
 
     assert resp.status_code == 200
@@ -681,8 +681,8 @@ def test_agent_stream_dedupes_identical_tool_calls(auth_client, monkeypatch):
     monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "portfolio test"}]},
+        "/api/agent/chat",
+        json={"message": "portfolio test"},
     )
 
     assert resp.status_code == 200
@@ -733,8 +733,8 @@ def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "How is sentiment?"}]},
+        "/api/agent/chat",
+        json={"message": "How is sentiment?"},
     )
 
     assert resp.status_code == 200
@@ -745,7 +745,7 @@ def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_
     assert any(e == "done" for e, _p in parsed)
 
 
-def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeypatch):
+def test_agent_chat_sends_initial_ping_and_disables_gzip(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -767,7 +767,7 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
     _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "How is liquidity?"},
     )
 
@@ -785,7 +785,7 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
     assert "agent instructions" not in json.dumps(done_events[-1]["timings"])
 
 
-def test_agent_chat_v2_fast_paths_simple_portfolio_summary(auth_client, monkeypatch):
+def test_agent_chat_fast_paths_simple_portfolio_summary(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -826,7 +826,7 @@ def test_agent_chat_v2_fast_paths_simple_portfolio_summary(auth_client, monkeypa
     monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "Summarize my portfolio's performance"},
     )
 
@@ -851,7 +851,7 @@ def test_agent_chat_v2_fast_paths_simple_portfolio_summary(auth_client, monkeypa
     assert finalized[0]["content"] == "Portfolio summary"
 
 
-def test_agent_chat_v2_portfolio_summary_openai_backfills_final_text(auth_client, monkeypatch):
+def test_agent_chat_portfolio_summary_openai_backfills_final_text(auth_client, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
@@ -891,7 +891,7 @@ def test_agent_chat_v2_portfolio_summary_openai_backfills_final_text(auth_client
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={
             "message": "Summarize my portfolio's performance",
             "response_preferences": {"thinking_enabled": True},
@@ -908,7 +908,7 @@ def test_agent_chat_v2_portfolio_summary_openai_backfills_final_text(auth_client
     assert finalized[0]["content"] == "Portfolio summary"
 
 
-def test_agent_chat_v2_portfolio_summary_never_finalizes_blank(auth_client, monkeypatch):
+def test_agent_chat_portfolio_summary_never_finalizes_blank(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -956,7 +956,7 @@ def test_agent_chat_v2_portfolio_summary_never_finalizes_blank(auth_client, monk
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "Summarize my portfolio's performance"},
     )
 
@@ -971,7 +971,7 @@ def test_agent_chat_v2_portfolio_summary_never_finalizes_blank(auth_client, monk
     assert finalized[0]["content"] == fallback_delta[-1]
 
 
-def test_agent_chat_v2_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
+def test_agent_chat_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -1005,7 +1005,7 @@ def test_agent_chat_v2_portfolio_risk_uses_normal_agent_loop(auth_client, monkey
     monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args, **_kwargs: json.dumps({"ok": True}))
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "Summarize my portfolio risk"},
     )
 
@@ -1018,7 +1018,7 @@ def test_agent_chat_v2_portfolio_risk_uses_normal_agent_loop(auth_client, monkey
     assert any(e == "phase" and p.get("phase") == "model_writing" for e, p in parsed)
 
 
-def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_client, monkeypatch):
+def test_agent_chat_casual_prompt_skips_anthropic_tools_and_retrieval(auth_client, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(
         agent_router,
@@ -1043,7 +1043,7 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "hello"},
     )
 
@@ -1056,7 +1056,7 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     assert finalized
 
 
-def test_agent_chat_v2_soft_allows_off_domain_text_to_model_with_guardrail_instruction(auth_client, monkeypatch):
+def test_agent_chat_soft_allows_off_domain_text_to_model_with_guardrail_instruction(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -1080,7 +1080,7 @@ def test_agent_chat_v2_soft_allows_off_domain_text_to_model_with_guardrail_instr
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "give me a chicken recipe"},
     )
 
@@ -1091,7 +1091,7 @@ def test_agent_chat_v2_soft_allows_off_domain_text_to_model_with_guardrail_instr
     assert any(e == "delta" and "investing side" in str(p.get("text", "")) for e, p in parsed)
 
 
-def test_agent_chat_v2_allows_operational_proposal_status_followup(auth_client, monkeypatch):
+def test_agent_chat_allows_operational_proposal_status_followup(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -1115,7 +1115,7 @@ def test_agent_chat_v2_allows_operational_proposal_status_followup(auth_client, 
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "can you make the proposals to update the status?"},
     )
 
@@ -1125,7 +1125,7 @@ def test_agent_chat_v2_allows_operational_proposal_status_followup(auth_client, 
     assert any(e == "delta" and "status proposals" in str(p.get("text", "")) for e, p in parsed)
 
 
-def test_agent_chat_v2_clarifies_empty_prompt_before_provider_context_or_tools(auth_client, monkeypatch):
+def test_agent_chat_clarifies_empty_prompt_before_provider_context_or_tools(auth_client, monkeypatch):
     monkeypatch.setattr(
         agent_router,
         "selected_provider",
@@ -1146,7 +1146,7 @@ def test_agent_chat_v2_clarifies_empty_prompt_before_provider_context_or_tools(a
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": " "},
     )
 
@@ -1159,7 +1159,7 @@ def test_agent_chat_v2_clarifies_empty_prompt_before_provider_context_or_tools(a
     assert finalized[0]["content"] == DOMAIN_CLARIFY_RESPONSE
 
 
-def test_agent_chat_legacy_soft_allows_off_domain_text_to_model(auth_client, monkeypatch):
+def test_agent_chat_soft_allows_off_domain_text_to_model(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     streams = [
@@ -1175,8 +1175,8 @@ def test_agent_chat_legacy_soft_allows_off_domain_text_to_model(auth_client, mon
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat",
-        json={"messages": [{"role": "user", "content": "plan a trip to Tokyo"}]},
+        "/api/agent/chat",
+        json={"message": "plan a trip to Tokyo"},
     )
 
     assert resp.status_code == 200
@@ -1205,7 +1205,7 @@ def test_agent_tool_execution_blocks_when_domain_decision_is_not_allow(monkeypat
     assert payload["_meta"]["status"] == "blocked"
 
 
-def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeypatch):
+def test_agent_chat_workflow_done_includes_tool_metadata(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
@@ -1234,7 +1234,6 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     )
     monkeypatch.setattr("api.workflow_artifacts.extract_artifacts", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("api.workflow_artifacts.persist_artifacts", lambda *_args, **_kwargs: 0)
-    monkeypatch.setattr("portfolio.core_db.complete_workflow_run", lambda *_args, **_kwargs: None)
 
     streams = [
         (
@@ -1249,7 +1248,7 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "/workflow:thesis_review:NVDA", "allow_workflow_handoff": False},
     )
 
@@ -1262,7 +1261,7 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
 
 
-def test_agent_chat_v2_workflow_hands_off_to_durable_job(auth_client, monkeypatch):
+def test_agent_chat_workflow_hands_off_to_durable_job(auth_client, monkeypatch):
     from api import async_job_runner, cache
 
     cache.invalidate_all()
@@ -1276,7 +1275,7 @@ def test_agent_chat_v2_workflow_hands_off_to_durable_job(auth_client, monkeypatc
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "/workflow:thesis_review:NVDA", "client_turn_id": "handoff-turn"},
     )
 
@@ -1325,7 +1324,7 @@ def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, m
     _install_fake_anthropic(monkeypatch, streams)
 
     started = auth_client.post(
-        "/api/v1/agent/chat/async",
+        "/api/agent/chat/async",
         json={"message": "How is liquidity?", "client_turn_id": "turn-1"},
     )
 
@@ -1335,7 +1334,7 @@ def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, m
     after_seq = 0
     seen_events: list[dict] = []
     while time.time() < deadline:
-        resp = auth_client.get(f"/api/v1/agent/chat/async/{job_id}/events", params={"after_seq": after_seq})
+        resp = auth_client.get(f"/api/agent/chat/async/{job_id}/events", params={"after_seq": after_seq})
         assert resp.status_code == 200
         body = resp.json()
         seen_events.extend(body.get("events") or [])
@@ -1370,7 +1369,7 @@ def test_agent_chat_async_created_cloud_run_job_returns_starting_event(auth_clie
     )
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/async",
+        "/api/agent/chat/async",
         json={"message": "How is liquidity?", "client_turn_id": "starting-turn"},
     )
 
@@ -1399,11 +1398,11 @@ def test_agent_chat_async_reuses_duplicate_active_job(auth_client, monkeypatch):
     monkeypatch.setattr(agent_chat_worker, "_run_agent_chat_turn_job", slow_agent_job)
 
     body = {"session_id": "dup-session", "message": "same turn", "client_turn_id": "dup-turn"}
-    first = auth_client.post("/api/v1/agent/chat/async", json=body)
+    first = auth_client.post("/api/agent/chat/async", json=body)
     assert first.status_code == 202
     assert started.wait(timeout=2)
 
-    second = auth_client.post("/api/v1/agent/chat/async", json=body)
+    second = auth_client.post("/api/agent/chat/async", json=body)
     assert second.status_code == 202
     assert second.json()["job_id"] == first.json()["job_id"]
 
@@ -1425,14 +1424,14 @@ def test_agent_chat_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
     monkeypatch.setattr(agent_chat_worker, "_run_agent_chat_turn_job", slow_agent_job)
 
     started_resp = auth_client.post(
-        "/api/v1/agent/chat/async",
+        "/api/agent/chat/async",
         json={"session_id": "cancel-session", "message": "cancel me", "client_turn_id": "cancel-turn"},
     )
     assert started_resp.status_code == 202
     job_id = started_resp.json()["job_id"]
     assert started.wait(timeout=2)
 
-    cancel_resp = auth_client.post(f"/api/v1/agent/chat/async/{job_id}/cancel")
+    cancel_resp = auth_client.post(f"/api/agent/chat/async/{job_id}/cancel")
     assert cancel_resp.status_code == 200
     body = cancel_resp.json()
     assert body["status"] == "cancelled"
@@ -1501,7 +1500,7 @@ def test_anthropic_initial_conversation_passes_strings_through():
     ]
 
 
-def test_agent_chat_v2_openai_replays_assistant_history_as_output_text(auth_client, monkeypatch):
+def test_agent_chat_openai_replays_assistant_history_as_output_text(auth_client, monkeypatch):
     """Multi-turn replay: prior assistant message must be sent as output_text, not input_text."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -1531,7 +1530,7 @@ def test_agent_chat_v2_openai_replays_assistant_history_as_output_text(auth_clie
     fake_client = _install_fake_openai(monkeypatch, streams)
 
     resp = auth_client.post(
-        "/api/v1/agent/chat/v2",
+        "/api/agent/chat",
         json={"message": "what model are you?"},
     )
 

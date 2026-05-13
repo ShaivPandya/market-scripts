@@ -164,7 +164,7 @@ def run_portfolio_sizer(req: SizerRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("sizer", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/portfolio-sizer/async/{job_id}")
+    return enqueue_response(row, "/api/portfolio-sizer/async/{job_id}")
 
 
 @router.post("/portfolio-sizer/async")
@@ -175,7 +175,7 @@ def start_portfolio_sizer(req: SizerRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("sizer", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/portfolio-sizer/async/{job_id}")
+    return enqueue_response(row, "/api/portfolio-sizer/async/{job_id}")
 
 
 @router.get("/portfolio-sizer/async/{job_id}")

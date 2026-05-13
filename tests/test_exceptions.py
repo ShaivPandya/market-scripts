@@ -44,7 +44,7 @@ class TestGlobalHandlers:
 
     def test_error_response_shape(self, client):
         """401 errors from auth should have the expected shape."""
-        resp = client.get("/api/v1/auth/me")
+        resp = client.get("/api/auth/me")
         assert resp.status_code == 401
         data = resp.json()
         assert "detail" in data

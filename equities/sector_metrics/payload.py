@@ -25,7 +25,7 @@ def sector_metric_rows(value: Any) -> list[dict[str, Any]]:
 
     Older cached snapshots serialized the DataFrame without its sector index,
     leaving rows with numeric data but no sector label. The computation emits
-    rows in ``SECTOR_ORDER``, so we can repair those legacy payloads by ordinal.
+    rows in ``SECTOR_ORDER``, so we can repair those source payloads by ordinal.
     """
     records: list[dict[str, Any]] = []
 

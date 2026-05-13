@@ -13,17 +13,7 @@ from ontology.command_service import (
     OntologyCommandService,
     OntologyCommandValidationError,
 )
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import admin_actor
-from portfolio.action_registry import (
-    ActionAuthorizationError,
-    ActionConflictError,
-    ActionContext,
-    ActionNotFoundError,
-    ActionValidationError,
-    execute_action,
-    propose_action,
-)
 
 
 def execute_api_action(
@@ -34,28 +24,6 @@ def execute_api_action(
     validation_status_code: int = 422,
     data_fetch_source: str | None = None,
 ) -> dict[str, Any]:
-    if not ontology_primary_writes_enabled():
-        try:
-            return execute_action(
-                action_id,
-                payload,
-                ActionContext(actor_type="user", source_type="api", source_id=source_id),
-            ).output
-        except ActionValidationError as exc:
-            if validation_status_code == 400:
-                raise HTTPException(status_code=400, detail=exc.message) from exc
-            raise ValidationError(exc.message) from exc
-        except ActionNotFoundError as exc:
-            raise NotFoundError(exc.resource, exc.identifier) from exc
-        except ActionConflictError as exc:
-            raise ConflictError(exc.message) from exc
-        except ActionAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=exc.message) from exc
-        except Exception as exc:
-            if data_fetch_source:
-                raise DataFetchError(source=data_fetch_source, detail=str(exc)) from exc
-            raise
-
     service = OntologyCommandService()
     context = OntologyCommandContext(actor=admin_actor(source="api"), source_type="api", source_id=source_id)
     try:
@@ -97,57 +65,6 @@ def stage_api_action(
     """Create an approval for a financial mutation, optionally applying it in the same audited request."""
 
     proposal_reason = str(reason or "").strip() or f"Requested via {source_id}"
-    if not ontology_primary_writes_enabled():
-        try:
-            approval = propose_action(
-                action_id,
-                payload,
-                ActionContext(actor_type="user", source_type="user", source_id=source_id),
-                reason=proposal_reason,
-                entity_id=int(entity_id) if entity_id is not None else None,
-            )
-            application_status = str(approval.get("application_status") or "pending")
-            status_value = "pending_approval_created"
-            if apply:
-                from portfolio import core_db
-
-                note = str(approval_note or "").strip()
-                if not note:
-                    raise ActionValidationError("approval_note is required when apply=true")
-                approval = core_db.resolve_approval(
-                    int(approval["id"]),
-                    "approved",
-                    note,
-                    actor_type="user",
-                    parent_action_run_id=None,
-                )
-                application_status = str(approval.get("application_status") or "applied")
-                status_value = "applied" if application_status == "applied" else application_status
-            return normalize_staged_response(
-                _staged_response(
-                    status=status_value,
-                    approval=approval,
-                    action_id=action_id,
-                    proposed_change=payload,
-                    reason=proposal_reason,
-                    application_status=application_status,
-                )
-            )
-        except ActionValidationError as exc:
-            if validation_status_code == 400:
-                raise HTTPException(status_code=400, detail=exc.message) from exc
-            raise ValidationError(exc.message) from exc
-        except ActionNotFoundError as exc:
-            raise NotFoundError(exc.resource, exc.identifier) from exc
-        except ActionConflictError as exc:
-            raise ConflictError(exc.message) from exc
-        except ActionAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=exc.message) from exc
-        except Exception as exc:
-            if data_fetch_source:
-                raise DataFetchError(source=data_fetch_source, detail=str(exc)) from exc
-            raise
-
     service = OntologyCommandService()
     context = OntologyCommandContext(
         actor=admin_actor(source="api"),

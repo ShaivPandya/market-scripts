@@ -6,14 +6,14 @@ import type { ManagementQualityAssessment, ParsedManagementQuality } from "@/lib
 import type { ParsedOverview } from "@/lib/overviewTypes"
 
 const client = axios.create({
-  baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, ""),
+  baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, ""),
   withCredentials: true,
   // Avoid "spinning forever" when the backend (or an upstream like Cloudflare) hangs.
   timeout: 60_000,
 })
 
 function schemaHeaders(method: string, url: string): Record<string, string> {
-  const base = new URL(client.defaults.baseURL ?? "/api/v1", window.location.origin)
+  const base = new URL(client.defaults.baseURL ?? "/api", window.location.origin)
   const parsed = url.startsWith("http")
     ? new URL(url)
     : new URL(`${base.pathname.replace(/\/+$/, "")}/${url.replace(/^\/+/, "")}`, window.location.origin)
@@ -216,7 +216,6 @@ export interface InvestmentIdeaMetadata {
 
 export interface InvestmentIdea {
   id: string
-  legacy_id?: number | null
   ticker: string
   company_name: string | null
   status: IdeaStatus | string
@@ -305,7 +304,7 @@ export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
 
 export interface IdeaEvaluation {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   idea_id: string
   ticker: string
   job_id: string | null
@@ -380,7 +379,7 @@ export interface IdeaAcceptResponse {
 
 export interface IdeaComparisonRanking {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   run_id: string
   idea_id: string
   evaluation_id: string
@@ -396,7 +395,7 @@ export interface IdeaComparisonRanking {
 
 export interface IdeaComparisonRun {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   run_id: string
   job_id: string | null
   scope_statuses: string[]
@@ -2125,7 +2124,7 @@ export interface PositionValueRangeScenario {
 
 export interface PositionValueRangeAssumption {
   denominator_currency?: string | null
-  legacy_denominator_currency?: boolean
+  source_denominator_currency?: boolean
   wacc?: number | null
   scenarios: Record<string, { multiple?: number | null; terminal_growth?: number | null; denominator?: number | null }>
   computed_scenarios?: Record<string, PositionValueRangeScenario>
@@ -2141,7 +2140,7 @@ export interface PositionValueRange {
   denominator_label: string
   denominator_currency?: string | null
   stored_denominator_currency?: string | null
-  legacy_denominator_currency?: boolean
+  source_denominator_currency?: boolean
   wacc?: number | null
   denominator_to_price_fx_rate?: number | null
   fx_rate_as_of?: string | null
@@ -2259,7 +2258,7 @@ export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
 // Continuous Optimization
 export interface OptimizationMission {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   name: string
   status: string
   schedule_label?: string | null
@@ -2273,7 +2272,7 @@ export interface OptimizationMission {
 export interface OptimizationRun {
   run_id: string
   id?: string
-  legacy_id?: number | null
+  source_id?: number | null
   mission_id: string
   mission_name: string
   status: string
@@ -2287,7 +2286,7 @@ export interface OptimizationRun {
 
 export interface OptimizationSnapshot {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   run_id: string
   mission_id: string
   ticker?: string | null
@@ -2307,7 +2306,7 @@ export interface OptimizationSnapshot {
 
 export interface OptimizationAlert {
   id: string
-  legacy_id?: number | null
+  source_id?: number | null
   mission_id: string
   run_id: string
   ticker?: string | null
@@ -2598,8 +2597,8 @@ export interface ProvenanceGraphWarning {
     | "seed_not_found"
     | "node_limit_reached"
     | "edge_limit_reached"
-    | "legacy_adapted"
-    | "sqlite_fallback"
+    | "adapted_trace"
+    | "storage_fallback"
     | "redacted_metadata"
   detail?: string
 }

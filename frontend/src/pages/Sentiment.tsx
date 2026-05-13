@@ -51,7 +51,7 @@ function mkSeries(rows: Record<string, unknown>[], dateKey: string, valueKey: st
     .map(r => ({ date: String(r[dateKey]), value: Number(r[valueKey]) }))
 }
 
-const SURVEYS_CACHE_KEY = "sentiment-surveys-cache-v1"
+const SURVEYS_CACHE_KEY = "sentiment-surveys-cache-current"
 
 type SurveysPayload = {
   aaii: Record<string, unknown>[]

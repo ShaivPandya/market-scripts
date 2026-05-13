@@ -399,7 +399,7 @@ def test_router_payload_uses_v3_schema(auth_client, monkeypatch):
 
     monkeypatch.setattr(cr_mod, "build_commodity_research", fake_build)
 
-    resp = auth_client.get("/api/v1/commodity-research")
+    resp = auth_client.get("/api/commodity-research")
     assert resp.status_code == 200
     data = resp.json()
 

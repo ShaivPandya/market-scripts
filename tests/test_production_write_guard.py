@@ -37,10 +37,10 @@ def test_project_root_sqlite_connect_raises_in_production(monkeypatch):
     assert not target.exists()
 
 
-def test_legacy_domain_write_guard_is_enabled_in_ontology_primary_runtime(monkeypatch):
-    from ontology.domain_write_service import legacy_write_guard_enabled
+def test_domain_table_writes_are_blocked_by_default(monkeypatch):
+    from ontology.domain_write_service import assert_domain_table_write_allowed
 
     monkeypatch.delenv("ENVIRONMENT", raising=False)
-    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
 
-    assert legacy_write_guard_enabled() is True
+    with pytest.raises(RuntimeError, match="Domain table write blocked"):
+        assert_domain_table_write_allowed("test")

@@ -1,12 +1,11 @@
-"""thesis_sync.py -- Bidirectional sync between thesis markdown and DB entities.
+"""Ontology-backed thesis markdown parsing and rendering helpers.
 
-Direction 1 (markdown -> DB):
+Direction 1 (markdown -> ontology):
   When thesis markdown is saved/generated, parse ## Key Catalysts and
-  ## Risk Factors sections and replace backfill-created DB entries.
+  ## Risk Factors sections for ontology command projection.
 
-Direction 2 (DB -> markdown):
-  When catalysts/kill conditions are created or updated via API,
-  regenerate the corresponding markdown sections from DB state.
+Direction 2 (ontology -> markdown):
+  Regenerate the corresponding markdown sections from current ontology state.
 """
 
 from __future__ import annotations
@@ -153,9 +152,56 @@ def _parse_bool(value: str | None, default: bool = True) -> bool:
     return value.strip().lower() not in {"false", "0", "no", "optional"}
 
 
-def _parse_source_requirement(text: str) -> dict[str, Any]:
-    from portfolio.core_db import normalize_source_requirements
+def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
+    """Normalize source requirements into typed requirement objects."""
 
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            normalized.append(
+                {
+                    "type": "custom",
+                    "description": text,
+                    "required": True,
+                    "freshness_days": None,
+                }
+            )
+            continue
+        if not isinstance(item, dict):
+            continue
+        req_type = str(item.get("type") or "custom").strip() or "custom"
+        description = str(item.get("description") or item.get("label") or req_type).strip()
+        required_raw = item.get("required", True)
+        required = _parse_bool(required_raw, default=True) if isinstance(required_raw, str) else bool(required_raw)
+        freshness_raw = item.get("freshness_days")
+        freshness_days = None
+        if freshness_raw not in (None, ""):
+            try:
+                freshness_days = max(0, int(freshness_raw))
+            except (TypeError, ValueError):
+                freshness_days = None
+        normalized.append(
+            {
+                "type": req_type,
+                "description": description,
+                "required": required,
+                "freshness_days": freshness_days,
+            }
+        )
+    return normalized
+
+
+def _parse_source_requirement(text: str) -> dict[str, Any]:
     if "=" not in text:
         return normalize_source_requirements([text])[0]
 
@@ -239,7 +285,7 @@ def _parse_structured_claims(content: str) -> list[dict] | None:
             "status": "active",
             "linked_catalyst_labels": [],
             "linked_kill_condition_labels": [],
-            "legacy_seed": False,
+            "parsed_from_text": False,
         }
         in_sources = False
         for raw_line in block[1:]:
@@ -303,7 +349,7 @@ def _parse_structured_claims(content: str) -> list[dict] | None:
     return claims
 
 
-def _parse_legacy_claims(content: str) -> list[dict]:
+def _parse_text_claims(content: str) -> list[dict]:
     from portfolio.thesis_backfill import _extract_label_and_description, _parse_bullets
 
     claims: list[dict] = []
@@ -323,7 +369,7 @@ def _parse_legacy_claims(content: str) -> list[dict]:
                 "status": "active",
                 "linked_catalyst_labels": [],
                 "linked_kill_condition_labels": [],
-                "legacy_seed": True,
+                "parsed_from_text": True,
             }
         )
     return claims
@@ -355,94 +401,19 @@ def _resolve_claim_links(claims: list[dict], catalysts: list[dict], kill_conditi
 
 
 def _upsert_markdown_claims(ticker: str, records: list[dict]) -> int:
-    from portfolio.core_db import (
-        create_thesis_claim,
-        delete_thesis_claims_by_ticker,
-        get_thesis_claim,
-        get_thesis_claims,
-        update_thesis_claim,
-    )
-
-    source_id = _markdown_source_id(ticker)
-    existing = get_thesis_claims(ticker=ticker, limit=500)
-    by_claim: dict[str, dict | None] = {}
-    for row in existing:
-        key = _normalize_match_text(str(row.get("claim") or ""))
-        if not key:
-            continue
-        by_claim[key] = None if key in by_claim else row
-
-    seen_markdown_ids: list[int] = []
-    count = 0
-    for record in records:
-        record = dict(record)
-        claim_id = record.pop("id", None)
-        legacy_seed = bool(record.pop("legacy_seed", False))
-        key = _normalize_match_text(str(record.get("claim") or ""))
-        target = None
-        if claim_id is not None:
-            candidate = get_thesis_claim(int(claim_id))
-            if candidate and str(candidate.get("ticker", "")).upper() == ticker.upper():
-                target = candidate
-        if target is None and key and by_claim.get(key):
-            target = by_claim[key]
-
-        if target:
-            target_id = int(target["id"])
-            if legacy_seed:
-                updated = target
-            else:
-                updated = update_thesis_claim(
-                    target_id,
-                    {
-                        "claim": record.get("claim"),
-                        "expected_evidence": record.get("expected_evidence"),
-                        "disconfirming_evidence": record.get("disconfirming_evidence"),
-                        "source_requirements": record.get("source_requirements", []),
-                        "cadence": record.get("cadence"),
-                        "confidence": record.get("confidence"),
-                        "status": record.get("status"),
-                        "linked_catalyst_ids": record.get("linked_catalyst_ids", []),
-                        "linked_kill_condition_ids": record.get("linked_kill_condition_ids", []),
-                    },
-                )
-            if updated.get("source_type") == _MARKDOWN_SOURCE_TYPE and updated.get("source_id") == source_id:
-                seen_markdown_ids.append(int(updated["id"]))
-            count += 1
-            continue
-
-        created = create_thesis_claim(
-            {
-                **record,
-                "ticker": ticker,
-                "source_type": _MARKDOWN_SOURCE_TYPE,
-                "source_id": source_id,
-            }
-        )
-        seen_markdown_ids.append(int(created["id"]))
-        count += 1
-
-    delete_thesis_claims_by_ticker(
-        ticker,
-        source_type=_MARKDOWN_SOURCE_TYPE,
-        source_id=source_id,
-        exclude_ids=seen_markdown_ids,
-    )
-    return count
+    return len(records)
 
 
 def sync_claims_from_content(ticker: str, content: str) -> int:
-    """Parse thesis claims from markdown content and sync them into the DB."""
-    from portfolio.core_db import get_catalysts, get_kill_conditions
+    """Parse thesis claims from markdown content.
 
+    The ontology command service owns mutation; this helper only reports the
+    number of claim records parsed from markdown.
+    """
     ticker = ticker.upper()
     parsed = _parse_structured_claims(content)
-    claims = parsed if parsed is not None else _parse_legacy_claims(content)
-    if not claims:
-        delete_count = _upsert_markdown_claims(ticker, [])
-        return delete_count
-    resolved = _resolve_claim_links(claims, get_catalysts(ticker), get_kill_conditions(ticker))
-    return _upsert_markdown_claims(ticker, resolved)
+    claims = parsed if parsed is not None else _parse_text_claims(content)
+    return len(claims or [])
 
 
 def _format_confidence(value: Any) -> str | None:
@@ -514,23 +485,11 @@ def _format_claim_lines(
 
 
 def sync_entities_from_markdown(ticker: str) -> dict[str, int]:
-    """Parse thesis markdown and sync catalysts/kill conditions to DB.
+    """Parse thesis markdown and return entity counts.
 
-    Replaces all 'backfill'-created entities for this ticker with
-    freshly parsed entries from the thesis markdown.
-    User/agent/workflow-created entities are left untouched.
-
-    Returns: {"catalysts": N, "kill_conditions": N, "thesis_claims": N}
+    Mutation happens inside ``OntologyCommandService.save_thesis_content``.
     """
-    from portfolio.core_db import (
-        create_catalyst,
-        create_kill_condition,
-        delete_catalysts_by_ticker,
-        delete_kill_conditions_by_ticker,
-    )
     from portfolio.thesis_backfill import (
-        _categorize_catalyst,
-        _extract_label_and_description,
         _parse_bullets,
     )
 
@@ -543,44 +502,14 @@ def sync_entities_from_markdown(ticker: str) -> dict[str, int]:
     if not content:
         return {"catalysts": 0, "kill_conditions": 0, "thesis_claims": 0}
 
-    # Remove old backfill entries
-    delete_catalysts_by_ticker(ticker, created_by="backfill")
-    delete_kill_conditions_by_ticker(ticker, created_by="backfill")
-
-    # Parse and recreate
     catalyst_bullets = _parse_bullets(content, "Key Catalysts")
     risk_bullets = _parse_bullets(content, "Risk Factors")
-
-    cat_count = 0
-    for bullet in catalyst_bullets:
-        if not bullet or bullet.strip() == "TBD":
-            continue
-        label, desc = _extract_label_and_description(bullet)
-        category = _categorize_catalyst(label, desc)
-        create_catalyst(
-            ticker=ticker,
-            description=f"{label}: {desc}" if desc != label else label,
-            category=category,
-            created_by="backfill",
-        )
-        cat_count += 1
-
-    kc_count = 0
-    for bullet in risk_bullets:
-        if not bullet or bullet.strip() == "TBD":
-            continue
-        label, desc = _extract_label_and_description(bullet)
-        create_kill_condition(
-            ticker=ticker,
-            condition=f"{label}: {desc}" if desc != label else label,
-            created_by="backfill",
-        )
-        kc_count += 1
-
+    cat_count = len([item for item in catalyst_bullets if item and item.strip() != "TBD"])
+    kc_count = len([item for item in risk_bullets if item and item.strip() != "TBD"])
     claim_count = sync_claims_from_content(ticker, content)
 
     logger.info(
-        "thesis_sync: %s markdown->DB: %d catalysts, %d kill conditions, %d thesis claims",
+        "thesis_sync: %s markdown parsed: %d catalysts, %d kill conditions, %d thesis claims",
         ticker,
         cat_count,
         kc_count,
@@ -595,14 +524,14 @@ def sync_entities_from_markdown(ticker: str) -> dict[str, int]:
 
 
 def sync_markdown_from_entities(ticker: str) -> bool:
-    """Read DB entities and update thesis markdown sections.
+    """Read ontology entities and update thesis markdown sections.
 
-    Regenerates ## Key Catalysts and ## Risk Factors from all DB entries
-    (regardless of created_by), keeping the rest of the thesis unchanged.
+    Regenerates ## Key Catalysts, ## Risk Factors, and ## Thesis Claims from
+    current ontology objects, keeping the rest of the thesis unchanged.
 
     Returns True if the file was updated, False if no thesis file exists.
     """
-    from portfolio.core_db import get_catalysts, get_kill_conditions, get_thesis_claims
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     ticker = ticker.upper()
     thesis_path, thesis_key = _thesis_paths(ticker)
@@ -611,10 +540,10 @@ def sync_markdown_from_entities(ticker: str) -> bool:
 
     content = read_text(thesis_path, thesis_key, encoding="utf-8")
 
-    # Only include active entities in the markdown
-    catalysts = get_catalysts(ticker)
-    kill_conditions = get_kill_conditions(ticker)
-    claims = get_thesis_claims(ticker=ticker, limit=500)
+    runtime = OntologyRuntimeReadService()
+    catalysts = runtime.catalysts(ticker, limit=500)
+    kill_conditions = runtime.kill_conditions(ticker, limit=500)
+    claims = runtime.thesis_claims(ticker, limit=500)
 
     cat_bullets = [_format_entity_bullet(c["description"]) for c in catalysts if c.get("status") == "pending"]
     kc_bullets = [_format_entity_bullet(k["condition"]) for k in kill_conditions if k.get("status") == "active"]

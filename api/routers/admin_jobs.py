@@ -47,7 +47,7 @@ def enqueue_cache_warm(_sub: str = Depends(require_scheduler_or_job_admin)):
         cache_key="maintenance:cache_warm:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.post("/admin/jobs/enqueue-async-job-sweep")
@@ -58,7 +58,7 @@ def enqueue_async_job_sweep(_sub: str = Depends(require_scheduler_or_job_admin))
         cache_key="maintenance:async_job_sweep:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.post("/admin/jobs/enqueue-governance-outbox-drain")
@@ -69,7 +69,7 @@ def enqueue_governance_outbox_drain(_sub: str = Depends(require_scheduler_or_job
         cache_key="maintenance:governance_outbox_drain:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.get("/admin/governance-outbox")
@@ -84,7 +84,7 @@ def list_governance_outbox(
         "count": 0,
         "metrics": {"pending": 0, "retry": 0, "failed": 0},
         "lineage_state": "ontology",
-        "message": "Legacy governance outbox has been removed from runtime.",
+        "message": "Governance outbox has been removed from runtime.",
     }
 
 
@@ -94,7 +94,7 @@ def requeue_governance_outbox(
     body: GovernanceOutboxRequeueRequest | None = None,
     _sub: str = Depends(require_job_admin),
 ):
-    raise HTTPException(status_code=410, detail="Legacy governance outbox has been removed from runtime.")
+    raise HTTPException(status_code=410, detail="Governance outbox has been removed from runtime.")
 
 
 @router.post("/admin/jobs/enqueue-market-snapshot-refresh")
@@ -105,7 +105,7 @@ def enqueue_market_snapshot_refresh(_sub: str = Depends(require_scheduler_or_job
         cache_key="maintenance:market_snapshot_refresh:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.post("/admin/jobs/enqueue-macro-snapshot-refresh")
@@ -116,7 +116,7 @@ def enqueue_macro_snapshot_refresh(_sub: str = Depends(require_scheduler_or_job_
         cache_key="maintenance:macro_snapshot_refresh:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.post("/admin/jobs/enqueue-watch-trigger-monitor")
@@ -127,7 +127,7 @@ def enqueue_watch_trigger_monitor(_sub: str = Depends(require_scheduler_or_job_a
         cache_key="maintenance:watch_trigger_monitor:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.post("/admin/jobs/enqueue-continuous-optimizer")
@@ -138,7 +138,7 @@ def enqueue_continuous_optimizer(_sub: str = Depends(require_scheduler_or_job_ad
         cache_key="maintenance:continuous_optimizer:v1",
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.get("/admin/jobs/{job_id}")

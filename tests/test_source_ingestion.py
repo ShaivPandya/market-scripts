@@ -11,7 +11,7 @@ import ontology.source_ingestion as source_ingestion
 from api.exceptions import ValidationError
 from ontology.action_registry import get_action, get_tool_exposure
 from ontology.object_service import normalize_object_payload
-from ontology.schemas.objects import AnalystFeedbackV1, MediaArtifactV1, SourceManifestV1
+from ontology.schemas.objects import AnalystFeedback, MediaArtifact, SourceManifest
 from ontology.schemas.registry import NODE_SCHEMAS
 from ontology.schemas.relations import RELATION_REGISTRY
 from ontology.source_ingestion import SourceIngestionService, UploadInput, sniff_mime_type
@@ -126,8 +126,8 @@ def test_multimodal_schema_registration():
     ]:
         assert relation_type in RELATION_REGISTRY
 
-    manifest = SourceManifestV1(manifest_id="my upload", name="My Upload", dataset="research")
-    media = MediaArtifactV1(
+    manifest = SourceManifest(manifest_id="my upload", name="My Upload", dataset="research")
+    media = MediaArtifact(
         media_id="abc",
         mime_type="image/png",
         content_hash="abc",
@@ -136,7 +136,7 @@ def test_multimodal_schema_registration():
     assert manifest.manifest_id == "my_upload"
     assert media.media_id == "abc"
     with pytest.raises(PydanticValidationError):
-        AnalystFeedbackV1(
+        AnalystFeedback(
             feedback_id="bad",
             target_object_uid="observation:x",
             target_object_type="Observation",

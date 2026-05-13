@@ -705,9 +705,9 @@ In the JSON block, provide these structured sections:
    - Positioning (COT data, sentiment, consensus)
    - Risk Sentiment (VIX term structure, credit spreads, safe haven flows)
    - Cycle Position (where in boom-bust, credit cycle phase)
-3. `six_dimensions` — legacy rating map for the Market Stance table. It must match the ratings in `regime_evidence`.
+3. `six_dimensions` — rating map for the Market Stance table. It must match the ratings in `regime_evidence`.
 4. `watchlist` — split into `risks_to_upside` and `risks_to_downside`. Each side needs 1-4 trigger/implication entries.
-5. `watchlist_triggers` — legacy flattened strings derived from the watchlist entries.
+5. `watchlist_triggers` — flattened strings derived from the watchlist entries.
 
 Stance options: {stance_options}
 
@@ -804,7 +804,7 @@ After the `# Stance Rationale` section, output the separator `{PASS1_SUMMARY_SEP
       }}
     ]
   }},
-  "watchlist_triggers": ["<legacy flattened watchlist strings>"]
+  "watchlist_triggers": ["<flattened watchlist strings>"]
 }}
 ```
 

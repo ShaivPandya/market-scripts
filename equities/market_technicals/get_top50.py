@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from api.postgres import use_postgres_state
-from api.postgres_compat import PostgresCompatConnection
+from api.postgres_state import PostgresStateConnection
 from utils.retry import requests_get, yf_download
 
 LOGGER = logging.getLogger(__name__)
@@ -172,12 +172,12 @@ def _connect_db():
     """Open a connection routed by ``use_postgres_state()``.
 
     Production (`ENVIRONMENT=production` or `STATE_DB_BACKEND=postgres`) → Postgres
-    via :class:`PostgresCompatConnection`. Dev/test → local SQLite at
+    via :class:`PostgresStateConnection`. Dev/test → local SQLite at
     ``equities/market_technicals/sp500_top50.sqlite3``. The SQLite path is created
     only outside production, so the production write guard is never tripped.
     """
     if use_postgres_state():
-        return PostgresCompatConnection()
+        return PostgresStateConnection()
     conn = sqlite3.connect(_resolve_db_path())
     conn.row_factory = sqlite3.Row
     _init_sqlite(conn)
@@ -217,7 +217,7 @@ def read_top50_from_db(conn) -> list[str]:
     rows = cur.fetchall()
     out: list[str] = []
     for row in rows:
-        # PostgresCompatConnection / sqlite3.Row both support index access.
+        # PostgresStateConnection / sqlite3.Row both support index access.
         ticker = row[0] if not isinstance(row, dict) else row["ticker"]
         if ticker is None:
             continue

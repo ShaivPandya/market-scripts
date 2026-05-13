@@ -13,11 +13,11 @@ from ontology.schemas.identity import (
     source_record_object_id,
 )
 from ontology.schemas.objects import (
-    AuditEventV1,
-    ExecutedActionV1,
-    ObjectVersionRefV1,
-    RecommendationV1,
-    SourceRecordV1,
+    AuditEvent,
+    ExecutedAction,
+    ObjectVersionRef,
+    Recommendation,
+    SourceRecord,
 )
 from ontology.schemas.registry import normalize_node
 from ontology.schemas.relations import get_relation_definition
@@ -71,7 +71,7 @@ def test_decision_object_schemas_have_stable_identities():
             id=source_record_object_id("report:daily:payload"),
             type="SourceRecord",
             label="report source",
-            properties=SourceRecordV1(
+            properties=SourceRecord(
                 source_record_id="report:daily:payload",
                 vendor="github_actions",
                 source_name="daily_report_sync",
@@ -83,14 +83,14 @@ def test_decision_object_schemas_have_stable_identities():
             schema_name="SourceRecord",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
     version_ref = normalize_node(
         OntologyNode(
             id=object_version_ref_id("action_item:1:version-1"),
             type="ObjectVersionRef",
             label="version ref",
-            properties=ObjectVersionRefV1(
+            properties=ObjectVersionRef(
                 ref_id="action_item:1:version-1",
                 object_uid="action_item:1",
                 version_id="version-1",
@@ -98,28 +98,28 @@ def test_decision_object_schemas_have_stable_identities():
             schema_name="ObjectVersionRef",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
     executed = normalize_node(
         OntologyNode(
             id=executed_action_id("1:2:create_action_item"),
             type="ExecutedAction",
             label="executed action",
-            properties=ExecutedActionV1(
+            properties=ExecutedAction(
                 executed_action_id="1:2:create_action_item",
                 action_id="create_action_item",
             ).model_dump(mode="json"),
             schema_name="ExecutedAction",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
     audit = normalize_node(
         OntologyNode(
             id=audit_event_id("evt-1"),
             type="AuditEvent",
             label="audit event",
-            properties=AuditEventV1(
+            properties=AuditEvent(
                 event_id="evt-1",
                 action_name="approval.applied",
                 action_category="approval",
@@ -128,14 +128,14 @@ def test_decision_object_schemas_have_stable_identities():
             schema_name="AuditEvent",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
     recommendation = normalize_node(
         OntologyNode(
             id=recommendation_id("daily:2026-05-02:buy:MU"),
             type="Recommendation",
             label="recommendation",
-            properties=RecommendationV1(
+            properties=Recommendation(
                 recommendation_id="daily:2026-05-02:buy:MU",
                 report_type="daily",
                 as_of="2026-05-02",
@@ -148,7 +148,7 @@ def test_decision_object_schemas_have_stable_identities():
             schema_name="Recommendation",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
 
     assert source.id == "source_record:report_daily_payload"
@@ -170,7 +170,7 @@ def test_source_record_identity_canonicalizes_logical_prefixed_ids():
     row = service.write_object(
         "SourceRecord",
         logical_id,
-        SourceRecordV1(
+        SourceRecord(
             source_record_id=logical_id,
             vendor="portfolio",
             source_name="portfolio",
@@ -196,7 +196,7 @@ def test_audit_event_identity_accepts_prefixed_business_key():
     row = service.write_object(
         "AuditEvent",
         event_uid,
-        AuditEventV1(
+        AuditEvent(
             event_id=event_uid,
             action_name="approval.created",
             action_category="approval",
@@ -246,7 +246,6 @@ def test_decision_relation_registry_models_lineage_edges():
 
 
 def test_decision_writeback_records_report_recommendation_lineage(monkeypatch):
-    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
     repo = _FakeTemporalRepo()
     service = DecisionOntologyWriteback(OntologyObjectService(repository=repo))
 
@@ -355,7 +354,6 @@ def test_decision_writeback_records_report_recommendation_lineage(monkeypatch):
 
 
 def test_decision_writeback_records_workflow_artifact_and_executed_action(monkeypatch):
-    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
     repo = _FakeTemporalRepo()
     service = DecisionOntologyWriteback(OntologyObjectService(repository=repo))
 

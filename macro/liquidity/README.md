@@ -1,25 +1,35 @@
 # Liquidity Dashboard
 
-A macro liquidity monitoring tool that fetches data from FRED, computes a composite liquidity score, classifies market regimes, and displays results in a rich terminal dashboard.
+A macro liquidity monitoring tool that fetches FRED and optional ECB SDMX data,
+computes regional liquidity scores, rolls them into a composite score, classifies
+market regimes, and displays results in a rich terminal dashboard.
 
 ## Where this is used
 
 - Standalone CLI: `python3 macro/liquidity/liquidity.py`
-- FastAPI: `GET /api/liquidity` (see `api/routers/liquidity.py`)
+- FastAPI:
+  - `GET /api/liquidity`
+  - `POST /api/liquidity/analyze` for the LLM-assisted dashboard summary
 - React UI: “Liquidity” page in `frontend/`
 
 ## Overview
 
-This script tracks global liquidity conditions by combining multiple macro indicators into a single composite score. The score emphasizes trend-based measures (4-week changes in net liquidity, reserves, and global central bank assets) while incorporating credit spreads and financial conditions.
+This script tracks global liquidity conditions by combining regional components
+into one composite score. US liquidity carries the largest weight and emphasizes
+net-liquidity/reserve trends, credit spreads, NFCI, and M2/GDP. Europe uses ECB
+excess liquidity and net liquidity effect when `sdmx1` is available. Japan uses
+BoJ assets, M3, and private-credit growth.
 
 ## Features
 
 - Fetches real-time data from FRED API
-- Calculates composite liquidity score from 8 weighted components
+- Calculates regional scores for the US, Europe, and Japan, then combines them
+  into one weighted composite
 - Classifies market regimes: ample, normal, tight, or stress
 - Rich terminal dashboard with color-coded output
 - Historical change tracking (1w, 1m, 3m)
 - Optional matplotlib charts with `--plot` flag
+- Optional `--no-ecb` mode to skip ECB SDMX fetches
 
 ## Installation
 
@@ -30,7 +40,7 @@ This script tracks global liquidity conditions by combining multiple macro indic
 pip install -r requirements.txt
 
 # Or minimal:
-# pip install pandas fredapi rich
+# pip install pandas fredapi rich sdmx1
 ```
 
 ### Optional (for charts)
@@ -70,6 +80,12 @@ python3 macro/liquidity/liquidity.py
 python3 macro/liquidity/liquidity.py --plot
 ```
 
+### Without ECB SDMX
+
+```bash
+python3 macro/liquidity/liquidity.py --no-ecb
+```
+
 ## How It Works
 
 ### Data Sources
@@ -83,8 +99,9 @@ The script fetches the following series from FRED:
 - RRPONTSYD: Overnight reverse repo
 
 **Global Central Banks**
-- ECBASSETSW: ECB total assets
 - JPNASSETS: BoJ total assets
+- JPNMABMM301GYSAM: Japan M3 YoY growth
+- QJPPAM770A: Japan private-sector credit
 
 **Credit & Conditions**
 - BAMLC0A0CM: IG corporate OAS
@@ -95,20 +112,38 @@ The script fetches the following series from FRED:
 - M2SL: M2 money stock
 - GDP: Nominal GDP
 
+ECB data is fetched separately through `sdmx1`:
+
+- Excess liquidity
+- Net liquidity effect
+
 ### Composite Score Calculation
 
-Each component is converted to a z-score using a 104-week rolling window, then weighted and summed:
+Each component is converted to a z-score using a 104-week rolling window, then
+weighted within its region. The regional scores are combined as:
+
+| Region | Composite Weight |
+|--------|------------------|
+| US | 60% |
+| Europe | 30% |
+| Japan | 10% |
+
+Current component weights:
 
 | Component | Weight | Polarity |
 |-----------|--------|----------|
-| Net Liquidity (4w change) | 35% | Positive |
-| Reserve Balances (4w change) | 15% | Positive |
-| ECB Assets (4w change) | 10% | Positive |
-| BoJ Assets (4w change) | 10% | Positive |
-| IG OAS | 10% | Negative |
-| HY OAS | 10% | Negative |
-| NFCI | 5% | Negative |
-| M2 / GDP | 5% | Positive |
+| US Net Liquidity (4w change) | 25% of US | Positive |
+| US Net Liquidity (level) | 20% of US | Positive |
+| US Reserve Balances (4w change) | 20% of US | Positive |
+| IG OAS | 15% of US | Negative |
+| HY OAS | 10% of US | Negative |
+| NFCI | 5% of US | Negative |
+| M2 / GDP | 5% of US | Positive |
+| ECB Excess Liquidity | 60% of Europe | Positive |
+| ECB Net Liquidity Effect | 40% of Europe | Positive |
+| BoJ Assets YoY | 35% of Japan | Positive |
+| Japan M3 YoY | 35% of Japan | Positive |
+| Japan Private Credit YoY | 30% of Japan | Positive |
 
 **Net Liquidity** = Fed Total Assets - TGA - ON RRP
 
@@ -126,8 +161,9 @@ The composite score maps to four regimes:
 The dashboard displays:
 
 1. **Current regime** with color-coded composite score
-2. **Component breakdown** showing each input's value, z-score, weight, contribution, and signal
-3. **Historical changes** for composite score and key series across 1w, 1m, and 3m periods
+2. **Regional scores** for US, Europe, and Japan
+3. **Component breakdown** showing each input's value, z-score, weight, contribution, and signal
+4. **Historical changes** for composite score and key series across 1w, 1m, and 3m periods
 
 ## Example Output
 

@@ -128,7 +128,7 @@ def run_fundamental_momentum(req: FMRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("fundamental_momentum", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/fundamental-momentum/async/{job_id}")
+    return enqueue_response(row, "/api/fundamental-momentum/async/{job_id}")
 
 
 @router.post("/fundamental-momentum/async")
@@ -139,7 +139,7 @@ def start_fundamental_momentum(req: FMRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("fundamental_momentum", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/fundamental-momentum/async/{job_id}")
+    return enqueue_response(row, "/api/fundamental-momentum/async/{job_id}")
 
 
 @router.get("/fundamental-momentum/async/{job_id}")

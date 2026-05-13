@@ -117,7 +117,7 @@ def sync_payload(report_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
         "X-Report-Sync-Secret": sync_secret,
-        "X-Request-Schema-Name": "post:/api/v1/report-sync/{report_type}",
+        "X-Request-Schema-Name": "post:/api/report-sync/{report_type}",
         "X-Request-Schema-Version": "1",
     }
     proxy_secret = (os.getenv("API_PROXY_SECRET") or "").strip()
@@ -125,7 +125,7 @@ def sync_payload(report_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers["X-Api-Proxy-Secret"] = proxy_secret
 
     response = requests.post(
-        f"{api_url}/api/v1/report-sync/{report_type}",
+        f"{api_url}/api/report-sync/{report_type}",
         headers=headers,
         json=payload,
         timeout=90,

@@ -13,7 +13,7 @@ router = APIRouter()
 
 VALID_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
 CACHE_VERSION = "v3"
-PORTFOLIO_REPLACEMENT_ENDPOINT = "/api/v1/portfolio?timeframe={timeframe}"
+PORTFOLIO_REPLACEMENT_ENDPOINT = "/api/portfolio?timeframe={timeframe}"
 
 
 def _current_holdings() -> list[Any]:

@@ -16,6 +16,8 @@ os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
 os.environ["ASYNC_JOB_BACKEND"] = "local"
 os.environ.setdefault("LLM_PROVIDER", "anthropic")
 os.environ["ENVIRONMENT"] = "development"
+os.environ.setdefault("STATE_DB_BACKEND", "postgres")
+os.environ.setdefault("DATABASE_URL", "postgresql://localhost/talisman_test")
 os.environ["STATE_STORAGE_BACKEND"] = "local"
 
 collect_ignore = []
@@ -31,6 +33,8 @@ def client():
     os.environ["AUTH_MODE"] = "password"
     os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
     os.environ["ENVIRONMENT"] = "development"
+    os.environ.setdefault("STATE_DB_BACKEND", "postgres")
+    os.environ.setdefault("DATABASE_URL", "postgresql://localhost/talisman_test")
     os.environ["STATE_STORAGE_BACKEND"] = "local"
     from api.main import app
 
@@ -51,7 +55,7 @@ def client():
 @pytest.fixture
 def auth_client(client):
     """Authenticated FastAPI test client with a valid session cookie."""
-    resp = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    resp = client.post("/api/auth/login", json={"password": "testpass"})
     # If login succeeds, the cookie is set automatically on the client
     if resp.status_code == 200:
         session_cookie = resp.cookies.get("__session")

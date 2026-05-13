@@ -1136,10 +1136,10 @@ class StateMigrator:
             rows = _sqlite_rows(db, source_table)
             if source_table in {"nodes", "edges", "snapshot_nodes", "snapshot_edges"}:
                 for row in rows:
-                    row["schema_name"] = row.get("schema_name") or "legacy"
+                    row["schema_name"] = row.get("schema_name") or "canonical"
                     row["schema_version"] = int(row.get("schema_version") or 0)
                     if source_table in {"edges", "snapshot_edges"}:
-                        row["relation_schema_name"] = row.get("relation_schema_name") or "legacy"
+                        row["relation_schema_name"] = row.get("relation_schema_name") or "canonical"
                         row["relation_schema_version"] = int(row.get("relation_schema_version") or 0)
             self._upsert_rows(target_table, columns, conflict, rows)
         if "schema_definitions" not in table_map:

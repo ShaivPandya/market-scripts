@@ -158,8 +158,6 @@ if [[ "${PARALLEL_JOB_DEPLOYS}" == "1" ]]; then
     "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
   start_parallel_step "analyzer worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-analyzer-worker.sh"
-  start_parallel_step "sizer worker pool deploy" \
-    "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
   start_parallel_step "ontology worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-ontology-worker.sh"
 else
@@ -174,9 +172,6 @@ else
 
   log "Deploying analyzer worker pool"
   "${_repo_root}/infra/gcp/deploy-analyzer-worker.sh"
-
-  log "Deploying sizer worker pool"
-  "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
 
   log "Deploying ontology worker pool"
   "${_repo_root}/infra/gcp/deploy-ontology-worker.sh"
@@ -207,7 +202,7 @@ fi
 log "Deploying API service"
 "${_repo_root}/infra/gcp/deploy-api.sh"
 
-log "Skipping legacy talisman-worker deploy; agent chat uses ${AGENT_WORKER_POOL:-talisman-agent-worker}"
+log "Skipping deprecated talisman-worker deploy; agent chat uses ${AGENT_WORKER_POOL:-talisman-agent-worker}"
 
 if [[ "${SYNC_SCHEDULER}" == "1" ]]; then
   log "Syncing Cloud Scheduler jobs"

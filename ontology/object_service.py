@@ -451,7 +451,6 @@ def normalize_object_payload(
                 schema_name=object_type,
                 schema_version=1,
             ),
-            allow_legacy=True,
         )
         return {
             "object_uid": node.id,
@@ -489,7 +488,6 @@ def normalize_relation_payload(
                 relation_schema_name=relation_type,
                 relation_schema_version=1,
             ),
-            allow_legacy=True,
         )
         return {
             "relation_schema_name": edge.relation_schema_name,
@@ -667,12 +665,12 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("kill_condition:"):
             return key
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
-        return kill_condition_id(ticker, props.get("legacy_id") or props.get("condition") or key)
+        return kill_condition_id(ticker, props.get("condition") or key)
     if object_type == "ThesisClaim":
         if key.startswith("thesis_claim:"):
             return key
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
-        return thesis_claim_id(ticker, props.get("legacy_id") or props.get("claim") or key)
+        return thesis_claim_id(ticker, props.get("claim") or key)
     if object_type == "Evidence":
         if key.startswith("evidence:"):
             return key
@@ -684,23 +682,23 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     if object_type == "ActionItem":
         if key.startswith("action_item:"):
             return key
-        return action_item_id(props.get("legacy_id") or key)
+        return action_item_id(key)
     if object_type == "WatchTrigger":
         if key.startswith("watch_trigger:"):
             return key
-        return watch_trigger_id(props.get("legacy_id") or key)
+        return watch_trigger_id(key)
     if object_type == "Approval":
         if key.startswith("approval:"):
             return key
-        return approval_id(props.get("legacy_id") or key)
+        return approval_id(key)
     if object_type == "ActionRun":
         if key.startswith("action_run:"):
             return key
-        return action_run_id(props.get("legacy_id") or key)
+        return action_run_id(key)
     if object_type == "ActionEvent":
         if key.startswith("action_event:"):
             return key
-        return action_event_id(props.get("legacy_id") or key)
+        return action_event_id(key)
     if object_type == "WorkflowRun":
         if key.startswith("workflow_run:"):
             return key
@@ -712,9 +710,7 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     if object_type == "Recommendation":
         if key.startswith("recommendation:"):
             return key
-        return recommendation_id(
-            props.get("legacy_id") or props.get("recommendation_id") or props.get("idempotency_key") or key
-        )
+        return recommendation_id(props.get("recommendation_id") or props.get("idempotency_key") or key)
     if object_type == "ReportRun":
         if key.startswith("report_run:"):
             return key
@@ -911,9 +907,7 @@ def _require_governed_lineage(
 
 
 def _strict_write_contract_enabled() -> bool:
-    if (os.getenv("ONTOLOGY_PRIMARY_WRITES") or "").strip().lower() in {"1", "true", "yes", "on"}:
-        return True
-    return (os.getenv("ENVIRONMENT") or "").strip().lower() == "production"
+    return True
 
 
 def _check_registered_object_type(object_type: str) -> None:
@@ -922,7 +916,7 @@ def _check_registered_object_type(object_type: str) -> None:
     message = f"Unregistered ontology object type: {object_type}"
     if _strict_write_contract_enabled():
         raise OntologyWriteContractError(message)
-    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+    raise OntologyWriteContractError(message)
 
 
 def _check_registered_relation_type(relation_type: str) -> None:
@@ -931,7 +925,7 @@ def _check_registered_relation_type(relation_type: str) -> None:
     message = f"Unregistered ontology relation type: {relation_type}"
     if _strict_write_contract_enabled():
         raise OntologyWriteContractError(message)
-    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+    raise OntologyWriteContractError(message)
 
 
 def _require_write_provenance(surface: str, name: str, provenance_event_id: str | None) -> None:

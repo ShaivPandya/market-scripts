@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.models import EntityType
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
@@ -80,8 +79,6 @@ def _write_runtime_object(object_type: str, business_key: str, properties: dict[
     props.setdefault("updated_at", _now_iso())
     if object_type == "OptimizationRun" and str(props.get("status") or "").lower() == "succeeded":
         props["status"] = "completed"
-    if not ontology_primary_writes_enabled():
-        return _write_legacy_runtime_object(object_type, business_key, props)
     write_props = _schema_write_properties(object_type, props)
     service = OntologyObjectService()
     row = service.write_object(
@@ -232,57 +229,6 @@ def _prefixed_uid(value: Any, prefix: str) -> str | None:
     if not text:
         return None
     return text if text.startswith(f"{prefix}:") else f"{prefix}:{text}"
-
-
-def _write_legacy_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
-    from portfolio import core_db
-
-    props = dict(properties)
-    if object_type == "OptimizationRun":
-        status = str(props.get("status") or "running")
-        run_id = str(props.get("run_id") or business_key)
-        if status in {"succeeded", "completed"}:
-            return core_db.complete_optimization_run(
-                run_id,
-                summary=_as_dict(props.get("summary")),
-                source_freshness=_as_dict(props.get("source_freshness")),
-                input_hash=props.get("input_hash"),
-                output_hash=props.get("output_hash"),
-            )
-        if status == "failed":
-            return core_db.fail_optimization_run(
-                run_id,
-                str(props.get("error") or "Continuous optimizer failed."),
-                summary=_as_dict(props.get("summary")),
-                source_freshness=_as_dict(props.get("source_freshness")),
-            )
-        return core_db.create_optimization_run(
-            {"id": int(props["mission_id"]), "name": props.get("mission_name")},
-            run_id=run_id,
-            input_hash=props.get("input_hash"),
-        )
-    if object_type == "OptimizationActionSnapshot":
-        return core_db.create_optimization_action_snapshot(props)
-    if object_type == "OptimizationAlert":
-        alert_id = props.get("id")
-        if isinstance(alert_id, int) or (isinstance(alert_id, str) and alert_id.isdigit()):
-            return core_db.update_optimization_alert_links(
-                int(alert_id),
-                approval_id=_optional_int(props.get("approval_id")),
-                action_item_approval_id=_optional_int(props.get("action_item_approval_id")),
-                recommendation_id=_optional_int(props.get("recommendation_id")),
-            )
-        return core_db.create_optimization_alert(props)
-    raise ValueError(f"Unsupported legacy optimizer object type: {object_type}")
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    return int(text)
 
 
 def _action_is_hold(action: str) -> bool:
@@ -529,26 +475,6 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
     description = f"Continuous optimizer: {alert['change_summary']}"
     if rationale:
         description = f"{description}\n\nEvidence: {rationale}"
-    if not ontology_primary_writes_enabled():
-        from portfolio.action_registry import ActionContext, propose_action
-
-        approval = propose_action(
-            "create_action_item",
-            {
-                "ticker": ticker,
-                "action_type": action_type,
-                "description": description,
-                "urgency": urgency,
-            },
-            ActionContext(
-                actor_type="workflow",
-                source_type="workflow",
-                source_id=str(alert.get("run_id")),
-            ),
-            reason=f"Review continuous optimizer alert {alert['id']}",
-        )
-        return str(approval["id"]) if approval and approval.get("id") is not None else None
-
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
     approval = OntologyCommandService().propose_action(
@@ -571,25 +497,16 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
 
 def _ensure_default_ontology_mission() -> dict[str, Any]:
     now = _now_iso()
-    try:
-        from portfolio import core_db
-
-        scenario = core_db._default_optimization_scenario()  # noqa: SLF001 - shared default seed contract.
-        source_config = core_db._default_optimization_sources()  # noqa: SLF001
-        thresholds = core_db._default_optimization_thresholds()  # noqa: SLF001
-        name = core_db.DEFAULT_OPTIMIZATION_MISSION_NAME
-        schedule = core_db.DEFAULT_OPTIMIZATION_SCHEDULE
-    except Exception:
-        scenario = {"preset": "balanced"}
-        source_config = {"mode": "recommend_and_stage"}
-        thresholds = {
-            "confidence_bucket_edges": [0.35, 0.65, 0.8],
-            "priority_bucket_edges": [0.75, 1.5, 2.5],
-            "stage_actions": True,
-            "suppress_low_severity_holds": True,
-        }
-        name = "Daily Command Center"
-        schedule = "Weekdays at 10:15 ET"
+    scenario = {"preset": "balanced"}
+    source_config = {"mode": "recommend_and_stage"}
+    thresholds = {
+        "confidence_bucket_edges": [0.35, 0.65, 0.8],
+        "priority_bucket_edges": [0.75, 1.5, 2.5],
+        "stage_actions": True,
+        "suppress_low_severity_holds": True,
+    }
+    name = "Daily Command Center"
+    schedule = "Weekdays at 10:15 ET"
 
     mission = _write_runtime_object(
         "OptimizationMission",
@@ -614,12 +531,8 @@ def _get_mission(mission_id: Any) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
     if mission_id:
         key = str(mission_id)
-        if ontology_primary_writes_enabled():
-            return reads.get(key) if key.startswith("optimization_mission:") else None
-        for candidate in (key, f"optimizationmission:{key}", f"optimization_mission:{key}"):
-            mission = reads.get(candidate)
-            if mission:
-                return mission
+        if key.startswith("optimization_mission:"):
+            return reads.get(key)
         matches = reads.list_objects("OptimizationMission", filters={"mission_id": key}, limit=1)
         if matches:
             return matches[0]
@@ -630,9 +543,7 @@ def _get_mission(mission_id: Any) -> dict[str, Any] | None:
     missions = reads.list_objects("OptimizationMission", limit=1)
     if missions:
         return missions[0]
-    if ontology_primary_writes_enabled():
-        return _ensure_default_ontology_mission()
-    return None
+    return _ensure_default_ontology_mission()
 
 
 def _create_run(mission: dict[str, Any], input_hash: str) -> dict[str, Any]:

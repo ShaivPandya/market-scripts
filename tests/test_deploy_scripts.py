@@ -59,18 +59,15 @@ def test_deploy_scripts_do_not_repeat_gcloud_args_values() -> None:
             assert not duplicates, f"{script_path}:{line_number} repeats --args values: {duplicates}"
 
 
-def test_sizer_worker_deploy_uses_env_for_duplicate_sizer_values() -> None:
-    script = (ROOT / "infra/gcp/deploy-sizer-worker.sh").read_text()
-    config_example = (ROOT / "infra/gcp/config.example.sh").read_text()
+def test_sizer_worker_deploy_removed() -> None:
+    assert not (ROOT / "infra/gcp/deploy-sizer-worker.sh").exists()
 
-    assert "--args=-m,api.job_worker_loop,run \\" in script
-    assert "--job-type,sizer,--queue,sizer" not in script
-    assert "SIZER_WORKER_INSTANCES=0 is incompatible" in script
-    assert 'SIZER_WORKER_INSTANCES="1"' in script
-    assert 'SIZER_WORKER_INSTANCES="1"' in config_example
-    assert '"ASYNC_DISPATCH_BACKEND_SIZER=warm_worker"' in script
-    assert '"JOB_WORKER_JOB_TYPE=sizer"' in script
-    assert '"JOB_WORKER_QUEUE=sizer"' in script
+    config_example = (ROOT / "infra/gcp/config.example.sh").read_text()
+    backend = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "SIZER_WORKER_" not in config_example
+    assert "deploy-sizer-worker.sh" not in backend
+    assert "sizer worker pool deploy" not in backend
 
 
 def test_ontology_worker_deploy_uses_env_for_duplicate_ontology_values() -> None:
@@ -102,17 +99,25 @@ def test_api_deploy_routes_noninteractive_jobs_to_cloud_run_jobs() -> None:
     script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
 
     assert '"ASYNC_DISPATCH_BACKEND_ANALYZER=cloud_run_jobs"' in script
-    assert '"ASYNC_DISPATCH_BACKEND_SIZER=warm_worker"' in script
+    assert '"ASYNC_DISPATCH_BACKEND_SIZER=cloud_run_jobs"' in script
     assert '"ASYNC_DISPATCH_BACKEND_ONTOLOGY=cloud_run_jobs"' in script
     assert '"AGENT_CHAT_DISPATCH_BACKEND=warm_worker"' in script
     assert '"ASYNC_QUEUE_ANALYZER=analyzer"' in script
     assert '"ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"' in script
 
 
-def test_common_gcp_env_enables_ontology_read_model_for_api_and_ontology_worker() -> None:
+def test_watch_trigger_monitor_scheduler_is_disabled_by_default() -> None:
+    script = (ROOT / "infra/gcp/setup-scheduler.sh").read_text()
+
+    assert "SCHEDULE_WATCH_TRIGGER_MONITOR:-0" in script
+    assert "delete_scheduler_job_if_present watch-trigger-monitor" in script
+    assert 'upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}"' in script
+
+
+def test_common_gcp_env_requires_postgres_for_api_and_ontology_worker() -> None:
     lib = (ROOT / "infra/gcp/lib.sh").read_text()
 
-    assert "ONTOLOGY_READ_MODEL=true" in lib
+    assert "STATE_DB_BACKEND=postgres" in lib
 
     for script_name in ("deploy-api.sh", "deploy-ontology-worker.sh"):
         script = (ROOT / "infra/gcp" / script_name).read_text()

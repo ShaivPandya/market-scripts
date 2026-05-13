@@ -1,16 +1,10 @@
-"""Domain-oriented ontology writes for operational actions.
-
-This module is the migration bridge between legacy domain actions and the
-authoritative bitemporal ontology write boundary. In shadow mode, callers keep
-their existing legacy writes and mirror the resulting operational objects here.
-"""
+"""Domain-oriented ontology writes for operational actions."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-import os
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -37,22 +31,6 @@ _APPROVED_DOMAIN_WRITE_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
     "approved_domain_write_scope",
     default=None,
 )
-
-
-def ontology_shadow_writes_enabled() -> bool:
-    return _env_flag("ONTOLOGY_SHADOW_WRITES") or ontology_primary_writes_enabled()
-
-
-def ontology_primary_writes_enabled() -> bool:
-    return _env_flag("ONTOLOGY_PRIMARY_WRITES") or _is_production()
-
-
-def ontology_read_model_enabled() -> bool:
-    return _env_flag("ONTOLOGY_READ_MODEL")
-
-
-def legacy_write_guard_enabled() -> bool:
-    return _env_flag("LEGACY_WRITE_GUARD") or ontology_primary_writes_enabled()
 
 
 def approved_domain_write_scope() -> dict[str, Any] | None:
@@ -89,22 +67,13 @@ def domain_write_scope(
         _APPROVED_DOMAIN_WRITE_SCOPE.reset(token)
 
 
-def assert_legacy_domain_write_allowed(surface: str) -> None:
+def assert_domain_table_write_allowed(surface: str) -> None:
     if approved_domain_write_scope() is not None:
         return
-    if legacy_write_guard_enabled() and not _env_flag("LEGACY_WRITE_GUARD_ALLOW_PROJECTION"):
-        raise RuntimeError(
-            f"Legacy domain write blocked by ontology-primary runtime: {surface}. "
-            "Use OntologyObjectService/OntologyCommandService, or run the isolated legacy backfill job."
-        )
-
-
-def _env_flag(name: str) -> bool:
-    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _is_production() -> bool:
-    return (os.getenv("ENVIRONMENT") or "").strip().lower() == "production"
+    raise RuntimeError(
+        f"Domain table write blocked by ontology runtime: {surface}. "
+        "Use OntologyObjectService or OntologyCommandService."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +139,6 @@ class DomainOntologyWriteService:
                     "ActionRun",
                     str(action_run_id_value),
                     {
-                        "legacy_id": action_run_id_value,
                         "action_id": action_id,
                         "action_schema_version": 1,
                         "actor_type": actor.get("actor_type") or "unknown",
@@ -195,7 +163,7 @@ class DomainOntologyWriteService:
                 input_hash=input_hash,
             )
             rows.append(action_run_row)
-            _log_shadow_parity(
+            _log_ontology_write(
                 action_id=action_id,
                 row=action_run_row,
                 action_run_id_value=action_run_id_value,
@@ -213,7 +181,7 @@ class DomainOntologyWriteService:
                 input_hash=input_hash,
             )
             rows.append(row)
-            _log_shadow_parity(
+            _log_ontology_write(
                 action_id=action_id,
                 row=row,
                 action_run_id_value=action_run_id_value,
@@ -230,7 +198,7 @@ class DomainOntologyWriteService:
                     approval_id=approval_id,
                     input_hash=input_hash,
                 )
-        _refresh_temporal_read_models_if_enabled()
+        _refresh_temporal_read_models()
         return rows
 
     def write_pending_approval(
@@ -245,7 +213,7 @@ class DomainOntologyWriteService:
         row = self.write_object(
             OntologyMutation(
                 "Approval",
-                str(approval.get("id") or approval.get("legacy_id") or _stable_hash(approval)),
+                str(approval.get("id") or _stable_hash(approval)),
                 _approval_properties(approval),
                 now,
             ),
@@ -257,7 +225,7 @@ class DomainOntologyWriteService:
             approval_id=_optional_int(approval.get("id")),
             input_hash=input_hash,
         )
-        _log_shadow_parity(
+        _log_ontology_write(
             action_id="pending_approval",
             row=row,
             action_run_id_value=_context_int(context, "action_run_id"),
@@ -266,7 +234,7 @@ class DomainOntologyWriteService:
                 approval.get("provenance_event_id") or _context_str(context, "provenance_event_id") or ""
             ),
         )
-        _refresh_temporal_read_models_if_enabled()
+        _refresh_temporal_read_models()
         return row
 
     def _link_action_run_to_version(
@@ -334,8 +302,6 @@ def record_action_ontology_versions(
     context: Any,
     input_hash: str | None,
 ) -> list[dict[str, Any]]:
-    if not ontology_shadow_writes_enabled():
-        return []
     service = DomainOntologyWriteService()
     return service.write_action_output(
         action_id=action_id,
@@ -352,23 +318,17 @@ def record_pending_approval_ontology_version(
     context: Any,
     input_hash: str | None,
 ) -> dict[str, Any] | None:
-    if not ontology_shadow_writes_enabled():
-        return None
     return DomainOntologyWriteService().write_pending_approval(approval, context=context, input_hash=input_hash)
 
 
-def _refresh_temporal_read_models_if_enabled() -> None:
-    if not ontology_read_model_enabled():
-        return
+def _refresh_temporal_read_models() -> None:
     try:
         TemporalReadModelRepository().refresh()
     except Exception:
-        if ontology_primary_writes_enabled():
-            raise
-        logger.exception("ontology read model refresh failed during shadow write")
+        raise
 
 
-def _log_shadow_parity(
+def _log_ontology_write(
     *,
     action_id: str,
     row: Mapping[str, Any],
@@ -378,7 +338,7 @@ def _log_shadow_parity(
 ) -> None:
     temporal = _temporal(row)
     logger.info(
-        "ontology shadow parity action_id=%s object_type=%s business_key=%s object_uid=%s "
+        "ontology write action_id=%s object_type=%s business_key=%s object_uid=%s "
         "version_id=%s action_run_id=%s approval_id=%s provenance_event_id=%s",
         action_id,
         row.get("object_type"),
@@ -563,7 +523,13 @@ def action_mutations(
         mutations = [
             OntologyMutation(
                 "Recommendation",
-                str(row.get("id") or row.get("legacy_id") or row.get("idempotency_key") or row.get("instrument") or ""),
+                str(
+                    row.get("recommendation_id")
+                    or row.get("id")
+                    or row.get("idempotency_key")
+                    or row.get("instrument")
+                    or ""
+                ),
                 _recommendation_properties(row),
                 _row_time(row, now),
             )
@@ -667,7 +633,6 @@ def _catalyst_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     description = str(row.get("description") or "")
     return {
         "ticker": str(row.get("ticker") or "").upper(),
-        "legacy_id": _optional_int(row.get("id") or row.get("catalyst_id")),
         "name": str(row.get("name") or description[:120] or "Catalyst"),
         "description": description or str(row.get("name") or "Catalyst"),
         "source": str(row.get("created_by") or row.get("source_type") or "domain_action"),
@@ -680,7 +645,6 @@ def _catalyst_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 def _kill_condition_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "ticker": str(row.get("ticker") or "").upper(),
-        "legacy_id": _optional_int(row.get("id") or row.get("kill_condition_id")),
         "condition": str(row.get("condition") or ""),
         "metric": row.get("metric"),
         "threshold": row.get("threshold"),
@@ -695,7 +659,6 @@ def _kill_condition_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 def _thesis_claim_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "ticker": str(row.get("ticker") or "").upper(),
-        "legacy_id": _optional_int(row.get("id") or row.get("claim_id")),
         "claim": str(row.get("claim") or ""),
         "expected_evidence": row.get("expected_evidence"),
         "disconfirming_evidence": row.get("disconfirming_evidence"),
@@ -714,7 +677,6 @@ def _thesis_claim_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def _action_item_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "legacy_id": _optional_int(row.get("id") or row.get("item_id")),
         "ticker": _optional_ticker(row.get("ticker")),
         "description": str(row.get("description") or ""),
         "action_type": str(row.get("action_type") or "review"),
@@ -732,8 +694,7 @@ def _recommendation_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     action = str(row.get("action") or "watch")
     is_actionable = action in {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
     return {
-        "recommendation_id": row.get("id") or row.get("legacy_id") or row.get("idempotency_key"),
-        "legacy_id": _optional_int(row.get("id")),
+        "recommendation_id": row.get("recommendation_id") or row.get("id") or row.get("idempotency_key"),
         "idempotency_key": row.get("idempotency_key"),
         "source_kind": "report",
         "report_type": row.get("report_type"),
@@ -779,7 +740,6 @@ def _policy_gate_result_properties(row: Mapping[str, Any], *, gate_result_id: st
 
 def _watch_trigger_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "legacy_id": _optional_int(row.get("id") or row.get("trigger_id")),
         "ticker": _optional_ticker(row.get("ticker")),
         "condition": str(row.get("condition") or ""),
         "trigger_type": str(row.get("trigger_type") or "custom"),
@@ -798,9 +758,8 @@ def _watch_trigger_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def _approval_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "legacy_id": _optional_int(row.get("id") or row.get("approval_id")),
         "entity_type": str(row.get("entity_type") or "approval"),
-        "entity_id": _optional_int(row.get("entity_id")),
+        "entity_id": str(row.get("entity_id")) if row.get("entity_id") not in (None, "") else None,
         "ticker": _optional_ticker(row.get("ticker")),
         "target_object_uid": row.get("target_object_uid"),
         "target_object_type": row.get("target_object_type"),

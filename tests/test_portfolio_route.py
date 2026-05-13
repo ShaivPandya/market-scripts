@@ -38,7 +38,7 @@ def test_portfolio_single_timeframe_uses_freshness_cache(auth_client, monkeypatc
     monkeypatch.setattr(portfolio_router, "get_or_set_cached", fake_get_or_set_cached)
     monkeypatch.setattr(portfolio_dashboard, "get_data", fake_get_data)
 
-    resp = auth_client.get("/api/v1/portfolio", params={"timeframe": timeframe})
+    resp = auth_client.get("/api/portfolio", params={"timeframe": timeframe})
 
     assert resp.status_code == 200
     expected_cache = getattr(portfolio_router, expected_cache_name)
@@ -70,7 +70,7 @@ def test_portfolio_all_timeframes_is_deprecated_but_compatible(auth_client, monk
     monkeypatch.setattr(portfolio_router, "get_or_set_cached", fake_get_or_set_cached)
     monkeypatch.setattr(portfolio_dashboard, "get_data", fake_get_data)
 
-    resp = auth_client.get("/api/v1/portfolio", params={"all_timeframes": "true"})
+    resp = auth_client.get("/api/portfolio", params={"all_timeframes": "true"})
 
     assert resp.status_code == 200
     assert resp.headers["Deprecation"] == "true"
@@ -84,4 +84,4 @@ def test_portfolio_all_timeframes_is_deprecated_but_compatible(auth_client, monk
     assert "timeframes" in payload
     assert payload["holdings"] == [{"ticker": "MU", "role": "position"}]
     assert payload["_meta"]["deprecated_endpoint"] is True
-    assert payload["_meta"]["replacement"] == "/api/v1/portfolio?timeframe={timeframe}"
+    assert payload["_meta"]["replacement"] == "/api/portfolio?timeframe={timeframe}"

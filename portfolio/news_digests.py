@@ -287,9 +287,9 @@ def _sort_summaries(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def save_digest(markdown: str, *, filename: str | None = None) -> dict[str, Any]:
     """Store or replace a digest and return its detail payload."""
-    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+    from ontology.domain_write_service import assert_domain_table_write_allowed
 
-    assert_legacy_domain_write_allowed("news_digests.save_digest")
+    assert_domain_table_write_allowed("news_digests.save_digest")
     now = _now_utc()
     now_iso = now.isoformat().replace("+00:00", "Z")
     parsed = parse_digest_markdown(markdown, filename=filename, uploaded_at=now)
@@ -396,9 +396,9 @@ def get_digest(digest_id: str) -> dict[str, Any]:
 
 
 def delete_digest(digest_id: str) -> bool:
-    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+    from ontology.domain_write_service import assert_domain_table_write_allowed
 
-    assert_legacy_domain_write_allowed("news_digests.delete_digest")
+    assert_domain_table_write_allowed("news_digests.delete_digest")
     digest_id = validate_digest_id(digest_id)
     manifest = _load_manifest()
     digests = [item for item in manifest.get("digests", []) if isinstance(item, dict)]

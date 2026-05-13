@@ -75,7 +75,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def drain_governance_outbox(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    logger.info("governance_outbox_drain skipped: legacy outbox removed from ontology-primary runtime")
+    logger.info("governance_outbox_drain skipped: outbox removed from ontology-primary runtime")
     return {
         "result": {"claimed": 0, "completed": 0, "failed": 0, "dead_lettered": 0},
         "metrics": {"pending": 0, "failed": 0, "dead_letter": 0},

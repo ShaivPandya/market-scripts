@@ -20,6 +20,7 @@ from api.audit import emit_audit_event
 from ontology.command_service import OntologyCommandContext, OntologyCommandService, OntologyCommandValidationError
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
+from ontology.schemas.identity import workflow_artifact_id
 
 logger = logging.getLogger("api.workflow_artifacts")
 
@@ -150,22 +151,6 @@ def persist_artifacts(
 
     Returns the number of approvals created.
     """
-    from ontology.domain_write_service import ontology_primary_writes_enabled
-
-    if not ontology_primary_writes_enabled():
-        from ontology.action_registry import propose_workflow_artifact
-
-        count = 0
-        for artifact_key in _ARTIFACT_BINDINGS:
-            count += propose_workflow_artifact(
-                artifact_key,
-                artifacts.get(artifact_key),
-                run_id=run_id,
-                ticker=ticker,
-            )
-        _emit_persisted_audit(run_id, ticker, artifacts, count)
-        return count
-
     actor = system_actor("workflow_artifacts")
     context = OntologyCommandContext(actor=actor, source_type="workflow", source_id=run_id)
     command_service = OntologyCommandService()
@@ -175,9 +160,8 @@ def persist_artifacts(
         for item_index, item in enumerate(_artifact_items(artifacts.get(artifact_key), multiple=binding.multiple)):
             if binding.required_keys and any(not item.get(key) for key in binding.required_keys):
                 continue
-            artifact_uid = (
-                f"workflow_artifact:{hashlib.sha256(f'{run_id}:{artifact_key}:{item_index}'.encode()).hexdigest()[:24]}"
-            )
+            artifact_key_value = hashlib.sha256(f"{run_id}:{artifact_key}:{item_index}".encode()).hexdigest()[:24]
+            artifact_uid = workflow_artifact_id(artifact_key_value)
             provenance_id = f"pv:workflow_artifact:{run_id}:{artifact_key}:{item_index}"
             now = datetime.now(UTC).isoformat()
             payload = _artifact_payload(artifact_key, item, ticker)
@@ -185,7 +169,7 @@ def persist_artifacts(
                 "WorkflowArtifact",
                 artifact_uid,
                 {
-                    "artifact_id": artifact_uid,
+                    "artifact_id": artifact_key_value,
                     "workflow_run_id": run_id,
                     "artifact_key": artifact_key,
                     "artifact_index": item_index,

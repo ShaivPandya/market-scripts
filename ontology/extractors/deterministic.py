@@ -192,7 +192,7 @@ class DisabledModelExtractor:
 
     def extract(self, context: ArtifactContext) -> ExtractorResult:
         del context
-        return ExtractorResult(status="disabled", error="Model-backed extractors are disabled in V1.")
+        return ExtractorResult(status="disabled", error="Model-backed extractors are disabled.")
 
 
 def _extract_text(content: bytes, mime_type: str) -> tuple[str, str | None]:

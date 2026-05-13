@@ -1,8 +1,8 @@
 """
 portfolio_analytics.py — PnL, drawdown, and attribution from portfolio positions.
 
-Consumes price series (from portfolio_dashboard) and position metadata
-(from portfolio_db) to compute per-position and portfolio-level metrics.
+Consumes price series and ontology-backed position metadata to compute
+per-position and portfolio-level metrics.
 
 Attribution is weighted by notional value when quantity and current price are
 available. Futures use quantity x price x contract multiplier; securities use

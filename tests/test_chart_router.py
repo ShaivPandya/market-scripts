@@ -39,7 +39,7 @@ def test_download_price_history_csv(auth_client, monkeypatch):
 
     monkeypatch.setattr(technical_analysis, "fetch_full_price_history", fake_fetch_full_price_history)
 
-    resp = auth_client.get("/api/v1/chart/price-history/brk-b")
+    resp = auth_client.get("/api/chart/price-history/brk-b")
 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")

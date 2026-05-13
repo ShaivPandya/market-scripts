@@ -7,14 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from api.exceptions import ValidationError
-from api.provenance_graph import (
-    DIRECTIONS,
-    ProvenanceGraphService,
-    build_legacy_decision_lineage_graph,
-    build_legacy_trace_graph,
-)
+from api.provenance_graph import DIRECTIONS, ProvenanceGraphService
 from api.routers.auth import require_actor
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import Actor, PolicyDenied
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
@@ -137,48 +131,7 @@ def get_governance_lineage_report(
     _validate_graph_params(max_depth=max_depth, direction=direction, max_nodes=max_nodes, max_edges=max_edges)
     direction = _normalize_direction(direction)
 
-    if not ontology_primary_writes_enabled():
-        legacy_decision_keys = {
-            "recommendation_id",
-            "approval_id",
-            "action_run_id",
-            "workflow_run_id",
-            "object_version_id",
-            "relation_version_id",
-        }
-        from portfolio import core_db
-
-        if set(selector).issubset(legacy_decision_keys):
-            report = core_db.get_decision_lineage_report(
-                recommendation_id=_legacy_numeric_id(recommendation_id),
-                approval_id=_legacy_numeric_id(approval_id),
-                action_run_id=_legacy_numeric_id(action_run_id),
-                workflow_run_id=workflow_run_id,
-                object_version_id=object_version_id,
-                relation_version_id=relation_version_id,
-                max_depth=max_depth,
-            )
-            return build_legacy_decision_lineage_graph(
-                report,
-                selector=selector,
-                direction=direction,
-                max_depth=max_depth,
-            )
-        return _legacy_trace(selector, max_depth=max_depth, direction=direction)
-
     return _ontology_trace(selector, max_depth=max_depth, direction=direction, max_nodes=max_nodes, max_edges=max_edges)
-
-
-def _legacy_numeric_id(value: str | None) -> int | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if ":" in text:
-        text = text.rsplit(":", 1)[-1]
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        raise ValidationError(f"Legacy provenance selector must be numeric: {value}") from None
 
 
 def _validate_selector(
@@ -221,8 +174,6 @@ def _ontology_trace(
     max_nodes: int = 250,
     max_edges: int = 500,
 ) -> dict:
-    if not ontology_primary_writes_enabled():
-        return _legacy_trace(selector, max_depth=max_depth, direction=direction)
     return ProvenanceGraphService(reads=OntologyRuntimeReadService()).trace(
         selector=selector,
         direction=direction,
@@ -230,41 +181,3 @@ def _ontology_trace(
         max_nodes=max_nodes,
         max_edges=max_edges,
     )
-
-
-def _legacy_trace(selector: dict[str, str], *, max_depth: int, direction: str) -> dict:
-    from portfolio import core_db
-
-    trace = core_db.get_provenance_trace(
-        workflow_run_id=selector.get("workflow_run_id"),
-        ontology_run_id=selector.get("ontology_run_id"),
-        approval_id=_legacy_numeric_id(selector.get("approval_id")),
-        action_run_id=_legacy_numeric_id(selector.get("action_run_id")),
-        agent_session_id=selector.get("agent_session_id"),
-        event_id=selector.get("event_id"),
-        ref_type=selector.get("ref_type") or _selector_ref_type(selector),
-        ref_id=selector.get("ref_id") or _selector_ref_id(selector),
-        max_depth=max_depth,
-    )
-    return build_legacy_trace_graph(trace, selector=selector, direction=direction, max_depth=max_depth)
-
-
-def _selector_ref_type(selector: dict[str, str]) -> str | None:
-    mapping = {
-        "recommendation_id": "recommendation",
-        "object_version_id": "ontology_object_version",
-        "relation_version_id": "relation_version",
-        "source_record_id": "source_record",
-        "snapshot_id": "computed_snapshot_version",
-    }
-    for key, ref_type in mapping.items():
-        if key in selector:
-            return ref_type
-    return None
-
-
-def _selector_ref_id(selector: dict[str, str]) -> str | None:
-    for key in ("recommendation_id", "object_version_id", "relation_version_id", "source_record_id", "snapshot_id"):
-        if key in selector:
-            return selector[key]
-    return None

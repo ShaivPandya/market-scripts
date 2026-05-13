@@ -1,9 +1,8 @@
 """
 Persistent conversation memory for the AI agent.
 
-Stores conversation sessions and summaries in SQLite so the agent can
-reference past research across sessions.  Follows the same connection
-pattern as portfolio/thesis_db.py (WAL mode, thread-safe, lazy init).
+Stores conversation sessions and summaries so the agent can reference past
+research across sessions.
 """
 
 from __future__ import annotations
@@ -17,13 +16,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from api.postgres import use_postgres_state
-from api.postgres_compat import PostgresCompatConnection
+from api.postgres_state import PostgresStateConnection
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DB_PATH = _REPO_ROOT / "data_cache" / "memory" / "memory.db"
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | PostgresCompatConnection | None = None
+_conn: sqlite3.Connection | PostgresStateConnection | None = None
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -52,7 +51,7 @@ ON conversation_sessions(ended_at DESC)
 # ---------------------------------------------------------------------------
 
 
-def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
+def _get_conn() -> sqlite3.Connection | PostgresStateConnection:
     global _conn
 
     if _conn is not None:
@@ -69,7 +68,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
         with _lock:
             if _conn is None:
                 if use_postgres_state():
-                    _conn = PostgresCompatConnection()
+                    _conn = PostgresStateConnection()
                 else:
                     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
                     _conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)

@@ -222,7 +222,6 @@ def test_command_service_refreshes_read_model_after_position_approval_apply(monk
         def refresh(self):
             refresh_calls.append("refresh")
 
-    monkeypatch.setattr(domain_write_service, "ontology_read_model_enabled", lambda: True)
     monkeypatch.setattr(read_model, "TemporalReadModelRepository", _Repo)
 
     service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
@@ -611,7 +610,7 @@ def test_unsupported_action_is_rejected_before_any_write():
     context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
 
     with pytest.raises(OntologyCommandValidationError):
-        service.propose_action("legacy_unregistered_write", {}, context)
+        service.propose_action("unregistered_write", {}, context)
     assert fake.objects == {}
 
 

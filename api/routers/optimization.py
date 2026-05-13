@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -31,12 +30,10 @@ def list_optimization_missions(status: str | None = None):
     )
     if not missions:
         from api.continuous_optimizer import _ensure_default_ontology_mission
-        from ontology.domain_write_service import ontology_primary_writes_enabled
 
-        if ontology_primary_writes_enabled():
-            seeded = _ensure_default_ontology_mission()
-            if not status or seeded.get("status") == status:
-                missions = [seeded]
+        seeded = _ensure_default_ontology_mission()
+        if not status or seeded.get("status") == status:
+            missions = [seeded]
     return {"missions": missions, "count": len(missions)}
 
 
@@ -57,7 +54,7 @@ def run_optimization_mission(mission_id: str, req: OptimizationRunRequest | None
         cache_key=None,
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
 @router.get("/optimization/runs")
@@ -103,6 +100,4 @@ def dismiss_optimization_alert(alert_id: str, req: DismissOptimizationAlertReque
 
 def _get_optimization_object(object_type: str, object_id: str) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
-    if ontology_primary_writes_enabled():
-        return reads.get(object_id)
     return reads.get(object_id) or reads.get(f"{object_type.lower()}:{object_id}")

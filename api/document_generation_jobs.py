@@ -24,7 +24,7 @@ UploadDocumentType = Literal["pdf", "markdown"]
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
 TEMP_UPLOAD_PREFIX = "tmp/document_generation_uploads"
 TEMP_UPLOAD_DIR = PROJECT_ROOT / TEMP_UPLOAD_PREFIX
-POLL_PATH = "/api/v1/document-generation/async/{job_id}"
+POLL_PATH = "/api/document-generation/async/{job_id}"
 _MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 

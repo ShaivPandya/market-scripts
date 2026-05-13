@@ -1,6 +1,6 @@
 import type { IdeaDetailResponse, IdeaEvaluation, InvestmentIdea } from "@/lib/api"
 
-export const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-v1"
+export const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-current"
 
 export function readActiveJobs(): Record<string, string> {
   try {

@@ -1,6 +1,6 @@
-# Frontend (Market Analysis Dashboard UI)
+# Talisman Frontend
 
-React + TypeScript + Vite web UI for the Market Scripts project.
+React + TypeScript + Vite web UI for Talisman.
 
 The UI is a thin client:
 - It renders charts/tables
@@ -12,9 +12,17 @@ For the full project overview, see the repo root `README.md`.
 
 ### Prereqs
 
-- Node 20+ (see `engines.node` in `frontend/package.json`)
-- A running backend API (FastAPI) on `http://localhost:8000`:
-  - `uvicorn api.main:app --reload --port 8000` (run from repo root)
+- Node 20.19 or newer (see `engines.node` in `frontend/package.json`)
+- A running backend API (FastAPI) on `http://localhost:8000`, started from the repo root:
+
+```bash
+ENVIRONMENT=development \
+STATE_DB_BACKEND=postgres \
+DATABASE_URL=postgresql://localhost/talisman_dev \
+STATE_STORAGE_BACKEND=local \
+ASYNC_JOB_BACKEND=local \
+uvicorn api.main:app --reload --port 8000
+```
 
 ### Install & run
 
@@ -24,6 +32,10 @@ npm run dev
 ```
 
 Vite runs on `http://localhost:5173` and proxies `/api/*` to `http://localhost:8000` via `frontend/vite.config.ts`.
+
+The Axios API client defaults to `VITE_API_BASE_URL=/api`; set
+`VITE_API_BASE_URL` only when the API should be called at another origin or
+base path.
 
 Run UI + API together (from `frontend/`):
 
@@ -58,22 +70,20 @@ Note: password sessions are intentionally “tab-scoped” — the UI uses `sess
   - If Access is configured, it treats `200 OK` as authenticated.
 - Login/logout actions redirect to Cloudflare endpoints instead of calling `/api/auth/*`.
 
-This mode is meant for deployments where Cloudflare Access gates the app at the edge, while the backend API remains protected by the API proxy secret (next section).
+This mode is meant for deployments where Cloudflare Access gates the app at the edge and a trusted API proxy can inject `X-Api-Proxy-Secret`. The checked-in Firebase Hosting rewrite cannot inject that header, so do not combine `AUTH_MODE=cloudflare` with plain Firebase rewrites unless another proxy layer adds the secret.
 
-## Production API proxy (Cloudflare Pages Functions)
+## Production hosting
 
 In production the UI expects `/api/*` to exist on the same origin as the frontend.
 
-This repo includes a Cloudflare Pages Function proxy:
-- `frontend/functions/api/[[path]].ts`
+This repo deploys the built Vite app with Firebase Hosting:
+- `firebase.json` serves `frontend/dist`
+- `/api/**` is rewritten to the Cloud Run service `talisman-api`
+- Application routes are rewritten to `/index.html`
 
-It forwards requests to a configured origin and injects an `X-Api-Proxy-Secret` header so the backend can reject direct requests.
-
-Cloudflare Pages env vars (runtime for the Function):
-- `API_ORIGIN` — base URL of the backend, e.g. `https://your-api.example.com`
-- `API_PROXY_SECRET` — must match the backend’s `API_PROXY_SECRET`
-
-Backend enforcement is implemented in `api/main.py`.
+Firebase Hosting rewrites do not add custom headers. Backend proxy-secret
+enforcement in `api/main.py` is therefore enabled only for Cloudflare auth mode
+or when `REQUIRE_API_PROXY_SECRET=true`.
 
 ## Code organization
 
@@ -82,6 +92,7 @@ Backend enforcement is implemented in `api/main.py`.
 - `frontend/src/lib/api.ts` — API client + typed helpers (GET/POST wrappers)
 - `frontend/src/components/*` — shared UI components (tables, charts, layout)
 - `frontend/src/contexts/AuthContext.tsx` — auth state + mode detection
+- `frontend/src/hooks/*` — React Query and feature-specific data hooks
 
 ## Build
 

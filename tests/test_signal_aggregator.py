@@ -147,7 +147,7 @@ def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
     resp = auth_client.get(
-        "/api/v1/signal-aggregator",
+        "/api/signal-aggregator",
         params={
             "lookback_weeks": 104,
             "positioning_instruments": "SP500,EUR",
@@ -200,7 +200,7 @@ def test_signal_aggregator_endpoint_force_refresh_bypasses_snapshot(auth_client,
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
     resp = auth_client.get(
-        "/api/v1/signal-aggregator",
+        "/api/signal-aggregator",
         params={
             "lookback_weeks": 104,
             "positioning_instruments": "sp500, eur",
@@ -297,8 +297,8 @@ def test_signal_aggregator_endpoint_cache_key_includes_positioning(auth_client, 
     monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
-    auth_client.get("/api/v1/signal-aggregator", params={"positioning_instruments": "SP500,EUR"})
-    auth_client.get("/api/v1/signal-aggregator", params={"positioning_instruments": "NASDAQ,US10Y"})
+    auth_client.get("/api/signal-aggregator", params={"positioning_instruments": "SP500,EUR"})
+    auth_client.get("/api/signal-aggregator", params={"positioning_instruments": "NASDAQ,US10Y"})
 
     assert len(cache_keys) == 2
     assert cache_keys[0] != cache_keys[1]
@@ -327,7 +327,7 @@ def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):
     monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
-    resp = auth_client.get("/api/v1/signal-aggregator", params={"lookback_weeks": 157})
+    resp = auth_client.get("/api/signal-aggregator", params={"lookback_weeks": 157})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "degraded"

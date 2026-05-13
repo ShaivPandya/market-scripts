@@ -1,18 +1,33 @@
-# Government Bond Yields Tracker (`government_bonds/`)
+# Government Bonds (`government_bonds/`)
 
-This script fetches and displays government bond yields for major countries, including historical changes over various time periods.
+This package has two fixed-income surfaces:
+
+- Web/API yield-curve and bond-dashboard data for the Talisman app.
+- A standalone terminal tracker in `government_bond_yields.py` that prints and optionally exports 2-year, 10-year, and US 30-year yield changes.
 
 For the overall repo architecture (API + UI), see the repo root `README.md`.
 
+## Where this is used
+
+- FastAPI:
+  - `GET /api/yield-curve`
+  - `GET /api/bond-dashboard`
+- React UI:
+  - “Yield Curve” page
+  - “Bond Dashboard” page
+- Standalone CLI:
+  - `python3 government_bonds/government_bond_yields.py`
+
 ## Features
 
-- Fetches current yields for 2-year and 10-year government bonds (30-year for US only)
-- Tracks yields for: United States, United Kingdom, Germany, and Japan
-- Calculates yield changes over: 1 month, 3 months, 6 months, and 1 year
-- Optional CSV export functionality
-- Uses FRED API for reliable US Treasury data
-- Uses Deutsche Bundesbank API for Germany bond data
-- Uses local CSV files for UK and Japan bond data
+- Yield-curve API returns current and historical points for 3M, 6M, 1Y, 2Y, 5Y, 10Y, and 30Y where the source supports them.
+- Bond-dashboard API returns past-year 2Y, 10Y, and 30Y series for US, UK, Germany, and Japan.
+- Standalone tracker calculates 1-month, 3-month, 6-month, and 1-year changes.
+- Standalone tracker supports optional CSV export.
+- US data comes from FRED.
+- Germany data comes from Deutsche Bundesbank.
+- Web dashboards fetch UK data from the Bank of England and Japan data from Japan MOF.
+- The standalone tracker still uses local CSV files for UK and Japan.
 
 ## Installation
 
@@ -66,13 +81,19 @@ This will create a `government_bond_yields.csv` file with all the data.
 
 ## Data Sources
 
-- **United States**: FRED (Federal Reserve Economic Data) - Most reliable and accurate source for US Treasury yields
-- **Germany**: Deutsche Bundesbank API (term-structure series)
-- **United Kingdom / Japan**: Local CSV files in the `data/` directory
+- **United States**: FRED Treasury constant-maturity series
+- **Germany**: Deutsche Bundesbank term-structure API
+- **United Kingdom**:
+  - Web dashboards: Bank of England GLC nominal yield curve ZIP
+  - Standalone tracker: local CSV files in `data/`
+- **Japan**:
+  - Web dashboards: Ministry of Finance JGB historical CSV
+  - Standalone tracker: local CSV files in `data/`
 
 ## Data File Requirements
 
-For UK and Japan, place CSV files in the `data/` directory with the following naming convention:
+For the standalone tracker’s UK and Japan paths, place CSV files in the `data/`
+directory with the following naming convention:
 
 ```
 Download Data - BOND_BX_XTUP_TMBMK{COUNTRY_CODE}-{MATURITY}.csv
@@ -104,9 +125,9 @@ See `government_bonds/data/README.md` for the expected filenames and an example.
 - US Treasury data from FRED is highly reliable and updated daily
 - Germany data is fetched live from Deutsche Bundesbank
 - Without a FRED API key, US Treasury data will not be available
-- Make sure the UK/JP CSV files are present in the `data/` directory before running
+- Make sure the UK/JP CSV files are present in the `data/` directory before running `government_bond_yields.py`; the web dashboards do not use those files.
 
-## Data Series Used
+## Standalone Tracker Series
 
 ### United States (FRED):
 - **2-Year**: DGS2 (2-Year Treasury Constant Maturity Rate)
@@ -117,6 +138,6 @@ See `government_bonds/data/README.md` for the expected filenames and an example.
 - **2-Year**: `BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A`
 - **10-Year**: `BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A`
 
-### Other Countries (Local CSV Files):
+### UK/Japan Local CSV Files:
 - **United Kingdom**: 2-Year and 10-Year
 - **Japan**: 2-Year and 10-Year

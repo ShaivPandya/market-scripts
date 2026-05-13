@@ -110,7 +110,7 @@ upsert_counter_metric \
 upsert_counter_metric \
   governance_lineage_completeness_warning_count \
   "Lineage completeness warnings returned by governance reports." \
-  'resource.type=("cloud_run_revision" OR "cloud_run_job") AND (textPayload:"lineage_completeness" OR textPayload:"Lineage completeness") AND (textPayload:"retry_pending" OR textPayload:"dead_letter" OR textPayload:"legacy_partial" OR textPayload:"failed_closed")'
+  'resource.type=("cloud_run_revision" OR "cloud_run_job") AND (textPayload:"lineage_completeness" OR textPayload:"Lineage completeness") AND (textPayload:"retry_pending" OR textPayload:"dead_letter" OR textPayload:"migration_partial" OR textPayload:"failed_closed")'
 
 upsert_counter_metric \
   governance_redaction_violation_count \

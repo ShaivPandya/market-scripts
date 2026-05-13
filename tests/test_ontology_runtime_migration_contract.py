@@ -51,7 +51,6 @@ class _ValidatingFakeObjectService:
 def test_idea_runtime_write_preserves_temporal_meta(monkeypatch):
     from api.routers import ideas
 
-    monkeypatch.setattr(ideas, "ontology_primary_writes_enabled", lambda: True)
     monkeypatch.setattr(ideas, "OntologyObjectService", _FakeObjectService)
 
     row = ideas._write_runtime_object(  # noqa: SLF001 - migration contract helper coverage.
@@ -68,7 +67,6 @@ def test_idea_runtime_write_preserves_temporal_meta(monkeypatch):
 def test_optimizer_runtime_write_preserves_temporal_meta(monkeypatch):
     import api.continuous_optimizer as optimizer
 
-    monkeypatch.setattr(optimizer, "ontology_primary_writes_enabled", lambda: True)
     monkeypatch.setattr(optimizer, "OntologyObjectService", _FakeObjectService)
 
     row = optimizer._write_runtime_object(  # noqa: SLF001 - migration contract helper coverage.
@@ -94,7 +92,6 @@ def test_optimizer_runtime_write_strips_envelope_fields_before_rewrite(monkeypat
     import api.continuous_optimizer as optimizer
 
     service = _ValidatingFakeObjectService()
-    monkeypatch.setattr(optimizer, "ontology_primary_writes_enabled", lambda: True)
     monkeypatch.setattr(optimizer, "OntologyObjectService", lambda: service)
 
     run = optimizer._write_runtime_object(  # noqa: SLF001 - migration contract helper coverage.

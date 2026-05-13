@@ -147,7 +147,7 @@ def start_quality_screen(req: QualityRequest):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     row, _disposition = enqueue_registered_job("quality_screen", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/quality-screen/async/{job_id}")
+    return enqueue_response(row, "/api/quality-screen/async/{job_id}")
 
 
 @router.get("/quality-screen/async/{job_id}")

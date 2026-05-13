@@ -31,11 +31,15 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Default (reads `portfolio/portfolio.csv`)
+### Default (reads current portfolio positions)
 
 ```bash
 python3 portfolio/momentum/price_momentum/momentum.py
 ```
+
+The default path now reads current positions from the ontology/Postgres runtime
+read model. Use `--tickers-file` or a positional ticker when you want to run
+without portfolio state.
 
 ### Single Ticker Analysis
 
@@ -65,7 +69,7 @@ python3 portfolio/momentum/price_momentum/momentum.py --list-universes
 
 - `ticker` - Single ticker symbol (e.g., AAPL)
 - `--tickers-file` - Universe name or path to file containing tickers (one per line)
-- `--benchmark` - Benchmark ticker for relative comparisons (required, e.g., SPY, QQQ)
+- `--benchmark` - Benchmark ticker override for relative comparisons (e.g., SPY, QQQ). If omitted, the script auto-selects IWM for small caps, QQQ for technology names, and SPY otherwise.
 - `--years` - Years of historical data to download (default: 5)
 - `--list-universes` - List available universe files and exit
 
@@ -108,7 +112,7 @@ The script requires at least 83 trading days of overlapping data between the tic
 
 ## Dependencies
 
-- Python 3.11+
+- Python 3.12+
 - yfinance
 - pandas
 

@@ -191,7 +191,7 @@ def start_price_momentum(req: PriceMomentumRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("price_momentum", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/price-momentum/async/{job_id}")
+    return enqueue_response(row, "/api/price-momentum/async/{job_id}")
 
 
 @router.get("/price-momentum/async/{job_id}")

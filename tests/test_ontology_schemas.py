@@ -9,19 +9,19 @@ from pydantic import ValidationError
 
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schema_definitions import SCHEMA_KIND_ONTOLOGY_OBJECT, ontology_schema_definitions
-from ontology.schemas.identity import action_item_id, evaluation_id, hedge_position_id, signal_id
+from ontology.schemas.identity import action_item_id, catalyst_id, evaluation_id, hedge_position_id, signal_id
 from ontology.schemas.objects import (
-    ActionItemV1,
-    FactorScoreV1,
-    HedgePositionV1,
-    IdeaComparisonRankingV1,
-    InvestmentIdeaV1,
-    ManagementQualityAssessmentV1,
-    MissingInformationRequirementV1,
-    OptimizationRunV1,
-    PositionV1,
-    ProvenanceEventV1,
-    SourceFreshnessV1,
+    ActionItem,
+    FactorScore,
+    HedgePosition,
+    IdeaComparisonRanking,
+    InvestmentIdea,
+    ManagementQualityAssessment,
+    MissingInformationRequirement,
+    OptimizationRun,
+    Position,
+    ProvenanceEvent,
+    SourceFreshness,
 )
 from ontology.schemas.registry import NODE_SCHEMAS, OntologySchemaValidationError, normalize_graph, normalize_node
 from ontology.schemas.relations import (
@@ -48,7 +48,7 @@ def _iter_source_python_files() -> list[Path]:
 
 
 def test_position_schema_normalizes_and_checks_risk_level():
-    model = PositionV1(
+    model = Position(
         ticker=" mu ",
         asset=" Equity ",
         direction=" Long ",
@@ -69,7 +69,7 @@ def test_position_schema_normalizes_and_checks_risk_level():
     assert model.direction == "long"
 
     with pytest.raises(ValidationError):
-        PositionV1(
+        Position(
             ticker="MU",
             asset="equity",
             direction="long",
@@ -90,27 +90,27 @@ def test_operational_object_schemas_have_stable_identities():
             id=hedge_position_id("MU"),
             type="HedgePosition",
             label="MU hedge",
-            properties=HedgePositionV1(ticker="mu", direction="short").model_dump(mode="json"),
+            properties=HedgePosition(ticker="mu", direction="short").model_dump(mode="json"),
             schema_name="HedgePosition",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
     action_item = normalize_node(
         OntologyNode(
-            id=action_item_id(42),
+            id=action_item_id("Review MU"),
             type="ActionItem",
             label="Review MU",
-            properties=ActionItemV1(legacy_id=42, description="Review MU").model_dump(mode="json"),
+            properties=ActionItem(description="Review MU").model_dump(mode="json"),
             schema_name="ActionItem",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
 
     assert hedge.id == "hedge_position:MU"
     assert hedge.properties["ticker"] == "MU"
-    assert action_item.id == "action_item:42"
+    assert action_item.id == "action_item:review_mu"
     assert action_item.properties["status"] == "open"
 
 
@@ -132,7 +132,7 @@ def test_account_schema_drops_deprecated_tax_lot_field():
             schema_name="Account",
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
 
     assert account.schema_version == 1
@@ -140,9 +140,37 @@ def test_account_schema_drops_deprecated_tax_lot_field():
     assert "tax_lot_data_available" not in account.properties
 
 
+def test_workflow_run_schema_accepts_persisted_timestamps():
+    run = normalize_node(
+        OntologyNode(
+            id="workflow_run:workflow_thesis_review_unit",
+            type="WorkflowRun",
+            label="thesis_review",
+            properties={
+                "schema_version": 1,
+                "run_id": "workflow:thesis_review:unit",
+                "workflow_name": "thesis_review",
+                "ticker": "mu",
+                "status": "running",
+                "started_at": "2026-05-13T16:08:59.403662+00:00",
+                "created_at": "2026-05-13T16:08:59.403662+00:00",
+                "updated_at": "2026-05-13T16:08:59.403662+00:00",
+                "ontology_run_id": "operational",
+            },
+            schema_name="WorkflowRun",
+            schema_version=1,
+        ),
+        allow_current=False,
+    )
+
+    assert run.properties["ticker"] == "MU"
+    assert run.properties["created_at"] == "2026-05-13T16:08:59.403662+00:00"
+    assert run.properties["updated_at"] == "2026-05-13T16:08:59.403662+00:00"
+
+
 def test_runtime_migration_schema_rejects_unregistered_fields():
     with pytest.raises(ValidationError):
-        InvestmentIdeaV1(
+        InvestmentIdea(
             idea_id="investment_idea:MU",
             ticker="MU",
             status="watching",
@@ -151,7 +179,7 @@ def test_runtime_migration_schema_rejects_unregistered_fields():
 
 
 def test_first_class_research_optimizer_and_management_quality_objects_accept_uid_links():
-    ranking = IdeaComparisonRankingV1(
+    ranking = IdeaComparisonRanking(
         ranking_id="idea_comparison_ranking:run_1_rank_1",
         comparison_run_id="idea_comparison_run:run_1",
         idea_id="investment_idea:mu",
@@ -160,28 +188,28 @@ def test_first_class_research_optimizer_and_management_quality_objects_accept_ui
         rank=1,
         action="buy",
     )
-    factor = FactorScoreV1(
+    factor = FactorScore(
         factor_score_id="factor_score:eval_1_management",
         parent_uid="idea_evaluation:eval_1",
         parent_type="IdeaEvaluation",
         factor_name="management_quality",
         score=82,
     )
-    missing = MissingInformationRequirementV1(
+    missing = MissingInformationRequirement(
         requirement_id="missing_information_requirement:eval_1_valuation",
         parent_uid="idea_evaluation:eval_1",
         parent_type="IdeaEvaluation",
         field="valuation",
     )
-    run = OptimizationRunV1(run_id="optimization_run:run_1", mission_id="optimization_mission:default")
-    freshness = SourceFreshnessV1(
+    run = OptimizationRun(run_id="optimization_run:run_1", mission_id="optimization_mission:default")
+    freshness = SourceFreshness(
         freshness_id="source_freshness:run_1_reports",
         parent_uid=run.run_id,
         parent_type="OptimizationRun",
         source_name="reports",
         status="ok",
     )
-    assessment = ManagementQualityAssessmentV1(
+    assessment = ManagementQualityAssessment(
         assessment_id="management_quality_assessment:issuer_mu",
         issuer_id="issuer:mu",
         ticker="mu",
@@ -208,7 +236,7 @@ def test_every_entity_type_has_pydantic_schema_and_definition():
 
 
 def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
-    event = ProvenanceEventV1(
+    event = ProvenanceEvent(
         event_id="pv:unit",
         event_type="unit",
         event_name="test",
@@ -221,7 +249,7 @@ def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
     assert event.status == "started"
 
     with pytest.raises(ValidationError, match="at least one"):
-        ProvenanceEventV1(
+        ProvenanceEvent(
             event_id="pv:no-context",
             event_type="unit",
             event_name="test",
@@ -231,7 +259,7 @@ def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
         )
 
     with pytest.raises(ValidationError):
-        ProvenanceEventV1(
+        ProvenanceEvent(
             event_id="pv:bad-status",
             event_type="unit",
             event_name="test",
@@ -242,7 +270,7 @@ def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
         )
 
     with pytest.raises(ValidationError):
-        ProvenanceEventV1(
+        ProvenanceEvent(
             event_id="pv:no-retention",
             event_type="unit",
             event_name="test",
@@ -274,18 +302,19 @@ def test_literal_write_object_calls_use_registered_object_types():
     assert offenders == []
 
 
-def test_legacy_signal_node_is_canonicalized_to_stable_identity():
+def test_signal_node_uses_stable_identity():
+    signal_uid = signal_id("test", "Test Signal")
     node = normalize_node(
         OntologyNode(
-            id="signal:test",
+            id=signal_uid,
             type="Signal",
             label="Test Signal",
-            properties={"source": "test", "ontology_run_id": "run-1"},
+            properties=_signal_props("Test Signal"),
         ),
         run_id="run-1",
     )
 
-    assert node.id == signal_id("test", "Test Signal")
+    assert node.id == signal_uid
     assert node.schema_name == "Signal"
     assert node.schema_version == 1
     assert node.properties["schema_version"] == 1
@@ -415,7 +444,7 @@ def test_relation_registry_accepts_typed_provenance_relation_verbs(relation_type
     assert definition.required_properties == PROVENANCE_REQUIRED_PROPERTIES
 
 
-def test_relation_registry_rejects_unregistered_legacy_provenance_link_relation():
+def test_relation_registry_rejects_unregistered_provenance_link_relation():
     nodes = [
         OntologyNode(
             id="provenance_event:pv_unit",
@@ -505,12 +534,12 @@ def test_relation_registry_rejects_belongs_to_sector_without_source():
 
 def test_relation_registry_rejects_invalid_exposure_contribution():
     nodes = _core_nodes() + [
-        OntologyNode(id="signal:test", type="Signal", label="Test Signal", properties={"source": "test"}),
+        _signal_node("test", "Test Signal"),
     ]
     edges = _core_edges() + [
         OntologyEdge(
             "position:MU",
-            "signal:test",
+            signal_id("test", "Test Signal"),
             "exposed_to_signal",
             {
                 "schema_version": 1,
@@ -549,11 +578,16 @@ def test_relation_registry_rejects_asset_belonging_to_two_sectors():
             id="sector:semiconductors",
             type="Sector",
             label="Semiconductors",
-            properties={"name": "Semiconductors"},
+            properties={"name": "Semiconductors", "sector_source": "test"},
         ),
     ]
     edges = _core_edges() + [
-        OntologyEdge("asset:MU", "sector:semiconductors", "belongs_to_sector", {"source": "override"})
+        OntologyEdge(
+            "asset:MU",
+            "sector:semiconductors",
+            "belongs_to_sector",
+            {"source": "override", "ontology_run_id": "run-1"},
+        )
     ]
 
     with pytest.raises(OntologySchemaValidationError, match="only one target"):
@@ -575,11 +609,13 @@ def test_relation_registry_rejects_multiple_theses_for_position():
 
 
 def test_relation_registry_rejects_two_owners_for_thesis_evaluation_catalyst_and_signal():
+    catalyst_uid = catalyst_id("MU", "Demand recovery", "Demand improves")
+    signal_uid = signal_id("test", "Shared Signal")
     nodes = _two_position_core_nodes() + [
         _thesis_node("MU"),
         _thesis_node("NVDA"),
         OntologyNode(
-            id="evaluation:MU:2026-03-08T00:00:00Z",
+            id=evaluation_id("MU", "2026-03-08T00:00:00Z"),
             type="Evaluation",
             label="Eval: MU",
             properties={
@@ -594,13 +630,14 @@ def test_relation_registry_rejects_two_owners_for_thesis_evaluation_catalyst_and
             },
         ),
         OntologyNode(
-            id="catalyst:MU:0",
+            id=catalyst_uid,
             type="Catalyst",
             label="Demand recovery",
             properties={
                 "ticker": "MU",
                 "name": "Demand recovery",
                 "description": "Demand improves",
+                "source": "test",
                 "ontology_run_id": "run-1",
             },
         ),
@@ -628,7 +665,7 @@ def test_relation_registry_rejects_two_owners_for_thesis_evaluation_catalyst_and
                 "ontology_run_id": "run-1",
             },
         ),
-        OntologyNode(id="signal:test", type="Signal", label="Shared Signal", properties={"source": "test"}),
+        _signal_node("test", "Shared Signal"),
     ]
     owner_edges = _two_position_core_edges() + [
         OntologyEdge("position:MU", "thesis:MU", "has_thesis", {"ontology_run_id": "run-1"}),
@@ -643,27 +680,21 @@ def test_relation_registry_rejects_two_owners_for_thesis_evaluation_catalyst_and
         owner_edges
         + [
             OntologyEdge(
-                "thesis:MU",
-                "evaluation:MU:2026-03-08T00:00:00Z",
-                "evaluated_by",
-                {"ontology_run_id": "run-1"},
+                "thesis:MU", evaluation_id("MU", "2026-03-08T00:00:00Z"), "evaluated_by", {"ontology_run_id": "run-1"}
             ),
             OntologyEdge(
-                "thesis:NVDA",
-                "evaluation:MU:2026-03-08T00:00:00Z",
-                "evaluated_by",
-                {"ontology_run_id": "run-1"},
+                "thesis:NVDA", evaluation_id("MU", "2026-03-08T00:00:00Z"), "evaluated_by", {"ontology_run_id": "run-1"}
             ),
         ],
         owner_edges
         + [
-            OntologyEdge("thesis:MU", "catalyst:MU:0", "has_catalyst", {"ontology_run_id": "run-1"}),
-            OntologyEdge("thesis:NVDA", "catalyst:MU:0", "has_catalyst", {"ontology_run_id": "run-1"}),
+            OntologyEdge("thesis:MU", catalyst_uid, "has_catalyst", {"ontology_run_id": "run-1"}),
+            OntologyEdge("thesis:NVDA", catalyst_uid, "has_catalyst", {"ontology_run_id": "run-1"}),
         ],
         owner_edges
         + [
-            OntologyEdge("macro_indicator:vol", "signal:test", "emits_signal", {"ontology_run_id": "run-1"}),
-            OntologyEdge("macro_indicator:breadth", "signal:test", "emits_signal", {"ontology_run_id": "run-1"}),
+            OntologyEdge("macro_indicator:vol", signal_uid, "emits_signal", {"ontology_run_id": "run-1"}),
+            OntologyEdge("macro_indicator:breadth", signal_uid, "emits_signal", {"ontology_run_id": "run-1"}),
         ],
     ]
 
@@ -698,8 +729,8 @@ def test_relation_registry_allows_many_to_many_relations():
                 "ontology_run_id": "run-1",
             },
         ),
-        OntologyNode(id="signal:one", type="Signal", label="One", properties={"source": "test"}),
-        OntologyNode(id="signal:two", type="Signal", label="Two", properties={"source": "test"}),
+        _signal_node("one", "One"),
+        _signal_node("two", "Two"),
     ]
     edges = _core_edges() + [
         OntologyEdge(
@@ -713,13 +744,13 @@ def test_relation_registry_allows_many_to_many_relations():
         ),
         OntologyEdge(
             "position:MU",
-            "signal:one",
+            signal_id("test", "One"),
             "exposed_to_signal",
             _exposure_props("One"),
         ),
         OntologyEdge(
             "position:MU",
-            "signal:two",
+            signal_id("test", "Two"),
             "exposed_to_signal",
             _exposure_props("Two"),
         ),
@@ -732,13 +763,18 @@ def test_relation_registry_allows_many_to_many_relations():
 
 def _core_nodes() -> list[OntologyNode]:
     return [
-        OntologyNode(id="position:MU", type="Position", label="MU", properties={"ticker": "MU"}),
+        OntologyNode(
+            id="position:MU",
+            type="Position",
+            label="MU",
+            properties={"ticker": "MU", "asset": "equity", "direction": "long", "ontology_run_id": "run-1"},
+        ),
         OntologyNode(id="asset:MU", type="Asset", label="MU", properties={"ticker": "MU", "asset": "equity"}),
         OntologyNode(
             id="sector:information_technology",
             type="Sector",
             label="Information Technology",
-            properties={"name": "Information Technology"},
+            properties={"name": "Information Technology", "sector_source": "test"},
         ),
     ]
 
@@ -757,7 +793,12 @@ def _core_edges() -> list[OntologyEdge]:
 
 def _two_position_core_nodes() -> list[OntologyNode]:
     return _core_nodes() + [
-        OntologyNode(id="position:NVDA", type="Position", label="NVDA", properties={"ticker": "NVDA"}),
+        OntologyNode(
+            id="position:NVDA",
+            type="Position",
+            label="NVDA",
+            properties={"ticker": "NVDA", "asset": "equity", "direction": "long", "ontology_run_id": "run-1"},
+        ),
         OntologyNode(id="asset:NVDA", type="Asset", label="NVDA", properties={"ticker": "NVDA", "asset": "equity"}),
     ]
 
@@ -799,3 +840,18 @@ def _exposure_props(name: str) -> dict[str, object]:
         "contribution": 0.2,
         "ontology_run_id": "run-1",
     }
+
+
+def _signal_props(name: str) -> dict[str, object]:
+    return {
+        "signal_key": name,
+        "name": name,
+        "source": "test",
+        "threshold": "higher is worse",
+        "direction": "stable",
+        "ontology_run_id": "run-1",
+    }
+
+
+def _signal_node(key: str, name: str) -> OntologyNode:
+    return OntologyNode(id=signal_id("test", name), type="Signal", label=name, properties=_signal_props(name))

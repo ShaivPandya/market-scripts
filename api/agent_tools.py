@@ -37,17 +37,14 @@ from api.agent_governance import (
 from api.cache import _get_or_set_cached_with_status, get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 from ontology.action_registry import (
-    ActionContext,
     ActionValidationError,
     get_action,
     get_tool_exposure,
     is_agent_tool_exposed,
     iter_tool_exposures,
-    propose_action,
     validate_tool_input,
 )
 from ontology.command_service import OntologyCommandContext, OntologyCommandService
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor, agent_actor
 
 logger = logging.getLogger("api.agent")
@@ -1780,7 +1777,7 @@ def _build_agent_portfolio_payload(
                 "price_history": "market-window price data only; do not infer entry date, first purchase price, holding period, or averaging up/down",
                 "short_price_declines_are_favorable": True,
                 "quantity_field": "quantity",
-                "legacy_shares_alias": True,
+                "shares_alias": True,
                 "weight": "absolute current notional as a fraction of configured book size",
                 "weight_of_book": "same as weight; use this for position concentration checks",
                 "gross_position_share": "absolute current notional as a fraction of total valued portfolio notional",
@@ -2683,18 +2680,6 @@ def _command_agent_context(actor: Actor, provenance_event_id: str | None = None)
     )
 
 
-def _source_provenance_event_id(source_id: str | None) -> str | None:
-    if not source_id:
-        return None
-    text = str(source_id)
-    if text.startswith("pv:"):
-        return text
-    marker = ":pv:"
-    if marker not in text:
-        return None
-    return "pv:" + text.split(marker, 1)[1]
-
-
 def propose_action_from_tool(
     tool_name: str,
     raw_input: dict[str, Any],
@@ -2716,20 +2701,6 @@ def propose_action_from_tool(
         raise ActionValidationError(str(exc)) from exc
     reason = exposure.reason_builder(typed_input) if exposure.reason_builder else None
     entity_id = exposure.entity_id_builder(typed_input) if exposure.entity_id_builder else None
-    if not ontology_primary_writes_enabled():
-        return propose_action(
-            exposure.action_id,
-            action_input,
-            ActionContext(
-                actor_type="agent",
-                actor_id=context.actor.actor_id,
-                source_type=context.source_type,
-                source_id=context.source_id,
-                provenance_event_id=_source_provenance_event_id(context.source_id),
-            ),
-            reason=reason,
-            entity_id=_legacy_entity_id(entity_id),
-        )
     return OntologyCommandService().propose_action(
         exposure.action_id,
         action_input,
@@ -2737,15 +2708,6 @@ def propose_action_from_tool(
         reason=reason,
         entity_id=str(entity_id) if entity_id is not None else None,
     )
-
-
-def _legacy_entity_id(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _collection_payload(key: str, rows: list[dict[str, Any]], **filters: Any) -> dict[str, Any]:
@@ -3533,7 +3495,7 @@ def _dispatch(
             "quality_screen",
             req.model_dump(),
             cache_key=quality_screen_cache_key(req),
-            poll_path="/api/v1/quality-screen/async/{job_id}",
+            poll_path="/api/quality-screen/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_short_screen":
@@ -3545,7 +3507,7 @@ def _dispatch(
             "short_screen",
             req.model_dump(),
             cache_key=short_screen_cache_key(req),
-            poll_path="/api/v1/short-screen/async/{job_id}",
+            poll_path="/api/short-screen/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_long_screen":
@@ -3557,7 +3519,7 @@ def _dispatch(
             "long_screen",
             req.model_dump(),
             cache_key=long_screen_cache_key(req),
-            poll_path="/api/v1/long-screen/async/{job_id}",
+            poll_path="/api/long-screen/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_fundamental_momentum":
@@ -3569,7 +3531,7 @@ def _dispatch(
             "fundamental_momentum",
             req.model_dump(),
             cache_key=fundamental_momentum_cache_key(req),
-            poll_path="/api/v1/fundamental-momentum/async/{job_id}",
+            poll_path="/api/fundamental-momentum/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_portfolio_analyzer":
@@ -3581,7 +3543,7 @@ def _dispatch(
             "analyzer",
             req.model_dump(),
             cache_key=analyzer_cache_key(req),
-            poll_path="/api/v1/portfolio-analyzer/async/{job_id}",
+            poll_path="/api/portfolio-analyzer/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_portfolio_sizer":
@@ -3593,7 +3555,7 @@ def _dispatch(
             "sizer",
             req.model_dump(),
             cache_key=sizer_cache_key(req),
-            poll_path="/api/v1/portfolio-sizer/async/{job_id}",
+            poll_path="/api/portfolio-sizer/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "get_portfolio_sizer_prefill":
@@ -3610,7 +3572,7 @@ def _dispatch(
             "hedging",
             req.model_dump(),
             cache_key=hedging_cache_key(req),
-            poll_path="/api/v1/hedging-tool/async/{job_id}",
+            poll_path="/api/hedging-tool/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "get_hedging_tool_prefill":

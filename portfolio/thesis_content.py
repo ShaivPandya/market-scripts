@@ -52,10 +52,6 @@ def save_thesis_content(
     response_content = content if preserve_exact_content else content.strip()
     write_content = content if preserve_exact_content else f"{response_content}\n"
     source_path = write_thesis(ticker, write_content)
-
-    from portfolio.thesis_db import upsert_thesis_meta
-
-    upsert_thesis_meta(ticker, status="active")
     return ThesisContentSave(
         output={"status": "ok", "ticker": ticker, "content": response_content},
         source_path=source_path,

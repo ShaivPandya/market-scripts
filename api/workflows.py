@@ -22,7 +22,6 @@ from typing import Any
 from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.policy import Actor, admin_actor
 
@@ -825,11 +824,6 @@ def create_workflow_run(
     *,
     actor: Actor | None = None,
 ) -> dict[str, Any]:
-    if not ontology_primary_writes_enabled():
-        from portfolio import core_db
-
-        return core_db.create_workflow_run(workflow_name, ticker=ticker)
-
     now = datetime.now(UTC).isoformat()
     run_id = f"workflow:{workflow_name}:{uuid.uuid4().hex}"
     OntologyObjectService().write_object(
@@ -861,11 +855,6 @@ def complete_workflow_run(
     *,
     actor: Actor | None = None,
 ) -> dict[str, Any]:
-    if not ontology_primary_writes_enabled():
-        from portfolio import core_db
-
-        return core_db.complete_workflow_run(run_id, synthesis, artifacts=artifacts, tool_sections=sections)
-
     now = datetime.now(UTC).isoformat()
     object_service = OntologyObjectService()
     existing = _get_workflow_run_object(object_service, run_id) or {}
@@ -899,11 +888,6 @@ def complete_workflow_run(
 
 
 def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) -> dict[str, Any]:
-    if not ontology_primary_writes_enabled():
-        from portfolio import core_db
-
-        return core_db.fail_workflow_run(run_id, error)
-
     now = datetime.now(UTC).isoformat()
     object_service = OntologyObjectService()
     existing = _get_workflow_run_object(object_service, run_id) or {}
@@ -935,13 +919,7 @@ def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) ->
 
 
 def _refresh_workflow_read_models_if_enabled() -> None:
-    if not ontology_primary_writes_enabled():
-        return
     try:
-        from ontology.domain_write_service import ontology_read_model_enabled
-
-        if not ontology_read_model_enabled():
-            return
         from ontology.read_model import TemporalReadModelRepository
 
         TemporalReadModelRepository().refresh()

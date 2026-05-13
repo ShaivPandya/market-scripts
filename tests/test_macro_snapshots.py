@@ -159,7 +159,7 @@ def test_labor_route_accepts_force_refresh(auth_client, monkeypatch):
 
     monkeypatch.setattr(labor_market, "get_snapshot_backed_response", fake_response)
 
-    resp = auth_client.get("/api/v1/labor-market", params={"force_refresh": "true"})
+    resp = auth_client.get("/api/labor-market", params={"force_refresh": "true"})
 
     assert resp.status_code == 200
     assert seen["force_refresh"] is True

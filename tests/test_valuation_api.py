@@ -33,7 +33,7 @@ def test_get_position_valuation_endpoint(auth_client, monkeypatch):
         },
     )
 
-    resp = auth_client.get("/api/v1/valuation/ZZVALUATION")
+    resp = auth_client.get("/api/valuation/ZZVALUATION")
 
     assert resp.status_code == 200
     assert resp.json()["ticker"] == "ZZVALUATION"
@@ -51,7 +51,7 @@ def test_update_position_valuation_profile_override_endpoint(auth_client, monkey
     )
     monkeypatch.setattr(valuation_router, "delete_cached", lambda cache, key: deleted_keys.append(key))
 
-    resp = auth_client.put("/api/v1/valuation/ZZVALUATION/profile-override", json={"profile_id": "bank_financial"})
+    resp = auth_client.put("/api/valuation/ZZVALUATION/profile-override", json={"profile_id": "bank_financial"})
 
     assert resp.status_code == 200
     assert resp.json()["profile_override"] == "bank_financial"
@@ -72,7 +72,7 @@ def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch
     monkeypatch.setattr(multiples, "write_value_range_assumption", _write)
 
     resp = auth_client.put(
-        "/api/v1/valuation/ZZVALUATION/value-range",
+        "/api/valuation/ZZVALUATION/value-range",
         json={
             "metric": "price_sales",
             "scenarios": {
@@ -102,7 +102,7 @@ def test_update_position_valuation_value_range_endpoint_accepts_dcf_gordon(auth_
     monkeypatch.setattr(multiples, "write_value_range_assumption", _write)
 
     resp = auth_client.put(
-        "/api/v1/valuation/ZZVALUATION/value-range",
+        "/api/valuation/ZZVALUATION/value-range",
         json={
             "metric": "dcf_gordon_growth",
             "denominator_currency": "USD",
@@ -132,7 +132,7 @@ def test_delete_position_valuation_value_range_endpoint(auth_client, monkeypatch
 
     monkeypatch.setattr(multiples, "delete_value_range_assumption", _delete)
 
-    resp = auth_client.delete("/api/v1/valuation/ZZVALUATION/value-range/price_sales")
+    resp = auth_client.delete("/api/valuation/ZZVALUATION/value-range/price_sales")
 
     assert resp.status_code == 200
     assert resp.json()["ticker"] == "ZZVALUATION"

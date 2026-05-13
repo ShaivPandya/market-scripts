@@ -12,11 +12,12 @@ This script is at `macro/positioning/positioning.py`.
   - `GET /api/positioning/summary`
   - `GET /api/positioning/timeseries`
   - `GET /api/positioning/instruments`
+  - `POST /api/positioning/analyze` for the LLM-assisted positioning summary
 - React UI: “Positioning” page in `frontend/`
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.12+
 - Dependencies from the repo root: `pip install -r requirements.txt`
 - Network access (the script pulls data from the CFTC PRE API)
 

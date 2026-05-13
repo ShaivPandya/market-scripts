@@ -136,7 +136,7 @@ def test_explicit_denied_rule_blocks_before_budget(monkeypatch):
     assert budget.model_calls == 0
 
 
-def test_local_only_model_egress_blocks_external_and_rejects_legacy_local_provider():
+def test_local_only_model_egress_blocks_external_and_rejects_removed_local_provider():
     with pytest.raises(ModelGatewayDenied) as exc_info:
         prepare_model_egress(
             provider="openai",
@@ -153,12 +153,12 @@ def test_local_only_model_egress_blocks_external_and_rejects_legacy_local_provid
 
     assert exc_info.value.manifest["decision_reason"] == "local_only_required"
 
-    with pytest.raises(ModelGatewayDenied) as legacy_exc_info:
+    with pytest.raises(ModelGatewayDenied) as provider_exc_info:
         prepare_model_egress(
             provider="local",
             purpose="agent_chat",
             stream_kwargs={
-                "model": "legacy-local",
+                "model": "local-unsupported",
                 "max_output_tokens": 16,
                 "local_only_required": True,
                 "instructions": "instructions",
@@ -167,7 +167,7 @@ def test_local_only_model_egress_blocks_external_and_rejects_legacy_local_provid
             actor=agent_actor(admin_actor()),
         )
 
-    assert legacy_exc_info.value.manifest["decision_reason"] == "unsupported_provider"
+    assert provider_exc_info.value.manifest["decision_reason"] == "unsupported_provider"
 
 
 def test_model_lifecycle_disabled_blocks_and_deprecated_warns(monkeypatch):

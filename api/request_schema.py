@@ -97,7 +97,7 @@ async def validate_and_upgrade_request_schema(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
-    if not request.url.path.startswith("/api/v1/"):
+    if not request.url.path.startswith("/api/"):
         return await call_next(request)
 
     route = _match_route(app, request.method, request.url.path)

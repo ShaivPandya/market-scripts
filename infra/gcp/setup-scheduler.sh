@@ -3,19 +3,23 @@
 # Cloud Run Jobs. Re-run anytime; existing jobs are updated in place.
 #
 # Jobs:
-#   enqueue-async-job-sweep   0 * * * *     POST  /api/v1/admin/jobs/enqueue-async-job-sweep
+#   enqueue-async-job-sweep   0 * * * *     POST  /api/admin/jobs/enqueue-async-job-sweep
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
-#   market-snapshot-refresh   15 23 * * 1-5 POST  /api/v1/admin/jobs/enqueue-market-snapshot-refresh
-#   macro-snapshot-refresh    30 23 * * 1-5 POST  /api/v1/admin/jobs/enqueue-macro-snapshot-refresh
-#   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/v1/admin/jobs/enqueue-watch-trigger-monitor
-#   continuous-optimizer      15 10 * * 1-5 POST /api/v1/admin/jobs/enqueue-continuous-optimizer
+#   market-snapshot-refresh   15 23 * * 1-5 POST  /api/admin/jobs/enqueue-market-snapshot-refresh
+#   macro-snapshot-refresh    30 23 * * 1-5 POST  /api/admin/jobs/enqueue-macro-snapshot-refresh
+#   continuous-optimizer      15 10 * * 1-5 POST /api/admin/jobs/enqueue-continuous-optimizer
 #
 # Optional:
-#   governance-outbox-drain   */5 * * * *   POST  /api/v1/admin/jobs/enqueue-governance-outbox-drain
-#   enqueue-cache-warm        0 * * * *     POST  /api/v1/admin/jobs/enqueue-cache-warm
+#   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/admin/jobs/enqueue-watch-trigger-monitor
+#   governance-outbox-drain   */5 * * * *   POST  /api/admin/jobs/enqueue-governance-outbox-drain
+#   enqueue-cache-warm        0 * * * *     POST  /api/admin/jobs/enqueue-cache-warm
 #
-# The legacy governance outbox drain is disabled by default because the runtime
+# The governance outbox drain is disabled by default because the runtime
 # job is now a no-op. Set SCHEDULE_GOVERNANCE_OUTBOX_DRAIN=1 to recreate it.
+#
+# The watch trigger monitor is disabled by default. It remains available as a
+# manual/admin job, but routine scheduling should stay off until its ontology-ID
+# handling is fixed. Set SCHEDULE_WATCH_TRIGGER_MONITOR=1 to recreate it.
 #
 # Scheduled cache warming is disabled by default. The warm job runs in the
 # generic async Cloud Run Job, which does not share the API service's in-memory
@@ -141,21 +145,26 @@ upsert_run_job_trigger() {
     --quiet >/dev/null
 }
 
-upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/v1/admin/jobs/enqueue-async-job-sweep
+upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/admin/jobs/enqueue-async-job-sweep
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
-upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/v1/admin/jobs/enqueue-market-snapshot-refresh
-upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-30 23 * * 1-5}" /api/v1/admin/jobs/enqueue-macro-snapshot-refresh
-upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/v1/admin/jobs/enqueue-watch-trigger-monitor
-upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/v1/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
+upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/admin/jobs/enqueue-market-snapshot-refresh
+upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-30 23 * * 1-5}" /api/admin/jobs/enqueue-macro-snapshot-refresh
+upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
+
+if is_truthy "${SCHEDULE_WATCH_TRIGGER_MONITOR:-0}"; then
+  upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/admin/jobs/enqueue-watch-trigger-monitor
+else
+  delete_scheduler_job_if_present watch-trigger-monitor
+fi
 
 if is_truthy "${SCHEDULE_GOVERNANCE_OUTBOX_DRAIN:-0}"; then
-  upsert_api_job governance-outbox-drain "${GOVERNANCE_OUTBOX_DRAIN_SCHEDULE:-*/5 * * * *}" /api/v1/admin/jobs/enqueue-governance-outbox-drain
+  upsert_api_job governance-outbox-drain "${GOVERNANCE_OUTBOX_DRAIN_SCHEDULE:-*/5 * * * *}" /api/admin/jobs/enqueue-governance-outbox-drain
 else
   delete_scheduler_job_if_present governance-outbox-drain
 fi
 
 if is_truthy "${SCHEDULE_CACHE_WARM:-0}"; then
-  upsert_api_job enqueue-cache-warm "${CACHE_WARM_SCHEDULE:-0 * * * *}" /api/v1/admin/jobs/enqueue-cache-warm
+  upsert_api_job enqueue-cache-warm "${CACHE_WARM_SCHEDULE:-0 * * * *}" /api/admin/jobs/enqueue-cache-warm
 else
   delete_scheduler_job_if_present enqueue-cache-warm
 fi

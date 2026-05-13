@@ -44,13 +44,7 @@ class AgentResponsePreferences(BaseModel):
 
 
 class AgentChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
-    screen_context: ScreenContextModel | None = None
-    response_preferences: AgentResponsePreferences | None = None
-
-
-class AgentChatRequestV2(BaseModel):
-    """V2 request: frontend sends only the new message + session ID."""
+    """Frontend sends only the new message plus the server-managed session ID."""
 
     session_id: ScreenShortText | None = None
     client_turn_id: ScreenShortText | None = None
@@ -61,7 +55,7 @@ class AgentChatRequestV2(BaseModel):
     allow_workflow_handoff: bool = True
 
 
-class AgentChatJobRequest(AgentChatRequestV2):
+class AgentChatJobRequest(AgentChatRequest):
     """Payload executed by the durable async agent worker."""
 
     actor: dict[str, Any] | None = None

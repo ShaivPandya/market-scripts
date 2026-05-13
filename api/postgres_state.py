@@ -1,4 +1,4 @@
-"""Small SQLite-style compatibility wrapper for legacy Postgres adapters."""
+"""Small SQLite-style Postgres state adapter for operational stores."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 from api.postgres import open_connection
 
 
-class CompatRow(Mapping[str, Any]):
+class StateRow(Mapping[str, Any]):
     def __init__(self, data: Mapping[str, Any], columns: Sequence[str]):
         self._data = dict(data)
         self._columns = list(columns)
@@ -30,34 +30,34 @@ class CompatRow(Mapping[str, Any]):
         return self._columns
 
 
-class CompatCursor:
-    def __init__(self, rows: list[CompatRow] | None = None, *, rowcount: int = -1, lastrowid: int | None = None):
+class StateCursor:
+    def __init__(self, rows: list[StateRow] | None = None, *, rowcount: int = -1, lastrowid: int | None = None):
         self._rows = rows or []
         self.rowcount = rowcount
         self.lastrowid = lastrowid
 
-    def __iter__(self) -> Iterator[CompatRow]:
+    def __iter__(self) -> Iterator[StateRow]:
         while self._rows:
             row = self.fetchone()
             if row is not None:
                 yield row
 
-    def fetchone(self) -> CompatRow | None:
+    def fetchone(self) -> StateRow | None:
         if not self._rows:
             return None
         return self._rows.pop(0)
 
-    def fetchall(self) -> list[CompatRow]:
+    def fetchall(self) -> list[StateRow]:
         rows = self._rows
         self._rows = []
         return rows
 
 
-class PostgresCompatConnection:
-    """A narrow sqlite3.Connection-compatible facade.
+class PostgresStateConnection:
+    """A narrow sqlite3.Connection-shaped facade.
 
     It handles qmark placeholders, optional table renames, tuple-like rows, and
-    identity ``lastrowid`` for legacy insert paths.
+    identity ``lastrowid`` for Postgres insert paths.
     """
 
     def __init__(
@@ -71,7 +71,7 @@ class PostgresCompatConnection:
         self._table_map = table_map or {}
         self._identity_tables = identity_tables or set()
 
-    def __enter__(self) -> PostgresCompatConnection:
+    def __enter__(self) -> PostgresStateConnection:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -90,10 +90,10 @@ class PostgresCompatConnection:
     def rollback(self) -> None:
         self._conn.rollback()
 
-    def execute(self, sql: str, params: Sequence[Any] | None = None) -> CompatCursor:
+    def execute(self, sql: str, params: Sequence[Any] | None = None) -> StateCursor:
         translated = self._translate_sql(sql)
         if self._is_schema_statement(translated):
-            return CompatCursor(rowcount=0)
+            return StateCursor(rowcount=0)
 
         translated, should_return_id = self._maybe_add_returning_id(translated)
         with self._conn.cursor() as cur:
@@ -103,22 +103,22 @@ class PostgresCompatConnection:
             if should_return_id and rows:
                 lastrowid = int(rows[0]["id"])
                 rows = []
-            return CompatCursor(rows, rowcount=cur.rowcount, lastrowid=lastrowid)
+            return StateCursor(rows, rowcount=cur.rowcount, lastrowid=lastrowid)
 
-    def executemany(self, sql: str, params_seq: Sequence[Sequence[Any]]) -> CompatCursor:
+    def executemany(self, sql: str, params_seq: Sequence[Sequence[Any]]) -> StateCursor:
         translated = self._translate_sql(sql)
         if self._is_schema_statement(translated):
-            return CompatCursor(rowcount=0)
+            return StateCursor(rowcount=0)
         with self._conn.cursor() as cur:
             cur.executemany(translated, [tuple(params) for params in params_seq])
-            return CompatCursor(rowcount=cur.rowcount)
+            return StateCursor(rowcount=cur.rowcount)
 
-    def _wrap_rows(self, cur: Any) -> list[CompatRow]:
+    def _wrap_rows(self, cur: Any) -> list[StateRow]:
         if cur.description is None:
             return []
         columns = [col.name for col in cur.description]
         raw_rows = cur.fetchall()
-        return [CompatRow(row, columns) for row in raw_rows]
+        return [StateRow(row, columns) for row in raw_rows]
 
     def _translate_sql(self, sql: str) -> str:
         out = sql

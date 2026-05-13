@@ -106,8 +106,8 @@ interface AgentSendOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "agent-chat"
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, "")
+const STORAGE_KEY = "agent-chat-current"
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, "")
 
 function schemaHeaders(method: string, url: string): Record<string, string> {
   const parsed = new URL(url, window.location.origin)
@@ -405,7 +405,7 @@ async function startLiveAgentStream(
   onEvent: (event: AgentStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<{ handoff?: AgentJobResponse }> {
-  const url = `${BASE_URL}/agent/chat/v2`
+  const url = `${BASE_URL}/agent/chat`
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...schemaHeaders("POST", url) },

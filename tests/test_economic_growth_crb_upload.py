@@ -77,7 +77,7 @@ def test_crb_upload_saves_metadata_invalidates_cache_and_get_uses_managed_file(a
 
     set_cached(daily_cache, router.ECONOMIC_GROWTH_CACHE_KEY, {"sentinel": True})
     upload = auth_client.post(
-        "/api/v1/economic-growth/crb-file",
+        "/api/economic-growth/crb-file",
         files={
             "file": (
                 "crb.xlsx",
@@ -95,7 +95,7 @@ def test_crb_upload_saves_metadata_invalidates_cache_and_get_uses_managed_file(a
     assert uploaded["latest_value"] == 615.37
     assert get_cached(daily_cache, router.ECONOMIC_GROWTH_CACHE_KEY) is None
 
-    response = auth_client.get("/api/v1/economic-growth", params={"force_refresh": "true"})
+    response = auth_client.get("/api/economic-growth", params={"force_refresh": "true"})
 
     assert response.status_code == 200
     data = response.json()
@@ -116,7 +116,7 @@ def test_crb_upload_rejects_invalid_or_empty_file_without_replacing_existing(aut
         ]
     )
     valid = auth_client.post(
-        "/api/v1/economic-growth/crb-file",
+        "/api/economic-growth/crb-file",
         files={
             "file": (
                 "crb.xlsx",
@@ -128,7 +128,7 @@ def test_crb_upload_rejects_invalid_or_empty_file_without_replacing_existing(aut
     assert valid.status_code == 200
 
     invalid = auth_client.post(
-        "/api/v1/economic-growth/crb-file",
+        "/api/economic-growth/crb-file",
         files={
             "file": (
                 "crb.xlsx",
@@ -138,7 +138,7 @@ def test_crb_upload_rejects_invalid_or_empty_file_without_replacing_existing(aut
         },
     )
     empty = auth_client.post(
-        "/api/v1/economic-growth/crb-file",
+        "/api/economic-growth/crb-file",
         files={
             "file": (
                 "empty.xlsx",
@@ -158,7 +158,7 @@ def test_crb_upload_rejects_endpoint_oversized_file(auth_client, monkeypatch, tm
     monkeypatch.setattr(router, "MAX_CRB_UPLOAD_SIZE_BYTES", 4)
 
     upload = auth_client.post(
-        "/api/v1/economic-growth/crb-file",
+        "/api/economic-growth/crb-file",
         files={
             "file": (
                 "crb.xlsx",
@@ -187,7 +187,7 @@ def test_economic_growth_get_falls_back_to_bundled_crb_when_no_managed_file(auth
     monkeypatch.setattr(eg, "DEFAULT_CRB_PATH", fallback)
     assert not router.CRB_LOCAL_PATH.exists()
 
-    response = auth_client.get("/api/v1/economic-growth", params={"force_refresh": "true"})
+    response = auth_client.get("/api/economic-growth", params={"force_refresh": "true"})
 
     assert response.status_code == 200
     data = response.json()

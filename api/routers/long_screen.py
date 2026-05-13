@@ -158,7 +158,7 @@ def run_long_screen(req: LongScreenRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("long_screen", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/long-screen/async/{job_id}")
+    return enqueue_response(row, "/api/long-screen/async/{job_id}")
 
 
 @router.post("/long-screen/async")
@@ -169,7 +169,7 @@ def start_long_screen(req: LongScreenRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("long_screen", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/long-screen/async/{job_id}")
+    return enqueue_response(row, "/api/long-screen/async/{job_id}")
 
 
 @router.get("/long-screen/async/{job_id}")

@@ -15,8 +15,6 @@ WARNING_EMPTY_TRACE = "empty_trace"
 WARNING_SEED_NOT_FOUND = "seed_not_found"
 WARNING_NODE_LIMIT_REACHED = "node_limit_reached"
 WARNING_EDGE_LIMIT_REACHED = "edge_limit_reached"
-WARNING_LEGACY_ADAPTED = "legacy_adapted"
-WARNING_SQLITE_FALLBACK = "sqlite_fallback"
 WARNING_REDACTED_METADATA = "redacted_metadata"
 
 VALID_WARNING_CODES = {
@@ -24,8 +22,6 @@ VALID_WARNING_CODES = {
     WARNING_SEED_NOT_FOUND,
     WARNING_NODE_LIMIT_REACHED,
     WARNING_EDGE_LIMIT_REACHED,
-    WARNING_LEGACY_ADAPTED,
-    WARNING_SQLITE_FALLBACK,
     WARNING_REDACTED_METADATA,
 }
 
@@ -58,124 +54,6 @@ class _Ref:
     @property
     def node_id(self) -> str:
         return _ref_node_id(self.ref_type, self.ref_id, self.ref_version)
-
-
-def build_legacy_trace_graph(
-    trace: Mapping[str, Any],
-    *,
-    selector: Mapping[str, Any] | None,
-    direction: str,
-    max_depth: int,
-    warnings: Iterable[Mapping[str, Any] | str] | None = None,
-    lineage_state: str = "legacy",
-) -> dict[str, Any]:
-    """Adapt the legacy SQLite trace shape to the graph contract."""
-
-    clean_selector = _clean_selector(selector or trace.get("seed") or {})
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: dict[str, dict[str, Any]] = {}
-    graph_warnings = [_coerce_warning(item) for item in (warnings or [])]
-    graph_warnings.append(_warning(WARNING_LEGACY_ADAPTED))
-
-    for event in _as_list(trace.get("events")):
-        event_id = str(event.get("id") or event.get("event_id") or "")
-        if event_id:
-            nodes[_event_node_id(event_id)] = _event_node(event_id, event)
-
-    for link in _as_list(trace.get("links")):
-        edge = _edge_from_legacy_link(link, depth=0)
-        if edge is None:
-            continue
-        source_node = _ref_node_from_edge(edge, "source")
-        target_node = _ref_node_from_edge(edge, "target")
-        nodes[source_node["id"]] = source_node
-        nodes[target_node["id"]] = target_node
-        if edge.get("event_id"):
-            event_id = str(edge["event_id"])
-            nodes.setdefault(_event_node_id(event_id), _event_node(event_id, {}))
-        edges[str(edge["id"])] = edge
-
-    for source_record in _as_list(trace.get("source_records")):
-        record_id = str(source_record.get("source_record_id") or source_record.get("record_ref_id") or "")
-        if record_id:
-            node_id = _ref_node_id(provenance.REF_SOURCE_RECORD, record_id, None)
-            nodes[node_id] = {
-                "id": node_id,
-                "node_type": "reference",
-                "ref_type": provenance.REF_SOURCE_RECORD,
-                "ref_id": record_id,
-                "label": record_id,
-                "payload": _safe_payload(source_record),
-                "timestamp": source_record.get("created_at") or source_record.get("as_of"),
-            }
-
-    for artifact in _as_list(trace.get("workflow_artifacts")):
-        artifact_id = str(artifact.get("artifact_id") or "")
-        if artifact_id:
-            node_id = _ref_node_id(provenance.REF_WORKFLOW_ARTIFACT, artifact_id, None)
-            nodes[node_id] = {
-                "id": node_id,
-                "node_type": "reference",
-                "ref_type": provenance.REF_WORKFLOW_ARTIFACT,
-                "ref_id": artifact_id,
-                "label": artifact_id,
-                "payload": _safe_payload(artifact),
-                "timestamp": artifact.get("created_at"),
-            }
-
-    if not nodes and not edges:
-        graph_warnings.append(_warning(WARNING_EMPTY_TRACE))
-
-    return _graph_response(
-        selector=clean_selector,
-        seed=_seed_from_selector(clean_selector),
-        direction=direction,
-        max_depth=max_depth,
-        nodes=nodes,
-        edges=edges,
-        warnings=graph_warnings,
-        truncated=False,
-        lineage_state=lineage_state,
-    )
-
-
-def build_legacy_decision_lineage_graph(
-    report: Mapping[str, Any],
-    *,
-    selector: Mapping[str, Any] | None,
-    direction: str,
-    max_depth: int,
-) -> dict[str, Any]:
-    """Adapt legacy governance lineage reports to the graph contract."""
-
-    graph = build_legacy_trace_graph(
-        report.get("provenance") or {},
-        selector=selector or report.get("selector") or {},
-        direction=direction,
-        max_depth=max_depth,
-        warnings=[_warning(WARNING_LEGACY_ADAPTED)],
-        lineage_state="legacy",
-    )
-    nodes = {str(node["id"]): dict(node) for node in graph.get("nodes") or []}
-    for audit in _as_list(report.get("audit_events")):
-        audit_id = str(audit.get("id") or audit.get("audit_event_id") or "")
-        if not audit_id:
-            continue
-        node_id = _ref_node_id(provenance.REF_AUDIT_EVENT, audit_id, None)
-        nodes[node_id] = {
-            "id": node_id,
-            "node_type": "reference",
-            "ref_type": provenance.REF_AUDIT_EVENT,
-            "ref_id": audit_id,
-            "label": audit.get("action_name") or audit_id,
-            "status": audit.get("status"),
-            "payload": _safe_payload(audit),
-            "timestamp": audit.get("created_at"),
-        }
-    graph["nodes"] = sorted(nodes.values(), key=lambda row: str(row.get("id") or ""))
-    graph["timeline"] = _timeline(graph["nodes"], graph.get("edges") or [])
-    graph["counts"] = _counts(graph["nodes"], graph.get("edges") or [], graph.get("warnings") or [])
-    return graph
 
 
 class ProvenanceGraphService:
@@ -224,39 +102,20 @@ class ProvenanceGraphService:
 
         visited_refs: set[str] = set()
         visited_events: set[str] = set()
-        try:
-            use_read_model = use_postgres_state()
-        except Exception:
-            use_read_model = False
-        edge_loader = self._query_read_model_edges if use_read_model else self._query_direct_edges
-        if not use_read_model:
-            warnings.append(_warning(WARNING_SQLITE_FALLBACK))
+        use_postgres_state()
+        edge_loader = self._query_read_model_edges
 
         for depth in range(safe_depth):
             if not frontier_refs and not frontier_events:
                 break
             next_refs: set[_Ref] = set()
             next_events: set[str] = set()
-            try:
-                rows = edge_loader(
-                    refs=frontier_refs,
-                    event_ids=frontier_events,
-                    direction=safe_direction,
-                    limit=safe_max_edges + 1,
-                )
-            except Exception:
-                if use_read_model:
-                    warnings.append(_warning(WARNING_SQLITE_FALLBACK))
-                    edge_loader = self._query_direct_edges
-                    use_read_model = False
-                    rows = edge_loader(
-                        refs=frontier_refs,
-                        event_ids=frontier_events,
-                        direction=safe_direction,
-                        limit=safe_max_edges + 1,
-                    )
-                else:
-                    raise
+            rows = edge_loader(
+                refs=frontier_refs,
+                event_ids=frontier_events,
+                direction=safe_direction,
+                limit=safe_max_edges + 1,
+            )
             for row in rows:
                 edge = _edge_from_row(row, depth=depth)
                 if edge is None:
@@ -594,43 +453,6 @@ def _edge_from_row(row: Mapping[str, Any], *, depth: int) -> dict[str, Any] | No
         "redaction_policy": normalized.get("redaction_policy"),
         "metadata": _safe_payload(normalized.get("metadata")),
         "lineage_root_id": normalized.get("lineage_root_id"),
-        "source_ref_type": source_ref.ref_type,
-        "source_ref_id": source_ref.ref_id,
-        "target_ref_type": target_ref.ref_type,
-        "target_ref_id": target_ref.ref_id,
-    }
-
-
-def _edge_from_legacy_link(link: Mapping[str, Any], *, depth: int) -> dict[str, Any] | None:
-    source_ref = _Ref(
-        ref_type=str(link.get("source_ref_type") or ""),
-        ref_id=str(link.get("source_ref_id") or ""),
-        ref_version=link.get("source_ref_version"),
-        object_uid=_ref_object_uid(str(link.get("source_ref_type") or ""), str(link.get("source_ref_id") or "")),
-    )
-    target_ref = _Ref(
-        ref_type=str(link.get("target_ref_type") or ""),
-        ref_id=str(link.get("target_ref_id") or ""),
-        ref_version=link.get("target_ref_version"),
-        object_uid=_ref_object_uid(str(link.get("target_ref_type") or ""), str(link.get("target_ref_id") or "")),
-    )
-    if not source_ref.ref_type or not source_ref.ref_id or not target_ref.ref_type or not target_ref.ref_id:
-        return None
-    edge_id = str(link.get("id") or f"{link.get('link_type') or 'link'}:{source_ref.node_id}->{target_ref.node_id}")
-    return {
-        "id": edge_id,
-        "source_node_id": source_ref.node_id,
-        "target_node_id": target_ref.node_id,
-        "edge_type": link.get("link_type"),
-        "relation_type": link.get("relation_type"),
-        "link_type": link.get("link_type"),
-        "event_id": link.get("event_id"),
-        "depth": depth,
-        "timestamp": link.get("created_at"),
-        "retention_class": link.get("retention_class"),
-        "redaction_policy": link.get("redaction_policy"),
-        "metadata": _safe_payload(link.get("metadata")),
-        "lineage_root_id": link.get("lineage_root_id"),
         "source_ref_type": source_ref.ref_type,
         "source_ref_id": source_ref.ref_id,
         "target_ref_type": target_ref.ref_type,

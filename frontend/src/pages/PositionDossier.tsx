@@ -117,7 +117,7 @@ interface Evaluation {
 type EntityId = number | string
 interface Catalyst {
   id: EntityId
-  legacy_id?: EntityId | null
+  source_id?: EntityId | null
   object_uid?: string | null
   source_record_id?: string | null
   description: string | null
@@ -128,7 +128,7 @@ interface Catalyst {
 }
 interface KillCondition {
   id: EntityId
-  legacy_id?: EntityId | null
+  source_id?: EntityId | null
   object_uid?: string | null
   source_record_id?: string | null
   condition: string | null
@@ -228,11 +228,11 @@ function prefixedNumericEntityId(value: unknown, prefix: string): EntityId | nul
 }
 
 function mutationEntityId(
-  entity: { id: EntityId; legacy_id?: EntityId | null; object_uid?: string | null; source_record_id?: string | null },
+  entity: { id: EntityId; source_id?: EntityId | null; object_uid?: string | null; source_record_id?: string | null },
   prefix: string,
 ): EntityId {
   return (
-    numericEntityId(entity.legacy_id) ??
+    numericEntityId(entity.source_id) ??
     prefixedNumericEntityId(entity.id, prefix) ??
     prefixedNumericEntityId(entity.object_uid, prefix) ??
     numericEntityId(entity.source_record_id) ??

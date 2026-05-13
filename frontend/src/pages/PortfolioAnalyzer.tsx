@@ -290,7 +290,7 @@ const SLIDER_STEP = 10
 
 type MetricScores = AnalyzerScenarioState["metric_scores"]
 type BrakeScores = AnalyzerScenarioState["brakes"]
-type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
+type PreviousScenarioState = Partial<AnalyzerScenarioState> & {
   factor_weights?: {
     quality?: number
     price_momentum?: number
@@ -368,12 +368,12 @@ function normalizeScenarioState(value: AnalyzerScenarioState | undefined): Analy
   const preset: ScenarioPreset =
     rawPreset === "custom" || rawPreset === "ai_recommended" || rawPreset in SCENARIO_PRESETS ? rawPreset : "balanced"
   const base = preset === "custom" || preset === "ai_recommended" ? SCENARIO_PRESETS.balanced : SCENARIO_PRESETS[preset]
-  const legacyValue = value as LegacyScenarioState
+  const previousValue = value as PreviousScenarioState
   return {
     preset: value.preset === "custom" ? "custom" : preset,
     metric_scores: value.metric_scores
       ? normalizeScoreMap(value.metric_scores, base.metric_scores)
-      : legacyWeightsToMetricScores(legacyValue, base.metric_scores),
+      : previousWeightsToMetricScores(previousValue, base.metric_scores),
     brakes: normalizeBrakeScores(value.brakes, base.brakes),
   }
 }
@@ -431,7 +431,7 @@ function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
   ) as T
 }
 
-function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: MetricScores): MetricScores {
+function previousWeightsToMetricScores(value: PreviousScenarioState, defaults: MetricScores): MetricScores {
   if (!value.factor_weights && !value.fundamental_momentum_weights && !value.valuation_weights && !value.qualitative_weights) {
     return normalizeScoreMap(defaults, defaults)
   }

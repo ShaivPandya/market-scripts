@@ -45,7 +45,7 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    response = auth_client.get("/api/v1/settings/llm")
+    response = auth_client.get("/api/settings/llm")
 
     assert response.status_code == 200
     payload = response.json()
@@ -129,7 +129,7 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
     monkeypatch.setattr(settings, "get_setting", fail_get_setting)
     monkeypatch.setattr("api.llm_settings.get_setting", fail_get_setting)
 
-    response = auth_client.get("/api/v1/settings/llm")
+    response = auth_client.get("/api/settings/llm")
 
     assert response.status_code == 200
     assert len(calls) == 1
@@ -181,7 +181,7 @@ def test_put_llm_settings_persists_provider(temp_llm_settings, auth_client, monk
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={
             "provider": "openai",
             "reasoning_efforts": {
@@ -208,7 +208,7 @@ def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_clien
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={
             "provider": "gemini",
             "reasoning_efforts": {
@@ -232,13 +232,13 @@ def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_clien
 
 
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "other"})
+    response = auth_client.put("/api/settings/llm", json={"provider": "other"})
 
     assert response.status_code == 422
 
 
 def test_put_llm_settings_rejects_local_provider(temp_llm_settings, auth_client):
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "local"})
+    response = auth_client.put("/api/settings/llm", json={"provider": "local"})
 
     assert response.status_code == 422
 
@@ -246,7 +246,7 @@ def test_put_llm_settings_rejects_local_provider(temp_llm_settings, auth_client)
 def test_put_llm_settings_rejects_missing_provider_key(temp_llm_settings, auth_client, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "openai"})
+    response = auth_client.put("/api/settings/llm", json={"provider": "openai"})
 
     assert response.status_code == 422
     assert "OPENAI_API_KEY" in response.text
@@ -255,7 +255,7 @@ def test_put_llm_settings_rejects_missing_provider_key(temp_llm_settings, auth_c
 def test_put_llm_settings_rejects_missing_gemini_key(temp_llm_settings, auth_client, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "gemini"})
+    response = auth_client.put("/api/settings/llm", json={"provider": "gemini"})
 
     assert response.status_code == 422
     assert "GEMINI_API_KEY" in response.text
@@ -269,7 +269,7 @@ def test_put_llm_settings_gateway_policy_requires_note(temp_llm_settings, auth_c
         {"provider": "anthropic", "model": "claude-test", "data_sensitivity": "portfolio_private"}
     ]
 
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "anthropic", "gateway_policy": policy})
+    response = auth_client.put("/api/settings/llm", json={"provider": "anthropic", "gateway_policy": policy})
 
     assert response.status_code == 422
     assert "gateway_note" in response.text
@@ -284,7 +284,7 @@ def test_put_llm_settings_gateway_policy_persists_with_audit(temp_llm_settings, 
     ]
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={"provider": "anthropic", "gateway_policy": policy, "gateway_note": "Block this model for tests."},
     )
 
@@ -300,7 +300,7 @@ def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth
     policy["denied_rules"] = [{"provider": "unknown", "model": "*", "data_sensitivity": "portfolio_private"}]
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={"provider": "anthropic", "gateway_policy": policy, "gateway_note": "Invalid policy."},
     )
 
@@ -312,7 +312,7 @@ def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={
             "provider": "anthropic",
             "reasoning_efforts": {
@@ -332,7 +332,7 @@ def test_put_llm_settings_rejects_unsupported_gemini_reasoning_effort(temp_llm_s
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
 
     response = auth_client.put(
-        "/api/v1/settings/llm",
+        "/api/settings/llm",
         json={
             "provider": "gemini",
             "reasoning_efforts": {
@@ -348,7 +348,7 @@ def test_put_llm_settings_rejects_unsupported_gemini_reasoning_effort(temp_llm_s
 
 
 def test_get_agent_response_preferences_returns_defaults(temp_llm_settings, auth_client):
-    response = auth_client.get("/api/v1/settings/agent-response-preferences")
+    response = auth_client.get("/api/settings/agent-response-preferences")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -366,7 +366,7 @@ def test_get_agent_response_preferences_returns_defaults(temp_llm_settings, auth
 
 def test_put_agent_response_preferences_persists_preferences(temp_llm_settings, auth_client):
     response = auth_client.put(
-        "/api/v1/settings/agent-response-preferences",
+        "/api/settings/agent-response-preferences",
         json={
             "thinking_enabled": True,
             "custom_instructions": "  End responses after answering. Do not ask follow-up questions.  ",
@@ -384,7 +384,7 @@ def test_put_agent_response_preferences_persists_preferences(temp_llm_settings, 
     assert saved["thinking_enabled"] is True
     assert saved["custom_instructions"] == "End responses after answering. Do not ask follow-up questions."
 
-    get_response = auth_client.get("/api/v1/settings/agent-response-preferences")
+    get_response = auth_client.get("/api/settings/agent-response-preferences")
     assert get_response.status_code == 200
     assert get_response.json()["thinking_enabled"] is True
     assert (
@@ -394,7 +394,7 @@ def test_put_agent_response_preferences_persists_preferences(temp_llm_settings, 
 
 def test_put_agent_response_preferences_rejects_invalid_values(temp_llm_settings, auth_client):
     response = auth_client.put(
-        "/api/v1/settings/agent-response-preferences",
+        "/api/settings/agent-response-preferences",
         json={"personality": "other"},
     )
 

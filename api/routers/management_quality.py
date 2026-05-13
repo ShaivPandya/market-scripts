@@ -13,7 +13,6 @@ from api.document_generation_jobs import classify_upload_document, enqueue_docum
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio import management_quality_content
 
@@ -509,34 +508,20 @@ def get_management_quality(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    if ontology_primary_writes_enabled():
-        assessment = OntologyRuntimeReadService().management_quality_assessment(normalized_ticker)
-        if assessment:
-            content = _read_markdown_projection(normalized_ticker) or _render_management_quality_markdown(
-                normalized_ticker, assessment
-            )
-            parsed = assessment.get("parsed") if isinstance(assessment.get("parsed"), dict) else None
-            if not parsed:
-                parsed = parse_management_quality_markdown(content)
-            return {
-                "status": "ok",
-                "ticker": normalized_ticker,
-                "content": content,
-                "parsed": parsed,
-                "assessment": assessment,
-            }
-
-    if not management_quality_content.management_quality_exists(normalized_ticker):
+    assessment = OntologyRuntimeReadService().management_quality_assessment(normalized_ticker)
+    if not assessment:
         raise NotFoundError("Management quality", normalized_ticker)
-    try:
-        content = management_quality_content.read_management_quality(normalized_ticker)
-    except Exception as e:
-        from api.exceptions import AppError
 
-        raise AppError(f"Failed to read management quality file: {e}") from e
+    content = _read_markdown_projection(normalized_ticker) or _render_management_quality_markdown(
+        normalized_ticker, assessment
+    )
+    parsed = assessment.get("parsed") if isinstance(assessment.get("parsed"), dict) else None
+    if not parsed:
+        parsed = parse_management_quality_markdown(content)
     return {
         "status": "ok",
         "ticker": normalized_ticker,
         "content": content,
-        "parsed": parse_management_quality_markdown(content),
+        "parsed": parsed,
+        "assessment": assessment,
     }

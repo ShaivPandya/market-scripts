@@ -11,7 +11,7 @@ from ontology.runtime_read_service import OntologyRuntimeReadService
 router = APIRouter()
 
 
-def _legacy_route_id(value: str, prefix: str) -> str:
+def _canonical_route_id(value: str, prefix: str) -> str:
     text = str(value or "").strip()
     marker = f"{prefix}:"
     if text.startswith(marker):
@@ -64,7 +64,7 @@ def create_catalyst(body: CreateCatalystRequest):
 
 @router.put("/catalysts/{catalyst_id}/status")
 def update_catalyst_status(catalyst_id: str, body: UpdateCatalystStatusRequest):
-    resolved_catalyst_id = _legacy_route_id(catalyst_id, "catalyst")
+    resolved_catalyst_id = _canonical_route_id(catalyst_id, "catalyst")
     return stage_api_action(
         "update_catalyst_status",
         {"catalyst_id": resolved_catalyst_id, "status": body.status, "evidence": body.evidence},
@@ -224,7 +224,7 @@ def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
 
 @router.put("/kill-conditions/{kc_id}/status")
 def update_kill_condition_status(kc_id: str, body: UpdateKillConditionStatusRequest):
-    resolved_kc_id = _legacy_route_id(kc_id, "kill_condition")
+    resolved_kc_id = _canonical_route_id(kc_id, "kill_condition")
     return stage_api_action(
         "update_kill_condition_status",
         {"kill_condition_id": resolved_kc_id, "status": body.status},

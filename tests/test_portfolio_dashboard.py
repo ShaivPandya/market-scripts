@@ -1,9 +1,25 @@
 import pandas as pd
 
 
-def test_dashboard_uses_runtime_portfolio_read_adapter():
-    import portfolio.portfolio_dashboard as dashboard
+def _import_dashboard(monkeypatch):
+    import sys
+
     from ontology import runtime_read_service
+
+    monkeypatch.setattr(
+        runtime_read_service,
+        "get_positions_df",
+        lambda include_hedges=False: pd.DataFrame(columns=["ticker", "asset", "direction"]),
+    )
+    monkeypatch.setattr(runtime_read_service, "get_positions", lambda include_hedges=False: [])
+    sys.modules.pop("portfolio.portfolio_dashboard", None)
+    import portfolio.portfolio_dashboard as dashboard
+
+    return dashboard, runtime_read_service
+
+
+def test_dashboard_uses_runtime_portfolio_read_adapter(monkeypatch):
+    dashboard, runtime_read_service = _import_dashboard(monkeypatch)
 
     assert dashboard.get_positions is runtime_read_service.get_positions
     assert dashboard.get_positions_df is runtime_read_service.get_positions_df
@@ -11,10 +27,7 @@ def test_dashboard_uses_runtime_portfolio_read_adapter():
 
 def test_runtime_positions_use_ontology_source_in_primary_mode(monkeypatch):
     from ontology import runtime_read_service
-    from portfolio import portfolio_db
 
-    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
-    monkeypatch.setattr(portfolio_db, "get_positions", lambda **kwargs: [{"ticker": "NUAI"}])
     monkeypatch.setattr(
         runtime_read_service.OntologyRuntimeReadService,
         "positions",
@@ -25,8 +38,7 @@ def test_runtime_positions_use_ontology_source_in_primary_mode(monkeypatch):
 
 
 def test_empty_portfolio_returns_empty_payload_without_yfinance(monkeypatch):
-    import portfolio.portfolio_dashboard as dashboard
-
+    dashboard, _runtime_read_service = _import_dashboard(monkeypatch)
     called = False
 
     def fake_download(*args, **kwargs):
@@ -49,7 +61,7 @@ def test_empty_portfolio_returns_empty_payload_without_yfinance(monkeypatch):
 
 
 def test_yfinance_empty_result_returns_warning_payload(monkeypatch):
-    import portfolio.portfolio_dashboard as dashboard
+    dashboard, _runtime_read_service = _import_dashboard(monkeypatch)
 
     monkeypatch.setattr(dashboard, "POSITIONS", {"MU": "MU"})
     monkeypatch.setattr(dashboard, "POSITION_ORDER", ["MU"])
@@ -71,13 +83,10 @@ def test_yfinance_empty_result_returns_warning_payload(monkeypatch):
 
 
 def test_futures_price_symbol_maps_back_to_portfolio_label(monkeypatch):
-    import portfolio.portfolio_dashboard as dashboard
+    dashboard, _runtime_read_service = _import_dashboard(monkeypatch)
 
     dates = pd.date_range("2026-01-01", periods=2, freq="D")
-    raw = pd.DataFrame(
-        {("ES=F", "Close"): [5000.0, 5020.0]},
-        index=dates,
-    )
+    raw = pd.DataFrame({("ES=F", "Close"): [5000.0, 5020.0]}, index=dates)
     raw.columns = pd.MultiIndex.from_tuples(raw.columns)
     holding = {
         "ticker": "ES",

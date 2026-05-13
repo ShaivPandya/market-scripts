@@ -86,7 +86,7 @@ def _beta_metric_name(prefix: str, ticker: str) -> str:
 
 
 def _expected_hedge_sign(ticker: str) -> int:
-    # SPY/QQQ offset long beta with shorts; IWM retains the legacy short-book hedge convention.
+    # SPY/QQQ offset long beta with shorts; IWM retains the current short-book hedge convention.
     return 1 if ticker == MARKET_TICKER_SHORT else -1
 
 

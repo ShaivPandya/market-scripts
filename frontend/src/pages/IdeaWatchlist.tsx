@@ -36,8 +36,8 @@ import {
 } from "@/lib/ideaUtils"
 import { cn } from "@/lib/utils"
 
-const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
-const EVALUATE_ALL_USE_PORTFOLIO_CONTEXT_KEY = "idea-watchlist-evaluate-all-use-portfolio-context-v1"
+const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-current"
+const EVALUATE_ALL_USE_PORTFOLIO_CONTEXT_KEY = "idea-watchlist-evaluate-all-use-portfolio-context-current"
 const IDEA_WATCHLIST_ANALYZER_STATE_KEY = ["idea-watchlist", "analyzer", "state-v3"] as const
 const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
 const ANALYZER_DIRECTIONS: { value: IdeaAnalyzerDirection; label: string }[] = [

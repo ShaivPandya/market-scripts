@@ -1,8 +1,4 @@
-"""Ingest source data into authoritative temporal ontology versions.
-
-During the migration window this module also persists legacy snapshot runs as a
-compatibility artifact for existing query paths.
-"""
+"""Ingest source data into authoritative temporal ontology versions."""
 
 from __future__ import annotations
 
@@ -13,7 +9,6 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from api.postgres import use_postgres_state
-from ontology.domain_write_service import ontology_primary_writes_enabled, ontology_read_model_enabled
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.object_service import OntologyObjectService
 from ontology.read_model import TemporalReadModelRepository
@@ -462,7 +457,6 @@ def ingest_into_repository(
         list(nodes.values()),
         list(edges.values()),
         run_id=run_id,
-        allow_legacy=True,
         skip_optional_invalid=True,
     )
     if normalized_graph.warnings:
@@ -719,14 +713,7 @@ def _write_temporal_graph_versions(
 
 
 def _refresh_temporal_read_models_after_ingestion() -> None:
-    if not ontology_read_model_enabled():
-        return
-    try:
-        TemporalReadModelRepository().refresh()
-    except Exception:
-        if ontology_primary_writes_enabled():
-            raise
-        logger.exception("ontology read model refresh failed after ingestion")
+    TemporalReadModelRepository().refresh()
 
 
 def _source_rows_for_provenance(
