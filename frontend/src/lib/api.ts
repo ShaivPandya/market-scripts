@@ -2546,8 +2546,13 @@ export const fetchWorkflowRun = (runId: string) =>
   client.get(`/workflow-runs/${runId}`).then(r => r.data)
 
 export interface ProvenanceSelector {
+  recommendation_id?: string
   workflow_run_id?: string
   ontology_run_id?: string
+  object_version_id?: string
+  relation_version_id?: string
+  source_record_id?: string
+  snapshot_id?: string
   approval_id?: string
   action_run_id?: string
   agent_session_id?: string
@@ -2555,41 +2560,79 @@ export interface ProvenanceSelector {
   ref_type?: string
   ref_id?: string
   max_depth?: number
+  direction?: "both" | "upstream" | "downstream"
+  max_nodes?: number
+  max_edges?: number
 }
 
-export interface ProvenanceEvent {
+export interface ProvenanceGraphWarning {
+  code:
+    | "empty_trace"
+    | "seed_not_found"
+    | "node_limit_reached"
+    | "edge_limit_reached"
+    | "legacy_adapted"
+    | "sqlite_fallback"
+    | "redacted_metadata"
+  detail?: string
+}
+
+export interface ProvenanceGraphNode {
   id: string
-  event_type: string
-  event_name?: string | null
+  node_type: string
+  label?: string | null
+  timestamp?: string | null
   status?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  actor_type?: string | null
-  actor_id?: string | null
-  summary?: Record<string, unknown> | null
-  metadata?: Record<string, unknown> | null
+  ref_type?: string | null
+  ref_id?: string | null
+  ref_version?: string | null
+  object_uid?: string | null
+  event_id?: string | null
+  event_type?: string | null
+  event_name?: string | null
+  redaction_policy?: string | null
+  retention_class?: string | null
+  payload?: Record<string, unknown> | unknown
 }
 
-export interface ProvenanceLink {
-  id?: string
+export interface ProvenanceGraphEdge {
+  id: string
+  source_node_id: string
+  target_node_id: string
+  edge_type?: string | null
+  relation_type?: string | null
+  link_type?: string | null
   event_id?: string | null
-  source_ref_type: string
-  source_ref_id: string
-  target_ref_type: string
-  target_ref_id: string
-  link_type: string
-  created_at?: string | null
+  depth?: number | null
+  timestamp?: string | null
+  retention_class?: string | null
+  redaction_policy?: string | null
+  metadata?: Record<string, unknown> | unknown
+  lineage_root_id?: string | null
+  source_ref_type?: string | null
+  source_ref_id?: string | null
+  target_ref_type?: string | null
+  target_ref_id?: string | null
 }
 
 export interface ProvenanceTrace {
   seed: Record<string, unknown>
-  events?: ProvenanceEvent[]
-  links?: ProvenanceLink[]
-  source_records?: Record<string, unknown>[]
-  workflow_artifacts?: Record<string, unknown>[]
-  references?: Record<string, unknown>[]
-  relations?: Record<string, unknown>[]
+  selector?: Record<string, unknown>
+  direction?: "both" | "upstream" | "downstream"
+  max_depth?: number
+  lineage_state?: string
+  nodes?: ProvenanceGraphNode[]
+  edges?: ProvenanceGraphEdge[]
   timeline?: Record<string, unknown>[]
+  counts?: {
+    nodes: number
+    edges: number
+    events: number
+    references: number
+    warnings: number
+  }
+  truncated?: boolean
+  warnings?: ProvenanceGraphWarning[]
 }
 
 export const fetchProvenanceTrace = (params: ProvenanceSelector) =>
