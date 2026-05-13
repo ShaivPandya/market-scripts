@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -2848,8 +2848,12 @@ def _dispatch(
         require_multimodal_ingestion_enabled()
         service = SourceIngestionService()
         if name == "list_source_artifacts":
+            artifact_type = str(args.get("artifact_type") or "all")
+            if artifact_type not in {"all", "document", "media"}:
+                raise ActionValidationError("artifact_type must be all, document, or media.")
+            normalized_artifact_type = cast(Literal["all", "document", "media"], artifact_type)
             return service.list_artifacts(
-                artifact_type=str(args.get("artifact_type") or "all"),
+                artifact_type=normalized_artifact_type,
                 manifest_id=args.get("manifest_id"),
                 ticker=args.get("ticker"),
                 limit=int(args.get("limit") or 25),

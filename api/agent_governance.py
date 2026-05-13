@@ -385,6 +385,7 @@ def _model_gateway_decision(
     sensitivity: str,
     stream_kwargs: Mapping[str, Any],
 ) -> ModelGatewayDecision:
+    policy: dict[str, Any]
     try:
         from api.llm_settings import get_gateway_policy_setting
     except Exception:

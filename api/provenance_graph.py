@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,7 +45,7 @@ _SELECTOR_REF_TYPES = {
     "agent_session_id": provenance.REF_AGENT_SESSION,
 }
 
-_RELATION_LINK_TYPES = {value: key for key, value in provenance.LINK_RELATION_TYPES.items()}
+_RELATION_LINK_TYPES: dict[str, str] = {str(value): str(key) for key, value in provenance.LINK_RELATION_TYPES.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,7 +427,8 @@ class ProvenanceGraphService:
             or edge.get("relation_type") in {"provenance_triggered", "provenance_resolved_by"}
         }
         for node in event_nodes:
-            payload = node.get("payload") if isinstance(node.get("payload"), Mapping) else {}
+            raw_payload = node.get("payload")
+            payload: Mapping[str, Any] = raw_payload if isinstance(raw_payload, Mapping) else {}
             parent_id = str(payload.get("parent_event_id") or "")
             child_id = str(node.get("event_id") or "")
             if not parent_id or not child_id:
@@ -723,9 +724,13 @@ def _graph_response(
     truncated: bool,
     lineage_state: str,
 ) -> dict[str, Any]:
-    node_list = sorted((dict(node) for node in nodes.values()), key=lambda row: str(row.get("id") or ""))
+    node_list: list[dict[str, Any]] = sorted(
+        (dict(node) for node in nodes.values()), key=lambda row: str(row.get("id") or "")
+    )
     if isinstance(edges, Mapping):
-        edge_list = sorted((dict(edge) for edge in edges.values()), key=lambda row: str(row.get("id") or ""))
+        edge_list: list[dict[str, Any]] = sorted(
+            (dict(edge) for edge in edges.values()), key=lambda row: str(row.get("id") or "")
+        )
     else:
         edge_list = sorted((dict(edge) for edge in edges), key=lambda row: str(row.get("id") or ""))
     warning_list = _dedupe_warnings(warnings)
@@ -761,7 +766,9 @@ def _dedupe_warnings(warnings: Iterable[Mapping[str, Any]]) -> list[dict[str, An
 
 
 def _counts(
-    nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]], warnings: list[Mapping[str, Any]]
+    nodes: Sequence[Mapping[str, Any]],
+    edges: Sequence[Mapping[str, Any]],
+    warnings: Sequence[Mapping[str, Any]],
 ) -> dict[str, int]:
     events = sum(1 for node in nodes if node.get("node_type") == "event")
     return {
@@ -773,7 +780,7 @@ def _counts(
     }
 
 
-def _timeline(nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _timeline(nodes: Sequence[Mapping[str, Any]], edges: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for node in nodes:
         timestamp = node.get("timestamp")
@@ -810,5 +817,5 @@ def _to_iso(value: Any) -> str | None:
         return None
     isoformat = getattr(value, "isoformat", None)
     if callable(isoformat):
-        return isoformat()
+        return str(isoformat())
     return str(value)

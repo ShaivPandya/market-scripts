@@ -264,6 +264,7 @@ def resolve_model(model: str, provider: str | None = None) -> str:
 def get_llm_client(provider: str | None = None, api_key: str | None = None) -> Any:
     resolved_provider = _normalize_provider(provider)
     resolved_key = api_key if api_key is not None else get_api_key(resolved_provider)
+    cache_key: tuple[str, str | None]
     if resolved_provider == PROVIDER_LOCAL:
         base_url = get_local_base_url()
         if not base_url:

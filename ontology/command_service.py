@@ -2266,11 +2266,11 @@ class OntologyCommandService:
                 input_hash=input_hash,
             )
             for label in linked_catalyst_labels:
-                catalyst_uid = catalyst_by_label.get(_normalize_match_text(str(label)))
-                if catalyst_uid:
+                linked_catalyst_uid = catalyst_by_label.get(_normalize_match_text(str(label)))
+                if linked_catalyst_uid:
                     self.objects.write_relation(
                         claim_uid,
-                        catalyst_uid,
+                        linked_catalyst_uid,
                         "claim_links_catalyst",
                         {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
                         now,
@@ -2279,11 +2279,11 @@ class OntologyCommandService:
                         input_hash=input_hash,
                     )
             for label in linked_kill_condition_labels:
-                kill_condition_uid = kill_condition_by_label.get(_normalize_match_text(str(label)))
-                if kill_condition_uid:
+                linked_kill_condition_uid = kill_condition_by_label.get(_normalize_match_text(str(label)))
+                if linked_kill_condition_uid:
                     self.objects.write_relation(
                         claim_uid,
-                        kill_condition_uid,
+                        linked_kill_condition_uid,
                         "claim_links_kill_condition",
                         {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
                         now,

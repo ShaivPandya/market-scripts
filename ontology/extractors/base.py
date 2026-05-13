@@ -35,9 +35,16 @@ class ExtractorResult:
 
 
 class ArtifactExtractor(Protocol):
-    extractor_id: str
-    version: str
-    supported_mime_types: frozenset[str]
-    enabled: bool
+    @property
+    def extractor_id(self) -> str: ...
+
+    @property
+    def version(self) -> str: ...
+
+    @property
+    def supported_mime_types(self) -> frozenset[str]: ...
+
+    @property
+    def enabled(self) -> bool: ...
 
     def extract(self, context: ArtifactContext) -> ExtractorResult: ...

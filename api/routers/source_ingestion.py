@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, Field
@@ -91,9 +91,10 @@ def list_source_artifacts(
     require_multimodal_ingestion_enabled()
     if artifact_type not in {"all", "document", "media"}:
         raise ValidationError("artifact_type must be all, document, or media.")
+    normalized_artifact_type = cast(Literal["all", "document", "media"], artifact_type)
     return serialize_response(
         SourceIngestionService().list_artifacts(
-            artifact_type=artifact_type, manifest_id=manifest_id, ticker=ticker, limit=limit
+            artifact_type=normalized_artifact_type, manifest_id=manifest_id, ticker=ticker, limit=limit
         )
     )
 

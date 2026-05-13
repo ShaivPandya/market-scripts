@@ -8,9 +8,7 @@ from typing import Any, Literal
 
 DomainDecision = Literal["allow", "block", "clarify"]
 
-DOMAIN_BLOCK_RESPONSE = (
-    "I can only help with investing related questions."
-)
+DOMAIN_BLOCK_RESPONSE = "I can only help with investing related questions."
 DOMAIN_CLARIFY_RESPONSE = "Can you frame that as an investing question?"
 MIXED_DOMAIN_INSTRUCTION = (
     "The current user turn contains both supported finance/business content and unsupported content. "

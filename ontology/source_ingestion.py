@@ -750,8 +750,9 @@ def _now() -> str:
 def _iso(value: Any) -> str | None:
     if value is None:
         return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
     return str(value)
 
 

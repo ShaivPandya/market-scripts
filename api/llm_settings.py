@@ -7,7 +7,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
@@ -34,7 +34,7 @@ DATA_SENSITIVITIES = {
     "account_private",
     "operational_private",
 }
-DEFAULT_GATEWAY_POLICY = {
+DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
     "private_egress_mode": "allow_with_warning",
     "provider_lifecycle": {
         "anthropic": "enabled",
@@ -157,7 +157,7 @@ def set_setting(key: str, value: str) -> dict[str, Any]:
 
 
 def default_gateway_policy() -> dict[str, Any]:
-    return json.loads(json.dumps(DEFAULT_GATEWAY_POLICY))
+    return cast(dict[str, Any], json.loads(json.dumps(DEFAULT_GATEWAY_POLICY)))
 
 
 def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
