@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 import llm_utils
 
 
@@ -13,8 +15,6 @@ def test_provider_and_model_resolution_defaults(monkeypatch):
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "openai") == "gpt-5.4"
     assert llm_utils.model_for_tier(llm_utils.MODEL_LOW, "gemini") == "gemini-3.1-flash-lite"
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "gemini") == "gemini-3.1-pro-preview-customtools"
-    assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "local") == "local-mid"
-    assert llm_utils.reasoning_effort_options("local") == ["none"]
     assert llm_utils.resolve_model("claude-opus-4-7", "openai") == "gpt-5.5"
 
 
@@ -24,9 +24,6 @@ def test_provider_model_overrides(monkeypatch):
 
     monkeypatch.setenv("GEMINI_MODEL_MID", "gemini-custom-mid")
     assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "gemini") == "gemini-custom-mid"
-
-    monkeypatch.setenv("LOCAL_LLM_MODEL_MID", "local-custom-mid")
-    assert llm_utils.model_for_tier(llm_utils.MODEL_MID, "local") == "local-custom-mid"
 
 
 def test_required_key_validation(monkeypatch):
@@ -58,17 +55,8 @@ def test_required_key_validation(monkeypatch):
         raise AssertionError("missing Gemini key should fail")
 
     monkeypatch.setenv("LLM_PROVIDER", "local")
-    monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
-    try:
+    with pytest.raises(ValueError, match="anthropic.*openai.*gemini"):
         llm_utils.require_api_key()
-    except RuntimeError as exc:
-        assert "LOCAL_LLM_BASE_URL" in str(exc)
-    else:
-        raise AssertionError("missing local base URL should fail")
-
-    monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:11434/v1")
-    monkeypatch.delenv("LOCAL_LLM_API_KEY", raising=False)
-    assert llm_utils.require_api_key("local") == "local"
 
 
 def _install_fake_gemini(monkeypatch, fake_client):
@@ -130,7 +118,6 @@ def test_anthropic_text_request_shape_and_citations(monkeypatch):
             "type": "web_search_20250305",
             "name": "web_search",
             "max_uses": 2,
-            "allowed_domains": ["example.com"],
         }
     ]
     assert "thinking" not in fake_messages.kwargs
@@ -191,7 +178,6 @@ def test_openai_text_request_shape_and_citations(monkeypatch):
     assert fake_responses.kwargs["tools"] == [
         {
             "type": "web_search",
-            "filters": {"allowed_domains": ["example.com"]},
             "search_context_size": "medium",
         }
     ]
@@ -244,21 +230,30 @@ def test_gemini_text_request_shape_reasoning_and_citations(monkeypatch):
     }
 
 
-def test_gemini_rejects_domain_constrained_search(monkeypatch):
+def test_gemini_allowed_domains_enable_unrestricted_search(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
 
-    try:
-        llm_utils.call_llm_text(
-            prompt="latest",
-            model=llm_utils.MODEL_LOW,
-            allowed_domains=["example.com"],
-            max_tokens=128,
-        )
-    except RuntimeError as exc:
-        assert "domain-constrained" in str(exc)
-    else:
-        raise AssertionError("Gemini should reject allowed_domains")
+    class FakeModels:
+        def __init__(self):
+            self.kwargs = None
+
+        def generate_content(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(text="grounded")
+
+    fake_models = FakeModels()
+    _install_fake_gemini(monkeypatch, SimpleNamespace(models=fake_models))
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="latest",
+        model=llm_utils.MODEL_LOW,
+        allowed_domains=["example.com"],
+        max_tokens=128,
+    )
+
+    assert text == "grounded"
+    assert fake_models.kwargs["config"]["tools"] == [{"google_search": {}}]
 
 
 def test_openai_reasoning_effort_request_shape(monkeypatch):

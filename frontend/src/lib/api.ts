@@ -445,7 +445,7 @@ export const authApi = {
   me: () => client.get("/auth/me").then(r => r.data),
 }
 
-export type LLMProvider = "anthropic" | "openai" | "gemini" | "local"
+export type LLMProvider = "anthropic" | "openai" | "gemini"
 export type LLMModelTier = "low" | "mid" | "high"
 export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 export type LLMModelTierMap = Record<LLMModelTier, string>
@@ -494,11 +494,6 @@ export interface LLMSettings {
   reasoning_efforts: Record<LLMProvider, LLMReasoningEffortMap>
   reasoning_options: Record<LLMProvider, Record<LLMModelTier, LLMReasoningEffortOption[]>>
   gateway_policy: GatewayPolicySettings
-  local_provider: {
-    configured: boolean
-    base_url_env: string
-    api_key_env: string
-  }
 }
 
 export const fetchLLMSettings = () =>

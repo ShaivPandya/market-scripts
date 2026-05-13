@@ -29,18 +29,15 @@ from api.llm_settings import (
 )
 from api.routers.auth import require_actor
 from llm_utils import (
-    LOCAL_LLM_BASE_URL_ENV,
     MODEL_HIGH,
     MODEL_LOW,
     MODEL_MID,
     PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
-    PROVIDER_LOCAL,
     PROVIDER_OPENAI,
     api_key_env,
     default_reasoning_effort,
     get_api_key,
-    get_local_base_url,
     model_for_tier,
     reasoning_effort_options,
     require_api_key,
@@ -50,7 +47,7 @@ from ontology.policy import Actor
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
-Provider = Literal["anthropic", "openai", "gemini", "local"]
+Provider = Literal["anthropic", "openai", "gemini"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 PreferenceLevel = Literal["less", "balanced", "more"]
 Personality = Literal["friendly", "pragmatic"]
@@ -64,6 +61,7 @@ DataSensitivity = Literal[
 ]
 CustomInstructionText = Annotated[str, Field(max_length=2000)]
 AGENT_RESPONSE_PREFERENCES_KEY = "agent.response_preferences"
+SETTINGS_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI)
 
 
 class ReasoningEffortSettings(BaseModel):
@@ -82,7 +80,7 @@ class GatewayDeniedRule(BaseModel):
     def _validate_provider(cls, value: str) -> str:
         normalized = str(value or "*").strip().lower()
         if normalized != "*" and normalized not in ALLOWED_LLM_PROVIDERS:
-            raise ValueError("provider must be '*', 'anthropic', 'openai', 'gemini', or 'local'")
+            raise ValueError("provider must be '*', 'anthropic', 'openai', or 'gemini'")
         return normalized
 
     @field_validator("model")
@@ -140,22 +138,16 @@ def _provider_label(provider: str) -> str:
         PROVIDER_ANTHROPIC: "Claude",
         PROVIDER_OPENAI: "OpenAI",
         PROVIDER_GEMINI: "Gemini",
-        PROVIDER_LOCAL: "Local",
     }.get(provider, provider.title())
 
 
 def _provider_status(provider: str) -> dict:
-    configured = get_local_base_url() is not None if provider == PROVIDER_LOCAL else get_api_key(provider) is not None
-    status = {
+    return {
         "provider": provider,
         "label": _provider_label(provider),
-        "configured": configured,
+        "configured": get_api_key(provider) is not None,
         "api_key_env": api_key_env(provider),
     }
-    if provider == PROVIDER_LOCAL:
-        status["base_url_env"] = LOCAL_LLM_BASE_URL_ENV
-        status["base_url_configured"] = get_local_base_url() is not None
-    return status
 
 
 def _models_for_provider(provider: str) -> dict:
@@ -201,12 +193,11 @@ def _validate_reasoning_efforts(provider: str, efforts: dict[str, str]) -> None:
 
 
 def _llm_settings_keys() -> list[str]:
-    providers = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI, PROVIDER_LOCAL)
     tiers = (MODEL_LOW, MODEL_MID, MODEL_HIGH)
     return [
         LLM_PROVIDER_KEY,
         LLM_GATEWAY_POLICY_KEY,
-        *(_reasoning_key(provider, tier) for provider in providers for tier in tiers),
+        *(_reasoning_key(provider, tier) for provider in SETTINGS_PROVIDERS for tier in tiers),
     ]
 
 
@@ -217,7 +208,7 @@ def _provider_from_settings(rows: dict[str, dict]) -> str:
 
     provider = (os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', 'gemini', or 'local'")
+        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
     return provider
 
 
@@ -240,17 +231,11 @@ def _settings_response() -> dict:
         PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
         PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
         PROVIDER_GEMINI: _models_for_provider(PROVIDER_GEMINI),
-        PROVIDER_LOCAL: _models_for_provider(PROVIDER_LOCAL),
     }
     gateway_policy = get_gateway_policy_setting(rows)
     return {
         "provider": provider,
-        "available_providers": [
-            _provider_status(PROVIDER_ANTHROPIC),
-            _provider_status(PROVIDER_OPENAI),
-            _provider_status(PROVIDER_GEMINI),
-            _provider_status(PROVIDER_LOCAL),
-        ],
+        "available_providers": [_provider_status(provider) for provider in SETTINGS_PROVIDERS],
         "models": models_by_provider[provider],
         "models_by_provider": models_by_provider,
         "reasoning_efforts": {
@@ -272,25 +257,13 @@ def _settings_response() -> dict:
                 )
                 for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
             },
-            PROVIDER_LOCAL: {
-                tier: _reasoning_effort_from_settings(
-                    rows, PROVIDER_LOCAL, tier, models_by_provider[PROVIDER_LOCAL][tier]
-                )
-                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
-            },
         },
         "reasoning_options": {
             PROVIDER_ANTHROPIC: _reasoning_options_for_provider(PROVIDER_ANTHROPIC),
             PROVIDER_OPENAI: _reasoning_options_for_provider(PROVIDER_OPENAI),
             PROVIDER_GEMINI: _reasoning_options_for_provider(PROVIDER_GEMINI),
-            PROVIDER_LOCAL: _reasoning_options_for_provider(PROVIDER_LOCAL),
         },
         "gateway_policy": gateway_policy,
-        "local_provider": {
-            "configured": get_local_base_url() is not None,
-            "base_url_env": LOCAL_LLM_BASE_URL_ENV,
-            "api_key_env": api_key_env(PROVIDER_LOCAL),
-        },
     }
 
 

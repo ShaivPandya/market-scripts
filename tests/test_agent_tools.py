@@ -990,27 +990,12 @@ def test_sentiment_snapshot_parity_from_normalized_shape():
     assert snapshot["latest"]["volatility"]["vix"] == 15.5
 
 
-def test_extract_inaccessible_domains_parses_error_message():
-    err = RuntimeError(
-        "Error code: 400 - {'message': \"The following domains are not accessible to our user agent: "
-        "['ft.com', 'WSJ.com']\"}"
-    )
-    blocked = agent_tools._extract_inaccessible_domains(err)
-    assert blocked == {"ft.com", "wsj.com"}
-
-
-def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
+def test_run_search_web_uses_unrestricted_web_search(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    calls: list[list[str]] = []
+    calls: list[dict] = []
 
-    def fake_call_llm_text(*, allowed_domains=None, **_kwargs):
-        domains = list(allowed_domains or [])
-        calls.append(domains)
-        if len(calls) == 1:
-            raise RuntimeError(
-                "Error code: 400 - {'message': \"The following domains are not accessible to our user agent: "
-                "['axios.com']\"}"
-            )
+    def fake_call_llm_text(**kwargs):
+        calls.append(kwargs)
         return "ok summary", [("Example", "https://example.com")], object()
 
     monkeypatch.setattr("llm_utils.call_llm_text", fake_call_llm_text)
@@ -1019,6 +1004,6 @@ def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
 
     assert result["summary"] == "ok summary"
     assert result["citation_count"] == 1
-    assert len(calls) == 2
-    assert "axios.com" in calls[0]
-    assert "axios.com" not in calls[1]
+    assert len(calls) == 1
+    assert calls[0]["enable_web_search"] is True
+    assert "allowed_domains" not in calls[0]

@@ -17,14 +17,14 @@ DB_PATH = Path(__file__).parent / "app_settings.db"
 LLM_PROVIDER_KEY = "llm.provider"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
 LLM_GATEWAY_POLICY_KEY = "llm.gateway_policy"
-ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "local"}
+ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+LEGACY_LLM_PROVIDERS = {"local"}
 MODEL_TIERS = {"low", "mid", "high"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 DEFAULT_REASONING_EFFORTS = {
     "anthropic": {"low": "high", "mid": "high", "high": "high"},
     "openai": {"low": "medium", "mid": "medium", "high": "medium"},
     "gemini": {"low": "minimal", "mid": "high", "high": "high"},
-    "local": {"low": "none", "mid": "none", "high": "none"},
 }
 LIFECYCLE_STATES = {"draft", "enabled", "deprecated", "disabled"}
 DATA_SENSITIVITIES = {
@@ -40,7 +40,6 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
         "anthropic": "enabled",
         "openai": "enabled",
         "gemini": "enabled",
-        "local": "enabled",
     },
     "model_lifecycle": {},
     "denied_rules": [],
@@ -172,6 +171,8 @@ def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
     for provider, state in dict(raw.get("provider_lifecycle") or {}).items():
         normalized_provider = str(provider or "").strip().lower()
         normalized_state = str(state or "").strip().lower()
+        if normalized_provider in LEGACY_LLM_PROVIDERS:
+            continue
         if normalized_provider not in ALLOWED_LLM_PROVIDERS:
             raise ValueError("Gateway provider lifecycle contains an unsupported provider")
         if normalized_state not in LIFECYCLE_STATES:
@@ -197,6 +198,8 @@ def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
         provider = str(item.get("provider") or "*").strip().lower()
         model = str(item.get("model") or "*").strip()
         sensitivity = str(item.get("data_sensitivity") or item.get("sensitivity") or "").strip().lower()
+        if provider in LEGACY_LLM_PROVIDERS:
+            continue
         if provider != "*" and provider not in ALLOWED_LLM_PROVIDERS:
             raise ValueError("Gateway denied rule contains an unsupported provider")
         if not model:
@@ -237,7 +240,7 @@ def get_llm_provider_setting() -> str | None:
 def set_llm_provider_setting(provider: str) -> dict[str, Any]:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'local'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return set_setting(LLM_PROVIDER_KEY, normalized)
 
 
@@ -248,7 +251,7 @@ def _reasoning_key(provider: str, tier: str) -> str:
 def _normalize_reasoning_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'local'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return normalized
 
 

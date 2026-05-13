@@ -79,11 +79,6 @@ SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"
 THESIS_SEPARATOR = "<!-- THESIS_SUMMARY_JSON -->"
 THESES_DIR = PROJECT_ROOT / "investment_theses"
 
-DEFAULT_NEWS_SOURCES = [
-    "bloomberg.com",
-    "cnbc.com",
-    "federalreserve.gov",
-]
 WEEKLY_NEWS_DIGEST_DAYS = 8
 DAILY_NEWS_DIGEST_DAYS = 2
 
@@ -1087,7 +1082,7 @@ def _generate_weekly_recommendations(
         extra_context_md=f"## Deterministic Weekly Performance Tables\n\n{perf_md}",
     )
     try:
-        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, web_search=False, max_tokens=8192)
         try:
             memo_md, payload = parse_recommendations_response(
                 raw_text,
@@ -1467,12 +1462,6 @@ def main():
     parser = argparse.ArgumentParser(description="Automated weekly market report")
     parser.add_argument("--force", action="store_true", help="Bypass Friday-afternoon schedule gate")
     parser.add_argument("--no-search", action="store_true", help="Disable web search for news context")
-    parser.add_argument(
-        "--news-sources",
-        type=str,
-        default=None,
-        help="Comma-separated list of domains to restrict news search (overrides defaults)",
-    )
     args = parser.parse_args()
 
     if not args.force and not os.environ.get("FORCE_RUN") and not _is_friday_afternoon_et():
@@ -1506,13 +1495,8 @@ def main():
     # 6. Resolve web search settings
     use_search = not args.no_search
     if use_search:
-        if args.news_sources:
-            allowed_domains = [d.strip() for d in args.news_sources.split(",") if d.strip()]
-        else:
-            allowed_domains = list(DEFAULT_NEWS_SOURCES)
-        log.info("Web search enabled — domains: %s", allowed_domains)
+        log.info("Web search enabled with unrestricted domains")
     else:
-        allowed_domains = None
         log.info("Web search disabled")
 
     # 7. Call the configured LLM for weekly commentary
@@ -1523,7 +1507,7 @@ def main():
     citations: list[tuple[str, str]] = []
 
     try:
-        response_text, citations = call_report_llm(system_msg, user_msg, allowed_domains=allowed_domains)
+        response_text, citations = call_report_llm(system_msg, user_msg, web_search=use_search)
         report_md, summary = parse_response(response_text)
         report_md = _insert_weekly_performance(report_md, perf_md)
         report_md = strip_llm_meta(report_md)
@@ -1548,7 +1532,7 @@ def main():
             thesis_text, thesis_citations = call_report_llm(
                 system_msg=thesis_system,
                 user_msg=thesis_user,
-                allowed_domains=allowed_domains,
+                web_search=use_search,
                 max_tokens=8192,
             )
             thesis_md, thesis_summary = parse_thesis_response(thesis_text)

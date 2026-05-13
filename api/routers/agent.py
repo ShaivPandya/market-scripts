@@ -56,7 +56,6 @@ from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
-    PROVIDER_LOCAL,
     PROVIDER_OPENAI,
     api_key_env,
     apply_reasoning_config,
@@ -1385,7 +1384,7 @@ def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
                     "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
                 }
             )
-        elif provider in {PROVIDER_OPENAI, PROVIDER_LOCAL}:
+        elif provider == PROVIDER_OPENAI:
             tools.append(
                 {
                     "type": "function",

@@ -138,13 +138,15 @@ def call_report_llm(
     system_msg: str,
     user_msg: str,
     allowed_domains: list[str] | None = None,
+    web_search: bool | None = None,
     model: str = MODEL_HIGH,
     max_tokens: int = 16384,
 ) -> tuple[str, list[tuple[str, str]]]:
-    """Call the configured report LLM provider, optionally with web search.
+    """Call the configured report LLM provider, optionally with unrestricted web search.
 
     Returns (text, citations) where citations is a list of (title, url) tuples.
     """
+    web_search_enabled = web_search if web_search is not None else allowed_domains is not None
 
     def _create_with_retry():
         """Call the configured LLM with automatic retry on rate-limit errors."""
@@ -157,7 +159,7 @@ def call_report_llm(
                     api_key=None,
                     max_tokens=max_tokens,
                     system=system_msg,
-                    allowed_domains=allowed_domains,
+                    enable_web_search=web_search_enabled,
                     reasoning_effort=reasoning_effort_for_tier(MODEL_HIGH),
                 )
             except Exception as exc:

@@ -46,25 +46,18 @@ const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEff
     mid: "high",
     high: "high",
   },
-  local: {
-    low: "none",
-    mid: "none",
-    high: "none",
-  },
 }
 
 const PROVIDER_DESCRIPTIONS: Record<LLMProvider, string> = {
   anthropic: "Claude runtime requests",
   openai: "OpenAI runtime requests",
   gemini: "Gemini runtime requests",
-  local: "OpenAI-compatible localhost runtime",
 }
 
 const PROVIDER_FALLBACK_LABELS: Record<LLMProvider, string> = {
   anthropic: "Claude",
   openai: "OpenAI",
   gemini: "Gemini",
-  local: "Local",
 }
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "claude-haiku-4-5": "Claude Haiku 4.5",
@@ -76,9 +69,6 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
   "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
   "gemini-3.1-pro-preview-customtools": "Gemini 3.1 Pro Preview (Custom Tools)",
-  "local-low": "Local Low",
-  "local-mid": "Local Mid",
-  "local-high": "Local High",
 }
 const MODEL_DISPLAY_TOKEN_NAMES: Record<string, string> = {
   api: "API",
@@ -91,7 +81,6 @@ const MODEL_DISPLAY_TOKEN_NAMES: Record<string, string> = {
   haiku: "Haiku",
   high: "High",
   lite: "Lite",
-  local: "Local",
   low: "Low",
   mid: "Mid",
   mini: "Mini",
@@ -159,7 +148,7 @@ function statusBadge(provider: LLMProviderStatus) {
     return <StatusBadge tone="success">Configured</StatusBadge>
   }
 
-  return <StatusBadge tone="warning">Missing {provider.provider === "local" ? provider.base_url_env : provider.api_key_env}</StatusBadge>
+  return <StatusBadge tone="warning">Missing {provider.api_key_env}</StatusBadge>
 }
 
 function policiesEqual(a: GatewayPolicySettings | undefined, b: GatewayPolicySettings | undefined) {
@@ -394,12 +383,9 @@ export function AISettings() {
                 Private egress: {effectiveGatewayPolicy.private_egress_mode.replace(/_/g, " ")}
               </p>
             </div>
-            <StatusBadge tone={data.local_provider.configured ? "success" : "warning"}>
-              Local {data.local_provider.configured ? "configured" : `missing ${data.local_provider.base_url_env}`}
-            </StatusBadge>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-3">
             {data.available_providers.map(provider => (
               <div key={provider.provider} className="theme-surface-muted px-3 py-3">
                 <p className="label-text">{provider.label}</p>

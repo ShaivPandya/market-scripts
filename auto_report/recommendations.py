@@ -976,7 +976,7 @@ Return a concise memo, then `{RECOMMENDATIONS_SEPARATOR}`, then valid JSON only.
     repaired, _ = call_report_llm(
         system_msg="You repair malformed investment recommendation JSON. Do not change the intent unless required by schema or blocked data-quality rules.",
         user_msg=prompt,
-        allowed_domains=None,
+        web_search=False,
         max_tokens=8192,
     )
     return parse_recommendations_response(

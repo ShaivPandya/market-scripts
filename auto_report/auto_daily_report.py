@@ -38,7 +38,6 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from auto_report.auto_weekly_report import (
     DAILY_NEWS_DIGEST_DAYS,
-    DEFAULT_NEWS_SOURCES,
     RULES_TEXT,
     _prepare_prompt_bundle,
     build_performance_markdown,
@@ -1222,7 +1221,7 @@ def _generate_daily_recommendations(
         extra_context_md=_build_recommendations_extra_context(risk_summary_md, adjustments_md),
     )
     try:
-        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, web_search=False, max_tokens=8192)
         try:
             memo_md, payload = parse_recommendations_response(
                 raw_text,
@@ -1479,7 +1478,11 @@ def main():
     pass1_system = _build_pass1_system_message(last_daily_json)
     pass1_user = _build_pass1_user_message(market_bundle, perf_md)
 
-    allowed_domains_pass1 = None if args.no_search else list(DEFAULT_NEWS_SOURCES)
+    pass1_web_search = not args.no_search
+    if pass1_web_search:
+        log.info("Pass 1 web search enabled with unrestricted domains")
+    else:
+        log.info("Pass 1 web search disabled")
     stance_dict = None
     market_analysis_md = None
     pass1_citations = []
@@ -1488,7 +1491,7 @@ def main():
         pass1_text, pass1_citations = call_report_llm(
             system_msg=pass1_system,
             user_msg=pass1_user,
-            allowed_domains=allowed_domains_pass1,
+            web_search=pass1_web_search,
         )
         market_analysis_md, stance_dict = parse_pass1_response(pass1_text)
         market_analysis_md = strip_llm_meta(market_analysis_md)
@@ -1567,7 +1570,7 @@ def main():
         pass2_text, pass2_citations = call_report_llm(
             system_msg=pass2_system,
             user_msg=pass2_user,
-            allowed_domains=None,  # no web search in Pass 2
+            web_search=False,
         )
         risk_analysis_md, risk_summary_dict = parse_daily_response(pass2_text)
         risk_analysis_md = strip_llm_meta(risk_analysis_md)

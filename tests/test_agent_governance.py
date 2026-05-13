@@ -136,7 +136,7 @@ def test_explicit_denied_rule_blocks_before_budget(monkeypatch):
     assert budget.model_calls == 0
 
 
-def test_local_only_model_egress_blocks_external_and_allows_local():
+def test_local_only_model_egress_blocks_external_and_rejects_legacy_local_provider():
     with pytest.raises(ModelGatewayDenied) as exc_info:
         prepare_model_egress(
             provider="openai",
@@ -153,22 +153,21 @@ def test_local_only_model_egress_blocks_external_and_allows_local():
 
     assert exc_info.value.manifest["decision_reason"] == "local_only_required"
 
-    _kwargs, manifest = prepare_model_egress(
-        provider="local",
-        purpose="agent_chat",
-        stream_kwargs={
-            "model": "local-mid",
-            "max_output_tokens": 16,
-            "local_only_required": True,
-            "instructions": "instructions",
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
-        },
-        actor=agent_actor(admin_actor()),
-    )
+    with pytest.raises(ModelGatewayDenied) as legacy_exc_info:
+        prepare_model_egress(
+            provider="local",
+            purpose="agent_chat",
+            stream_kwargs={
+                "model": "legacy-local",
+                "max_output_tokens": 16,
+                "local_only_required": True,
+                "instructions": "instructions",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
+            },
+            actor=agent_actor(admin_actor()),
+        )
 
-    assert manifest["decision"] == "allowed"
-    assert manifest["provider_egress"] == "local_only"
-    assert manifest["local_only_required"] is True
+    assert legacy_exc_info.value.manifest["decision_reason"] == "unsupported_provider"
 
 
 def test_model_lifecycle_disabled_blocks_and_deprecated_warns(monkeypatch):

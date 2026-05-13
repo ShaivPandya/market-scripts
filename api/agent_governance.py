@@ -27,6 +27,7 @@ DEFAULT_ACCOUNT_SCOPE = "default-account"
 DEFAULT_PORTFOLIO_SCOPE = "default-portfolio"
 REDACTION_POLICY = "agent_dlp_v1"
 EGRESS_POLICY_VERSION = "agent_provider_egress_v1"
+SUPPORTED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
 
 
 class AgentGovernanceError(RuntimeError):
@@ -411,6 +412,14 @@ def _model_gateway_decision(
     local_only_required = bool(stream_kwargs.get("local_only_required") or tool_local_only)
     provider_l = provider.lower()
 
+    if provider_l not in SUPPORTED_LLM_PROVIDERS:
+        return ModelGatewayDecision(
+            decision="blocked",
+            reason="unsupported_provider",
+            provider_egress="external_blocked",
+            lifecycle_state="disabled",
+            local_only_required=local_only_required,
+        )
     if lifecycle_state == "disabled":
         return ModelGatewayDecision(
             decision="blocked",
@@ -419,7 +428,7 @@ def _model_gateway_decision(
             lifecycle_state=lifecycle_state,
             local_only_required=local_only_required,
         )
-    if local_only_required and provider_l != "local":
+    if local_only_required:
         return ModelGatewayDecision(
             decision="blocked",
             reason="local_only_required",
@@ -439,9 +448,7 @@ def _model_gateway_decision(
                 local_only_required=local_only_required,
             )
 
-    if provider_l == "local" or local_only_required:
-        provider_egress = "local_only"
-    elif resolved_sensitivity in _PRIVATE_SENSITIVITIES:
+    if resolved_sensitivity in _PRIVATE_SENSITIVITIES:
         provider_egress = "external_allowed_raw_private"
     else:
         provider_egress = "external_allowed"
