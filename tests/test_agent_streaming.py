@@ -8,7 +8,7 @@ from typing import Any
 
 import api.agent_chat_worker as agent_chat_worker
 import api.routers.agent as agent_router
-from api.agent_domain_policy import DOMAIN_BLOCK_RESPONSE, DOMAIN_CLARIFY_RESPONSE, AgentDomainClassification
+from api.agent_domain_policy import DOMAIN_CLARIFY_RESPONSE, AgentDomainClassification
 
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
@@ -1056,41 +1056,28 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     assert finalized
 
 
-def test_agent_chat_v2_blocks_off_domain_before_provider_context_or_tools(auth_client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(
-        agent_router,
-        "selected_provider",
-        lambda: (_ for _ in ()).throw(AssertionError("no provider selection")),
-    )
-    monkeypatch.setattr(
-        agent_router,
-        "_build_agent_instructions",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
-    )
-    monkeypatch.setattr(
-        agent_router,
-        "_get_provider_client",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no client")),
-    )
-    monkeypatch.setattr(
-        agent_router,
-        "execute_tool",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no tools")),
-    )
+def test_agent_chat_v2_soft_allows_off_domain_text_to_model_with_guardrail_instruction(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
         "api.memory_manager.build_conversation_context",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no retrieval/context build")),
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "soft-allow-session",
+        ),
     )
-    monkeypatch.setattr(
-        "api.memory_db.get_or_create_session",
-        lambda _session_id=None: {"session_id": "guardrail-session", "server_messages": [], "rolling_summary": None},
-    )
-    finalized: list[tuple[dict, dict]] = []
-    monkeypatch.setattr(
-        "api.memory_manager.finalize_turn_async",
-        lambda _sid, user_msg, assistant_msg: finalized.append((user_msg, assistant_msg)),
-    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+    streams = [
+        (
+            [_event_text_delta("I can only handle the investing side here.")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "I can only handle the investing side here."}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
         "/api/v1/agent/chat/v2",
@@ -1098,17 +1085,47 @@ def test_agent_chat_v2_blocks_off_domain_before_provider_context_or_tools(auth_c
     )
 
     assert resp.status_code == 200
+    assert fake_client.messages.calls == 1
+    assert "Domain Guardrail" in fake_client.messages.kwargs_history[0]["system"]
     parsed = _parse_sse(resp.text)
-    assert parsed[0][0] == "ping"
-    assert any(e == "delta" and p.get("text") == DOMAIN_BLOCK_RESPONSE for e, p in parsed)
-    done_events = [p for e, p in parsed if e == "done"]
-    assert done_events[-1]["session_id"] == "guardrail-session"
-    assert done_events[-1]["domain_decision"] == "block"
-    assert finalized[0][0]["content"] == "give me a chicken recipe"
-    assert finalized[0][1]["content"] == DOMAIN_BLOCK_RESPONSE
+    assert any(e == "delta" and "investing side" in str(p.get("text", "")) for e, p in parsed)
 
 
-def test_agent_chat_v2_clarifies_ambiguous_prompt_before_provider_context_or_tools(auth_client, monkeypatch):
+def test_agent_chat_v2_allows_operational_proposal_status_followup(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "proposal-session",
+        ),
+    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+    streams = [
+        (
+            [_event_text_delta("I’ll stage the status proposals.")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "I’ll stage the status proposals."}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "can you make the proposals to update the status?"},
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.messages.calls == 1
+    parsed = _parse_sse(resp.text)
+    assert any(e == "delta" and "status proposals" in str(p.get("text", "")) for e, p in parsed)
+
+
+def test_agent_chat_v2_clarifies_empty_prompt_before_provider_context_or_tools(auth_client, monkeypatch):
     monkeypatch.setattr(
         agent_router,
         "selected_provider",
@@ -1130,7 +1147,7 @@ def test_agent_chat_v2_clarifies_ambiguous_prompt_before_provider_context_or_too
 
     resp = auth_client.post(
         "/api/v1/agent/chat/v2",
-        json={"message": "what do you think?"},
+        json={"message": " "},
     )
 
     assert resp.status_code == 200
@@ -1142,18 +1159,20 @@ def test_agent_chat_v2_clarifies_ambiguous_prompt_before_provider_context_or_too
     assert finalized[0]["content"] == DOMAIN_CLARIFY_RESPONSE
 
 
-def test_agent_chat_legacy_blocks_off_domain_without_api_key(auth_client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(
-        agent_router,
-        "_read_llm_api_key",
-        lambda: (_ for _ in ()).throw(AssertionError("no api key read")),
-    )
-    monkeypatch.setattr(
-        agent_router,
-        "_build_agent_instructions",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
-    )
+def test_agent_chat_legacy_soft_allows_off_domain_text_to_model(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    streams = [
+        (
+            [_event_text_delta("I can help if there is an investing angle.")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "I can help if there is an investing angle."}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
@@ -1161,11 +1180,10 @@ def test_agent_chat_legacy_blocks_off_domain_without_api_key(auth_client, monkey
     )
 
     assert resp.status_code == 200
+    assert fake_client.messages.calls == 1
+    assert "Domain Guardrail" in fake_client.messages.kwargs_history[0]["system"]
     parsed = _parse_sse(resp.text)
-    assert parsed[0][0] == "ping"
-    assert any(e == "delta" and p.get("text") == DOMAIN_BLOCK_RESPONSE for e, p in parsed)
-    done_events = [p for e, p in parsed if e == "done"]
-    assert done_events[-1]["domain_decision"] == "block"
+    assert any(e == "delta" and "investing angle" in str(p.get("text", "")) for e, p in parsed)
 
 
 def test_agent_tool_execution_blocks_when_domain_decision_is_not_allow(monkeypatch):

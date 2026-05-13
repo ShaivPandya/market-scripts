@@ -531,9 +531,19 @@ class CreateCatalystInput(TickerMixin):
 
 
 class UpdateCatalystStatusInput(OptionalTickerMixin):
-    catalyst_id: int
+    catalyst_id: int | str
     status: Literal["pending", "played_out", "failed", "superseded"]
     evidence: str | None = None
+
+    @field_validator("catalyst_id")
+    @classmethod
+    def _strip_catalyst_id(cls, value: int | str) -> int | str:
+        if isinstance(value, int):
+            return value
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Catalyst id cannot be empty.")
+        return text
 
     @model_validator(mode="before")
     @classmethod
@@ -558,8 +568,18 @@ class CreateKillConditionInput(TickerMixin):
 
 
 class UpdateKillConditionStatusInput(OptionalTickerMixin):
-    kill_condition_id: int
+    kill_condition_id: int | str
     status: Literal["active", "triggered", "retired"]
+
+    @field_validator("kill_condition_id")
+    @classmethod
+    def _strip_kill_condition_id(cls, value: int | str) -> int | str:
+        if isinstance(value, int):
+            return value
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Kill condition id cannot be empty.")
+        return text
 
     @model_validator(mode="before")
     @classmethod
@@ -2508,6 +2528,15 @@ def _raise_not_found_or_validation(exc: ValueError, resource: str, identifier: i
     raise ActionValidationError(message) from exc
 
 
+def _legacy_numeric_id(value: int | str, resource: str) -> int:
+    if isinstance(value, int):
+        return value
+    text = str(value or "").strip()
+    if text.isdigit():
+        return int(text)
+    raise ActionValidationError(f"{resource} id must be a numeric legacy id: {text}")
+
+
 def _create_catalyst(input_model: BaseModel, context: ActionContext) -> ActionResult:
     typed = cast(CreateCatalystInput, input_model)
     from portfolio import core_db
@@ -2527,10 +2556,11 @@ def _update_catalyst_status(input_model: BaseModel, _context: ActionContext) -> 
     typed = cast(UpdateCatalystStatusInput, input_model)
     from portfolio import core_db
 
+    catalyst_id = _legacy_numeric_id(typed.catalyst_id, "Catalyst")
     try:
-        result = core_db.update_catalyst_status(typed.catalyst_id, typed.status, typed.evidence)
+        result = core_db.update_catalyst_status(catalyst_id, typed.status, typed.evidence)
     except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Catalyst", typed.catalyst_id)
+        _raise_not_found_or_validation(exc, "Catalyst", catalyst_id)
     return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
 
 
@@ -2552,10 +2582,11 @@ def _update_kill_condition_status(input_model: BaseModel, _context: ActionContex
     typed = cast(UpdateKillConditionStatusInput, input_model)
     from portfolio import core_db
 
+    kill_condition_id = _legacy_numeric_id(typed.kill_condition_id, "Kill condition")
     try:
-        result = core_db.update_kill_condition_status(typed.kill_condition_id, typed.status)
+        result = core_db.update_kill_condition_status(kill_condition_id, typed.status)
     except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Kill condition", typed.kill_condition_id)
+        _raise_not_found_or_validation(exc, "Kill condition", kill_condition_id)
     return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
 
 

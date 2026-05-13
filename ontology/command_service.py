@@ -2847,6 +2847,14 @@ def _strip_uid_prefix(value: Any, prefix: str) -> str:
 
 
 def _legacy_object_context(objects: Any, object_type: str, legacy_id: Any) -> dict[str, Any]:
+    raw_id = str(legacy_id or "").strip()
+    if raw_id:
+        try:
+            row = objects.get_object(raw_id)
+        except Exception:
+            row = None
+        if row:
+            return _flatten_object(row)
     normalized_id = _legacy_int(legacy_id)
     if normalized_id is None:
         return {}

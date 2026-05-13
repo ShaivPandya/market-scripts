@@ -52,6 +52,14 @@ def test_process_entity_routes_stage_by_default_and_self_apply_through_approval(
     assert catalyst_update.json()["status"] == "applied"
     assert core_db.get_catalysts("MU")[0]["status"] == "played_out"
 
+    catalyst_uid_update = auth_client.put(
+        f"/api/v1/catalysts/catalyst:{catalyst['id']}/status",
+        json={"status": "failed", "evidence": "Disconfirmed", "apply": True, "approval_note": "Apply in test"},
+    )
+    assert catalyst_uid_update.status_code == 200
+    assert catalyst_uid_update.json()["status"] == "applied"
+    assert core_db.get_catalysts("MU")[0]["status"] == "failed"
+
     kill_resp = auth_client.post(
         "/api/v1/kill-conditions",
         json={
@@ -73,6 +81,13 @@ def test_process_entity_routes_stage_by_default_and_self_apply_through_approval(
     )
     assert kill_update.status_code == 200
     assert core_db.get_kill_conditions("MU")[0]["status"] == "triggered"
+
+    kill_uid_update = auth_client.put(
+        f"/api/v1/kill-conditions/kill_condition:{kill_condition['id']}/status",
+        json={"status": "retired", "apply": True, "approval_note": "Apply in test"},
+    )
+    assert kill_uid_update.status_code == 200
+    assert core_db.get_kill_conditions("MU")[0]["status"] == "retired"
 
     claim_resp = auth_client.post(
         "/api/v1/thesis-claims",

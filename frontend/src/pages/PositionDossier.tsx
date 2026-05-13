@@ -115,8 +115,28 @@ interface Evaluation {
   evaluated_at: string
 }
 type EntityId = number | string
-interface Catalyst { id: EntityId; description: string | null; category: string | null; status: string | null; target_date: string | null; evidence: string | null }
-interface KillCondition { id: EntityId; condition: string | null; metric: string | null; threshold: string | null; status: string | null; triggered_at: string | null }
+interface Catalyst {
+  id: EntityId
+  legacy_id?: EntityId | null
+  object_uid?: string | null
+  source_record_id?: string | null
+  description: string | null
+  category: string | null
+  status: string | null
+  target_date: string | null
+  evidence: string | null
+}
+interface KillCondition {
+  id: EntityId
+  legacy_id?: EntityId | null
+  object_uid?: string | null
+  source_record_id?: string | null
+  condition: string | null
+  metric: string | null
+  threshold: string | null
+  status: string | null
+  triggered_at: string | null
+}
 interface WorkflowRun { run_id: string | null; workflow_name: string | null; status: string | null; started_at: string | null; completed_at: string | null }
 interface ActionItem { id: number | string; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
@@ -191,6 +211,34 @@ function textOrFallback(value: unknown, fallback: string): string {
 
 function statusOrFallback(value: unknown, fallback: string): string {
   return textOrFallback(value, fallback)
+}
+
+function numericEntityId(value: unknown): EntityId | null {
+  if (typeof value === "number" && Number.isInteger(value)) return value
+  const text = String(value ?? "").trim()
+  return /^\d+$/.test(text) ? Number(text) : null
+}
+
+function prefixedNumericEntityId(value: unknown, prefix: string): EntityId | null {
+  const text = String(value ?? "").trim()
+  const marker = `${prefix}:`
+  if (!text.startsWith(marker)) return null
+  const suffix = text.slice(marker.length)
+  return /^\d+$/.test(suffix) ? Number(suffix) : null
+}
+
+function mutationEntityId(
+  entity: { id: EntityId; legacy_id?: EntityId | null; object_uid?: string | null; source_record_id?: string | null },
+  prefix: string,
+): EntityId {
+  return (
+    numericEntityId(entity.legacy_id) ??
+    prefixedNumericEntityId(entity.id, prefix) ??
+    prefixedNumericEntityId(entity.object_uid, prefix) ??
+    numericEntityId(entity.source_record_id) ??
+    entity.object_uid ??
+    entity.id
+  )
 }
 
 function subjectLabel(entityType?: string | null): string {
@@ -1516,7 +1564,8 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
-    mutationFn: ({ id, status }: { id: EntityId; status: string }) => updateCatalystStatus(id, status),
+    mutationFn: ({ catalyst, status }: { catalyst: Catalyst; status: string }) =>
+      updateCatalystStatus(mutationEntityId(catalyst, "catalyst"), status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
       void invalidateApprovalSummaries(qc)
@@ -1530,6 +1579,11 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   return (
     <div className="space-y-3">
       <StagedProposalNotice proposal={proposal} className="text-xs" />
+      {mutation.isError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {String(mutation.error)}
+        </div>
+      )}
       {catalysts.map(c => {
         const status = statusOrFallback(c.status, "pending")
         return (
@@ -1550,7 +1604,7 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
                   <button
                     key={s}
                     type="button"
-                    onClick={() => mutation.mutate({ id: c.id, status: s })}
+                    onClick={() => mutation.mutate({ catalyst: c, status: s })}
                     disabled={mutation.isPending}
                     className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
                   >
@@ -1576,7 +1630,8 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
-    mutationFn: ({ id, status }: { id: EntityId; status: string }) => updateKillConditionStatus(id, status),
+    mutationFn: ({ condition, status }: { condition: KillCondition; status: string }) =>
+      updateKillConditionStatus(mutationEntityId(condition, "kill_condition"), status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
       void invalidateApprovalSummaries(qc)
@@ -1590,6 +1645,11 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
   return (
     <div className="space-y-3">
       <StagedProposalNotice proposal={proposal} className="text-xs" />
+      {mutation.isError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {String(mutation.error)}
+        </div>
+      )}
       {conditions.map(k => {
         const status = statusOrFallback(k.status, "active")
         return (
@@ -1610,7 +1670,7 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
                   <button
                     key={s}
                     type="button"
-                    onClick={() => mutation.mutate({ id: k.id, status: s })}
+                    onClick={() => mutation.mutate({ condition: k, status: s })}
                     disabled={mutation.isPending}
                     className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
                   >

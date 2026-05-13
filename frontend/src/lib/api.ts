@@ -2484,7 +2484,7 @@ export const fetchCatalysts = (ticker: string) =>
 export const createCatalyst = (body: { ticker: string; description: string; category?: string; target_date?: string } & StagedMutationOptions) =>
   client.post("/catalysts", body).then(r => r.data as StagedMutationResponse)
 export const updateCatalystStatus = (id: number | string, status: string, evidence?: string, options?: StagedMutationOptions) =>
-  client.put(`/catalysts/${id}/status`, { status, evidence, ...options }).then(r => r.data as StagedMutationResponse)
+  client.put(`/catalysts/${encodeURIComponent(String(id))}/status`, { status, evidence, ...options }).then(r => r.data as StagedMutationResponse)
 
 // Thesis Claims
 export interface SourceRequirement {
@@ -2541,7 +2541,7 @@ export const fetchKillConditions = (ticker: string) =>
 export const createKillCondition = (body: { ticker: string; condition: string; metric?: string; threshold?: string } & StagedMutationOptions) =>
   client.post("/kill-conditions", body).then(r => r.data as StagedMutationResponse)
 export const updateKillConditionStatus = (id: number | string, status: string, options?: StagedMutationOptions) =>
-  client.put(`/kill-conditions/${id}/status`, { status, ...options }).then(r => r.data as StagedMutationResponse)
+  client.put(`/kill-conditions/${encodeURIComponent(String(id))}/status`, { status, ...options }).then(r => r.data as StagedMutationResponse)
 
 // Workflow Runs
 interface AgentWorkflowResponse {

@@ -11,6 +11,16 @@ from ontology.runtime_read_service import OntologyRuntimeReadService
 router = APIRouter()
 
 
+def _legacy_route_id(value: str, prefix: str) -> str:
+    text = str(value or "").strip()
+    marker = f"{prefix}:"
+    if text.startswith(marker):
+        suffix = text.removeprefix(marker)
+        if suffix.isdigit():
+            return suffix
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Catalysts
 # ---------------------------------------------------------------------------
@@ -54,14 +64,15 @@ def create_catalyst(body: CreateCatalystRequest):
 
 @router.put("/catalysts/{catalyst_id}/status")
 def update_catalyst_status(catalyst_id: str, body: UpdateCatalystStatusRequest):
+    resolved_catalyst_id = _legacy_route_id(catalyst_id, "catalyst")
     return stage_api_action(
         "update_catalyst_status",
-        {"catalyst_id": catalyst_id, "status": body.status, "evidence": body.evidence},
+        {"catalyst_id": resolved_catalyst_id, "status": body.status, "evidence": body.evidence},
         source_id="process_entities.update_catalyst_status",
-        reason=body.reason or f"Update catalyst {catalyst_id} status",
+        reason=body.reason or f"Update catalyst {resolved_catalyst_id} status",
         apply=body.apply,
         approval_note=body.approval_note,
-        entity_id=catalyst_id,
+        entity_id=resolved_catalyst_id,
     )
 
 
@@ -213,12 +224,13 @@ def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
 
 @router.put("/kill-conditions/{kc_id}/status")
 def update_kill_condition_status(kc_id: str, body: UpdateKillConditionStatusRequest):
+    resolved_kc_id = _legacy_route_id(kc_id, "kill_condition")
     return stage_api_action(
         "update_kill_condition_status",
-        {"kill_condition_id": kc_id, "status": body.status},
+        {"kill_condition_id": resolved_kc_id, "status": body.status},
         source_id="process_entities.update_kill_condition_status",
-        reason=body.reason or f"Update kill condition {kc_id} status",
+        reason=body.reason or f"Update kill condition {resolved_kc_id} status",
         apply=body.apply,
         approval_note=body.approval_note,
-        entity_id=kc_id,
+        entity_id=resolved_kc_id,
     )

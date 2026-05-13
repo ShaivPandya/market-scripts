@@ -10,14 +10,15 @@ def test_agent_domain_policy_allows_finance_business_questions():
         "is Apple attractive here?",
         "compare EURUSD and rates",
         "fix the portfolio analyzer bug",
+        "can you make the proposals to update the status?",
     ]
 
     for text in allowed:
         assert classify_agent_domain(text) == "allow"
 
 
-def test_agent_domain_policy_blocks_unrelated_questions():
-    blocked = [
+def test_agent_domain_policy_allows_unrelated_questions_with_soft_flag():
+    unrelated = [
         "give me a chicken recipe",
         "plan a trip to Tokyo",
         "who won the Lakers game?",
@@ -25,19 +26,25 @@ def test_agent_domain_policy_blocks_unrelated_questions():
         "write quicksort in Python",
     ]
 
-    for text in blocked:
-        assert classify_agent_domain(text) == "block"
+    for text in unrelated:
+        result = analyze_agent_domain(text)
+        assert result.decision == "allow"
+        assert result.contains_unsupported_request is True
 
 
-def test_agent_domain_policy_clarifies_ambiguous_questions_without_context():
-    clarify = [
+def test_agent_domain_policy_allows_ambiguous_followups_without_clear_unrelated_intent():
+    allowed = [
         "what do you think?",
         "Mercury",
         "is it good?",
     ]
 
-    for text in clarify:
-        assert classify_agent_domain(text) == "clarify"
+    for text in allowed:
+        assert classify_agent_domain(text) == "allow"
+
+
+def test_agent_domain_policy_clarifies_empty_messages():
+    assert classify_agent_domain(" ") == "clarify"
 
 
 def test_agent_domain_policy_flags_mixed_supported_and_unsupported_request():

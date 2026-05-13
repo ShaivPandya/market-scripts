@@ -8,9 +8,12 @@ still being filled out route by route.
 from __future__ import annotations
 
 import importlib
+import logging
 from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService
+
+logger = logging.getLogger(__name__)
 
 
 def _ontology_primary_writes_enabled() -> bool:
@@ -104,6 +107,11 @@ class OntologyRuntimeReadService:
             return self._workspace_bundle_from_objects()
         repo = self._read_model_repository()
         bundle = repo.fetch_workspace_bundle()
+        recent_workflow_runs = self._merge_fresh_workflow_runs(
+            self._project_read_model_rows(bundle.get("recent_workflow_runs", [])),
+            ticker=None,
+            limit=3,
+        )
         return {
             "latest_evaluations": self._project_read_model_rows(bundle.get("latest_evaluations", [])),
             "theses": self._project_read_model_rows(bundle.get("theses", [])),
@@ -116,7 +124,7 @@ class OntologyRuntimeReadService:
             "open_action_items": self._project_read_model_rows(bundle.get("open_action_items", [])),
             "optimizer_alerts": self._project_read_model_rows(bundle.get("optimizer_alerts", [])),
             "active_watch_triggers": self._project_read_model_rows(bundle.get("active_watch_triggers", [])),
-            "recent_workflow_runs": self._project_read_model_rows(bundle.get("recent_workflow_runs", [])),
+            "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": self._project_read_model_rows(bundle.get("recent_report_runs", [])),
             "challenged_claims": self._project_read_model_rows(bundle.get("challenged_claims", [])),
             "disconfirmed_claims": self._project_read_model_rows(bundle.get("disconfirmed_claims", [])),
@@ -127,6 +135,11 @@ class OntologyRuntimeReadService:
             return self._dossier_bundle_from_objects(ticker)
         repo = self._read_model_repository()
         bundle = repo.fetch_dossier_bundle(ticker)
+        workflow_runs = self._merge_fresh_workflow_runs(
+            self._project_read_model_rows(bundle.get("workflow_runs", [])),
+            ticker=ticker,
+            limit=10,
+        )
         return {
             "position": self._project_read_model_row(bundle.get("position")),
             "thesis_meta": self._project_read_model_row(bundle.get("thesis_meta")),
@@ -135,7 +148,7 @@ class OntologyRuntimeReadService:
             "catalysts": self._project_read_model_rows(bundle.get("catalysts", [])),
             "kill_conditions": self._project_read_model_rows(bundle.get("kill_conditions", [])),
             "thesis_claims": self._project_read_model_rows(bundle.get("thesis_claims", [])),
-            "workflow_runs": self._project_read_model_rows(bundle.get("workflow_runs", [])),
+            "workflow_runs": workflow_runs,
             "action_items": self._project_read_model_rows(bundle.get("action_items", [])),
             "watch_triggers": self._project_read_model_rows(bundle.get("watch_triggers", [])),
             "pending_approvals": self._project_read_model_rows(bundle.get("pending_approvals", [])),
@@ -292,8 +305,10 @@ class OntologyRuntimeReadService:
         return rows
 
     def workflow_runs(self, *, ticker: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        if _ontology_primary_writes_enabled():
+            return self._fresh_workflow_runs_from_objects(ticker=ticker, limit=limit)
         filters = {"ticker": _ticker(ticker)} if ticker else None
-        return self.list_objects("WorkflowRun", filters=filters, limit=limit)
+        return _sort_workflow_runs(self.list_objects("WorkflowRun", filters=filters, limit=limit))[:limit]
 
     def report_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.list_objects("ReportRun", limit=limit)
@@ -336,6 +351,33 @@ class OntologyRuntimeReadService:
             "watch_triggers": self.watch_triggers(ticker=normalized),
             "pending_approvals": self.approvals(ticker=normalized, status="pending"),
         }
+
+    def _merge_fresh_workflow_runs(
+        self,
+        read_model_runs: list[dict[str, Any]],
+        *,
+        ticker: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        try:
+            direct_runs = self._fresh_workflow_runs_from_objects(ticker=ticker, limit=max(limit, 20))
+        except Exception:
+            logger.exception("failed to merge fresh workflow runs into operational bundle")
+            direct_runs = []
+
+        by_id: dict[str, dict[str, Any]] = {}
+        for run in [*direct_runs, *read_model_runs]:
+            key = _workflow_run_identity(run)
+            if key and key not in by_id:
+                by_id[key] = run
+        return _sort_workflow_runs(list(by_id.values()))[:limit]
+
+    def _fresh_workflow_runs_from_objects(self, *, ticker: str | None, limit: int) -> list[dict[str, Any]]:
+        normalized = _ticker(ticker) if ticker else None
+        filters = {"ticker": normalized} if normalized else None
+        fetch_limit = 500 if _ontology_primary_writes_enabled() else limit
+        rows = self.list_objects("WorkflowRun", filters=filters, limit=fetch_limit)
+        return _sort_workflow_runs(rows)[:limit]
 
     def _read_model_repository(self):
         if self.read_model_repo is not None:
@@ -737,6 +779,30 @@ def _ticker(value: Any) -> str:
 
 def _ticker_status_filter(ticker: str | None, status: str | None) -> dict[str, Any]:
     return _clean_filters({"ticker": _ticker(ticker) if ticker else None, "status": status})
+
+
+def _workflow_run_identity(row: dict[str, Any]) -> str:
+    return str(row.get("run_id") or row.get("object_uid") or row.get("id") or "").strip()
+
+
+def _workflow_run_sort_value(row: dict[str, Any]) -> str:
+    for key in ("updated_at", "completed_at", "started_at", "created_at"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    meta = row.get("_meta")
+    temporal = meta.get("temporal") if isinstance(meta, dict) else None
+    if isinstance(temporal, dict):
+        return str(temporal.get("tx_from") or temporal.get("valid_from") or "").strip()
+    return ""
+
+
+def _sort_workflow_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (_workflow_run_sort_value(row), _workflow_run_identity(row)),
+        reverse=True,
+    )
 
 
 def _first(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

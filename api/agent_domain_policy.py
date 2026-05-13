@@ -8,8 +8,13 @@ from typing import Any, Literal
 
 DomainDecision = Literal["allow", "block", "clarify"]
 
-DOMAIN_BLOCK_RESPONSE = "I can only help with investing related questions."
-DOMAIN_CLARIFY_RESPONSE = "Can you frame that as an investing question?"
+DOMAIN_BLOCK_RESPONSE = (
+    "I can’t help with clearly unrelated requests here, but I can help with investing, markets, "
+    "portfolio, macro, business, and Talisman workflow questions."
+)
+DOMAIN_CLARIFY_RESPONSE = (
+    "What investing, markets, portfolio, macro, business, or Talisman workflow question should I help with?"
+)
 MIXED_DOMAIN_INSTRUCTION = (
     "The current user turn contains both supported finance/business content and unsupported content. "
     "Answer only the supported finance, markets, investing, portfolio, macro, business, company, "
@@ -44,7 +49,8 @@ _SUPPORTED_RX = re.compile(
     r"risk|risks|hedge|hedging|beta|exposure|p&l|pnl|drawdown|"
     r"thesis|catalyst|catalysts|kill condition|dossier|conviction|sizing|sizer|analyzer|optimizer|"
     r"screener|screen|chart|technical analysis|breadth|sentiment|positioning|management quality|"
-    r"talisman|stan|workspace|approval|approvals|watch trigger|workflow"
+    r"talisman|stan|workspace|approval|approvals|proposal|proposals|status|statuses|watch trigger|"
+    r"workflow|action item|action items|pending|stage|staged|propose|proposed"
     r")\b",
     re.IGNORECASE,
 )
@@ -131,15 +137,19 @@ def analyze_agent_domain(text: str, screen_context: Any | None = None) -> AgentD
         )
 
     if has_unsupported_signal:
-        return AgentDomainClassification("block", "unsupported_domain")
+        return AgentDomainClassification(
+            "allow",
+            "unsupported_signal_allowed",
+            contains_unsupported_request=True,
+        )
 
     if has_screen_context and _looks_like_followup(normalized):
         return AgentDomainClassification("allow", "screen_context_followup")
 
     if _QUESTION_WITHOUT_DOMAIN_RX.match(normalized) or _looks_like_short_ambiguous_text(normalized):
-        return AgentDomainClassification("clarify", "ambiguous_without_domain_signal")
+        return AgentDomainClassification("allow", "ambiguous_allowed")
 
-    return AgentDomainClassification("block", "outside_supported_domain")
+    return AgentDomainClassification("allow", "no_block_signal")
 
 
 def _has_supported_signal(text: str, *, has_screen_context: bool) -> bool:

@@ -87,6 +87,31 @@ interface AgentChatProps {
   screenContext?: ScreenContext
 }
 
+interface WorkflowInvalidationTarget {
+  workflowName: string
+  ticker: string | null
+}
+
+function workflowTargetFromCommand(value: string): WorkflowInvalidationTarget | null {
+  const match = value.trim().match(/^\/workflow:([A-Za-z0-9_]+)(?::([A-Za-z0-9._-]+))?(?:\s|$)/)
+  if (!match) return null
+  return {
+    workflowName: match[1],
+    ticker: match[2] ? match[2].toUpperCase() : null,
+  }
+}
+
+function invalidateWorkflowRunQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  target: WorkflowInvalidationTarget,
+) {
+  void queryClient.invalidateQueries({ queryKey: ["workspace"] })
+  void queryClient.invalidateQueries({ queryKey: ["workflow-runs"] })
+  if (target.ticker) {
+    void queryClient.invalidateQueries({ queryKey: ["dossier", target.ticker] })
+  }
+}
+
 export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat, loadSession } = useAgentChat()
   const queryClient = useQueryClient()
@@ -103,6 +128,8 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const [preferenceSaveError, setPreferenceSaveError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const wasStreamingRef = useRef(isStreaming)
+  const pendingWorkflowInvalidationRef = useRef<WorkflowInvalidationTarget | null>(null)
   const workflowsQuery = useQuery({
     queryKey: ["agent-workflows"],
     queryFn: fetchAgentWorkflows,
@@ -143,6 +170,14 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? "auto" : "smooth" })
   }, [messages, isStreaming])
 
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming && pendingWorkflowInvalidationRef.current) {
+      invalidateWorkflowRunQueries(queryClient, pendingWorkflowInvalidationRef.current)
+      pendingWorkflowInvalidationRef.current = null
+    }
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming, queryClient])
+
   // Focus textarea when drawer opens
   useEffect(() => {
     if (open) {
@@ -168,6 +203,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   function handleSend() {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
+    pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(trimmed)
     setInput("")
     sendMessage(trimmed, screenContext, activePreferences)
   }
@@ -191,6 +227,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const cmd = wf.requiresTicker
       ? `/workflow:${wf.name}:${ticker}`
       : `/workflow:${wf.name}`
+    pendingWorkflowInvalidationRef.current = { workflowName: wf.name, ticker: ticker || null }
     sendMessage(cmd, screenContext, activePreferences, { durable: true })
     setWorkflowTicker("")
     setShowWorkflows(false)

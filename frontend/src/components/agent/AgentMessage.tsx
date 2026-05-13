@@ -165,17 +165,48 @@ function ToolCallChip({ tc }: { tc: ToolCall }) {
   )
 }
 
-function EgressChip({ record }: { record: EgressRecord }) {
-  if (record.decision !== "allowed_with_warning" && record.decision !== "blocked") return null
-  const blocked = record.decision === "blocked"
-  const label = blocked ? "Model egress blocked" : "Private context sent"
-  const title = [
+interface EgressRecordGroup {
+  id: string
+  decision: "allowed_with_warning" | "blocked"
+  records: EgressRecord[]
+}
+
+function visibleEgressGroups(records: EgressRecord[] | undefined): EgressRecordGroup[] {
+  const groups = new Map<EgressRecordGroup["decision"], EgressRecordGroup>()
+  for (const record of records ?? []) {
+    if (record.decision !== "allowed_with_warning" && record.decision !== "blocked") continue
+    const decision = record.decision
+    const group = groups.get(decision)
+    if (group) {
+      group.records.push(record)
+    } else {
+      groups.set(decision, { id: decision, decision, records: [record] })
+    }
+  }
+  return [...groups.values()]
+}
+
+function egressRecordTitle(record: EgressRecord): string {
+  return [
     record.decisionReason,
     record.dataSensitivity ? `Sensitivity: ${record.dataSensitivity}` : null,
     record.provider ? `Provider: ${record.provider}` : null,
     record.model ? `Model: ${record.model}` : null,
     record.policyDecisionId ? `Policy decision: ${record.policyDecisionId}` : null,
   ].filter(Boolean).join("\n")
+}
+
+function EgressChip({ group }: { group: EgressRecordGroup }) {
+  const blocked = group.decision === "blocked"
+  const label = blocked ? "Model egress blocked" : "Private context sent"
+  const title = [
+    group.records.length > 1 ? `${group.records.length} model calls recorded.` : null,
+    ...group.records.map((record, index) => {
+      const detail = egressRecordTitle(record)
+      if (!detail) return null
+      return group.records.length > 1 ? `Call ${index + 1}\n${detail}` : detail
+    }),
+  ].filter(Boolean).join("\n\n")
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs mr-1.5 mb-1.5 ${
@@ -187,6 +218,7 @@ function EgressChip({ record }: { record: EgressRecord }) {
     >
       <ShieldAlert size={10} aria-hidden="true" />
       {label}
+      {group.records.length > 1 && <span className="opacity-75">· {group.records.length} calls</span>}
     </span>
   )
 }
@@ -211,6 +243,7 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
     ? "internal_state"
     : "read_only"
   const messageDecisionState = messageScope === "internal_state" ? "proposal" : "analysis"
+  const egressGroups = visibleEgressGroups(message.egressRecords)
 
   // Assistant message
   return (
@@ -228,10 +261,10 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
             ))}
           </div>
         )}
-        {message.egressRecords && message.egressRecords.length > 0 && (
+        {egressGroups.length > 0 && (
           <div className="flex flex-wrap mb-2">
-            {message.egressRecords.map(record => (
-              <EgressChip key={record.id} record={record} />
+            {egressGroups.map(group => (
+              <EgressChip key={group.id} group={group} />
             ))}
           </div>
         )}

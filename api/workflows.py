@@ -841,12 +841,15 @@ def create_workflow_run(
             "ticker": ticker,
             "status": "running",
             "started_at": now,
+            "created_at": now,
+            "updated_at": now,
             "ontology_run_id": "operational",
         },
         now,
         actor=_actor_payload(actor),
         provenance=f"pv:workflow_run:{run_id}",
     )
+    _refresh_workflow_read_models_if_enabled()
     return {"run_id": run_id, "workflow_name": workflow_name, "ticker": ticker, "status": "running"}
 
 
@@ -875,6 +878,8 @@ def complete_workflow_run(
             "status": "succeeded",
             "started_at": props.get("started_at") or now,
             "completed_at": now,
+            "created_at": props.get("created_at") or props.get("started_at") or now,
+            "updated_at": now,
             "synthesis": synthesis,
             "artifacts": artifacts or {},
             "tool_sections": sections or [],
@@ -889,6 +894,7 @@ def complete_workflow_run(
         actor=_actor_payload(actor),
         provenance=f"pv:workflow_run:{run_id}:complete",
     )
+    _refresh_workflow_read_models_if_enabled()
     return dict(row.get("properties") or props)
 
 
@@ -910,6 +916,8 @@ def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) ->
             "status": "failed",
             "started_at": props.get("started_at") or now,
             "completed_at": now,
+            "created_at": props.get("created_at") or props.get("started_at") or now,
+            "updated_at": now,
             "error": error,
             "ontology_run_id": "operational",
         }
@@ -922,7 +930,23 @@ def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) ->
         actor=_actor_payload(actor),
         provenance=f"pv:workflow_run:{run_id}:failed",
     )
+    _refresh_workflow_read_models_if_enabled()
     return dict(row.get("properties") or props)
+
+
+def _refresh_workflow_read_models_if_enabled() -> None:
+    if not ontology_primary_writes_enabled():
+        return
+    try:
+        from ontology.domain_write_service import ontology_read_model_enabled
+
+        if not ontology_read_model_enabled():
+            return
+        from ontology.read_model import TemporalReadModelRepository
+
+        TemporalReadModelRepository().refresh()
+    except Exception:
+        logger.exception("ontology read model refresh failed after workflow run write")
 
 
 def _get_workflow_run_object(service: OntologyObjectService, run_id: str) -> dict[str, Any] | None:
