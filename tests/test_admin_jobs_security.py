@@ -28,7 +28,7 @@ def test_scheduler_secret_can_enqueue_maintenance_job(client, monkeypatch):
     )
 
     resp = client.post(
-        "/api/v1/admin/jobs/enqueue-cache-warm",
+        "/api/admin/jobs/enqueue-cache-warm",
         headers={"X-Scheduler-Secret": "scheduler-secret"},
     )
 
@@ -65,7 +65,7 @@ def test_scheduler_secret_can_enqueue_macro_snapshot_job(client, monkeypatch):
     )
 
     resp = client.post(
-        "/api/v1/admin/jobs/enqueue-macro-snapshot-refresh",
+        "/api/admin/jobs/enqueue-macro-snapshot-refresh",
         headers={"X-Scheduler-Secret": "scheduler-secret"},
     )
 
@@ -85,7 +85,7 @@ def test_scheduler_secret_cannot_poll_arbitrary_job_result(client, monkeypatch):
     complete_job("known-job", {"secret_result": "value"})
 
     resp = client.get(
-        "/api/v1/admin/jobs/known-job",
+        "/api/admin/jobs/known-job",
         headers={"X-Scheduler-Secret": "scheduler-secret"},
     )
 
@@ -99,7 +99,7 @@ def test_authenticated_admin_can_poll_job_result(auth_client):
     create_job("analyzer", payload={"private": "payload"}, job_id="known-job")
     complete_job("known-job", {"secret_result": "value"})
 
-    resp = auth_client.get("/api/v1/admin/jobs/known-job")
+    resp = auth_client.get("/api/admin/jobs/known-job")
 
     assert resp.status_code == 200
     assert resp.json()["result"] == {"secret_result": "value"}
@@ -114,7 +114,7 @@ def test_admin_enqueue_dispatch_error_returns_structured_503(auth_client, monkey
 
     monkeypatch.setattr(admin_jobs, "enqueue_registered_job", fail_enqueue)
 
-    resp = auth_client.post("/api/v1/admin/jobs/enqueue-market-snapshot-refresh")
+    resp = auth_client.post("/api/admin/jobs/enqueue-market-snapshot-refresh")
 
     assert resp.status_code == 503
     assert resp.json()["error"] == "Async job dispatch failed: run api unavailable"

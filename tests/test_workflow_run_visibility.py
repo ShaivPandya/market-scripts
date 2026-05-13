@@ -23,8 +23,6 @@ def test_workflow_run_writes_refresh_operational_read_model(monkeypatch):
             props = store.get(str(object_uid)) or store.get(run_id)
             return {"properties": dict(props)} if props else None
 
-    monkeypatch.setattr(workflows, "ontology_primary_writes_enabled", lambda: True)
-    monkeypatch.setattr(domain_write_service, "ontology_read_model_enabled", lambda: True)
     monkeypatch.setattr(read_model, "TemporalReadModelRepository", _Repo)
     monkeypatch.setattr(workflows, "OntologyObjectService", _Objects)
 
@@ -107,9 +105,6 @@ def test_runtime_bundles_merge_fresh_workflow_runs_when_read_model_is_stale(monk
             if ticker and ticker != "NVDA":
                 return []
             return [fresh_run]
-
-    monkeypatch.setattr(runtime_read_service, "_ontology_primary_writes_enabled", lambda: True)
-    monkeypatch.setattr(runtime_read_service, "_ontology_read_model_enabled", lambda: True)
 
     service = OntologyRuntimeReadService(object_service=_Objects(), read_model_repository=_Repo())
 

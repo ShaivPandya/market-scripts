@@ -1,0 +1,100 @@
+import { ChevronDown, Send, Square, Zap } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { resizeChatTextarea } from "./agentChatTextarea"
+import type { KeyboardEvent, ReactNode, RefObject } from "react"
+
+interface AgentChatComposerProps {
+  input: string
+  onInputChange: (value: string) => void
+  onSend: () => void
+  onStop: () => void
+  isStreaming: boolean
+  textareaRef: RefObject<HTMLTextAreaElement | null>
+  compactWorkflowSlot?: ReactNode
+  workflowsOpen?: boolean
+  onToggleWorkflows?: () => void
+}
+
+export function AgentChatComposer({
+  input,
+  onInputChange,
+  onSend,
+  onStop,
+  isStreaming,
+  textareaRef,
+  compactWorkflowSlot,
+  workflowsOpen,
+  onToggleWorkflows,
+}: AgentChatComposerProps) {
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault()
+      onSend()
+    }
+  }
+
+  return (
+    <div className="safe-bottom shrink-0 border-t border-app bg-card px-4 py-3">
+      {compactWorkflowSlot && onToggleWorkflows && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={onToggleWorkflows}
+            className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted transition-colors hover:text-app"
+            aria-expanded={workflowsOpen}
+          >
+            <Zap size={13} aria-hidden="true" />
+            <span>Workflows</span>
+            <ChevronDown size={12} className={cn("transition-transform", workflowsOpen && "rotate-180")} aria-hidden="true" />
+          </button>
+          {workflowsOpen && compactWorkflowSlot}
+        </div>
+      )}
+
+      {isStreaming && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-app bg-card-muted px-3 py-2 text-xs text-muted" aria-live="polite">
+          <span>Generating response</span>
+          <span className="h-2 w-2 rounded-full bg-[hsl(var(--accent))] animate-pulse" aria-hidden="true" />
+        </div>
+      )}
+
+      <div className="flex items-end gap-2">
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={event => onInputChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onInput={event => resizeChatTextarea(event.currentTarget)}
+          placeholder="Ask about markets, portfolio, macro..."
+          aria-label="Message Stan"
+          rows={1}
+          className="theme-input min-h-[44px] min-w-0 max-h-[120px] flex-1 resize-none overflow-x-hidden rounded-xl text-sm leading-5"
+          style={{ height: "44px", overflowX: "hidden", overflowY: "hidden" }}
+          disabled={isStreaming}
+        />
+        {isStreaming ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className="theme-button-destructive flex h-11 w-11 flex-none items-center justify-center rounded-full"
+            aria-label="Stop generating"
+            title="Stop generating"
+          >
+            <Square size={14} aria-hidden="true" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={!input.trim()}
+            className="theme-button-primary flex h-11 w-11 flex-none items-center justify-center rounded-full text-[hsl(var(--accent-foreground))] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Send message"
+            title="Send message"
+          >
+            <Send size={14} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}

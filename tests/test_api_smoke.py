@@ -13,7 +13,7 @@ external APIs (yfinance, FRED, etc.) are unavailable. Mark them with
 import pytest
 
 # All GET endpoints that require auth
-_API_PREFIX = "/api/v1"
+_API_PREFIX = "/api"
 
 _AUTH_GET_ENDPOINTS = [
     f"{_API_PREFIX}/portfolio",
@@ -49,7 +49,7 @@ class TestPublicEndpoints:
         assert resp.json() == {"status": "ok"}
 
     def test_admin_health_has_checks(self, auth_client):
-        resp = auth_client.get("/api/v1/admin/health")
+        resp = auth_client.get("/api/admin/health")
         assert resp.status_code in {200, 503}
         data = resp.json()
         assert "checks" in data

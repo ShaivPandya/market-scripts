@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from api.postgres import use_postgres_state
-from api.postgres_compat import PostgresCompatConnection
+from api.postgres_state import PostgresStateConnection
 
 DB_PATH = Path(__file__).parent / "app_settings.db"
 
@@ -46,7 +46,7 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
 }
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | PostgresCompatConnection | None = None
+_conn: sqlite3.Connection | PostgresStateConnection | None = None
 
 _CREATE_APP_SETTINGS = """
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -71,7 +71,7 @@ def _close_conn() -> None:
         _conn = None
 
 
-def _get_conn(*, probe: bool = True) -> sqlite3.Connection | PostgresCompatConnection:
+def _get_conn(*, probe: bool = True) -> sqlite3.Connection | PostgresStateConnection:
     global _conn
     if probe and _conn is not None:
         try:
@@ -82,7 +82,7 @@ def _get_conn(*, probe: bool = True) -> sqlite3.Connection | PostgresCompatConne
         with _lock:
             if _conn is None:
                 if use_postgres_state():
-                    _conn = PostgresCompatConnection()
+                    _conn = PostgresStateConnection()
                 else:
                     _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
                     _conn.row_factory = sqlite3.Row
@@ -90,7 +90,7 @@ def _get_conn(*, probe: bool = True) -> sqlite3.Connection | PostgresCompatConne
     return _conn
 
 
-def _init_db(conn: sqlite3.Connection | PostgresCompatConnection) -> None:
+def _init_db(conn: sqlite3.Connection | PostgresStateConnection) -> None:
     conn.execute(_CREATE_APP_SETTINGS)
     conn.commit()
 

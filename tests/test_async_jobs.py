@@ -329,18 +329,18 @@ def test_analyzer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     assert persisted["queue_name"] == "analyzer"
 
 
-def test_sizer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
+def test_sizer_dispatches_to_cloud_run_jobs(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
-    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
+    dispatched: list[tuple[str, str]] = []
     monkeypatch.setattr(
         async_job_runner,
         "_enqueue_cloud_run_job",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+        lambda job_type, job_id: dispatched.append((job_type, job_id)),
     )
 
     row, disposition = async_job_runner.enqueue_registered_job(
@@ -350,6 +350,7 @@ def test_sizer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     )
 
     assert disposition == "created"
+    assert dispatched == [("sizer", row["job_id"])]
     persisted = get_job(row["job_id"])
     assert persisted is not None
     assert persisted["status"] == "queued"
@@ -435,22 +436,21 @@ def test_agent_worker_loop_claims_and_completes_one_job(monkeypatch):
     assert persisted["status"] == "completed"
 
 
-def test_generic_worker_loop_claims_and_completes_sizer_job(monkeypatch):
-    from api import async_job_runner, cache
-    from api.job_queue import get_job
+def test_generic_worker_loop_can_claim_and_complete_sizer_job(monkeypatch):
+    from api import cache
+    from api.job_queue import create_or_reuse_job, get_job
     from api.job_worker_loop import run_once
     from api.routers import sizer
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
-    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
     monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
 
-    row, _disposition = async_job_runner.enqueue_registered_job(
+    row, _disposition = create_or_reuse_job(
         "sizer",
-        {"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
+        payload={"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
         cache_key="sizer-worker-loop",
+        queue_name="sizer",
     )
 
     assert run_once(job_type="sizer", queue_name="sizer") is True
@@ -910,26 +910,26 @@ def test_core_async_endpoints_use_persisted_job_contract(auth_client, monkeypatc
 
     cache.invalidate_all()
     cases = [
-        (analyzer, "analyzer", "_compute_analyzer_result", "/api/v1/portfolio-analyzer/async", {}),
+        (analyzer, "analyzer", "_compute_analyzer_result", "/api/portfolio-analyzer/async", {}),
         (
             hedging,
             "hedging",
             "_compute_hedging_result",
-            "/api/v1/hedging-tool/async",
+            "/api/hedging-tool/async",
             {"book": 100000, "positions": [{"ticker": "AAA", "weight": 0.1}]},
         ),
         (
             sizer,
             "sizer",
             "_compute_sizer_result",
-            "/api/v1/portfolio-sizer/async",
+            "/api/portfolio-sizer/async",
             {"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
         ),
         (
             fundamental_momentum,
             "fundamental_momentum",
             "_compute_fundamental_momentum",
-            "/api/v1/fundamental-momentum/async",
+            "/api/fundamental-momentum/async",
             {"input_mode": "Custom Tickers", "tickers": "AAA", "screen_type": "EPS"},
         ),
     ]
@@ -972,14 +972,14 @@ def test_analyzer_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
     monkeypatch.setattr(analyzer, "_compute_analyzer_result", slow_analyzer_job)
 
     started_resp = auth_client.post(
-        "/api/v1/portfolio-analyzer/async",
+        "/api/portfolio-analyzer/async",
         json={"scenario": {"preset": f"cancel-test-{time.time_ns()}"}},
     )
     assert started_resp.status_code == 202
     job_id = started_resp.json()["job_id"]
     assert started.wait(timeout=2)
 
-    cancel_resp = auth_client.post(f"/api/v1/portfolio-analyzer/async/{job_id}/cancel")
+    cancel_resp = auth_client.post(f"/api/portfolio-analyzer/async/{job_id}/cancel")
     assert cancel_resp.status_code == 200
     assert cancel_resp.json()["status"] == "cancelled"
 
@@ -993,39 +993,35 @@ def test_analyzer_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
     else:
         raise AssertionError("cancelled analyzer job was overwritten")
 
-    poll_resp = auth_client.get(f"/api/v1/portfolio-analyzer/async/{job_id}")
+    poll_resp = auth_client.get(f"/api/portfolio-analyzer/async/{job_id}")
     assert poll_resp.status_code == 200
     assert poll_resp.json()["status"] == "cancelled"
 
 
-def test_sizer_async_endpoint_can_complete_via_warm_worker(auth_client, monkeypatch):
+def test_sizer_async_endpoint_dispatches_cloud_run_job(auth_client, monkeypatch):
     from api import async_job_runner, cache
-    from api.job_worker_loop import run_once
-    from api.routers import sizer
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
-    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
+    dispatched: list[tuple[str, str]] = []
     monkeypatch.setattr(
         async_job_runner,
         "_enqueue_cloud_run_job",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+        lambda job_type, job_id: dispatched.append((job_type, job_id)),
     )
-    monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
 
     started = auth_client.post(
-        "/api/v1/portfolio-sizer/async",
+        "/api/portfolio-sizer/async",
         json={"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
     )
 
     assert started.status_code == 202
     job_id = started.json()["job_id"]
-    assert run_once(job_type="sizer", queue_name="sizer") is True
+    assert dispatched == [("sizer", job_id)]
 
-    done = auth_client.get(f"/api/v1/portfolio-sizer/async/{job_id}").json()
-    assert done["status"] == "done"
-    assert done["result"] == {"ok": "AAA"}
+    queued = auth_client.get(f"/api/portfolio-sizer/async/{job_id}").json()
+    assert queued["status"] == "queued"
 
 
 def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client, monkeypatch):
@@ -1038,7 +1034,7 @@ def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client,
     monkeypatch.setattr(fundamental_momentum, "enqueue_registered_job", fail_enqueue)
 
     resp = auth_client.post(
-        "/api/v1/fundamental-momentum/async",
+        "/api/fundamental-momentum/async",
         json={
             "input_mode": "Custom Tickers",
             "tickers": "FTI, INVX",

@@ -7,7 +7,10 @@ The Economic Growth Dashboard is a Python-based tool that tracks key economic in
 ## Where this is used
 
 - Standalone CLI: `python3 macro/economic_growth/economic_growth.py`
-- FastAPI: `GET /api/economic-growth` (see `api/routers/economic_growth.py`)
+- FastAPI:
+  - `GET /api/economic-growth`
+  - `POST /api/economic-growth/crb-file` to upload/replace the CRB workbook used by the app
+  - `POST /api/economic-growth/analyze` for the LLM-assisted dashboard summary
 - React UI: “Economic Growth” page in `frontend/`
 
 ## How It Works
@@ -15,7 +18,7 @@ The Economic Growth Dashboard is a Python-based tool that tracks key economic in
 ### Data Collection
 
 1. **Live Market Data**: Uses the `yfinance` library to fetch historical price data for equities, commodities, and currency pairs
-2. **CRB Spot Index**: Reads from a local Excel file (`.xlsx` format) containing Moody's Analytics CRB Spot Index data
+2. **CRB Spot Index**: Reads from a local Excel file (`.xls` or `.xlsx`) containing Moody's Analytics CRB Spot Index data
 3. **Time Periods**: Calculates returns over 1-month (30 days), 3-month (91 days), 6-month (182 days), and 1-year (365 days) periods
 
 ### Performance Calculation
@@ -26,7 +29,7 @@ The Economic Growth Dashboard is a Python-based tool that tracks key economic in
 ### Benchmark Comparison
 
 **Equities** are color-coded relative to their benchmarks:
-- **US Equities** (Russell 2000, S&P 600, Consumer Staples, Transports, Banks, Korea): Compared to **S&P 500**
+- **US Equities** (Russell 2000, S&P 600, Transports, Banks, Retail, Staples, Utilities, Korea): Compared to **S&P 500**
 - **Europe Banks**: Compared to **STOXX 600**
 - **Green** = Outperforming benchmark for that period
 - **Red** = Underperforming benchmark for that period
@@ -96,7 +99,7 @@ Historically used by macro investors as a proxy for global economic optimism.
 pip install -r requirements.txt
 
 # Or install just the minimal deps for this module
-pip install yfinance rich pandas openpyxl
+pip install yfinance rich pandas openpyxl xlrd
 
 # Run with default CRB file (crb.xlsx)
 python3 macro/economic_growth/economic_growth.py

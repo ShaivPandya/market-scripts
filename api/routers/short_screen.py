@@ -154,7 +154,7 @@ def run_short_screen(req: ShortScreenRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("short_screen", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/short-screen/async/{job_id}")
+    return enqueue_response(row, "/api/short-screen/async/{job_id}")
 
 
 @router.post("/short-screen/async")
@@ -165,7 +165,7 @@ def start_short_screen(req: ShortScreenRequest):
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     row, _disposition = enqueue_registered_job("short_screen", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/short-screen/async/{job_id}")
+    return enqueue_response(row, "/api/short-screen/async/{job_id}")
 
 
 @router.get("/short-screen/async/{job_id}")

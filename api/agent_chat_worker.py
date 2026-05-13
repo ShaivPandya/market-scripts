@@ -8,7 +8,7 @@ import os
 import time
 from typing import Any
 
-from api.agent_models import AgentChatJobRequest, AgentChatRequestV2
+from api.agent_models import AgentChatJobRequest, AgentChatRequest
 from api.job_events import append_job_event
 from api.job_queue import get_job
 from llm_utils import api_key_env, selected_provider
@@ -100,7 +100,7 @@ def _format_stream_error(exc: Exception) -> str:
 
 def _run_agent_chat_turn_job(req: AgentChatJobRequest, *, job_id: str) -> dict[str, Any]:
     """Execute one agent turn and persist replayable chat events."""
-    worker_req = AgentChatRequestV2.model_validate(
+    worker_req = AgentChatRequest.model_validate(
         {
             **req.model_dump(exclude={"actor"}),
             "finalize_synchronously": True,
@@ -115,11 +115,11 @@ def _run_agent_chat_turn_job(req: AgentChatJobRequest, *, job_id: str) -> dict[s
 
     async def _consume() -> None:
         nonlocal terminal_payload, error_message
-        from api.routers.agent import agent_chat_v2
+        from api.routers.agent import agent_chat
         from ontology.policy import actor_from_dict
 
         actor = actor_from_dict(req.actor)
-        response = agent_chat_v2(worker_req, actor)
+        response = agent_chat(worker_req, actor)
         buffer = ""
         async for chunk in response.body_iterator:
             if isinstance(chunk, bytes):

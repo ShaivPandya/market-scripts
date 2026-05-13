@@ -139,16 +139,10 @@ def test_object_service_rejects_writes_without_provenance():
         )
 
 
-@pytest.mark.parametrize("env_name", ["ENVIRONMENT", "ONTOLOGY_PRIMARY_WRITES"])
-def test_object_service_rejects_unregistered_object_types_in_primary_runtime(monkeypatch, env_name):
+def test_object_service_rejects_unregistered_object_types(monkeypatch):
     repo = _FakeTemporalRepo()
     service = OntologyObjectService(repository=repo)
     monkeypatch.delenv("ENVIRONMENT", raising=False)
-    monkeypatch.delenv("ONTOLOGY_PRIMARY_WRITES", raising=False)
-    if env_name == "ENVIRONMENT":
-        monkeypatch.setenv("ENVIRONMENT", "production")
-    else:
-        monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
 
     with pytest.raises(OntologyWriteContractError, match="Unregistered ontology object type"):
         service.write_object(

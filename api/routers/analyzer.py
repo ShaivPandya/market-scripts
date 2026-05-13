@@ -42,10 +42,10 @@ class AnalyzerFactorWeights(BaseModel):
 
     @model_validator(mode="after")
     def require_nonzero(self):
-        legacy_total = self.quality + self.price_momentum + self.fundamental_momentum + self.valuation
-        if "qualitative" not in self.model_fields_set and legacy_total <= 0:
+        classic_total = self.quality + self.price_momentum + self.fundamental_momentum + self.valuation
+        if "qualitative" not in self.model_fields_set and classic_total <= 0:
             raise ValueError("factor_weights must include at least one positive weight.")
-        if legacy_total + self.qualitative <= 0:
+        if classic_total + self.qualitative <= 0:
             raise ValueError("factor_weights must include at least one positive weight.")
         return self
 
@@ -155,7 +155,7 @@ class AnalyzerScenario(BaseModel):
 
 
 class AnalyzerRequest(BaseModel):
-    # Legacy optimizer fields are accepted for backward compatibility and ignored by analyzer logic.
+    # Deprecated optimizer fields are ignored by analyzer logic.
     book: float | None = None
     target_leverage: float | None = None
     beta_neutral: bool | None = None
@@ -362,7 +362,7 @@ def generate_recommended_scenario_brief(req: AnalyzerRecommendedScenarioBriefReq
 @router.post("/portfolio-optimizer")
 def run_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):  # noqa: B008
     row, _disposition = enqueue_registered_job("analyzer", req.model_dump(), cache_key=_cache_key(req))
-    return enqueue_response(row, "/api/v1/portfolio-analyzer/async/{job_id}")
+    return enqueue_response(row, "/api/portfolio-analyzer/async/{job_id}")
 
 
 @router.post("/portfolio-analyzer/async")
@@ -372,7 +372,7 @@ def start_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest))
     Start an analyzer job and return a job_id quickly.
     """
     row, _disposition = enqueue_registered_job("analyzer", req.model_dump(), cache_key=_cache_key(req))
-    return enqueue_response(row, "/api/v1/portfolio-analyzer/async/{job_id}")
+    return enqueue_response(row, "/api/portfolio-analyzer/async/{job_id}")
 
 
 @router.get("/portfolio-analyzer/async/{job_id}")

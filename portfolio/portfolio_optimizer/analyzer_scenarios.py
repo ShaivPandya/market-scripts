@@ -402,7 +402,7 @@ def _weights_close(
     if not isinstance(values, Mapping):
         return False
     try:
-        normalized = _nonnegative_weight_group(values, expected, group_name="legacy_check")
+        normalized = _nonnegative_weight_group(values, expected, group_name="balanced_default_check")
     except ValueError:
         return False
     return all(abs(normalized[key] - expected[key]) <= tolerance for key in expected)
@@ -412,7 +412,7 @@ def _brakes_are_default(values: Mapping[str, Any] | None) -> bool:
     return all(value == 0.0 for value in _clamped_brakes(values).values())
 
 
-def _is_legacy_balanced_default(raw: Mapping[str, Any]) -> bool:
+def _is_previous_balanced_default(raw: Mapping[str, Any]) -> bool:
     preset = str(raw.get("preset") or "balanced")
     if preset != "balanced":
         return False
@@ -493,8 +493,8 @@ def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> di
     if preset in REMOVED_SCENARIO_PRESETS:
         raise ValueError(f"Unsupported analyzer preset: {preset}")
     preset_config = SCENARIO_PRESETS.get(preset)
-    legacy_balanced_default = _is_legacy_balanced_default(raw)
-    has_explicit_weights = not legacy_balanced_default and any(
+    previous_balanced_default = _is_previous_balanced_default(raw)
+    has_explicit_weights = not previous_balanced_default and any(
         raw.get(key) is not None
         for key in ("factor_weights", "fundamental_momentum_weights", "valuation_weights", "qualitative_weights")
     )

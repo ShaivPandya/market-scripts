@@ -23,8 +23,6 @@ import sys
 
 import requests
 
-from ontology.domain_write_service import ontology_primary_writes_enabled
-
 
 def _build_headers() -> dict[str, str]:
     headers: dict[str, str] = {}
@@ -47,9 +45,9 @@ def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str,
         return
 
     response = session.post(
-        f"{api_url}/api/v1/auth/login",
+        f"{api_url}/api/auth/login",
         json={"password": password},
-        headers={**headers, **_schema_headers("post:/api/v1/auth/login")},
+        headers={**headers, **_schema_headers("post:/api/auth/login")},
         timeout=30,
     )
     response.raise_for_status()
@@ -57,7 +55,7 @@ def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str,
 
 def _fetch_portfolio_book_size(session: requests.Session, api_url: str, headers: dict[str, str]) -> float | None:
     response = session.get(
-        f"{api_url}/api/v1/portfolio-settings",
+        f"{api_url}/api/portfolio-settings",
         headers=headers,
         timeout=30,
     )
@@ -96,7 +94,7 @@ def fetch_and_seed() -> int:
     _login_if_needed(session, api_url, headers)
 
     response = session.get(
-        f"{api_url}/api/v1/portfolio-positions",
+        f"{api_url}/api/portfolio-positions",
         params={"include_hedges": "true"},
         headers=headers,
         timeout=30,
@@ -129,12 +127,6 @@ def fetch_and_seed() -> int:
 
     total = len(positions) + len(hedges)
     print(f"Fetched {len(positions)} position(s) and {len(hedges)} hedge(s) from ontology runtime.")
-
-    if not ontology_primary_writes_enabled():
-        from portfolio.portfolio_db import save_positions
-
-        save_positions(positions, role="position")
-        save_positions(hedges, role="hedge")
 
     if total == 0:
         print("WARNING: No positions returned from API; report generation will still block.", file=sys.stderr)

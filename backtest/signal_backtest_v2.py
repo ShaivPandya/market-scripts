@@ -1,6 +1,6 @@
 """
-Signal Aggregator Backtest V2
-=============================
+Signal Aggregator Growth Backtest
+=================================
 Validates regime thresholds and factor weights against 10 years of historical data,
 including an Economic Growth factor candidate.
 
@@ -657,7 +657,7 @@ def run_backtest(
     data_start = (pd.Timestamp(start) - pd.DateOffset(years=2)).strftime("%Y-%m-%d")
 
     print("=" * 70)
-    print("SIGNAL AGGREGATOR BACKTEST V2")
+    print("SIGNAL AGGREGATOR GROWTH BACKTEST")
     print("=" * 70)
     print(f"  Period:  {start} → {end}")
     print(f"  Data from: {data_start} (extra lookback for MAs/z-scores)")
@@ -899,7 +899,7 @@ def print_composite_comparison(df: pd.DataFrame) -> None:
     valid = df.dropna(subset=["composite_base", "composite", "fwd_4w"])
 
     print("\n" + "=" * 70)
-    print("BASE VS V2 COMPOSITE  (4-Week Forward Returns)")
+    print("BASE VS GROWTH COMPOSITE  (4-Week Forward Returns)")
     print("=" * 70)
     if valid.empty:
         print("  insufficient data")
@@ -907,7 +907,7 @@ def print_composite_comparison(df: pd.DataFrame) -> None:
 
     print(f"\n  {'Composite':<16} {'Corr':>7} {'Lo20%':>8} {'Hi80%':>8} {'Spread':>8}")
     print(f"  {'-' * 16} {'-' * 7} {'-' * 8} {'-' * 8} {'-' * 8}")
-    for key, label in (("composite_base", "Base"), ("composite", "V2 + Growth")):
+    for key, label in (("composite_base", "Base"), ("composite", "Growth")):
         factor = valid[key]
         fwd = valid["fwd_4w"]
         corr = factor.corr(fwd, method="spearman")
@@ -973,7 +973,7 @@ def print_summary_stats(df: pd.DataFrame) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Signal Aggregator Backtest V2")
+    parser = argparse.ArgumentParser(description="Signal Aggregator Growth Backtest")
     parser.add_argument("--start", default="2016-03-01", help="Backtest start (default: 2016-03-01)")
     parser.add_argument("--end", default=None, help="Backtest end (default: today)")
     parser.add_argument("--force", action="store_true", help="Force re-download all data")

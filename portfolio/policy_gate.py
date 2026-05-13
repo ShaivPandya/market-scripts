@@ -104,35 +104,33 @@ def ensure_policy_gate_for_action(
 
     gate = evaluate_policy_gate(action_id, mutable, context=context)
     from api.provenance import stable_hash
-    from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.schemas.identity import policy_gate_result_id
 
     target_id = stable_hash({"action_id": action_id, "payload": mutable})
     gate_key = f"{action_id}:action_payload:{target_id}"
     gate_uid = policy_gate_result_id(gate_key)
-    if object_service is not None or ontology_primary_writes_enabled():
-        from ontology.object_service import OntologyObjectService
-        from ontology.policy import actor_to_dict, system_actor
+    from ontology.object_service import OntologyObjectService
+    from ontology.policy import actor_to_dict, system_actor
 
-        actor = system_actor("policy_gate")
-        objects = object_service or OntologyObjectService()
-        objects.write_object(
-            "PolicyGateResult",
-            gate_uid,
-            {
-                "gate_result_id": gate_key,
-                "decision": gate.get("decision") or "review_required",
-                "review_required": bool(gate.get("review_required")),
-                "failure_reasons": gate.get("failure_reasons", []),
-                "warnings": gate.get("warnings", []),
-                "evaluated_at": datetime.now(UTC).isoformat(),
-                "ontology_run_id": "operational",
-            },
-            datetime.now(UTC).isoformat(),
-            actor=actor_to_dict(actor),
-            provenance=f"pv:policy_gate:{target_id}",
-            input_hash=target_id,
-        )
+    actor = system_actor("policy_gate")
+    objects = object_service or OntologyObjectService()
+    objects.write_object(
+        "PolicyGateResult",
+        gate_uid,
+        {
+            "gate_result_id": gate_key,
+            "decision": gate.get("decision") or "review_required",
+            "review_required": bool(gate.get("review_required")),
+            "failure_reasons": gate.get("failure_reasons", []),
+            "warnings": gate.get("warnings", []),
+            "evaluated_at": datetime.now(UTC).isoformat(),
+            "ontology_run_id": "operational",
+        },
+        datetime.now(UTC).isoformat(),
+        actor=actor_to_dict(actor),
+        provenance=f"pv:policy_gate:{target_id}",
+        input_hash=target_id,
+    )
     gate["policy_gate_result_id"] = gate_uid
     if gate["decision"] == "blocked":
         raise PolicyGateBlockedError(_gate_summary(gate))

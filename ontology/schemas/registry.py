@@ -93,92 +93,91 @@ from ontology.schemas.identity import (
     workflow_artifact_id,
     workflow_run_id,
 )
-from ontology.schemas.legacy import adapt_edge_payload, adapt_node_payload
 from ontology.schemas.objects import (
-    AccountV1,
-    ActionEventV1,
-    ActionItemV1,
-    ActionRunV1,
-    AgentSessionRefV1,
-    AnalystFeedbackV1,
-    ApprovalV1,
-    AssetV1,
-    AuditEventV1,
-    CatalystV1,
-    CitationV1,
-    ClassificationV1,
-    CompanyFinancialProfileV1,
-    ComputedSnapshotRefV1,
-    DocumentArtifactV1,
-    EquityOverviewV1,
-    EvaluationV1,
-    EvidenceV1,
-    ExecutedActionV1,
-    ExecutedDecisionRecordV1,
-    ExtractionRunV1,
-    ExtrinsicSensitivityV1,
-    FactorScoreV1,
-    ForwardOutlookV1,
-    HedgePositionV1,
-    IdeaComparisonRankingV1,
-    IdeaComparisonRunV1,
-    IdeaEvaluationV1,
-    IndustryForceAssessmentV1,
-    InstrumentV1,
-    InvestmentIdeaV1,
-    InvestmentPolicyV1,
-    InvestorV1,
-    IssuerV1,
-    KillConditionV1,
-    MacroIndicatorV1,
-    ManagementQualityAccomplishmentV1,
-    ManagementQualityAssessmentV1,
-    ManagementQualityScorecardRowV1,
-    ManagementQualitySetbackV1,
-    MarketRegimeSnapshotV1,
-    MediaArtifactV1,
-    MissingInformationRequirementV1,
-    ModelCallRefV1,
-    ObjectVersionRefV1,
-    ObservationV1,
-    OntologyObjectV1,
-    OntologyRunRefV1,
-    OptimizationActionSnapshotV1,
-    OptimizationAlertV1,
-    OptimizationMissionV1,
-    OptimizationRunV1,
-    PatternDetectionV1,
-    PolicyGateResultV1,
-    PortfolioRiskSnapshotV1,
-    PortfolioV1,
-    PositionRiskSnapshotV1,
-    PositionV1,
-    ProvenanceEventV1,
-    RecommendationV1,
-    RegimeEpisodeV1,
-    RelationVersionRefV1,
-    ReportRunV1,
-    RiskLimitV1,
-    RiskMetricV1,
-    ScenarioV1,
-    SchemaDefinitionRefV1,
-    SectorV1,
-    SignalFactorScoreV1,
-    SignalV1,
-    SourceFreshnessV1,
-    SourceManifestV1,
-    SourceRecordV1,
-    SupplyChainRelationshipV1,
-    SupplyDemandOutlookV1,
-    ThesisClaimV1,
-    ThesisDocumentV1,
-    ThesisSectionV1,
-    ThesisV1,
-    ToolCallRefV1,
-    TradeProposalV1,
-    WatchTriggerV1,
-    WorkflowArtifactV1,
-    WorkflowRunV1,
+    Account,
+    ActionEvent,
+    ActionItem,
+    ActionRun,
+    AgentSessionRef,
+    AnalystFeedback,
+    Approval,
+    Asset,
+    AuditEvent,
+    Catalyst,
+    Citation,
+    Classification,
+    CompanyFinancialProfile,
+    ComputedSnapshotRef,
+    DocumentArtifact,
+    EquityOverview,
+    Evaluation,
+    Evidence,
+    ExecutedAction,
+    ExecutedDecisionRecord,
+    ExtractionRun,
+    ExtrinsicSensitivity,
+    FactorScore,
+    ForwardOutlook,
+    HedgePosition,
+    IdeaComparisonRanking,
+    IdeaComparisonRun,
+    IdeaEvaluation,
+    IndustryForceAssessment,
+    Instrument,
+    InvestmentIdea,
+    InvestmentPolicy,
+    Investor,
+    Issuer,
+    KillCondition,
+    MacroIndicator,
+    ManagementQualityAccomplishment,
+    ManagementQualityAssessment,
+    ManagementQualityScorecardRow,
+    ManagementQualitySetback,
+    MarketRegimeSnapshot,
+    MediaArtifact,
+    MissingInformationRequirement,
+    ModelCallRef,
+    ObjectVersionRef,
+    Observation,
+    OntologyObject,
+    OntologyRunRef,
+    OptimizationActionSnapshot,
+    OptimizationAlert,
+    OptimizationMission,
+    OptimizationRun,
+    PatternDetection,
+    PolicyGateResult,
+    Portfolio,
+    PortfolioRiskSnapshot,
+    Position,
+    PositionRiskSnapshot,
+    ProvenanceEvent,
+    Recommendation,
+    RegimeEpisode,
+    RelationVersionRef,
+    ReportRun,
+    RiskLimit,
+    RiskMetric,
+    Scenario,
+    SchemaDefinitionRef,
+    Sector,
+    Signal,
+    SignalFactorScore,
+    SourceFreshness,
+    SourceManifest,
+    SourceRecord,
+    SupplyChainRelationship,
+    SupplyDemandOutlook,
+    Thesis,
+    ThesisClaim,
+    ThesisDocument,
+    ThesisSection,
+    ToolCallRef,
+    TradeProposal,
+    WatchTrigger,
+    WorkflowArtifact,
+    WorkflowRun,
 )
 from ontology.schemas.relations import (
     BELONGS_TO_SECTOR,
@@ -195,89 +194,89 @@ from ontology.schemas.relations import (
 )
 
 NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
-    "Position": PositionV1,
-    "HedgePosition": HedgePositionV1,
-    "Asset": AssetV1,
-    "Instrument": InstrumentV1,
-    "Issuer": IssuerV1,
-    "Investor": InvestorV1,
-    "Account": AccountV1,
-    "Portfolio": PortfolioV1,
-    "InvestmentPolicy": InvestmentPolicyV1,
-    "RiskLimit": RiskLimitV1,
-    "RiskMetric": RiskMetricV1,
-    "Scenario": ScenarioV1,
-    "PolicyGateResult": PolicyGateResultV1,
-    "TradeProposal": TradeProposalV1,
-    "SourceRecord": SourceRecordV1,
-    "ObjectVersionRef": ObjectVersionRefV1,
-    "ExecutedAction": ExecutedActionV1,
-    "ExecutedDecisionRecord": ExecutedDecisionRecordV1,
-    "AuditEvent": AuditEventV1,
-    "Sector": SectorV1,
-    "MacroIndicator": MacroIndicatorV1,
-    "Signal": SignalV1,
-    "Thesis": ThesisV1,
-    "Evaluation": EvaluationV1,
-    "Catalyst": CatalystV1,
-    "KillCondition": KillConditionV1,
-    "ThesisClaim": ThesisClaimV1,
-    "Evidence": EvidenceV1,
-    "Citation": CitationV1,
-    "ActionItem": ActionItemV1,
-    "WatchTrigger": WatchTriggerV1,
-    "Approval": ApprovalV1,
-    "ActionRun": ActionRunV1,
-    "ActionEvent": ActionEventV1,
-    "ProvenanceEvent": ProvenanceEventV1,
-    "RelationVersionRef": RelationVersionRefV1,
-    "SchemaDefinitionRef": SchemaDefinitionRefV1,
-    "OntologyRunRef": OntologyRunRefV1,
-    "AgentSessionRef": AgentSessionRefV1,
-    "ModelCallRef": ModelCallRefV1,
-    "ToolCallRef": ToolCallRefV1,
-    "ComputedSnapshotRef": ComputedSnapshotRefV1,
-    "MarketRegimeSnapshot": MarketRegimeSnapshotV1,
-    "SignalFactorScore": SignalFactorScoreV1,
-    "ForwardOutlook": ForwardOutlookV1,
-    "RegimeEpisode": RegimeEpisodeV1,
-    "PositionRiskSnapshot": PositionRiskSnapshotV1,
-    "PortfolioRiskSnapshot": PortfolioRiskSnapshotV1,
-    "WorkflowRun": WorkflowRunV1,
-    "WorkflowArtifact": WorkflowArtifactV1,
-    "Recommendation": RecommendationV1,
-    "ReportRun": ReportRunV1,
-    "SourceManifest": SourceManifestV1,
-    "DocumentArtifact": DocumentArtifactV1,
-    "MediaArtifact": MediaArtifactV1,
-    "ExtractionRun": ExtractionRunV1,
-    "Observation": ObservationV1,
-    "Classification": ClassificationV1,
-    "PatternDetection": PatternDetectionV1,
-    "AnalystFeedback": AnalystFeedbackV1,
-    "EquityOverview": EquityOverviewV1,
-    "CompanyFinancialProfile": CompanyFinancialProfileV1,
-    "ExtrinsicSensitivity": ExtrinsicSensitivityV1,
-    "IndustryForceAssessment": IndustryForceAssessmentV1,
-    "SupplyDemandOutlook": SupplyDemandOutlookV1,
-    "SupplyChainRelationship": SupplyChainRelationshipV1,
-    "ThesisDocument": ThesisDocumentV1,
-    "ThesisSection": ThesisSectionV1,
-    "InvestmentIdea": InvestmentIdeaV1,
-    "IdeaEvaluation": IdeaEvaluationV1,
-    "IdeaComparisonRun": IdeaComparisonRunV1,
-    "IdeaComparisonRanking": IdeaComparisonRankingV1,
-    "FactorScore": FactorScoreV1,
-    "MissingInformationRequirement": MissingInformationRequirementV1,
-    "OptimizationMission": OptimizationMissionV1,
-    "OptimizationRun": OptimizationRunV1,
-    "OptimizationActionSnapshot": OptimizationActionSnapshotV1,
-    "OptimizationAlert": OptimizationAlertV1,
-    "SourceFreshness": SourceFreshnessV1,
-    "ManagementQualityAssessment": ManagementQualityAssessmentV1,
-    "ManagementQualityScorecardRow": ManagementQualityScorecardRowV1,
-    "ManagementQualityAccomplishment": ManagementQualityAccomplishmentV1,
-    "ManagementQualitySetback": ManagementQualitySetbackV1,
+    "Position": Position,
+    "HedgePosition": HedgePosition,
+    "Asset": Asset,
+    "Instrument": Instrument,
+    "Issuer": Issuer,
+    "Investor": Investor,
+    "Account": Account,
+    "Portfolio": Portfolio,
+    "InvestmentPolicy": InvestmentPolicy,
+    "RiskLimit": RiskLimit,
+    "RiskMetric": RiskMetric,
+    "Scenario": Scenario,
+    "PolicyGateResult": PolicyGateResult,
+    "TradeProposal": TradeProposal,
+    "SourceRecord": SourceRecord,
+    "ObjectVersionRef": ObjectVersionRef,
+    "ExecutedAction": ExecutedAction,
+    "ExecutedDecisionRecord": ExecutedDecisionRecord,
+    "AuditEvent": AuditEvent,
+    "Sector": Sector,
+    "MacroIndicator": MacroIndicator,
+    "Signal": Signal,
+    "Thesis": Thesis,
+    "Evaluation": Evaluation,
+    "Catalyst": Catalyst,
+    "KillCondition": KillCondition,
+    "ThesisClaim": ThesisClaim,
+    "Evidence": Evidence,
+    "Citation": Citation,
+    "ActionItem": ActionItem,
+    "WatchTrigger": WatchTrigger,
+    "Approval": Approval,
+    "ActionRun": ActionRun,
+    "ActionEvent": ActionEvent,
+    "ProvenanceEvent": ProvenanceEvent,
+    "RelationVersionRef": RelationVersionRef,
+    "SchemaDefinitionRef": SchemaDefinitionRef,
+    "OntologyRunRef": OntologyRunRef,
+    "AgentSessionRef": AgentSessionRef,
+    "ModelCallRef": ModelCallRef,
+    "ToolCallRef": ToolCallRef,
+    "ComputedSnapshotRef": ComputedSnapshotRef,
+    "MarketRegimeSnapshot": MarketRegimeSnapshot,
+    "SignalFactorScore": SignalFactorScore,
+    "ForwardOutlook": ForwardOutlook,
+    "RegimeEpisode": RegimeEpisode,
+    "PositionRiskSnapshot": PositionRiskSnapshot,
+    "PortfolioRiskSnapshot": PortfolioRiskSnapshot,
+    "WorkflowRun": WorkflowRun,
+    "WorkflowArtifact": WorkflowArtifact,
+    "Recommendation": Recommendation,
+    "ReportRun": ReportRun,
+    "SourceManifest": SourceManifest,
+    "DocumentArtifact": DocumentArtifact,
+    "MediaArtifact": MediaArtifact,
+    "ExtractionRun": ExtractionRun,
+    "Observation": Observation,
+    "Classification": Classification,
+    "PatternDetection": PatternDetection,
+    "AnalystFeedback": AnalystFeedback,
+    "EquityOverview": EquityOverview,
+    "CompanyFinancialProfile": CompanyFinancialProfile,
+    "ExtrinsicSensitivity": ExtrinsicSensitivity,
+    "IndustryForceAssessment": IndustryForceAssessment,
+    "SupplyDemandOutlook": SupplyDemandOutlook,
+    "SupplyChainRelationship": SupplyChainRelationship,
+    "ThesisDocument": ThesisDocument,
+    "ThesisSection": ThesisSection,
+    "InvestmentIdea": InvestmentIdea,
+    "IdeaEvaluation": IdeaEvaluation,
+    "IdeaComparisonRun": IdeaComparisonRun,
+    "IdeaComparisonRanking": IdeaComparisonRanking,
+    "FactorScore": FactorScore,
+    "MissingInformationRequirement": MissingInformationRequirement,
+    "OptimizationMission": OptimizationMission,
+    "OptimizationRun": OptimizationRun,
+    "OptimizationActionSnapshot": OptimizationActionSnapshot,
+    "OptimizationAlert": OptimizationAlert,
+    "SourceFreshness": SourceFreshness,
+    "ManagementQualityAssessment": ManagementQualityAssessment,
+    "ManagementQualityScorecardRow": ManagementQualityScorecardRow,
+    "ManagementQualityAccomplishment": ManagementQualityAccomplishment,
+    "ManagementQualitySetback": ManagementQualitySetback,
 }
 OPTIONAL_NODE_TYPES = {
     "Thesis",
@@ -353,8 +352,6 @@ OPTIONAL_NODE_TYPES = {
     "ExecutedAction",
     "AuditEvent",
 }
-NodeUpgradeAdapter = Any
-NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
 
 
 class OntologySchemaValidationError(ValueError):
@@ -387,33 +384,17 @@ def normalize_node(
     node: OntologyNode,
     *,
     run_id: str | None = None,
-    allow_legacy: bool = True,
+    allow_current: bool = True,
 ) -> OntologyNode:
     try:
         schema_cls = NODE_SCHEMAS[node.type]
     except KeyError as exc:
         raise OntologySchemaValidationError(f"Unsupported node type: {node.type}") from exc
 
-    legacy_payload = _is_legacy_payload(node.properties, node.schema_version)
     node_id = node.id
     label = node.label
     payload = dict(node.properties or {})
-    if legacy_payload:
-        if not allow_legacy:
-            raise OntologySchemaValidationError(f"Legacy ontology node is not allowed: {node.id}")
-        try:
-            node_id, label, payload = adapt_node_payload(
-                node_id=node.id,
-                node_type=node.type,
-                label=node.label,
-                properties=payload,
-                run_id=run_id,
-            )
-        except Exception as exc:
-            raise OntologySchemaValidationError(f"Invalid legacy node {node.id}: {exc}") from exc
-        payload_version = 1
-    else:
-        payload_version = int(payload.get("schema_version") or node.schema_version or 0)
+    payload_version = int(payload.get("schema_version") or node.schema_version or 0)
 
     current_version = _schema_version_for(schema_cls)
     try:
@@ -424,16 +405,13 @@ def normalize_node(
         ) from exc
 
     try:
-        model = cast(OntologyObjectV1, schema_cls.model_validate(payload))
+        model = cast(OntologyObject, schema_cls.model_validate(payload))
     except ValidationError as exc:
         raise OntologySchemaValidationError(f"Invalid {node.type} node {node.id}: {exc}") from exc
 
     expected_id = expected_node_id(node.type, model)
     if node_id != expected_id:
-        if legacy_payload:
-            node_id = expected_id
-        else:
-            raise OntologySchemaValidationError(f"Node {node.id} has non-canonical identity; expected {expected_id}")
+        raise OntologySchemaValidationError(f"Node {node.id} has non-canonical identity; expected {expected_id}")
 
     return OntologyNode(
         id=node_id,
@@ -449,22 +427,11 @@ def normalize_edge(
     edge: OntologyEdge,
     *,
     run_id: str | None = None,
-    allow_legacy: bool = True,
+    allow_current: bool = True,
     source_id: str | None = None,
     target_id: str | None = None,
 ) -> OntologyEdge:
     payload = dict(edge.properties or {})
-    legacy_payload = _is_legacy_payload(payload, edge.schema_version)
-    if legacy_payload:
-        if not allow_legacy:
-            raise OntologySchemaValidationError(
-                f"Legacy ontology edge is not allowed: {edge.source_id}->{edge.target_id}:{edge.relation_type}"
-            )
-        try:
-            payload = adapt_edge_payload(relation_type=edge.relation_type, properties=payload, run_id=run_id)
-        except Exception as exc:
-            raise OntologySchemaValidationError(f"Invalid legacy edge {edge.relation_type}: {exc}") from exc
-
     try:
         schema_cls = edge_schema_for_relation(edge.relation_type)
     except ValueError as exc:
@@ -493,7 +460,7 @@ def validate_edge_relation(
     node_types: Mapping[str, str],
     *,
     run_id: str | None = None,
-    allow_legacy: bool = True,
+    allow_current: bool = True,
     source_id: str | None = None,
     target_id: str | None = None,
 ) -> OntologyEdge:
@@ -503,7 +470,7 @@ def validate_edge_relation(
     normalized = normalize_edge(
         edge,
         run_id=run_id,
-        allow_legacy=allow_legacy,
+        allow_current=allow_current,
         source_id=relation_source_id,
         target_id=relation_target_id,
     )
@@ -524,7 +491,7 @@ def validate_graph_relations(
 
     for edge in edges:
         try:
-            valid_edges.append(validate_edge_relation(edge, node_types, allow_legacy=True))
+            valid_edges.append(validate_edge_relation(edge, node_types, allow_current=True))
         except OntologySchemaValidationError as exc:
             if skip_optional_invalid and edge.relation_type in OPTIONAL_RELATIONS:
                 report.warnings.append(str(exc))
@@ -543,7 +510,7 @@ def normalize_graph(
     edges: list[OntologyEdge],
     *,
     run_id: str | None = None,
-    allow_legacy: bool = True,
+    allow_current: bool = True,
     skip_optional_invalid: bool = False,
     require_core_edges: bool = True,
 ) -> NormalizedGraph:
@@ -554,7 +521,7 @@ def normalize_graph(
 
     for node in nodes:
         try:
-            normalized_node = normalize_node(node, run_id=run_id, allow_legacy=allow_legacy)
+            normalized_node = normalize_node(node, run_id=run_id, allow_current=allow_current)
         except OntologySchemaValidationError as exc:
             if skip_optional_invalid and node.type in OPTIONAL_NODE_TYPES:
                 skipped_old_ids.add(node.id)
@@ -582,7 +549,7 @@ def normalize_graph(
                 edge,
                 node_types,
                 run_id=run_id,
-                allow_legacy=allow_legacy,
+                allow_current=allow_current,
                 source_id=source_id,
                 target_id=target_id,
             )
@@ -613,177 +580,176 @@ def normalize_graph(
     )
 
 
-def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
-    if isinstance(model, PositionV1):
+def expected_node_id(node_type: str, model: OntologyObject) -> str:
+    if isinstance(model, Position):
         return position_id(model.ticker)
-    if isinstance(model, HedgePositionV1):
+    if isinstance(model, HedgePosition):
         return hedge_position_id(model.ticker)
-    if isinstance(model, AssetV1):
+    if isinstance(model, Asset):
         return asset_id(model.ticker)
-    if isinstance(model, InstrumentV1):
+    if isinstance(model, Instrument):
         return instrument_id(model.instrument_id)
-    if isinstance(model, IssuerV1):
+    if isinstance(model, Issuer):
         return issuer_id(model.issuer_id)
-    if isinstance(model, InvestorV1):
+    if isinstance(model, Investor):
         return investor_id(model.investor_id)
-    if isinstance(model, AccountV1):
+    if isinstance(model, Account):
         return account_id(model.account_id)
-    if isinstance(model, PortfolioV1):
+    if isinstance(model, Portfolio):
         return portfolio_id(model.portfolio_id)
-    if isinstance(model, InvestmentPolicyV1):
+    if isinstance(model, InvestmentPolicy):
         return investment_policy_id(model.policy_id)
-    if isinstance(model, RiskLimitV1):
+    if isinstance(model, RiskLimit):
         return risk_limit_id(model.limit_id)
-    if isinstance(model, RiskMetricV1):
+    if isinstance(model, RiskMetric):
         return risk_metric_id(model.metric_id)
-    if isinstance(model, ScenarioV1):
+    if isinstance(model, Scenario):
         return scenario_id(model.scenario_id)
-    if isinstance(model, PolicyGateResultV1):
+    if isinstance(model, PolicyGateResult):
         return policy_gate_result_id(model.gate_result_id)
-    if isinstance(model, TradeProposalV1):
+    if isinstance(model, TradeProposal):
         return trade_proposal_id(model.proposal_id)
-    if isinstance(model, SourceRecordV1):
+    if isinstance(model, SourceRecord):
         return source_record_object_id(model.source_record_id)
-    if isinstance(model, ObjectVersionRefV1):
+    if isinstance(model, ObjectVersionRef):
         return object_version_ref_id(model.ref_id)
-    if isinstance(model, ExecutedActionV1):
+    if isinstance(model, ExecutedAction):
         return executed_action_id(model.executed_action_id)
-    if isinstance(model, ExecutedDecisionRecordV1):
+    if isinstance(model, ExecutedDecisionRecord):
         return executed_decision_record_id(model.decision_record_id)
-    if isinstance(model, AuditEventV1):
+    if isinstance(model, AuditEvent):
         return audit_event_id(model.event_id)
-    if isinstance(model, SectorV1):
+    if isinstance(model, Sector):
         return sector_id(model.name)
-    if isinstance(model, MacroIndicatorV1):
+    if isinstance(model, MacroIndicator):
         return macro_indicator_id(model.indicator_key)
-    if isinstance(model, SignalV1):
+    if isinstance(model, Signal):
         return signal_id(model.source, model.name)
-    if isinstance(model, ThesisV1):
+    if isinstance(model, Thesis):
         return thesis_id(model.ticker)
-    if isinstance(model, EvaluationV1):
+    if isinstance(model, Evaluation):
         return evaluation_id(model.ticker, model.evaluated_at)
-    if isinstance(model, CatalystV1):
+    if isinstance(model, Catalyst):
         return catalyst_id(model.ticker, model.name, model.description)
-    if isinstance(model, KillConditionV1):
-        return kill_condition_id(model.ticker, model.legacy_id or model.condition)
-    if isinstance(model, ThesisClaimV1):
-        return thesis_claim_id(model.ticker, model.legacy_id or model.claim)
-    if isinstance(model, EvidenceV1):
+    if isinstance(model, KillCondition):
+        return kill_condition_id(model.ticker, model.condition)
+    if isinstance(model, ThesisClaim):
+        return thesis_claim_id(model.ticker, model.claim)
+    if isinstance(model, Evidence):
         return evidence_id(model.evidence_id)
-    if isinstance(model, CitationV1):
+    if isinstance(model, Citation):
         return citation_id(model.citation_id)
-    if isinstance(model, ActionItemV1):
-        return action_item_id(model.legacy_id or model.description)
-    if isinstance(model, WatchTriggerV1):
-        return watch_trigger_id(model.legacy_id or model.condition)
-    if isinstance(model, ApprovalV1):
-        return approval_id(model.legacy_id or f"{model.entity_type}:{model.action_input_hash or model.created_at}")
-    if isinstance(model, ActionRunV1):
-        return action_run_id(model.legacy_id or f"{model.action_id}:{model.started_at}")
-    if isinstance(model, ActionEventV1):
-        return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
-    if isinstance(model, ProvenanceEventV1):
+    if isinstance(model, ActionItem):
+        return action_item_id(model.description)
+    if isinstance(model, WatchTrigger):
+        return watch_trigger_id(model.condition)
+    if isinstance(model, Approval):
+        return approval_id(f"{model.entity_type}:{model.action_input_hash or model.created_at}")
+    if isinstance(model, ActionRun):
+        return action_run_id(f"{model.action_id}:{model.started_at}")
+    if isinstance(model, ActionEvent):
+        return action_event_id(f"{model.action_run_id}:{model.event_type}:{model.created_at}")
+    if isinstance(model, ProvenanceEvent):
         return provenance_event_id(model.event_id)
-    if isinstance(model, RelationVersionRefV1):
+    if isinstance(model, RelationVersionRef):
         return relation_version_ref_id(model.ref_id)
-    if isinstance(model, SchemaDefinitionRefV1):
+    if isinstance(model, SchemaDefinitionRef):
         return schema_definition_ref_id(model.ref_id)
-    if isinstance(model, OntologyRunRefV1):
+    if isinstance(model, OntologyRunRef):
         return ontology_run_ref_id(model.run_id)
-    if isinstance(model, AgentSessionRefV1):
+    if isinstance(model, AgentSessionRef):
         return agent_session_ref_id(model.session_id)
-    if isinstance(model, ModelCallRefV1):
+    if isinstance(model, ModelCallRef):
         return model_call_ref_id(model.call_id)
-    if isinstance(model, ToolCallRefV1):
+    if isinstance(model, ToolCallRef):
         return tool_call_ref_id(model.call_id)
-    if isinstance(model, ComputedSnapshotRefV1):
+    if isinstance(model, ComputedSnapshotRef):
         return computed_snapshot_ref_id(model.snapshot_key)
-    if isinstance(model, MarketRegimeSnapshotV1):
+    if isinstance(model, MarketRegimeSnapshot):
         return market_regime_snapshot_id(model.snapshot_id)
-    if isinstance(model, SignalFactorScoreV1):
+    if isinstance(model, SignalFactorScore):
         return signal_factor_score_id(model.factor_score_id)
-    if isinstance(model, ForwardOutlookV1):
+    if isinstance(model, ForwardOutlook):
         return forward_outlook_id(model.outlook_id)
-    if isinstance(model, RegimeEpisodeV1):
+    if isinstance(model, RegimeEpisode):
         return regime_episode_id(model.episode_id)
-    if isinstance(model, PositionRiskSnapshotV1):
+    if isinstance(model, PositionRiskSnapshot):
         return position_risk_snapshot_id(model.snapshot_id)
-    if isinstance(model, PortfolioRiskSnapshotV1):
+    if isinstance(model, PortfolioRiskSnapshot):
         return portfolio_risk_snapshot_id(model.snapshot_id)
-    if isinstance(model, WorkflowRunV1):
+    if isinstance(model, WorkflowRun):
         return workflow_run_id(model.run_id)
-    if isinstance(model, WorkflowArtifactV1):
+    if isinstance(model, WorkflowArtifact):
         return workflow_artifact_id(model.artifact_id)
-    if isinstance(model, RecommendationV1):
+    if isinstance(model, Recommendation):
         return recommendation_id(
-            model.legacy_id
-            or model.recommendation_id
+            model.recommendation_id
             or model.idempotency_key
             or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}"
         )
-    if isinstance(model, ReportRunV1):
+    if isinstance(model, ReportRun):
         return report_run_id(model.report_id)
-    if isinstance(model, SourceManifestV1):
+    if isinstance(model, SourceManifest):
         return source_manifest_id(model.manifest_id)
-    if isinstance(model, DocumentArtifactV1):
+    if isinstance(model, DocumentArtifact):
         return document_artifact_id(model.document_type, model.document_id)
-    if isinstance(model, MediaArtifactV1):
+    if isinstance(model, MediaArtifact):
         return media_artifact_id(model.media_id)
-    if isinstance(model, ExtractionRunV1):
+    if isinstance(model, ExtractionRun):
         return extraction_run_id(model.extraction_run_id)
-    if isinstance(model, ObservationV1):
+    if isinstance(model, Observation):
         return observation_id(model.observation_id)
-    if isinstance(model, ClassificationV1):
+    if isinstance(model, Classification):
         return classification_id(model.classification_id)
-    if isinstance(model, PatternDetectionV1):
+    if isinstance(model, PatternDetection):
         return pattern_detection_id(model.pattern_id)
-    if isinstance(model, AnalystFeedbackV1):
+    if isinstance(model, AnalystFeedback):
         return analyst_feedback_id(model.feedback_id)
-    if isinstance(model, EquityOverviewV1):
+    if isinstance(model, EquityOverview):
         return equity_overview_id(model.overview_id)
-    if isinstance(model, CompanyFinancialProfileV1):
+    if isinstance(model, CompanyFinancialProfile):
         return company_financial_profile_id(model.profile_id)
-    if isinstance(model, ExtrinsicSensitivityV1):
+    if isinstance(model, ExtrinsicSensitivity):
         return extrinsic_sensitivity_id(model.sensitivity_id)
-    if isinstance(model, IndustryForceAssessmentV1):
+    if isinstance(model, IndustryForceAssessment):
         return industry_force_assessment_id(model.force_id)
-    if isinstance(model, SupplyDemandOutlookV1):
+    if isinstance(model, SupplyDemandOutlook):
         return supply_demand_outlook_id(model.outlook_id)
-    if isinstance(model, SupplyChainRelationshipV1):
+    if isinstance(model, SupplyChainRelationship):
         return supply_chain_relationship_id(model.relationship_id)
-    if isinstance(model, ThesisDocumentV1):
+    if isinstance(model, ThesisDocument):
         return thesis_document_id(model.thesis_document_id)
-    if isinstance(model, ThesisSectionV1):
+    if isinstance(model, ThesisSection):
         return thesis_section_id(model.section_id)
-    if isinstance(model, InvestmentIdeaV1):
+    if isinstance(model, InvestmentIdea):
         return investment_idea_id(model.idea_id)
-    if isinstance(model, IdeaEvaluationV1):
+    if isinstance(model, IdeaEvaluation):
         return idea_evaluation_id(model.evaluation_id)
-    if isinstance(model, IdeaComparisonRunV1):
+    if isinstance(model, IdeaComparisonRun):
         return idea_comparison_run_id(model.comparison_run_id)
-    if isinstance(model, IdeaComparisonRankingV1):
+    if isinstance(model, IdeaComparisonRanking):
         return idea_comparison_ranking_id(model.ranking_id)
-    if isinstance(model, FactorScoreV1):
+    if isinstance(model, FactorScore):
         return factor_score_id(model.factor_score_id)
-    if isinstance(model, MissingInformationRequirementV1):
+    if isinstance(model, MissingInformationRequirement):
         return missing_information_requirement_id(model.requirement_id)
-    if isinstance(model, OptimizationMissionV1):
+    if isinstance(model, OptimizationMission):
         return optimization_mission_id(model.mission_id)
-    if isinstance(model, OptimizationRunV1):
+    if isinstance(model, OptimizationRun):
         return optimization_run_id(model.run_id)
-    if isinstance(model, OptimizationActionSnapshotV1):
+    if isinstance(model, OptimizationActionSnapshot):
         return optimization_action_snapshot_id(model.snapshot_id)
-    if isinstance(model, OptimizationAlertV1):
+    if isinstance(model, OptimizationAlert):
         return optimization_alert_id(model.alert_id)
-    if isinstance(model, SourceFreshnessV1):
+    if isinstance(model, SourceFreshness):
         return source_freshness_id(model.freshness_id)
-    if isinstance(model, ManagementQualityAssessmentV1):
+    if isinstance(model, ManagementQualityAssessment):
         return management_quality_assessment_id(model.assessment_id)
-    if isinstance(model, ManagementQualityScorecardRowV1):
+    if isinstance(model, ManagementQualityScorecardRow):
         return management_quality_scorecard_row_id(model.row_id)
-    if isinstance(model, ManagementQualityAccomplishmentV1):
+    if isinstance(model, ManagementQualityAccomplishment):
         return management_quality_accomplishment_id(model.accomplishment_id)
-    if isinstance(model, ManagementQualitySetbackV1):
+    if isinstance(model, ManagementQualitySetback):
         return management_quality_setback_id(model.setback_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
@@ -793,7 +759,7 @@ def node_from_schema(
     node_id: str,
     node_type: EntityType,
     label: str,
-    model: OntologyObjectV1,
+    model: OntologyObject,
 ) -> OntologyNode:
     return normalize_node(
         OntologyNode(
@@ -804,17 +770,8 @@ def node_from_schema(
             schema_name=node_type,
             schema_version=1,
         ),
-        allow_legacy=False,
+        allow_current=False,
     )
-
-
-def register_node_schema_upgrade_adapter(
-    node_type: str,
-    from_version: int,
-    to_version: int,
-    adapter: NodeUpgradeAdapter,
-) -> None:
-    NODE_UPGRADE_ADAPTERS[(node_type, int(from_version), int(to_version))] = adapter
 
 
 def _validate_relation(
@@ -881,18 +838,11 @@ def _upgrade_node_payload(
     to_version: int,
 ) -> dict[str, Any]:
     current_version = int(from_version)
-    upgraded = dict(payload)
     if current_version == to_version:
-        return upgraded
+        return dict(payload)
     if current_version > to_version:
         raise ValueError(f"future schema version {current_version} cannot be read as v{to_version}")
-    while current_version < to_version:
-        adapter = NODE_UPGRADE_ADAPTERS.get((node_type, current_version, current_version + 1))
-        if adapter is None:
-            raise ValueError(f"{node_type} v{current_version}->v{current_version + 1}")
-        upgraded = adapter(upgraded)
-        current_version += 1
-    return upgraded
+    raise ValueError(f"unsupported schema version {current_version} for {node_type}; expected {to_version}")
 
 
 def _cardinality_errors(edges: list[OntologyEdge]) -> list[str]:
@@ -970,73 +920,69 @@ def _optional_owner_errors(nodes: list[OntologyNode], edges: list[OntologyEdge])
     return errors
 
 
-def _is_legacy_payload(properties: dict[str, Any], schema_version: int) -> bool:
-    return schema_version != 1 and int(properties.get("schema_version") or 0) != 1
-
-
-def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
-    if isinstance(model, (PositionV1, AssetV1)):
+def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
+    if isinstance(model, (Position, Asset)):
         return model.ticker
-    if isinstance(model, SectorV1):
+    if isinstance(model, Sector):
         return model.name
-    if isinstance(model, MacroIndicatorV1):
+    if isinstance(model, MacroIndicator):
         return model.name
-    if isinstance(model, SignalV1):
+    if isinstance(model, Signal):
         return model.name
-    if isinstance(model, ThesisV1):
+    if isinstance(model, Thesis):
         return f"Thesis: {model.ticker}"
-    if isinstance(model, EvaluationV1):
+    if isinstance(model, Evaluation):
         return f"Eval: {model.ticker}"
-    if isinstance(model, CatalystV1):
+    if isinstance(model, Catalyst):
         return model.name
-    if isinstance(model, InvestmentIdeaV1):
+    if isinstance(model, InvestmentIdea):
         return model.ticker
-    if isinstance(model, IdeaComparisonRankingV1):
+    if isinstance(model, IdeaComparisonRanking):
         return f"{model.ticker} rank {model.rank}"
-    if isinstance(model, FactorScoreV1):
+    if isinstance(model, FactorScore):
         return model.factor_name
-    if isinstance(model, MissingInformationRequirementV1):
+    if isinstance(model, MissingInformationRequirement):
         return model.field
-    if isinstance(model, OptimizationMissionV1):
+    if isinstance(model, OptimizationMission):
         return model.name
-    if isinstance(model, OptimizationAlertV1):
+    if isinstance(model, OptimizationAlert):
         return model.change_summary
-    if isinstance(model, SourceFreshnessV1):
+    if isinstance(model, SourceFreshness):
         return f"{model.source_name}: {model.status}"
-    if isinstance(model, MarketRegimeSnapshotV1):
+    if isinstance(model, MarketRegimeSnapshot):
         return f"Market regime: {model.regime_label}"
-    if isinstance(model, SignalFactorScoreV1):
+    if isinstance(model, SignalFactorScore):
         return f"{model.factor_name}: {model.status}"
-    if isinstance(model, ForwardOutlookV1):
+    if isinstance(model, ForwardOutlook):
         return f"Forward outlook: {model.label}"
-    if isinstance(model, RegimeEpisodeV1):
+    if isinstance(model, RegimeEpisode):
         return f"Regime episode: {model.regime}"
-    if isinstance(model, PositionRiskSnapshotV1):
+    if isinstance(model, PositionRiskSnapshot):
         return f"Position risk: {model.ticker or model.snapshot_id}"
-    if isinstance(model, PortfolioRiskSnapshotV1):
+    if isinstance(model, PortfolioRiskSnapshot):
         return f"Portfolio risk: {model.snapshot_id}"
-    if isinstance(model, EquityOverviewV1):
+    if isinstance(model, EquityOverview):
         return f"Equity overview: {model.ticker or model.issuer_id}"
-    if isinstance(model, CompanyFinancialProfileV1):
+    if isinstance(model, CompanyFinancialProfile):
         return f"Financial profile: {model.ticker or model.issuer_id}"
-    if isinstance(model, ExtrinsicSensitivityV1):
+    if isinstance(model, ExtrinsicSensitivity):
         return model.factor
-    if isinstance(model, IndustryForceAssessmentV1):
+    if isinstance(model, IndustryForceAssessment):
         return model.force
-    if isinstance(model, SupplyDemandOutlookV1):
+    if isinstance(model, SupplyDemandOutlook):
         return f"{model.outlook_type} outlook"
-    if isinstance(model, SupplyChainRelationshipV1):
+    if isinstance(model, SupplyChainRelationship):
         return f"{model.counterparty_role}: {model.counterparty_name}"
-    if isinstance(model, ThesisDocumentV1):
+    if isinstance(model, ThesisDocument):
         return f"Thesis document: {model.ticker}"
-    if isinstance(model, ThesisSectionV1):
+    if isinstance(model, ThesisSection):
         return model.heading
-    if isinstance(model, ManagementQualityAssessmentV1):
+    if isinstance(model, ManagementQualityAssessment):
         return f"Management quality: {model.ticker or model.issuer_id}"
-    if isinstance(model, ManagementQualityScorecardRowV1):
+    if isinstance(model, ManagementQualityScorecardRow):
         return model.question
-    if isinstance(model, ManagementQualityAccomplishmentV1):
+    if isinstance(model, ManagementQualityAccomplishment):
         return model.title or model.text[:80]
-    if isinstance(model, ManagementQualitySetbackV1):
+    if isinstance(model, ManagementQualitySetback):
         return model.title or model.text[:80]
     return label

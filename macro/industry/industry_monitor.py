@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 from api import state_storage
 from api.postgres import use_postgres_state
-from api.postgres_compat import PostgresCompatConnection
+from api.postgres_state import PostgresStateConnection
 from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ def _resolve_db_path(db_path: str | None = None) -> str:
 
 def _connect_db(db_path: str | None = None):
     if db_path is None and use_postgres_state():
-        return PostgresCompatConnection(table_map={"transcripts": "industry_transcripts"})
+        return PostgresStateConnection(table_map={"transcripts": "industry_transcripts"})
     conn = sqlite3.connect(_resolve_db_path(db_path))
     conn.row_factory = sqlite3.Row
     return conn

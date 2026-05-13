@@ -671,7 +671,7 @@ def _normalize_value_range_metric_assumption(
     payload: Mapping[str, Any] | None,
     *,
     require_complete: bool,
-    legacy_without_currency: bool,
+    source_without_currency: bool,
 ) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise ValueError("Value range metric assumption is required")
@@ -683,13 +683,13 @@ def _normalize_value_range_metric_assumption(
         payload.get("scenarios"),
         require_complete=require_complete,
     )
-    legacy_denominator_currency = bool(payload.get("legacy_denominator_currency")) or (
-        legacy_without_currency and not denominator_currency
-    )
+    source_denominator_currency = bool(
+        payload.get("source_denominator_currency") or payload.get("source_denominator_currency")
+    ) or (source_without_currency and not denominator_currency)
 
     out: dict[str, Any] = {
         "scenarios": scenarios,
-        "legacy_denominator_currency": legacy_denominator_currency,
+        "source_denominator_currency": source_denominator_currency,
     }
     if normalized_metric in DCF_GORDON_GROWTH_METRICS:
         wacc = _safe_float(payload.get("wacc"))
@@ -711,7 +711,7 @@ def _normalize_value_range_update_payload(payload: Mapping[str, Any] | None) -> 
         metric,
         payload,
         require_complete=True,
-        legacy_without_currency=False,
+        source_without_currency=False,
     )
 
 
@@ -729,7 +729,7 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
                     metric,
                     value if isinstance(value, Mapping) else None,
                     require_complete=require_complete,
-                    legacy_without_currency=False,
+                    source_without_currency=False,
                 )
             except ValueError:
                 if require_complete:
@@ -752,7 +752,7 @@ def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require
         metric,
         payload,
         require_complete=require_complete,
-        legacy_without_currency=True,
+        source_without_currency=True,
     )
     return {"selected_metric": metric, "metric_assumptions": {metric: assumption}}
 
@@ -942,7 +942,7 @@ def value_range_payload(
         "denominator_label": DENOMINATOR_LABELS[metric],
         "denominator_currency": calculation["denominator_currency"],
         "stored_denominator_currency": calculation["stored_denominator_currency"],
-        "legacy_denominator_currency": calculation["legacy_denominator_currency"],
+        "source_denominator_currency": calculation["source_denominator_currency"],
         "wacc": calculation["wacc"],
         "denominator_to_price_fx_rate": calculation["denominator_to_price_fx_rate"],
         "fx_rate_as_of": calculation["fx_rate_as_of"],
@@ -969,10 +969,14 @@ def _value_range_metric_calculation(
     )
     financial_currency = _clean_currency(currency_context.get("financial_currency")) or price_currency
     assumption_currency = _clean_currency(assumption.get("denominator_currency")) if assumption else None
-    legacy_denominator_currency = bool(assumption.get("legacy_denominator_currency")) if assumption else False
+    source_denominator_currency = (
+        bool(assumption.get("source_denominator_currency") or assumption.get("source_denominator_currency"))
+        if assumption
+        else False
+    )
     wacc = _safe_float(assumption.get("wacc")) if assumption else None
     stored_denominator_currency = assumption_currency or (
-        price_currency if legacy_denominator_currency else financial_currency
+        price_currency if source_denominator_currency else financial_currency
     )
     display_denominator_currency = financial_currency
 
@@ -1031,7 +1035,7 @@ def _value_range_metric_calculation(
     return {
         "denominator_currency": display_denominator_currency,
         "stored_denominator_currency": stored_denominator_currency,
-        "legacy_denominator_currency": legacy_denominator_currency,
+        "source_denominator_currency": source_denominator_currency,
         "wacc": wacc,
         "denominator_to_price_fx_rate": denominator_to_price_rate,
         "fx_rate_as_of": denominator_to_price.get("as_of"),

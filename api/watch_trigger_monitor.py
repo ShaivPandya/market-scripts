@@ -673,47 +673,23 @@ def _result_fingerprint(result: dict[str, Any]) -> str:
 
 
 def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from ontology.domain_write_service import ontology_primary_writes_enabled
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.policy import system_actor
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    primary_writes = ontology_primary_writes_enabled()
-    command_service = None
-    if primary_writes:
-        from ontology.command_service import OntologyCommandService
-
-        command_service = OntologyCommandService()
+    command_service = OntologyCommandService()
     reads = OntologyRuntimeReadService()
 
     def propose_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
-        if primary_writes:
-            from ontology.command_service import OntologyCommandContext
-            from ontology.policy import system_actor
-
-            assert command_service is not None
-            return command_service.propose_action(
-                action_id,
-                payload,
-                OntologyCommandContext(
-                    actor=system_actor("watch_trigger_monitor"),
-                    source_type="workflow",
-                    source_id=source_id,
-                ),
-                reason=reason,
-            )
-        from ontology.action_registry import ActionContext
-        from ontology.action_registry import propose_action as propose_legacy_action
-
-        return propose_legacy_action(
+        return command_service.propose_action(
             action_id,
             payload,
-            ActionContext(
-                actor_type="workflow",
-                actor_id="watch_trigger_monitor",
+            OntologyCommandContext(
+                actor=system_actor("watch_trigger_monitor"),
                 source_type="workflow",
                 source_id=source_id,
             ),
             reason=reason,
-            once=True,
         )
 
     checked = 0
@@ -722,7 +698,10 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
     errors = 0
     for trigger in reads.watch_triggers(status="active"):
         checked += 1
-        trigger_id = int(trigger["id"])
+        trigger_id = str(trigger.get("object_uid") or trigger.get("id") or "").strip()
+        if not trigger_id:
+            errors += 1
+            continue
         try:
             result = evaluate_trigger(trigger)
             if result.get("inferred_definition") and not trigger.get("definition_json"):

@@ -15,7 +15,6 @@ from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.job_queue import get_job
 from api.routers.auth import require_actor
 from ontology.action_registry import get_tool_exposure
-from ontology.domain_write_service import ontology_read_model_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import (
     Actor,
@@ -291,7 +290,7 @@ def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
         cache_key=_job_cache_key(job_req),
         reuse_completed=_reuse_completed_job(req),
     )
-    return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
+    return enqueue_response(row, "/api/ontology/query/async/{job_id}")
 
 
 def _job_cache_key(req: OntologyQueryRequest | OntologyQueryJobRequest) -> str:
@@ -317,9 +316,7 @@ def _completed_ttl_seconds(req: OntologyQueryRequest | OntologyQueryJobRequest) 
 
 def _current_ontology_cache_token() -> str:
     try:
-        if ontology_read_model_enabled():
-            return f"read_model:{_read_model_watermark_token()}"
-        return f"legacy_snapshot:{_legacy_snapshot_watermark_token()}"
+        return f"read_model:{_read_model_watermark_token()}"
     except Exception as exc:
         return f"unavailable:{exc.__class__.__name__}"
 
@@ -349,19 +346,6 @@ def _read_model_watermark_token() -> str:
     return _hash_token(payload)
 
 
-def _legacy_snapshot_watermark_token() -> str:
-    latest = _service.repo.get_latest_run()
-    if not latest:
-        return "none"
-    return _hash_token(
-        {
-            "run_id": latest.get("run_id"),
-            "as_of": latest.get("as_of"),
-            "created_at": latest.get("created_at"),
-        }
-    )
-
-
 def _hash_token(payload: dict[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
@@ -379,7 +363,7 @@ def start_query_ontology_async(req: OntologyQueryRequest, actor: ActorDep):
         cache_key=key,
         reuse_completed=_reuse_completed_job(req),
     )
-    return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
+    return enqueue_response(row, "/api/ontology/query/async/{job_id}")
 
 
 @router.get("/ontology/query/async/{job_id}")
@@ -408,10 +392,9 @@ def _job_request(req: OntologyQueryRequest, actor: Actor) -> OntologyQueryJobReq
 
 
 def _preflight_read_model_deprecations(req: OntologyQueryRequest) -> None:
-    if ontology_read_model_enabled() and req.refresh_snapshot and not req.run_id:
+    if req.refresh_snapshot and not req.run_id:
         raise ValidationError(
-            "refresh_snapshot is deprecated when ONTOLOGY_READ_MODEL=true; "
-            "omit refresh_snapshot for temporal read-model queries or provide run_id for snapshot compatibility."
+            "refresh_snapshot is not supported for current ontology read-model queries; provide run_id for replay."
         )
 
 

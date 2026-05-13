@@ -297,7 +297,7 @@ def test_ontology_api_denied_action_returns_403(auth_client, monkeypatch):
     monkeypatch.setattr(ontology_router, "_service", service)
 
     resp = auth_client.post(
-        "/api/v1/ontology/query",
+        "/api/ontology/query",
         json={"intent": "portfolio_risk_exposure", "schema_mode": "upgraded"},
     )
 
@@ -341,11 +341,11 @@ def test_ontology_api_and_agent_propagate_actor(auth_client, monkeypatch):
 
     monkeypatch.setattr(ontology_router, "_service", _Service())
     resp = auth_client.post(
-        "/api/v1/ontology/query",
+        "/api/ontology/query",
         json={"intent": "portfolio_risk_exposure", "query": "actor propagation check", "schema_mode": "upgraded"},
     )
     job = resp.json()
-    done = auth_client.get(f"/api/v1/ontology/query/async/{job['job_id']}").json()
+    done = auth_client.get(f"/api/ontology/query/async/{job['job_id']}").json()
 
     assert done["status"] == "done"
     assert captured["api"].actor_id == "admin"
@@ -386,7 +386,6 @@ def test_current_ontology_job_cache_key_uses_read_model_watermark(monkeypatch):
     import api.routers.ontology as ontology_router
 
     tokens = iter(("read-model-v1", "read-model-v2"))
-    monkeypatch.setattr(ontology_router, "ontology_read_model_enabled", lambda: True)
     monkeypatch.setattr(ontology_router, "_read_model_watermark_token", lambda: next(tokens))
     req = ontology_router.OntologyQueryJobRequest(schema_mode="upgraded", actor={"actor_id": "admin"})
 
@@ -395,21 +394,6 @@ def test_current_ontology_job_cache_key_uses_read_model_watermark(monkeypatch):
 
     assert first != second
     assert "read_model" in first
-
-
-def test_current_ontology_job_cache_key_uses_legacy_snapshot_watermark(monkeypatch):
-    import api.routers.ontology as ontology_router
-
-    tokens = iter(("legacy-run-1", "legacy-run-2"))
-    monkeypatch.setattr(ontology_router, "ontology_read_model_enabled", lambda: False)
-    monkeypatch.setattr(ontology_router, "_legacy_snapshot_watermark_token", lambda: next(tokens))
-    req = ontology_router.OntologyQueryJobRequest(schema_mode="upgraded", actor={"actor_id": "admin"})
-
-    first = ontology_router._job_cache_key(req)
-    second = ontology_router._job_cache_key(req)
-
-    assert first != second
-    assert "legacy_snapshot" in first
 
 
 def test_replay_ontology_job_cache_key_omits_current_watermark(monkeypatch):

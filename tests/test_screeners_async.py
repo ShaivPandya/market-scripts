@@ -117,14 +117,14 @@ def test_quality_screen_async_returns_result_and_cache(auth_client, monkeypatch)
         "benchmark": "Same as Input",
     }
 
-    started = auth_client.post("/api/v1/quality-screen/async", json=body)
+    started = auth_client.post("/api/quality-screen/async", json=body)
     assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
-    done = _poll(auth_client, "/api/v1/quality-screen/async", job_id)
+    done = _poll(auth_client, "/api/quality-screen/async", job_id)
     assert done["status"] == "done"
     assert done["result"]["results_df"] == [{"index": "AAA", "quality": 1.2}]
 
-    cached = auth_client.post("/api/v1/quality-screen/async", json=body)
+    cached = auth_client.post("/api/quality-screen/async", json=body)
     assert cached.status_code in (200, 202)
     assert cached.json()["status"] == "done"
     assert cached.json()["result"]["scored_count"] == 1
@@ -163,16 +163,16 @@ def test_quality_screen_async_dedupes_running_job(auth_client, monkeypatch):
         "benchmark": "Same as Input",
     }
 
-    first = auth_client.post("/api/v1/quality-screen/async", json=body)
+    first = auth_client.post("/api/quality-screen/async", json=body)
     assert first.status_code in (200, 202)
     assert started_compute.wait(timeout=2)
 
-    second = auth_client.post("/api/v1/quality-screen/async", json=body)
+    second = auth_client.post("/api/quality-screen/async", json=body)
     assert second.status_code in (200, 202)
     assert second.json()["job_id"] == first.json()["job_id"]
 
     release_compute.set()
-    done = _poll(auth_client, "/api/v1/quality-screen/async", first.json()["job_id"])
+    done = _poll(auth_client, "/api/quality-screen/async", first.json()["job_id"])
     assert done["status"] == "done"
 
 
@@ -196,9 +196,9 @@ def test_quality_screen_async_surfaces_worker_error(auth_client, monkeypatch):
         "benchmark": "Same as Input",
     }
 
-    started = auth_client.post("/api/v1/quality-screen/async", json=body)
+    started = auth_client.post("/api/quality-screen/async", json=body)
     assert started.status_code in (200, 202)
-    done = _poll(auth_client, "/api/v1/quality-screen/async", started.json()["job_id"])
+    done = _poll(auth_client, "/api/quality-screen/async", started.json()["job_id"])
     assert done["status"] == "error"
     assert "rate limited" in done["error"]
 
@@ -233,13 +233,13 @@ def test_quality_screen_direct_endpoint_enqueues(auth_client, monkeypatch):
         "benchmark": "Same as Input",
     }
 
-    started = auth_client.post("/api/v1/quality-screen", json=body)
+    started = auth_client.post("/api/quality-screen", json=body)
     assert started.status_code == 202
     assert started.json()["status"] in {"queued", "running"}
-    assert started.headers["location"].startswith("/api/v1/quality-screen/async/")
+    assert started.headers["location"].startswith("/api/quality-screen/async/")
 
     release_compute.set()
-    done = _poll(auth_client, "/api/v1/quality-screen/async", started.json()["job_id"])
+    done = _poll(auth_client, "/api/quality-screen/async", started.json()["job_id"])
     assert done["status"] == "done"
 
 
@@ -285,14 +285,14 @@ def test_short_screen_async_returns_result_and_cache(auth_client, monkeypatch):
         "rel_momentum_benchmark": "IWM",
     }
 
-    started = auth_client.post("/api/v1/short-screen/async", json=body)
+    started = auth_client.post("/api/short-screen/async", json=body)
     assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
-    done = _poll(auth_client, "/api/v1/short-screen/async", job_id)
+    done = _poll(auth_client, "/api/short-screen/async", job_id)
     assert done["status"] == "done"
     assert done["result"]["results_df"] == [{"Ticker": "AAA"}]
 
-    cached = auth_client.post("/api/v1/short-screen/async", json=body)
+    cached = auth_client.post("/api/short-screen/async", json=body)
     assert cached.status_code in (200, 202)
     assert cached.json()["status"] == "done"
     assert cached.json()["result"]["results_df"] == [{"Ticker": "AAA"}]
@@ -341,16 +341,16 @@ def test_short_screen_async_dedupes_running_job(auth_client, monkeypatch):
         "rel_momentum_benchmark": "IWM",
     }
 
-    first = auth_client.post("/api/v1/short-screen/async", json=body)
+    first = auth_client.post("/api/short-screen/async", json=body)
     assert first.status_code in (200, 202)
     assert started_compute.wait(timeout=2)
 
-    second = auth_client.post("/api/v1/short-screen/async", json=body)
+    second = auth_client.post("/api/short-screen/async", json=body)
     assert second.status_code in (200, 202)
     assert second.json()["job_id"] == first.json()["job_id"]
 
     release_compute.set()
-    done = _poll(auth_client, "/api/v1/short-screen/async", first.json()["job_id"])
+    done = _poll(auth_client, "/api/short-screen/async", first.json()["job_id"])
     assert done["status"] == "done"
 
 
@@ -386,9 +386,9 @@ def test_short_screen_async_surfaces_worker_error(auth_client, monkeypatch):
         "rel_momentum_benchmark": "IWM",
     }
 
-    started = auth_client.post("/api/v1/short-screen/async", json=body)
+    started = auth_client.post("/api/short-screen/async", json=body)
     assert started.status_code in (200, 202)
-    done = _poll(auth_client, "/api/v1/short-screen/async", started.json()["job_id"])
+    done = _poll(auth_client, "/api/short-screen/async", started.json()["job_id"])
     assert done["status"] == "error"
     assert "rate limited" in done["error"]
 
@@ -528,14 +528,14 @@ def test_price_momentum_async_returns_result_and_cache(auth_client, monkeypatch)
         "benchmark": "Same as Input",
     }
 
-    started = auth_client.post("/api/v1/price-momentum/async", json=body)
+    started = auth_client.post("/api/price-momentum/async", json=body)
     assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
-    done = _poll(auth_client, "/api/v1/price-momentum/async", job_id)
+    done = _poll(auth_client, "/api/price-momentum/async", job_id)
     assert done["status"] == "done"
     assert done["result"]["results_df"] == [{"ticker": "AAA", "roc63": 12.3, "benchmark": "SPY"}]
 
-    cached = auth_client.post("/api/v1/price-momentum/async", json=body)
+    cached = auth_client.post("/api/price-momentum/async", json=body)
     assert cached.status_code in (200, 202)
     assert cached.json()["status"] == "done"
     assert cached.json()["result"]["scored_count"] == 1

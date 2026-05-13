@@ -11,7 +11,7 @@ def test_market_breadth_route_uses_snapshot(auth_client, monkeypatch):
         lambda key: {"total_analyzed": 503, "pct_above_200dma": 55.0, "_meta": {"snapshot": {"key": key}}},
     )
 
-    resp = auth_client.get("/api/v1/market-breadth")
+    resp = auth_client.get("/api/market-breadth")
     assert resp.status_code == 200
     body = resp.json()
     assert body["total_analyzed"] == 503
@@ -28,7 +28,7 @@ def test_sector_metrics_route_uses_snapshot(auth_client, monkeypatch):
         lambda key: {"weights_df": [{"Sector": "Technology", "Weight_Now": 30.0}], "_meta": {"snapshot": {"key": key}}},
     )
 
-    resp = auth_client.get("/api/v1/sector-metrics")
+    resp = auth_client.get("/api/sector-metrics")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -36,7 +36,7 @@ def test_sector_metrics_route_uses_snapshot(auth_client, monkeypatch):
     assert body["_meta"]["snapshot"]["key"] == router.SNAPSHOT_SECTOR_METRICS
 
 
-def test_sector_metrics_route_repairs_legacy_snapshot_without_sector(auth_client, monkeypatch):
+def test_sector_metrics_route_repairs_current_snapshot_without_sector(auth_client, monkeypatch):
     import api.routers.sector_metrics as router
 
     monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
@@ -46,7 +46,7 @@ def test_sector_metrics_route_repairs_legacy_snapshot_without_sector(auth_client
         lambda key: {"weights_df": [{"Weight_Now": 17.8}], "_meta": {"snapshot": {"key": key}}},
     )
 
-    resp = auth_client.get("/api/v1/sector-metrics")
+    resp = auth_client.get("/api/sector-metrics")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -64,7 +64,7 @@ def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, mon
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live compute should not run")),
     )
 
-    resp = auth_client.get("/api/v1/sector-metrics")
+    resp = auth_client.get("/api/sector-metrics")
 
     assert resp.status_code == 503
     assert resp.json()["type"] == "SnapshotUnavailableError"
@@ -91,7 +91,7 @@ def test_signal_aggregator_route_uses_snapshot(auth_client, monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live compute should not run")),
     )
 
-    resp = auth_client.get("/api/v1/signal-aggregator", params={"lookback_weeks": 104})
+    resp = auth_client.get("/api/signal-aggregator", params={"lookback_weeks": 104})
     assert resp.status_code == 200
     body = resp.json()
     assert body["regime"]["label"] == "risk-on"
@@ -153,7 +153,7 @@ def test_signal_aggregator_route_falls_back_to_module_snapshots(auth_client, mon
 
     monkeypatch.setattr(signal_snapshot, "get_snapshot_response", lambda key: payloads.get(key))
 
-    resp = auth_client.get("/api/v1/signal-aggregator", params={"lookback_weeks": 104})
+    resp = auth_client.get("/api/signal-aggregator", params={"lookback_weeks": 104})
 
     assert resp.status_code == 200
     body = resp.json()

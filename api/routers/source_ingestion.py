@@ -110,7 +110,7 @@ def enqueue_source_extraction(req: ExtractionRequest, actor: ActorDep):
     require_multimodal_ingestion_enabled()
     payload = {**req.model_dump(exclude_none=True), "actor": _actor_dict(actor)}
     row, _disposition = enqueue_registered_job("source_extraction", payload, cache_key=None, reuse_completed=False)
-    return enqueue_response(row, "/api/v1/source-ingestion/extractions/{job_id}")
+    return enqueue_response(row, "/api/source-ingestion/extractions/{job_id}")
 
 
 @router.get("/source-ingestion/extractions/{run_id}")

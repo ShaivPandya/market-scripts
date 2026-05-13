@@ -94,7 +94,6 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
             raise AssertionError("dossier route should not scan all positions")
 
     monkeypatch.setattr(dossier_router, "OntologyRuntimeReadService", _Reads)
-    monkeypatch.setattr(dossier_router, "ontology_primary_writes_enabled", lambda: False)
     monkeypatch.setattr(state_storage, "exists_text", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(management_quality_content, "management_quality_exists", lambda *_args, **_kwargs: False)
 

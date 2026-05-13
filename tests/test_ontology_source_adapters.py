@@ -84,7 +84,7 @@ def test_sector_metrics_adapter_normalizes_rows_and_empty_payloads():
     assert empty.quality == "missing"
 
 
-def test_sector_metrics_adapter_repairs_legacy_rows_without_sector():
+def test_sector_metrics_adapter_repairs_source_rows_without_sector():
     result = SectorMetricsAdapter().normalize(
         {
             "weights_df": [

@@ -24,7 +24,7 @@ class _FakeSession:
 
     def get(self, url: str, **kwargs):
         self.calls.append(("GET", url, kwargs))
-        if url.endswith("/api/v1/portfolio-settings"):
+        if url.endswith("/api/portfolio-settings"):
             return _FakeResponse({"book_size": 125000})
         return _FakeResponse(
             {
@@ -37,39 +37,32 @@ class _FakeSession:
 
 
 def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch, tmp_path):
-    from api.portfolio_settings import get_configured_portfolio_book_size
+    import api.portfolio_settings as portfolio_settings
 
     session = _FakeSession()
-    saved: list[tuple[list[dict], str]] = []
     github_env = tmp_path / "github.env"
+    saved_book_size: list[float] = []
 
     monkeypatch.setenv("TALISMAN_API_URL", "https://example.test")
     monkeypatch.setenv("API_PROXY_SECRET", "proxy-secret")
     monkeypatch.setenv("TALISMAN_API_PASSWORD", "report-password")
     monkeypatch.setenv("GITHUB_ENV", str(github_env))
     monkeypatch.setattr(fetch_state.requests, "Session", lambda: session)
-    monkeypatch.setattr(
-        "portfolio.portfolio_db.save_positions",
-        lambda positions, role="position": saved.append((positions, role)),
-    )
+    monkeypatch.setattr(portfolio_settings, "set_portfolio_book_size", lambda value: saved_book_size.append(value))
 
     assert fetch_state.fetch_and_seed() == 0
 
     assert [call[:2] for call in session.calls] == [
-        ("POST", "https://example.test/api/v1/auth/login"),
-        ("GET", "https://example.test/api/v1/portfolio-positions"),
-        ("GET", "https://example.test/api/v1/portfolio-settings"),
+        ("POST", "https://example.test/api/auth/login"),
+        ("GET", "https://example.test/api/portfolio-positions"),
+        ("GET", "https://example.test/api/portfolio-settings"),
     ]
     assert session.calls[0][2]["json"] == {"password": "report-password"}
     assert session.calls[0][2]["headers"] == {
         "X-Api-Proxy-Secret": "proxy-secret",
-        "X-Request-Schema-Name": "post:/api/v1/auth/login",
+        "X-Request-Schema-Name": "post:/api/auth/login",
         "X-Request-Schema-Version": "1",
     }
     assert session.calls[1][2]["params"] == {"include_hedges": "true"}
     assert "TALISMAN_BOOK_SIZE=125000.00\n" in github_env.read_text(encoding="utf-8")
-    assert get_configured_portfolio_book_size() == 125000
-    assert saved == [
-        ([{"ticker": "MU", "role": "position"}], "position"),
-        ([{"ticker": "SH", "role": "hedge"}], "hedge"),
-    ]
+    assert saved_book_size == [125000.0]

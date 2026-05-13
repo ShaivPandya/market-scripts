@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, field_validator
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import NotFoundError, ValidationError
-from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import actor_to_dict, admin_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -260,8 +259,6 @@ def _comparison_uid(value: Any) -> str:
 def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
     now = _now()
     payload = {**props, "ontology_run_id": "operational"}
-    if not ontology_primary_writes_enabled():
-        return _write_legacy_runtime_object(object_type, uid, payload)
     service = OntologyObjectService()
     row = service.write_object(
         object_type,
@@ -365,13 +362,7 @@ def _delete_ontology_runtime_idea(idea: dict[str, Any]) -> int:
 
 
 def _delete_runtime_idea(idea_id: str, idea: dict[str, Any]) -> int:
-    if ontology_primary_writes_enabled():
-        return _delete_ontology_runtime_idea(idea)
-    from portfolio import core_db
-
-    numeric_id = _required_legacy_numeric_id(idea.get("id") or idea_id)
-    deleted = core_db.delete_investment_idea(numeric_id)
-    return 1 if deleted else 0
+    return _delete_ontology_runtime_idea(idea)
 
 
 def _write_relation(
@@ -615,106 +606,10 @@ def _write_idea_comparison_graph(service: OntologyObjectService, run: dict[str, 
         _write_relation(service, ranking_uid, evaluation_uid, "ranking_uses_evaluation", now=now)
 
 
-def _write_legacy_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
-    from portfolio import core_db
-
-    if object_type == "InvestmentIdea":
-        idea_id = _legacy_numeric_id(uid)
-        if idea_id is None:
-            return core_db.create_investment_idea(
-                str(props.get("ticker") or ""),
-                company_name=props.get("company_name"),
-                user_notes=props.get("user_notes"),
-                tags=cast(list[str] | None, props.get("tags") if isinstance(props.get("tags"), list) else None),
-                status=str(props.get("status") or "watching"),
-                source_type=str(props.get("source_type") or "user"),
-                source_id=props.get("source_id"),
-                metadata=cast(
-                    dict[str, Any] | None, props.get("metadata") if isinstance(props.get("metadata"), dict) else None
-                ),
-            )
-        return core_db.update_investment_idea(
-            idea_id,
-            ticker=props.get("ticker"),
-            company_name=props.get("company_name"),
-            status=props.get("status"),
-            user_notes=props.get("user_notes"),
-            tags=cast(list[str], props.get("tags") if isinstance(props.get("tags"), list) else []),
-            latest_job_id=props.get("latest_job_id"),
-            latest_evaluation_id=_legacy_numeric_id(props.get("latest_evaluation_id")),
-            accepted_recommendation_id=_legacy_numeric_id(props.get("accepted_recommendation_id")),
-            metadata=cast(dict[str, Any], props.get("metadata") if isinstance(props.get("metadata"), dict) else {}),
-        )
-    if object_type == "IdeaEvaluation":
-        evaluation_id = _legacy_numeric_id(uid)
-        if evaluation_id is not None and props.get("accepted_at"):
-            return core_db.mark_idea_evaluation_accepted(
-                evaluation_id,
-                recommendation_id=_required_legacy_numeric_id(props.get("recommendation_id")),
-                action_approval_id=_legacy_numeric_id(props.get("action_approval_id")),
-                accepted_by=str(props.get("accepted_by") or "user"),
-            )
-        return core_db.create_idea_evaluation(
-            _required_legacy_numeric_id(props.get("idea_id")),
-            props,
-            job_id=props.get("job_id"),
-        )
-    if object_type == "IdeaComparisonRun":
-        rankings: list[dict[str, Any]] = []
-        ranking_rows = props.get("rankings")
-        for row in ranking_rows if isinstance(ranking_rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            rankings.append(
-                {
-                    **row,
-                    "idea_id": _required_legacy_numeric_id(row.get("idea_id")),
-                    "evaluation_id": _required_legacy_numeric_id(row.get("evaluation_id")),
-                }
-            )
-        return core_db.create_idea_comparison_run(
-            job_id=props.get("job_id"),
-            scope_statuses=cast(
-                list[str] | None, props.get("scope_statuses") if isinstance(props.get("scope_statuses"), list) else None
-            ),
-            summary=str(props.get("summary") or ""),
-            rankings=rankings,
-            raw_result=cast(
-                dict[str, Any] | None, props.get("raw_result") if isinstance(props.get("raw_result"), dict) else None
-            ),
-            run_id=_legacy_text_id(uid),
-        )
-    raise ValueError(f"Unsupported legacy idea runtime object type: {object_type}")
-
-
-def _legacy_text_id(value: Any) -> str:
-    text = str(value or "").strip()
-    return text.split(":", 1)[1] if ":" in text else text
-
-
-def _legacy_numeric_id(value: Any) -> int | None:
-    text = _legacy_text_id(value)
-    if not text:
-        return None
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        return None
-
-
-def _required_legacy_numeric_id(value: Any) -> int:
-    numeric = _legacy_numeric_id(value)
-    if numeric is None:
-        raise ValueError(f"Expected numeric legacy id, got {value!r}")
-    return numeric
-
-
 def _get_idea(idea_id: Any) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
     text = str(idea_id or "").strip()
-    if ontology_primary_writes_enabled():
-        return reads.get(text) if text.startswith("investment_idea:") else None
-    return reads.get(_idea_uid(text))
+    return reads.get(text) if text.startswith("investment_idea:") else reads.get(_idea_uid(text))
 
 
 def _list_ideas(*, status: str | None = None, include_archived: bool = False, limit: int = 200) -> list[dict[str, Any]]:
@@ -733,9 +628,8 @@ def _list_idea_evaluations(idea_id: Any | None = None, *, limit: int = 100) -> l
 
 def _get_idea_evaluation(evaluation_id: Any) -> dict[str, Any] | None:
     text = str(evaluation_id or "").strip()
-    if ontology_primary_writes_enabled():
-        return OntologyRuntimeReadService().get(text) if text.startswith("idea_evaluation:") else None
-    return OntologyRuntimeReadService().get(_evaluation_uid(text))
+    reads = OntologyRuntimeReadService()
+    return reads.get(text) if text.startswith("idea_evaluation:") else reads.get(_evaluation_uid(text))
 
 
 def _write_idea_evaluation(
@@ -849,19 +743,18 @@ def _read_state_text(folder: str, ticker: str) -> tuple[str | None, str | None]:
 
 
 def _read_management_quality_text(ticker: str) -> tuple[str | None, str | None]:
-    if ontology_primary_writes_enabled():
-        try:
-            from api.routers.management_quality import _read_markdown_projection, _render_management_quality_markdown
+    try:
+        from api.routers.management_quality import _read_markdown_projection, _render_management_quality_markdown
 
-            assessment = OntologyRuntimeReadService().management_quality_assessment(ticker)
-            if assessment:
-                return (
-                    _read_markdown_projection(ticker) or _render_management_quality_markdown(ticker, assessment),
-                    None,
-                )
-        except Exception as exc:
-            return None, f"investment_management_quality: {exc}"
-    return _read_state_text("investment_management_quality", ticker)
+        assessment = OntologyRuntimeReadService().management_quality_assessment(ticker)
+        if assessment:
+            return (
+                _read_markdown_projection(ticker) or _render_management_quality_markdown(ticker, assessment),
+                None,
+            )
+    except Exception as exc:
+        return None, f"investment_management_quality: {exc}"
+    return None, None
 
 
 def _safe_tool(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2115,7 +2008,7 @@ def start_idea_comparison_evaluation(body: dict[str, Any] | None = OPTIONAL_JSON
         cache_key=None,
         reuse_completed=False,
     )
-    return enqueue_response(row, "/api/v1/ideas/evaluate-all/async/{job_id}")
+    return enqueue_response(row, "/api/ideas/evaluate-all/async/{job_id}")
 
 
 @router.get("/ideas/evaluate-all/async/{job_id}")
@@ -2134,7 +2027,7 @@ def list_idea_comparison_runs(limit: int = 20):
 
 @router.get("/ideas/comparison-runs/{run_id}")
 def get_idea_comparison_run(run_id: str):
-    key = run_id if ontology_primary_writes_enabled() else _comparison_uid(run_id)
+    key = run_id if str(run_id).startswith("idea_comparison_run:") else _comparison_uid(run_id)
     run = OntologyRuntimeReadService().get(key)
     if not run:
         raise NotFoundError("Idea comparison run", run_id)
@@ -2215,7 +2108,7 @@ def start_idea_evaluation(idea_id: str, body: dict[str, Any] | None = OPTIONAL_J
     idea.pop("id", None)
     idea.pop("object_uid", None)
     _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), idea)
-    return enqueue_response(row, "/api/v1/ideas/evaluate/async/{job_id}")
+    return enqueue_response(row, "/api/ideas/evaluate/async/{job_id}")
 
 
 @router.get("/ideas/evaluate/async/{job_id}")
@@ -2240,30 +2133,20 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
     )
     if not record:
         record = _recommendation_record_from_result(idea, evaluation)
-    if ontology_primary_writes_enabled():
-        from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
-        context = OntologyCommandContext(
-            actor=admin_actor(source="ideas"),
-            source_type="user",
-            source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
-        )
-        recommendation = OntologyCommandService().propose_action(
-            "create_recommendation",
-            {"record": record},
-            context,
-            reason=(body.note if body else None) or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
-        )
-        recommendation_id = recommendation["id"]
-    else:
-        from portfolio import core_db
-
-        recommendation = (
-            core_db.upsert_recommendation(record)
-            if record.get("idempotency_key")
-            else core_db.create_recommendation(record)
-        )
-        recommendation_id = recommendation["id"]
+    context = OntologyCommandContext(
+        actor=admin_actor(source="ideas"),
+        source_type="user",
+        source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
+    )
+    recommendation = OntologyCommandService().propose_action(
+        "create_recommendation",
+        {"record": record},
+        context,
+        reason=(body.note if body else None) or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
+    )
+    recommendation_id = recommendation["id"]
 
     action_proposal = None
     action_error = None
@@ -2303,7 +2186,6 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
         "accepted": True,
         "accepted_by": "user",
         "accepted_at": _now(),
-        "recommendation_id": recommendation_id if not ontology_primary_writes_enabled() else None,
         "recommendation_approval_id": recommendation_id,
         "action_approval_id": action_proposal["approval_id"] if action_proposal else None,
     }

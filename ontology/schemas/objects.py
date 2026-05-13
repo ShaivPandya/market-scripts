@@ -47,7 +47,7 @@ ExtractionRunStatus = Literal["queued", "running", "succeeded", "partial", "fail
 AnalystFeedbackDecision = Literal["confirm", "correct", "reject", "needs_review"]
 
 
-class PositionV1(OntologySchemaBase):
+class Position(OntologySchemaBase):
     ticker: NonBlankStr
     asset: NonBlankStr
     direction: NonBlankStr
@@ -124,14 +124,14 @@ class PositionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
     @model_validator(mode="after")
-    def _risk_level_matches_score(self) -> PositionV1:
+    def _risk_level_matches_score(self) -> Position:
         expected = expected_risk_level(float(self.risk_score))
         if self.risk_level != expected:
             raise ValueError(f"risk_level must be {expected!r} for risk_score={self.risk_score}")
         return self
 
 
-class AssetV1(OntologySchemaBase):
+class Asset(OntologySchemaBase):
     ticker: NonBlankStr
     asset: NonBlankStr
     name: str | None = None
@@ -154,7 +154,7 @@ class AssetV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class InstrumentV1(OntologySchemaBase):
+class Instrument(OntologySchemaBase):
     instrument_id: NonBlankStr
     ticker: str | None = None
     name: str | None = None
@@ -205,7 +205,7 @@ class InstrumentV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class IssuerV1(OntologySchemaBase):
+class Issuer(OntologySchemaBase):
     issuer_id: NonBlankStr
     name: NonBlankStr
     ticker: str | None = None
@@ -235,7 +235,7 @@ class IssuerV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class InvestorV1(OntologySchemaBase):
+class Investor(OntologySchemaBase):
     investor_id: NonBlankStr
     name: NonBlankStr
     suitability_profile: str | None = None
@@ -257,7 +257,7 @@ class InvestorV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class AccountV1(OntologySchemaBase):
+class Account(OntologySchemaBase):
     account_id: NonBlankStr
     investor_id: NonBlankStr
     account_type: str | None = None
@@ -288,7 +288,7 @@ class AccountV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PortfolioV1(OntologySchemaBase):
+class Portfolio(OntologySchemaBase):
     portfolio_id: NonBlankStr
     account_id: NonBlankStr
     base_currency: NonBlankStr = "USD"
@@ -312,7 +312,7 @@ class PortfolioV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class InvestmentPolicyV1(OntologySchemaBase):
+class InvestmentPolicy(OntologySchemaBase):
     policy_id: NonBlankStr
     account_id: NonBlankStr
     policy_version: int = 1
@@ -340,7 +340,7 @@ class InvestmentPolicyV1(OntologySchemaBase):
         return clean_text(value)
 
 
-class RiskLimitV1(OntologySchemaBase):
+class RiskLimit(OntologySchemaBase):
     limit_id: NonBlankStr
     policy_id: NonBlankStr
     metric: NonBlankStr
@@ -360,7 +360,7 @@ class RiskLimitV1(OntologySchemaBase):
         return clean_text(value)
 
 
-class RiskMetricV1(OntologySchemaBase):
+class RiskMetric(OntologySchemaBase):
     metric_id: NonBlankStr
     metric: NonBlankStr
     scope_type: str | None = None
@@ -391,7 +391,7 @@ class RiskMetricV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ScenarioV1(OntologySchemaBase):
+class Scenario(OntologySchemaBase):
     scenario_id: NonBlankStr
     name: NonBlankStr
     scenario_type: NonBlankStr = "stress"
@@ -433,7 +433,7 @@ class ScenarioV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PolicyGateResultV1(OntologySchemaBase):
+class PolicyGateResult(OntologySchemaBase):
     gate_result_id: NonBlankStr
     decision: NonBlankStr
     review_required: bool = False
@@ -461,7 +461,7 @@ class PolicyGateResultV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class TradeProposalV1(OntologySchemaBase):
+class TradeProposal(OntologySchemaBase):
     proposal_id: NonBlankStr
     recommendation_id: str | None = None
     account_id: str | None = None
@@ -502,7 +502,7 @@ class TradeProposalV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SourceRecordV1(OntologySchemaBase):
+class SourceRecord(OntologySchemaBase):
     source_record_id: NonBlankStr
     vendor: NonBlankStr
     source_name: NonBlankStr
@@ -544,7 +544,7 @@ class SourceRecordV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SourceManifestV1(OntologySchemaBase):
+class SourceManifest(OntologySchemaBase):
     manifest_id: NonBlankStr
     name: NonBlankStr
     source_kind: NonBlankStr = "document"
@@ -599,7 +599,7 @@ class SourceManifestV1(OntologySchemaBase):
         return [part.lower() for part in raw if part]
 
 
-class ObjectVersionRefV1(OntologySchemaBase):
+class ObjectVersionRef(OntologySchemaBase):
     ref_id: NonBlankStr
     object_uid: NonBlankStr
     object_type: str | None = None
@@ -621,7 +621,7 @@ class ObjectVersionRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ExecutedDecisionRecordV1(OntologySchemaBase):
+class ExecutedDecisionRecord(OntologySchemaBase):
     decision_record_id: NonBlankStr
     approval_id: str | None = None
     action_run_id: str | None = None
@@ -651,7 +651,7 @@ class ExecutedDecisionRecordV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ExecutedActionV1(OntologySchemaBase):
+class ExecutedAction(OntologySchemaBase):
     executed_action_id: NonBlankStr
     action_id: NonBlankStr
     approval_id: str | None = None
@@ -674,7 +674,7 @@ class ExecutedActionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class AuditEventV1(OntologySchemaBase):
+class AuditEvent(OntologySchemaBase):
     event_id: NonBlankStr
     occurred_at: str | None = None
     actor_type: NonBlankStr = "system"
@@ -711,7 +711,7 @@ class AuditEventV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SectorV1(OntologySchemaBase):
+class Sector(OntologySchemaBase):
     name: NonBlankStr
     sector_source: NonBlankStr
 
@@ -721,7 +721,7 @@ class SectorV1(OntologySchemaBase):
         return clean_text(value)
 
 
-class MacroIndicatorV1(OntologySchemaBase):
+class MacroIndicator(OntologySchemaBase):
     indicator_key: NonBlankStr
     name: NonBlankStr
     source: NonBlankStr
@@ -739,7 +739,7 @@ class MacroIndicatorV1(OntologySchemaBase):
         return clean_text(value)
 
 
-class SignalV1(OntologySchemaBase):
+class Signal(OntologySchemaBase):
     signal_key: NonBlankStr
     name: NonBlankStr
     source: NonBlankStr
@@ -775,7 +775,7 @@ class SignalV1(OntologySchemaBase):
         return "unknown"
 
 
-class ThesisV1(OntologySchemaBase):
+class Thesis(OntologySchemaBase):
     ticker: NonBlankStr
     status: ThesisStatus
     created_at: NonBlankStr
@@ -799,7 +799,7 @@ class ThesisV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class EvaluationV1(OntologySchemaBase):
+class Evaluation(OntologySchemaBase):
     ticker: NonBlankStr
     evaluated_at: NonBlankStr
     thesis_status: NonBlankStr
@@ -844,7 +844,7 @@ class EvaluationV1(OntologySchemaBase):
         return [str(item).strip() for item in value if str(item).strip()]
 
 
-class CatalystV1(OntologySchemaBase):
+class Catalyst(OntologySchemaBase):
     ticker: NonBlankStr
     name: NonBlankStr
     description: NonBlankStr
@@ -871,7 +871,7 @@ class CatalystV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class HedgePositionV1(OntologySchemaBase):
+class HedgePosition(OntologySchemaBase):
     ticker: NonBlankStr
     direction: NonBlankStr
     asset: NonBlankStr = "equity"
@@ -928,10 +928,9 @@ class HedgePositionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class KillConditionV1(OntologySchemaBase):
+class KillCondition(OntologySchemaBase):
     ticker: NonBlankStr
     condition: NonBlankStr
-    legacy_id: int | None = None
     metric: str | None = None
     threshold: str | None = None
     status: NonBlankStr = "active"
@@ -957,10 +956,9 @@ class KillConditionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ThesisClaimV1(OntologySchemaBase):
+class ThesisClaim(OntologySchemaBase):
     ticker: NonBlankStr
     claim: NonBlankStr
-    legacy_id: int | None = None
     expected_evidence: str | None = None
     disconfirming_evidence: str | None = None
     source_requirements: list[Any] = Field(default_factory=list)
@@ -1000,7 +998,7 @@ class ThesisClaimV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class EvidenceV1(OntologySchemaBase):
+class Evidence(OntologySchemaBase):
     evidence_id: NonBlankStr
     evidence_type: NonBlankStr = "source_excerpt"
     title: str | None = None
@@ -1038,7 +1036,7 @@ class EvidenceV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class CitationV1(OntologySchemaBase):
+class Citation(OntologySchemaBase):
     citation_id: NonBlankStr
     source_record_id: str | None = None
     document_artifact_id: str | None = None
@@ -1068,10 +1066,9 @@ class CitationV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ActionItemV1(OntologySchemaBase):
+class ActionItem(OntologySchemaBase):
     description: NonBlankStr
     action_type: NonBlankStr = "review"
-    legacy_id: int | None = None
     ticker: str | None = None
     urgency: NonBlankStr = "normal"
     status: NonBlankStr = "open"
@@ -1098,10 +1095,9 @@ class ActionItemV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class WatchTriggerV1(OntologySchemaBase):
+class WatchTrigger(OntologySchemaBase):
     condition: NonBlankStr
     trigger_type: NonBlankStr = "custom"
-    legacy_id: int | None = None
     ticker: str | None = None
     status: NonBlankStr = "active"
     source_type: str | None = None
@@ -1140,8 +1136,7 @@ class WatchTriggerV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ApprovalV1(OntologySchemaBase):
-    legacy_id: int | None = None
+class Approval(OntologySchemaBase):
     entity_type: NonBlankStr
     entity_id: str | None = None
     ticker: str | None = None
@@ -1217,8 +1212,7 @@ class ApprovalV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ActionRunV1(OntologySchemaBase):
-    legacy_id: int | None = None
+class ActionRun(OntologySchemaBase):
     action_id: NonBlankStr
     action_schema_name: str | None = None
     action_schema_version: int = 1
@@ -1263,8 +1257,7 @@ class ActionRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ActionEventV1(OntologySchemaBase):
-    legacy_id: int | None = None
+class ActionEvent(OntologySchemaBase):
     action_run_id: str
     event_type: NonBlankStr
     message: str | None = None
@@ -1283,7 +1276,7 @@ class ActionEventV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class WorkflowRunV1(OntologySchemaBase):
+class WorkflowRun(OntologySchemaBase):
     run_id: NonBlankStr
     workflow_name: NonBlankStr
     ticker: str | None = None
@@ -1324,7 +1317,7 @@ class WorkflowRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class WorkflowArtifactV1(OntologySchemaBase):
+class WorkflowArtifact(OntologySchemaBase):
     artifact_id: NonBlankStr
     workflow_run_id: str | None = None
     artifact_key: NonBlankStr
@@ -1351,9 +1344,8 @@ class WorkflowArtifactV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class RecommendationV1(OntologySchemaBase):
+class Recommendation(OntologySchemaBase):
     recommendation_id: str | None = None
-    legacy_id: int | None = None
     idempotency_key: str | None = None
     source_kind: NonBlankStr = "report"
     report_type: str | None = None
@@ -1419,7 +1411,7 @@ class RecommendationV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ReportRunV1(OntologySchemaBase):
+class ReportRun(OntologySchemaBase):
     report_id: NonBlankStr
     report_type: NonBlankStr
     as_of: NonBlankStr
@@ -1461,7 +1453,7 @@ class ReportRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class DocumentArtifactV1(OntologySchemaBase):
+class DocumentArtifact(OntologySchemaBase):
     document_type: NonBlankStr
     document_id: NonBlankStr
     title: str | None = None
@@ -1509,7 +1501,7 @@ class DocumentArtifactV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class MediaArtifactV1(OntologySchemaBase):
+class MediaArtifact(OntologySchemaBase):
     media_id: NonBlankStr
     media_type: NonBlankStr = "image"
     mime_type: NonBlankStr
@@ -1563,7 +1555,7 @@ class MediaArtifactV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ExtractionRunV1(OntologySchemaBase):
+class ExtractionRun(OntologySchemaBase):
     extraction_run_id: NonBlankStr
     extractor_id: NonBlankStr
     extractor_version: NonBlankStr = "unknown"
@@ -1601,7 +1593,7 @@ class ExtractionRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ObservationV1(OntologySchemaBase):
+class Observation(OntologySchemaBase):
     observation_id: NonBlankStr
     observation_type: NonBlankStr = "extracted_fact"
     value: Any = None
@@ -1632,7 +1624,7 @@ class ObservationV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ClassificationV1(OntologySchemaBase):
+class Classification(OntologySchemaBase):
     classification_id: NonBlankStr
     label: NonBlankStr
     classifier_id: str | None = None
@@ -1670,7 +1662,7 @@ class ClassificationV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PatternDetectionV1(OntologySchemaBase):
+class PatternDetection(OntologySchemaBase):
     pattern_id: NonBlankStr
     pattern_type: NonBlankStr
     summary: str | None = None
@@ -1701,7 +1693,7 @@ class PatternDetectionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class AnalystFeedbackV1(OntologySchemaBase):
+class AnalystFeedback(OntologySchemaBase):
     feedback_id: NonBlankStr
     target_object_uid: NonBlankStr
     target_object_type: NonBlankStr
@@ -1734,7 +1726,7 @@ class AnalystFeedbackV1(OntologySchemaBase):
         return clean_optional_text(value)
 
     @model_validator(mode="after")
-    def _feedback_payload_required(self) -> AnalystFeedbackV1:
+    def _feedback_payload_required(self) -> AnalystFeedback:
         if self.decision in {"correct", "reject", "needs_review"} and not (self.note or "").strip():
             raise ValueError("note is required for correct, reject, and needs_review feedback")
         if self.decision == "correct" and not self.correction:
@@ -1742,7 +1734,7 @@ class AnalystFeedbackV1(OntologySchemaBase):
         return self
 
 
-class ProvenanceEventV1(OntologySchemaBase):
+class ProvenanceEvent(OntologySchemaBase):
     event_id: NonBlankStr
     id: str | None = None
     event_type: NonBlankStr
@@ -1807,7 +1799,7 @@ class ProvenanceEventV1(OntologySchemaBase):
         return clean_optional_text(value)
 
     @model_validator(mode="after")
-    def _has_context_anchor(self) -> ProvenanceEventV1:
+    def _has_context_anchor(self) -> ProvenanceEvent:
         if any(
             (
                 self.actor_type,
@@ -1829,7 +1821,7 @@ class ProvenanceEventV1(OntologySchemaBase):
         )
 
 
-class RelationVersionRefV1(OntologySchemaBase):
+class RelationVersionRef(OntologySchemaBase):
     ref_id: NonBlankStr
     relation_uid: str | None = None
     relation_type: str | None = None
@@ -1847,7 +1839,7 @@ class RelationVersionRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SchemaDefinitionRefV1(OntologySchemaBase):
+class SchemaDefinitionRef(OntologySchemaBase):
     ref_id: NonBlankStr
     schema_kind: NonBlankStr
     schema_name: NonBlankStr
@@ -1860,7 +1852,7 @@ class SchemaDefinitionRefV1(OntologySchemaBase):
         return clean_text(value)
 
 
-class OntologyRunRefV1(OntologySchemaBase):
+class OntologyRunRef(OntologySchemaBase):
     run_id: NonBlankStr
     status: str | None = None
     as_of: str | None = None
@@ -1877,7 +1869,7 @@ class OntologyRunRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class AgentSessionRefV1(OntologySchemaBase):
+class AgentSessionRef(OntologySchemaBase):
     session_id: NonBlankStr
     actor_id: str | None = None
     started_at: str | None = None
@@ -1894,7 +1886,7 @@ class AgentSessionRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ModelCallRefV1(OntologySchemaBase):
+class ModelCallRef(OntologySchemaBase):
     call_id: NonBlankStr
     model: str | None = None
     provider: str | None = None
@@ -1911,7 +1903,7 @@ class ModelCallRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ToolCallRefV1(OntologySchemaBase):
+class ToolCallRef(OntologySchemaBase):
     call_id: NonBlankStr
     tool_name: str | None = None
     ontology_run_id: NonBlankStr = "operational"
@@ -1927,7 +1919,7 @@ class ToolCallRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ComputedSnapshotRefV1(OntologySchemaBase):
+class ComputedSnapshotRef(OntologySchemaBase):
     snapshot_key: NonBlankStr
     snapshot_id: str | None = None
     status: str | None = None
@@ -1944,7 +1936,7 @@ class ComputedSnapshotRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class MarketRegimeSnapshotV1(OntologySchemaBase):
+class MarketRegimeSnapshot(OntologySchemaBase):
     snapshot_id: NonBlankStr
     snapshot_key: NonBlankStr
     regime_label: NonBlankStr
@@ -1977,7 +1969,7 @@ class MarketRegimeSnapshotV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SignalFactorScoreV1(OntologySchemaBase):
+class SignalFactorScore(OntologySchemaBase):
     factor_score_id: NonBlankStr
     snapshot_id: NonBlankStr
     factor_key: NonBlankStr
@@ -2011,7 +2003,7 @@ class SignalFactorScoreV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ForwardOutlookV1(OntologySchemaBase):
+class ForwardOutlook(OntologySchemaBase):
     outlook_id: NonBlankStr
     snapshot_id: NonBlankStr
     label: NonBlankStr
@@ -2031,7 +2023,7 @@ class ForwardOutlookV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class RegimeEpisodeV1(OntologySchemaBase):
+class RegimeEpisode(OntologySchemaBase):
     episode_id: NonBlankStr
     snapshot_id: NonBlankStr
     regime: NonBlankStr
@@ -2052,7 +2044,7 @@ class RegimeEpisodeV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PositionRiskSnapshotV1(OntologySchemaBase):
+class PositionRiskSnapshot(OntologySchemaBase):
     snapshot_id: NonBlankStr
     ticker: str | None = None
     portfolio_risk_snapshot_id: str | None = None
@@ -2082,7 +2074,7 @@ class PositionRiskSnapshotV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PortfolioRiskSnapshotV1(OntologySchemaBase):
+class PortfolioRiskSnapshot(OntologySchemaBase):
     snapshot_id: NonBlankStr
     as_of: str | None = None
     computed_at: str | None = None
@@ -2107,7 +2099,7 @@ class PortfolioRiskSnapshotV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class EquityOverviewV1(OntologySchemaBase):
+class EquityOverview(OntologySchemaBase):
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
     ticker: str | None = None
@@ -2134,7 +2126,7 @@ class EquityOverviewV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class CompanyFinancialProfileV1(OntologySchemaBase):
+class CompanyFinancialProfile(OntologySchemaBase):
     profile_id: NonBlankStr
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
@@ -2161,7 +2153,7 @@ class CompanyFinancialProfileV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ExtrinsicSensitivityV1(OntologySchemaBase):
+class ExtrinsicSensitivity(OntologySchemaBase):
     sensitivity_id: NonBlankStr
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
@@ -2189,7 +2181,7 @@ class ExtrinsicSensitivityV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class IndustryForceAssessmentV1(OntologySchemaBase):
+class IndustryForceAssessment(OntologySchemaBase):
     force_id: NonBlankStr
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
@@ -2216,7 +2208,7 @@ class IndustryForceAssessmentV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SupplyDemandOutlookV1(OntologySchemaBase):
+class SupplyDemandOutlook(OntologySchemaBase):
     outlook_id: NonBlankStr
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
@@ -2242,7 +2234,7 @@ class SupplyDemandOutlookV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SupplyChainRelationshipV1(OntologySchemaBase):
+class SupplyChainRelationship(OntologySchemaBase):
     relationship_id: NonBlankStr
     overview_id: NonBlankStr
     issuer_id: NonBlankStr
@@ -2279,7 +2271,7 @@ class SupplyChainRelationshipV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ThesisDocumentV1(OntologySchemaBase):
+class ThesisDocument(OntologySchemaBase):
     thesis_document_id: NonBlankStr
     ticker: NonBlankStr
     issuer_id: str | None = None
@@ -2309,7 +2301,7 @@ class ThesisDocumentV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ThesisSectionV1(OntologySchemaBase):
+class ThesisSection(OntologySchemaBase):
     section_id: NonBlankStr
     thesis_document_id: NonBlankStr
     ticker: NonBlankStr
@@ -2336,10 +2328,9 @@ class ThesisSectionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class InvestmentIdeaV1(OntologySchemaBase):
+class InvestmentIdea(OntologySchemaBase):
     idea_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     ticker: NonBlankStr
     company_name: str | None = None
     status: NonBlankStr = "watching"
@@ -2384,10 +2375,9 @@ class InvestmentIdeaV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class IdeaEvaluationV1(OntologySchemaBase):
+class IdeaEvaluation(OntologySchemaBase):
     evaluation_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     idea_id: NonBlankStr
     ticker: NonBlankStr
     job_id: str | None = None
@@ -2447,10 +2437,9 @@ class IdeaEvaluationV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class IdeaComparisonRunV1(OntologySchemaBase):
+class IdeaComparisonRun(OntologySchemaBase):
     comparison_run_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     run_id: NonBlankStr
     job_id: str | None = None
     scope_statuses: list[str] = Field(default_factory=list)
@@ -2473,10 +2462,9 @@ class IdeaComparisonRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class IdeaComparisonRankingV1(OntologySchemaBase):
+class IdeaComparisonRanking(OntologySchemaBase):
     ranking_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     comparison_run_id: NonBlankStr
     run_id: str | None = None
     idea_id: NonBlankStr
@@ -2515,10 +2503,9 @@ class IdeaComparisonRankingV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class FactorScoreV1(OntologySchemaBase):
+class FactorScore(OntologySchemaBase):
     factor_score_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     parent_uid: NonBlankStr
     parent_type: NonBlankStr
     factor_name: NonBlankStr
@@ -2541,10 +2528,9 @@ class FactorScoreV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class MissingInformationRequirementV1(OntologySchemaBase):
+class MissingInformationRequirement(OntologySchemaBase):
     requirement_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     parent_uid: NonBlankStr
     parent_type: NonBlankStr
     field: NonBlankStr
@@ -2565,10 +2551,9 @@ class MissingInformationRequirementV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class OptimizationMissionV1(OntologySchemaBase):
+class OptimizationMission(OntologySchemaBase):
     mission_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     name: NonBlankStr
     status: NonBlankStr = "active"
     schedule_label: str | None = None
@@ -2590,10 +2575,9 @@ class OptimizationMissionV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class OptimizationRunV1(OntologySchemaBase):
+class OptimizationRun(OntologySchemaBase):
     run_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     mission_id: NonBlankStr
     mission_name: str | None = None
     status: NonBlankStr = "running"
@@ -2629,10 +2613,9 @@ class OptimizationRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class OptimizationActionSnapshotV1(OntologySchemaBase):
+class OptimizationActionSnapshot(OntologySchemaBase):
     snapshot_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     run_id: NonBlankStr
     mission_id: NonBlankStr
     ticker: str | None = None
@@ -2681,10 +2664,9 @@ class OptimizationActionSnapshotV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class OptimizationAlertV1(OntologySchemaBase):
+class OptimizationAlert(OntologySchemaBase):
     alert_id: NonBlankStr
     id: str | int | None = None
-    legacy_id: int | None = None
     mission_id: NonBlankStr
     run_id: NonBlankStr
     ticker: str | None = None
@@ -2735,7 +2717,7 @@ class OptimizationAlertV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class SourceFreshnessV1(OntologySchemaBase):
+class SourceFreshness(OntologySchemaBase):
     freshness_id: NonBlankStr
     id: str | int | None = None
     parent_uid: str | None = None
@@ -2769,7 +2751,7 @@ class SourceFreshnessV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ManagementQualityAssessmentV1(OntologySchemaBase):
+class ManagementQualityAssessment(OntologySchemaBase):
     assessment_id: NonBlankStr
     id: str | int | None = None
     issuer_id: NonBlankStr
@@ -2824,7 +2806,7 @@ class ManagementQualityAssessmentV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ManagementQualityScorecardRowV1(OntologySchemaBase):
+class ManagementQualityScorecardRow(OntologySchemaBase):
     row_id: NonBlankStr
     id: str | int | None = None
     assessment_id: NonBlankStr
@@ -2852,7 +2834,7 @@ class ManagementQualityScorecardRowV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ManagementQualityAccomplishmentV1(OntologySchemaBase):
+class ManagementQualityAccomplishment(OntologySchemaBase):
     accomplishment_id: NonBlankStr
     id: str | int | None = None
     assessment_id: NonBlankStr
@@ -2880,7 +2862,7 @@ class ManagementQualityAccomplishmentV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ManagementQualitySetbackV1(OntologySchemaBase):
+class ManagementQualitySetback(OntologySchemaBase):
     setback_id: NonBlankStr
     id: str | int | None = None
     assessment_id: NonBlankStr
@@ -2909,89 +2891,89 @@ class ManagementQualitySetbackV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-OntologyObjectV1 = (
-    PositionV1
-    | AssetV1
-    | InstrumentV1
-    | IssuerV1
-    | InvestorV1
-    | AccountV1
-    | PortfolioV1
-    | InvestmentPolicyV1
-    | RiskLimitV1
-    | RiskMetricV1
-    | ScenarioV1
-    | PolicyGateResultV1
-    | TradeProposalV1
-    | SourceRecordV1
-    | ObjectVersionRefV1
-    | ExecutedActionV1
-    | ExecutedDecisionRecordV1
-    | AuditEventV1
-    | SectorV1
-    | MacroIndicatorV1
-    | SignalV1
-    | ThesisV1
-    | EvaluationV1
-    | CatalystV1
-    | HedgePositionV1
-    | KillConditionV1
-    | ThesisClaimV1
-    | EvidenceV1
-    | CitationV1
-    | ActionItemV1
-    | WatchTriggerV1
-    | ApprovalV1
-    | ActionRunV1
-    | ActionEventV1
-    | ProvenanceEventV1
-    | RelationVersionRefV1
-    | SchemaDefinitionRefV1
-    | OntologyRunRefV1
-    | AgentSessionRefV1
-    | ModelCallRefV1
-    | ToolCallRefV1
-    | ComputedSnapshotRefV1
-    | MarketRegimeSnapshotV1
-    | SignalFactorScoreV1
-    | ForwardOutlookV1
-    | RegimeEpisodeV1
-    | PositionRiskSnapshotV1
-    | PortfolioRiskSnapshotV1
-    | WorkflowRunV1
-    | WorkflowArtifactV1
-    | RecommendationV1
-    | ReportRunV1
-    | SourceManifestV1
-    | DocumentArtifactV1
-    | MediaArtifactV1
-    | ExtractionRunV1
-    | ObservationV1
-    | ClassificationV1
-    | PatternDetectionV1
-    | AnalystFeedbackV1
-    | EquityOverviewV1
-    | CompanyFinancialProfileV1
-    | ExtrinsicSensitivityV1
-    | IndustryForceAssessmentV1
-    | SupplyDemandOutlookV1
-    | SupplyChainRelationshipV1
-    | ThesisDocumentV1
-    | ThesisSectionV1
-    | InvestmentIdeaV1
-    | IdeaEvaluationV1
-    | IdeaComparisonRunV1
-    | IdeaComparisonRankingV1
-    | FactorScoreV1
-    | MissingInformationRequirementV1
-    | OptimizationMissionV1
-    | OptimizationRunV1
-    | OptimizationActionSnapshotV1
-    | OptimizationAlertV1
-    | SourceFreshnessV1
-    | ManagementQualityAssessmentV1
-    | ManagementQualityScorecardRowV1
-    | ManagementQualityAccomplishmentV1
-    | ManagementQualitySetbackV1
+OntologyObject = (
+    Position
+    | Asset
+    | Instrument
+    | Issuer
+    | Investor
+    | Account
+    | Portfolio
+    | InvestmentPolicy
+    | RiskLimit
+    | RiskMetric
+    | Scenario
+    | PolicyGateResult
+    | TradeProposal
+    | SourceRecord
+    | ObjectVersionRef
+    | ExecutedAction
+    | ExecutedDecisionRecord
+    | AuditEvent
+    | Sector
+    | MacroIndicator
+    | Signal
+    | Thesis
+    | Evaluation
+    | Catalyst
+    | HedgePosition
+    | KillCondition
+    | ThesisClaim
+    | Evidence
+    | Citation
+    | ActionItem
+    | WatchTrigger
+    | Approval
+    | ActionRun
+    | ActionEvent
+    | ProvenanceEvent
+    | RelationVersionRef
+    | SchemaDefinitionRef
+    | OntologyRunRef
+    | AgentSessionRef
+    | ModelCallRef
+    | ToolCallRef
+    | ComputedSnapshotRef
+    | MarketRegimeSnapshot
+    | SignalFactorScore
+    | ForwardOutlook
+    | RegimeEpisode
+    | PositionRiskSnapshot
+    | PortfolioRiskSnapshot
+    | WorkflowRun
+    | WorkflowArtifact
+    | Recommendation
+    | ReportRun
+    | SourceManifest
+    | DocumentArtifact
+    | MediaArtifact
+    | ExtractionRun
+    | Observation
+    | Classification
+    | PatternDetection
+    | AnalystFeedback
+    | EquityOverview
+    | CompanyFinancialProfile
+    | ExtrinsicSensitivity
+    | IndustryForceAssessment
+    | SupplyDemandOutlook
+    | SupplyChainRelationship
+    | ThesisDocument
+    | ThesisSection
+    | InvestmentIdea
+    | IdeaEvaluation
+    | IdeaComparisonRun
+    | IdeaComparisonRanking
+    | FactorScore
+    | MissingInformationRequirement
+    | OptimizationMission
+    | OptimizationRun
+    | OptimizationActionSnapshot
+    | OptimizationAlert
+    | SourceFreshness
+    | ManagementQualityAssessment
+    | ManagementQualityScorecardRow
+    | ManagementQualityAccomplishment
+    | ManagementQualitySetback
 )
 JsonObject = dict[str, Any]

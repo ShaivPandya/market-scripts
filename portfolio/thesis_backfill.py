@@ -1,11 +1,4 @@
-"""
-thesis_backfill.py -- Parse thesis markdown files into structured catalysts and kill conditions.
-
-Reads each .md file in investment_theses/, extracts bullets from
-## Key Catalysts -> catalysts table, ## Risk Factors -> kill_conditions table.
-
-Can be run as a CLI script or called from _init_db on first run.
-"""
+"""Parse thesis markdown and seed ontology-backed thesis objects."""
 
 from __future__ import annotations
 
@@ -70,12 +63,13 @@ def _categorize_catalyst(label: str, description: str) -> str:
 
 
 def backfill_from_markdown(theses_dir: Path | None = None) -> dict[str, dict[str, int]]:
-    """Parse all thesis markdown files and insert catalysts/kill conditions.
+    """Parse thesis markdown files and apply them through the ontology command layer.
 
     Returns a summary dict: {ticker: {catalysts: N, kill_conditions: N}}.
     """
-    from portfolio.core_db import create_catalyst, create_kill_condition, get_catalysts, get_thesis_claims
-    from portfolio.thesis_sync import sync_claims_from_content
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.policy import system_actor
+    from portfolio.thesis_sync import _parse_structured_claims, _parse_text_claims
 
     if theses_dir is None:
         from paths import PROJECT_ROOT
@@ -87,6 +81,12 @@ def backfill_from_markdown(theses_dir: Path | None = None) -> dict[str, dict[str
         return {}
 
     summary: dict[str, dict[str, int]] = {}
+    service = OntologyCommandService()
+    context = OntologyCommandContext(
+        actor=system_actor("thesis_backfill"),
+        source_type="thesis_markdown",
+        source_id=str(theses_dir),
+    )
 
     for md_file in sorted(theses_dir.glob("*.md")):
         ticker = md_file.stem.upper()
@@ -94,57 +94,32 @@ def backfill_from_markdown(theses_dir: Path | None = None) -> dict[str, dict[str
         if not content:
             continue
 
-        # Keep catalyst/kill-condition backfill idempotent, but let claims
-        # backfill independently for databases populated before claims existed.
-        existing_catalysts = get_catalysts(ticker)
-        has_backfilled_entities = any(c.get("created_by") == "backfill" for c in existing_catalysts)
-
         catalyst_bullets = _parse_bullets(content, "Key Catalysts")
         risk_bullets = _parse_bullets(content, "Risk Factors")
-
-        cat_count = 0
-        kc_count = 0
-        if not has_backfilled_entities:
-            for bullet in catalyst_bullets:
-                if not bullet or bullet.strip() == "TBD":
-                    continue
-                label, desc = _extract_label_and_description(bullet)
-                category = _categorize_catalyst(label, desc)
-                create_catalyst(
-                    ticker=ticker,
-                    description=f"{label}: {desc}" if desc != label else label,
-                    category=category,
-                    created_by="backfill",
-                )
-                cat_count += 1
-
-            for bullet in risk_bullets:
-                if not bullet or bullet.strip() == "TBD":
-                    continue
-                label, desc = _extract_label_and_description(bullet)
-                create_kill_condition(
-                    ticker=ticker,
-                    condition=f"{label}: {desc}" if desc != label else label,
-                    created_by="backfill",
-                )
-                kc_count += 1
-
-        claim_count = 0
-        if not get_thesis_claims(ticker=ticker):
-            claim_count = sync_claims_from_content(ticker, content)
-
-        if not (cat_count or kc_count or claim_count):
-            continue
-
+        claims = _parse_structured_claims(content)
+        claim_count = len(claims if claims is not None else _parse_text_claims(content))
+        approval = service.propose_action(
+            "save_thesis_content",
+            {"ticker": ticker, "content": content, "preserve_exact_content": True},
+            context,
+            reason="Seed ontology thesis content from markdown",
+        )
+        service.resolve_approval(
+            str(approval["id"]),
+            "approved",
+            "Seed ontology thesis content from markdown",
+            context,
+        )
+        cat_count = len([item for item in catalyst_bullets if item and item.strip() != "TBD"])
+        kc_count = len([item for item in risk_bullets if item and item.strip() != "TBD"])
         summary[ticker] = {"catalysts": cat_count, "kill_conditions": kc_count, "thesis_claims": claim_count}
-        if cat_count or kc_count or claim_count:
-            logger.info(
-                "thesis_backfill: %s -> %d catalysts, %d kill conditions, %d thesis claims",
-                ticker,
-                cat_count,
-                kc_count,
-                claim_count,
-            )
+        logger.info(
+            "thesis_backfill: %s -> %d catalysts, %d kill conditions, %d thesis claims",
+            ticker,
+            cat_count,
+            kc_count,
+            claim_count,
+        )
 
     return summary
 

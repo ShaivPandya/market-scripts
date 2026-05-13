@@ -9,8 +9,8 @@ This module owns two related registries:
 
 State-changing domain action execution has moved to
 ``ontology.command_service.OntologyCommandService``. This registry is retained
-for typed action metadata and agent tool exposure only; legacy execution paths
-are fail-closed unless explicitly enabled for migration repair.
+for typed action metadata and agent tool exposure only; direct execution paths
+are fail-closed.
 """
 
 from __future__ import annotations
@@ -96,14 +96,10 @@ class ActionNotFoundError(ActionError):
         self.identifier = identifier
 
 
-def _assert_legacy_action_runtime_enabled() -> None:
-    from ontology.domain_write_service import ontology_primary_writes_enabled
-
-    if ontology_primary_writes_enabled():
-        raise ActionConflictError(
-            "Legacy action_registry execution is disabled in ontology-primary runtime; "
-            "use ontology.command_service.OntologyCommandService instead."
-        )
+def _assert_metadata_registry_not_executed() -> None:
+    raise ActionConflictError(
+        "action_registry execution is disabled; use ontology.command_service.OntologyCommandService instead."
+    )
 
 
 @dataclass(frozen=True)
@@ -222,46 +218,10 @@ class DomainAction:
 ActionDefinition = DomainAction
 
 
-ActionUpgradeAdapter = Callable[[dict[str, Any]], dict[str, Any]]
 _ACTION_INPUT_MODELS: dict[tuple[ActionId, int], type[BaseModel]] = {}
-_ACTION_UPGRADE_ADAPTERS: dict[tuple[ActionId, int, int], ActionUpgradeAdapter] = {}
 
 
-class PortfolioPositionInputV1(BaseModel):
-    ticker: str
-    asset: Literal["equity", "commodity", "fx", "bond"]
-    direction: Literal["long", "short"]
-    contrarian: bool = False
-    conviction: int = Field(default=3, ge=1, le=5)
-    cost_basis: float | None = None
-    shares: float | None = None
-
-    @field_validator("ticker")
-    @classmethod
-    def _normalize_ticker(cls, value: str) -> str:
-        ticker = str(value or "").strip().upper()
-        if not ticker:
-            raise ValueError("Ticker cannot be empty.")
-        if not _TICKER_RE.match(ticker):
-            raise ValueError(f"Invalid ticker format: '{ticker}'.")
-        return ticker
-
-
-class UpdatePortfolioPositionsInputV1(BaseModel):
-    positions: list[PortfolioPositionInputV1]
-
-    @model_validator(mode="after")
-    def _validate_positions(self) -> UpdatePortfolioPositionsInputV1:
-        if not self.positions:
-            raise ValueError("At least one position is required.")
-        tickers = [position.ticker for position in self.positions]
-        if len(set(tickers)) != len(tickers):
-            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
-            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
-        return self
-
-
-class PortfolioPositionInputV2(BaseModel):
+class PortfolioPositionInputBase(BaseModel):
     ticker: str
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
     direction: Literal["long", "short"]
@@ -286,7 +246,7 @@ class PortfolioPositionInputV2(BaseModel):
     valuation_status: str | None = None
 
     @model_validator(mode="after")
-    def _normalize_instrument(self) -> PortfolioPositionInputV2:
+    def _normalize_instrument(self) -> PortfolioPositionInputBase:
         self.instrument_type = normalize_instrument_type(
             self.instrument_type,
             ticker=str(self.ticker),
@@ -315,21 +275,7 @@ class PortfolioPositionInputV2(BaseModel):
         return self
 
 
-class UpdatePortfolioPositionsInputV2(BaseModel):
-    positions: list[PortfolioPositionInputV2]
-
-    @model_validator(mode="after")
-    def _validate_positions(self) -> UpdatePortfolioPositionsInputV2:
-        if not self.positions:
-            raise ValueError("At least one position is required.")
-        tickers = [position.ticker for position in self.positions]
-        if len(set(tickers)) != len(tickers):
-            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
-            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
-        return self
-
-
-class PortfolioPositionInput(PortfolioPositionInputV2):
+class PortfolioPositionInput(PortfolioPositionInputBase):
     group_name: str | None = None
     group_conviction: int | None = Field(default=None, ge=1, le=5)
 
@@ -355,35 +301,6 @@ class UpdatePortfolioPositionsInput(BaseModel):
         for position, row in zip(self.positions, rows, strict=False):
             position.group_name = row.get("group_name")
             position.group_conviction = row.get("group_conviction")
-        return self
-
-
-class HedgePositionInputV1(BaseModel):
-    ticker: str
-    direction: Literal["long", "short"]
-    cost_basis: float | None = None
-    shares: float | None = None
-
-    @field_validator("ticker")
-    @classmethod
-    def _normalize_ticker(cls, value: str) -> str:
-        ticker = str(value or "").strip().upper()
-        if not ticker:
-            raise ValueError("Ticker cannot be empty.")
-        if not _TICKER_RE.match(ticker):
-            raise ValueError(f"Invalid ticker format: '{ticker}'.")
-        return ticker
-
-
-class UpdateHedgePositionsInputV1(BaseModel):
-    positions: list[HedgePositionInputV1]
-
-    @model_validator(mode="after")
-    def _validate_positions(self) -> UpdateHedgePositionsInputV1:
-        tickers = [position.ticker for position in self.positions]
-        if len(set(tickers)) != len(tickers):
-            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
-            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
         return self
 
 
@@ -458,11 +375,6 @@ class ChangeThesisStatusInput(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _support_legacy_approval_shape(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "status" not in value and "new_status" in value:
-            value = {**value, "status": value.get("new_status")}
-        return value
-
     @field_validator("ticker")
     @classmethod
     def _normalize_ticker(cls, value: str) -> str:
@@ -545,13 +457,6 @@ class UpdateCatalystStatusInput(OptionalTickerMixin):
             raise ValueError("Catalyst id cannot be empty.")
         return text
 
-    @model_validator(mode="before")
-    @classmethod
-    def _support_legacy_status_shape(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "status" not in value and "new_status" in value:
-            value = {**value, "status": value.get("new_status")}
-        return value
-
 
 class CreateKillConditionInput(TickerMixin):
     condition: str
@@ -580,18 +485,6 @@ class UpdateKillConditionStatusInput(OptionalTickerMixin):
         if not text:
             raise ValueError("Kill condition id cannot be empty.")
         return text
-
-    @model_validator(mode="before")
-    @classmethod
-    def _support_legacy_id_and_status_shape(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            updates = dict(value)
-            if "kill_condition_id" not in updates and "kc_id" in updates:
-                updates["kill_condition_id"] = updates.get("kc_id")
-            if "status" not in updates and "new_status" in updates:
-                updates["status"] = updates.get("new_status")
-            return updates
-        return value
 
 
 class SourceRequirementActionInput(BaseModel):
@@ -1159,14 +1052,17 @@ def _normalize_action_item_uid(value: Any) -> str:
     return f"action_item:{text}"
 
 
-def _legacy_action_item_id(value: Any) -> int | None:
+def _numeric_action_item_id(value: ActionItemIdentifier) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
     text = str(value or "").strip()
     if text.startswith("action_item:"):
         text = text.removeprefix("action_item:").strip()
-    try:
-        return int(text)
-    except (TypeError, ValueError):
+    if not text.isdigit():
         return None
+    return int(text)
 
 
 def _action_item_context(value: Any) -> dict[str, Any]:
@@ -1192,10 +1088,10 @@ def _action_item_status_payload(model: BaseModel) -> dict[str, Any]:
 
 
 def _hash_watch_trigger_status(model: BaseModel) -> dict[str, Any]:
-    trigger_id = int(getattr(model, "trigger_id", 0) or 0)
+    trigger_id = str(getattr(model, "trigger_id", "") or "").strip()
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    trigger_uid = f"watch_trigger:{trigger_id}"
+    trigger_uid = trigger_id if trigger_id.startswith("watch_trigger:") else f"watch_trigger:{trigger_id}"
     trigger = OntologyRuntimeReadService().get(trigger_uid)
     return {"trigger_id": trigger_id, "status": trigger.get("status") if trigger else None}
 
@@ -1211,112 +1107,8 @@ def _validation_message(exc: PydanticValidationError) -> str:
 
 
 def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: ActionContext) -> tuple[int, str]:
-    from portfolio import core_db
-
-    input_hash = _stable_hash(raw_input)
-    governed = action.risk_class == "financial" or action.effect_kind in {"approval_gated", "direct_mutation"}
-    lineage_root_id: str | None = None
-    run = core_db.create_action_run(
-        action_id=action.action_id,
-        action_schema_version=action.schema_version,
-        action_schema_name=action.action_id,
-        actor_type=context.actor_type,
-        actor_id=context.actor_id,
-        source_type=context.source_type,
-        source_id=context.source_id,
-        approval_id=context.approval_id,
-        parent_action_run_id=context.parent_action_run_id,
-        input_hash=input_hash,
-        input_payload=raw_input,
-    )
-    run_id = int(run["id"])
-    lineage_root_id = f"action_run:{run_id}"
-    try:
-        from api import provenance
-
-        event_id = provenance.deterministic_id("pv:action_run", run_id)
-        provenance.start_event(
-            event_id=event_id,
-            event_type="action_run",
-            event_name=action.action_id,
-            actor=context,
-            parent_event_id=context.provenance_event_id,
-            action_run_id=run_id,
-            approval_id=context.approval_id,
-            input_value=raw_input,
-            summary={
-                "action_id": action.action_id,
-                "action_schema_name": action.action_id,
-                "action_schema_version": action.schema_version,
-                "actor_type": context.actor_type,
-            },
-            metadata={
-                "input_hash": input_hash,
-                "source_type": context.source_type,
-                "source_id": context.source_id,
-                "parent_action_run_id": context.parent_action_run_id,
-            },
-            criticality="financial_critical" if governed else "operational",
-            lineage_root_id=lineage_root_id if governed else None,
-            idempotency_key=f"action_run:{run_id}:started",
-            retention_class="financial_lineage_7y" if governed else provenance.DEFAULT_RETENTION_CLASS,
-            fail_closed=governed,
-        )
-        core_db.set_action_run_provenance_event(run_id, event_id)
-        provenance.link_refs(
-            event_id=event_id,
-            source_ref_type="domain_action",
-            source_ref_id=action.action_id,
-            source_ref_version=str(action.schema_version),
-            target_ref_type="action_run",
-            target_ref_id=str(run_id),
-            link_type="executed_as",
-            lineage_root_id=lineage_root_id if governed else None,
-            fail_closed=governed,
-        )
-        if context.source_type and context.source_id:
-            provenance.link_refs(
-                event_id=event_id,
-                source_ref_type=context.source_type,
-                source_ref_id=str(context.source_id),
-                target_ref_type="action_run",
-                target_ref_id=str(run_id),
-                link_type="triggered",
-                lineage_root_id=lineage_root_id if governed else None,
-                fail_closed=governed,
-            )
-        if context.approval_id is not None:
-            provenance.link_refs(
-                event_id=event_id,
-                source_ref_type="approval",
-                source_ref_id=str(context.approval_id),
-                target_ref_type="action_run",
-                target_ref_id=str(run_id),
-                link_type="approved_execution",
-                lineage_root_id=lineage_root_id if governed else None,
-                fail_closed=governed,
-            )
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        core_db.record_action_event(run_id, "provenance_failed", message=message)
-        core_db.complete_action_run(run_id, status="failed", error=message)
-        if governed:
-            raise
-    core_db.record_action_event(run_id, "start", payload={"action_id": action.action_id})
-    _emit_domain_audit(
-        action,
-        context,
-        "domain.action.started",
-        "started",
-        action_run_id=run_id,
-        metadata={
-            "action_id": action.action_id,
-            "action_schema_version": action.schema_version,
-            "input_hash": input_hash,
-            "input_summary": summarize_for_audit(raw_input),
-        },
-    )
-    return run_id, input_hash
+    _assert_metadata_registry_not_executed()
+    return 0, _stable_hash(raw_input)
 
 
 def _action_refs(
@@ -1353,46 +1145,7 @@ def _queue_action_lineage_retry(
     error: str | None = None,
     provenance_links: list[dict[str, Any]] | None = None,
 ) -> None:
-    from api import governance
-    from portfolio import core_db
-
-    lineage_root_id = governance.lineage_root(governance.REF_ACTION_RUN, run_id)
-    bundle = governance.lifecycle_event_bundle(
-        event_name=event_name,
-        event_type="action_run",
-        ref_type=governance.REF_ACTION_RUN,
-        ref_id=run_id,
-        status=status,
-        actor_type=context.actor_type,
-        actor_id=context.actor_id,
-        parent_event_id=context.provenance_event_id,
-        action_run_id=run_id,
-        approval_id=context.approval_id,
-        summary=summary,
-        metadata={
-            "action_id": action.action_id,
-            "action_schema_version": action.schema_version,
-            **(metadata if isinstance(metadata, dict) else {"metadata": metadata} if metadata is not None else {}),
-        },
-        source_lineage=_source_lineage(context),
-        error=error,
-        idempotency_key=f"domain_action:{run_id}:{event_name}:{status}:retry",
-    )
-    if provenance_links:
-        bundle.setdefault("provenance_links", []).extend(provenance_links)
-    bundle["action_run_updates"] = [
-        {
-            "action_run_id": run_id,
-            "provenance_event_id": _action_run_provenance_id(run_id),
-            "lineage_completeness": "complete",
-        }
-    ]
-    core_db.enqueue_governance_outbox(
-        bundle,
-        idempotency_key=f"domain_action:{run_id}:{event_name}:{status}:retry",
-        lineage_root_id=lineage_root_id,
-    )
-    core_db.set_action_run_lineage_completeness(run_id, "retry_pending")
+    _assert_metadata_registry_not_executed()
 
 
 def _emit_domain_audit(
@@ -1627,56 +1380,7 @@ def _record_ontology_write_boundary_versions(
     normalized_input: dict[str, Any],
     output: dict[str, Any],
 ) -> None:
-    primary = False
-    try:
-        from ontology.domain_write_service import ontology_primary_writes_enabled, record_action_ontology_versions
-        from portfolio import core_db
-
-        primary = ontology_primary_writes_enabled()
-        rows = record_action_ontology_versions(
-            action_id=action.action_id,
-            input_payload=normalized_input,
-            output=output,
-            context=context,
-            input_hash=input_hash,
-        )
-        if rows and context.approval_id is not None:
-            try:
-                from ontology.decision_writeback import apply_approved_decision
-
-                apply_approved_decision(
-                    approval_id=context.approval_id,
-                    action_run_id=run_id,
-                    action_id=action.action_id,
-                    output=output,
-                    mutated_versions=rows,
-                    actor={"actor_type": context.actor_type, "actor_id": context.actor_id},
-                    provenance=context.provenance_event_id,
-                )
-            except Exception:
-                if primary:
-                    raise
-        if rows:
-            core_db.record_action_event(
-                run_id,
-                "ontology_versions_written",
-                payload={
-                    "action_id": action.action_id,
-                    "count": len(rows),
-                    "version_ids": [_ontology_version_id(row) for row in rows if _ontology_version_id(row)],
-                },
-            )
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        try:
-            from portfolio import core_db
-
-            core_db.record_action_event(run_id, "ontology_write_failed", message=message)
-        except Exception:
-            pass
-        if primary:
-            raise
-        logger.warning("Ontology write-boundary mirror failed for %s", action.action_id, exc_info=True)
+    _assert_metadata_registry_not_executed()
 
 
 def _ontology_version_id(row: Mapping[str, Any]) -> str | None:
@@ -1696,33 +1400,7 @@ def _record_pending_approval_ontology_version(
     run_id: int,
     input_hash: str | None,
 ) -> None:
-    primary = False
-    try:
-        from ontology.domain_write_service import (
-            ontology_primary_writes_enabled,
-            record_pending_approval_ontology_version,
-        )
-        from portfolio import core_db
-
-        primary = ontology_primary_writes_enabled()
-        row = record_pending_approval_ontology_version(approval, context=context, input_hash=input_hash)
-        if row:
-            core_db.record_action_event(
-                run_id,
-                "ontology_approval_version_written",
-                payload={"version_id": _ontology_version_id(row), "approval_id": approval.get("id")},
-            )
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        try:
-            from portfolio import core_db
-
-            core_db.record_action_event(run_id, "ontology_write_failed", message=message)
-        except Exception:
-            pass
-        if primary:
-            raise
-        logger.warning("Ontology approval mirror failed for approval=%s", approval.get("id"), exc_info=True)
+    _assert_metadata_registry_not_executed()
 
 
 def _action_result_refs(
@@ -1822,32 +1500,7 @@ def _audit_fail(
     audit_action_name: str = "domain.action.failed",
     audit_status: str = "failed",
 ) -> None:
-    from portfolio import core_db
-
-    core_db.record_action_event(run_id, "error", message=message)
-    core_db.complete_action_run(run_id, status="rolled_back" if rolled_back else "failed", error=message)
-    critical = bool(action and action.risk_class == "financial")
-    _finish_action_provenance(
-        run_id,
-        action=action,
-        context=context,
-        critical=critical,
-        status="rolled_back" if rolled_back else "failed",
-        summary={"status": "rolled_back" if rolled_back else "failed"},
-        metadata={"audit_action_name": audit_action_name},
-        error=message,
-    )
-    if action is not None and context is not None:
-        _emit_domain_audit(
-            action,
-            context,
-            audit_action_name,
-            audit_status,
-            action_run_id=run_id,
-            after_summary={"status": audit_status},
-            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
-            error=message,
-        )
+    _assert_metadata_registry_not_executed()
 
 
 def execute_action(
@@ -1857,128 +1510,8 @@ def execute_action(
     *,
     input_schema_version: int | None = None,
 ) -> ActionResult:
-    _assert_legacy_action_runtime_enabled()
-    action = get_action(action_id)
-    context = context or ActionContext()
-    audit_action = action
-    if input_schema_version is not None and input_schema_version != action.schema_version:
-        audit_action = replace(action, schema_version=int(input_schema_version))
-    run_id, input_hash = _audit_start(audit_action, raw_input, context)
-    context = replace(context, action_run_id=run_id, provenance_event_id=_action_run_provenance_id(run_id))
-
-    from portfolio import core_db
-
-    try:
-        try:
-            typed_input = _validate_and_upgrade_action_input(
-                action,
-                raw_input,
-                input_schema_version=input_schema_version,
-            )
-        except PydanticValidationError as exc:
-            message = _validation_message(exc)
-            core_db.record_action_event(run_id, "validation_failed", message=message, payload=exc.errors())
-            raise ActionValidationError(message) from exc
-
-        normalized = _model_payload(typed_input)
-        core_db.record_action_event(run_id, "validated", payload=normalized)
-
-        if context.actor_type not in action.execute_actor_types:
-            message = f"Actor '{context.actor_type}' is not authorized to execute {action.action_id}"
-            core_db.record_action_event(run_id, "authorization_denied", message=message)
-            raise ActionAuthorizationError(message)
-        if (
-            action.effect_kind == "approval_gated"
-            and context.actor_type == "approval_apply"
-            and context.approval_id is None
-        ):
-            message = f"Approval-gated action {action.action_id} requires approval_id for execution"
-            core_db.record_action_event(run_id, "authorization_denied", message=message)
-            raise ActionAuthorizationError(message)
-        core_db.record_action_event(run_id, "authorized", payload={"actor_type": context.actor_type})
-
-        core_db.record_action_event(run_id, "mutation_started")
-        if context.actor_type == "approval_apply":
-            from ontology.domain_write_service import domain_write_scope
-
-            with domain_write_scope(
-                action_id=action.action_id,
-                actor_type=context.actor_type,
-                approval_id=context.approval_id,
-                action_run_id=run_id,
-                source_type=context.source_type,
-                source_id=context.source_id,
-            ):
-                result = action.handler(typed_input, context)
-        else:
-            result = action.handler(typed_input, context)
-        core_db.record_action_event(run_id, "mutation_completed", payload=result.output)
-        _record_ontology_write_boundary_versions(
-            action=action,
-            context=context,
-            run_id=run_id,
-            input_hash=input_hash,
-            normalized_input=normalized,
-            output=result.output,
-        )
-
-        for callback in result.post_commit_callbacks:
-            try:
-                callback.fn()
-                core_db.record_action_event(run_id, "callback_completed", payload={"name": callback.name})
-            except Exception as exc:
-                logger.warning("Action callback failed: %s", callback.name, exc_info=True)
-                core_db.record_action_event(
-                    run_id,
-                    "callback_failed",
-                    message=str(exc) or exc.__class__.__name__,
-                    payload={"name": callback.name},
-                )
-
-        core_db.record_action_event(run_id, "complete", payload=result.output)
-        core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
-        critical = action.risk_class == "financial"
-        _link_action_result_entities(action, context, run_id, result.output, normalized, critical=critical)
-        _finish_action_provenance(
-            run_id,
-            action=action,
-            context=context,
-            critical=critical,
-            status="succeeded",
-            output_value=result.output,
-            summary={"status": "succeeded", **result.output},
-            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
-        )
-        _emit_domain_audit(
-            action,
-            context,
-            "domain.action.succeeded",
-            "succeeded",
-            action_run_id=run_id,
-            after_summary=result.output,
-            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
-        )
-        return result
-    except ActionError as exc:
-        action_run = core_db.get_action_run(run_id) or {}
-        if action_run.get("status") == "running":
-            _audit_fail(
-                run_id,
-                exc.message,
-                action=action,
-                context=context,
-                audit_action_name="domain.action.denied"
-                if isinstance(exc, ActionAuthorizationError)
-                else "domain.action.failed",
-                audit_status="denied" if isinstance(exc, ActionAuthorizationError) else "failed",
-            )
-        raise
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        action_run = core_db.get_action_run(run_id) or {}
-        if action_run.get("status") == "running":
-            _audit_fail(run_id, message, action=action, context=context)
-        raise
+    _assert_metadata_registry_not_executed()
+    return ActionResult({"status": "disabled"})
 
 
 def propose_action(
@@ -1992,190 +1525,8 @@ def propose_action(
     reason_code: str | None = None,
     supersedes_approval_id: int | None = None,
 ) -> dict[str, Any]:
-    _assert_legacy_action_runtime_enabled()
-    action = get_action(action_id)
-    approval_spec = action.approval_spec
-    proposal_action = DomainAction(
-        action_id=f"{action.action_id}:propose",
-        input_model=action.input_model,
-        handler=lambda _input, _context: ActionResult({"status": "pending_approval_created"}),
-        schema_version=action.schema_version,
-        execute_actor_types=action.propose_actor_types,
-    )
-    run_id, input_hash = _audit_start(proposal_action, raw_input, context)
-    proposal_event_id = _action_run_provenance_id(run_id)
-
-    from portfolio import core_db
-
-    try:
-        try:
-            typed_input = action.input_model.model_validate(raw_input)
-        except PydanticValidationError as exc:
-            message = _validation_message(exc)
-            core_db.record_action_event(run_id, "validation_failed", message=message, payload=exc.errors())
-            raise ActionValidationError(message) from exc
-        if context.actor_type not in action.propose_actor_types:
-            message = f"Actor '{context.actor_type}' is not authorized to propose {action.action_id}"
-            core_db.record_action_event(run_id, "authorization_denied", message=message)
-            raise ActionAuthorizationError(message)
-        if approval_spec is None:
-            raise ActionValidationError(f"Action {action.action_id} cannot be proposed for approval")
-        if approval_spec.reason_required and not str(reason or "").strip():
-            raise ActionValidationError(f"Action {action.action_id} requires a proposal reason")
-
-        approval_payload = (
-            approval_spec.payload_builder(typed_input) if approval_spec.payload_builder else _model_payload(typed_input)
-        )
-        try:
-            from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action
-
-            approval_payload, policy_gate = ensure_policy_gate_for_action(
-                action.action_id,
-                approval_payload,
-                context={
-                    "actor_type": context.actor_type,
-                    "actor_id": context.actor_id,
-                    "source_type": context.source_type,
-                    "source_id": context.source_id,
-                    "proposal_action_run_id": run_id,
-                },
-            )
-            if policy_gate:
-                core_db.record_action_event(run_id, "policy_gate_evaluated", payload=policy_gate)
-        except PolicyGateBlockedError as exc:
-            message = str(exc).strip() or "Policy gate blocked the action"
-            core_db.record_action_event(run_id, "policy_gate_blocked", message=message)
-            raise ActionValidationError(message) from exc
-        ticker = approval_spec.ticker_extractor(typed_input) if approval_spec.ticker_extractor else None
-        base_state_hash = compute_action_base_state_hash(action.action_id, approval_payload)
-        use_once = once or approval_spec.once
-        create = core_db.create_pending_approval_once if use_once else core_db.create_pending_approval
-        approval = create(
-            entity_type=approval_spec.entity_type,
-            proposed_change=approval_payload,
-            entity_id=entity_id,
-            ticker=ticker,
-            reason=reason,
-            source_type=context.source_type or context.actor_type,
-            source_id=context.source_id,
-            action_id=action.action_id,
-            action_schema_version=action.schema_version,
-            action_schema_name=action.action_id,
-            action_input_hash=input_hash,
-            risk_class=action.risk_class,
-            approval_mode=action.default_execution_mode or "approval_required",
-            base_state_hash=base_state_hash,
-            requested_by_actor_id=context.actor_id,
-            approval_note_required=action.reason_required,
-            reason_code=reason_code,
-            supersedes_approval_id=supersedes_approval_id,
-        )
-        try:
-            from api import provenance
-
-            core_db.set_pending_approval_provenance(
-                int(approval["id"]),
-                origin_provenance_event_id=proposal_event_id,
-            )
-            provenance.link_refs(
-                event_id=proposal_event_id,
-                source_ref_type="action_run",
-                source_ref_id=str(run_id),
-                target_ref_type="approval",
-                target_ref_id=str(approval["id"]),
-                link_type="proposed",
-                metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
-                lineage_root_id=f"action_run:{run_id}" if action.risk_class == "financial" else None,
-                fail_closed=action.risk_class == "financial",
-            )
-        except Exception as exc:
-            if action.risk_class == "financial":
-                from api import governance
-
-                _queue_action_lineage_retry(
-                    run_id=run_id,
-                    action=proposal_action,
-                    context=context,
-                    event_name="approval.created",
-                    status="pending",
-                    summary={"approval_id": approval["id"], "status": "retry_pending"},
-                    metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
-                    error=str(exc) or exc.__class__.__name__,
-                    provenance_links=[
-                        governance.provenance_link(
-                            event_id=proposal_event_id,
-                            source_ref_type=governance.REF_ACTION_RUN,
-                            source_ref_id=run_id,
-                            target_ref_type=governance.REF_APPROVAL,
-                            target_ref_id=approval["id"],
-                            link_type=governance.LINK_PROPOSED,
-                            lineage_root_id=f"action_run:{run_id}",
-                            metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
-                        )
-                    ],
-                )
-            else:
-                logger.debug("Failed to link approval proposal provenance", exc_info=True)
-        output = {
-            "status": "pending_approval_created",
-            "approval_id": approval["id"],
-            "entity_type": approval["entity_type"],
-            "ticker": approval.get("ticker"),
-        }
-        _record_pending_approval_ontology_version(
-            approval=approval,
-            context=replace(context, action_run_id=run_id, provenance_event_id=proposal_event_id),
-            run_id=run_id,
-            input_hash=input_hash,
-        )
-        core_db.record_action_event(run_id, "approval_created", payload=output)
-        core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
-        critical = action.risk_class == "financial"
-        _finish_action_provenance(
-            run_id,
-            action=proposal_action,
-            context=context,
-            critical=critical,
-            status="succeeded",
-            output_value=output,
-            summary=output,
-            metadata={
-                "action_id": action.action_id,
-                "proposal_action_id": proposal_action.action_id,
-                "action_schema_version": action.schema_version,
-            },
-        )
-        _emit_domain_audit(
-            proposal_action,
-            context,
-            "domain.action.succeeded",
-            "succeeded",
-            action_run_id=run_id,
-            after_summary=output,
-            metadata={
-                "action_id": action.action_id,
-                "proposal_action_id": proposal_action.action_id,
-                "action_schema_version": action.schema_version,
-                "input_hash": input_hash,
-            },
-        )
-        return approval
-    except ActionError as exc:
-        _audit_fail(
-            run_id,
-            exc.message,
-            action=proposal_action,
-            context=context,
-            audit_action_name="domain.action.denied"
-            if isinstance(exc, ActionAuthorizationError)
-            else "domain.action.failed",
-            audit_status="denied" if isinstance(exc, ActionAuthorizationError) else "failed",
-        )
-        raise
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        _audit_fail(run_id, message, action=proposal_action, context=context)
-        raise
+    _assert_metadata_registry_not_executed()
+    return {}
 
 
 def compute_action_base_state_hash(action_id: ActionId, raw_input: dict[str, Any]) -> str | None:
@@ -2184,7 +1535,7 @@ def compute_action_base_state_hash(action_id: ActionId, raw_input: dict[str, Any
     action = get_action(action_id)
     if action.precondition_builder is None:
         return None
-    typed_input = _validate_and_upgrade_action_input(action, raw_input)
+    typed_input = _validate_action_input(action, raw_input)
     return _stable_hash(action.precondition_builder(typed_input))
 
 
@@ -2201,44 +1552,23 @@ def register_action_schema_version(action_id: ActionId, schema_version: int, mod
     _ACTION_INPUT_MODELS[(action_id, int(schema_version))] = model
 
 
-def register_action_upgrade_adapter(
-    action_id: ActionId,
-    from_version: int,
-    to_version: int,
-    adapter: ActionUpgradeAdapter,
-) -> None:
-    _ACTION_UPGRADE_ADAPTERS[(action_id, int(from_version), int(to_version))] = adapter
-
-
-def _validate_and_upgrade_action_input(
+def _validate_action_input(
     action: DomainAction,
     raw_input: dict[str, Any],
     *,
     input_schema_version: int | None = None,
 ) -> BaseModel:
     supplied_version = int(input_schema_version or action.schema_version)
-    if supplied_version == action.schema_version:
-        return action.input_model.model_validate(raw_input)
     if supplied_version > action.schema_version:
         raise ActionValidationError(
             f"Unsupported future action schema version {supplied_version} for {action.action_id}"
         )
-
-    model = _ACTION_INPUT_MODELS.get((action.action_id, supplied_version))
-    if model is None:
-        raise ActionValidationError(f"Missing action schema definition for {action.action_id} v{supplied_version}")
-    payload = model.model_validate(raw_input).model_dump()
-    current_version = supplied_version
-    while current_version < action.schema_version:
-        adapter = _ACTION_UPGRADE_ADAPTERS.get((action.action_id, current_version, current_version + 1))
-        if adapter is None:
-            raise ActionValidationError(
-                f"Missing action schema upgrade adapter for {action.action_id} from "
-                f"v{current_version} to v{current_version + 1}"
-            )
-        payload = adapter(payload)
-        current_version += 1
-    return action.input_model.model_validate(payload)
+    if supplied_version != action.schema_version:
+        raise ActionValidationError(
+            f"Unsupported action schema version {supplied_version} for {action.action_id}; "
+            f"expected {action.schema_version}"
+        )
+    return action.input_model.model_validate(raw_input)
 
 
 def _position_rows(
@@ -2317,606 +1647,38 @@ def _hedge_rows(
     return enrich_position_valuations(rows, preserve_existing=preserve_existing_valuation)
 
 
-def _portfolio_callbacks() -> tuple[ActionCallback, ...]:
-    def _reload() -> None:
-        from portfolio.portfolio_dashboard import reload_portfolio
-
-        reload_portfolio()
-
-    def _invalidate() -> None:
-        from api.cache import invalidate_all
-
-        invalidate_all()
-
-    return (ActionCallback("reload_portfolio", _reload), ActionCallback("invalidate_all", _invalidate))
-
-
-def _restore_positions(previous_rows: list[dict[str, Any]], *, role: str, context: ActionContext, reason: str) -> None:
-    from portfolio import core_db
-    from portfolio.portfolio_db import save_positions
-
-    try:
-        save_positions(previous_rows, role=role)
-        if context.action_run_id is not None:
-            core_db.record_action_event(
-                context.action_run_id, "rollback_completed", message=reason, payload={"role": role}
-            )
-    except Exception as rollback_exc:
-        if context.action_run_id is not None:
-            core_db.record_action_event(
-                context.action_run_id,
-                "rollback_failed",
-                message=str(rollback_exc) or rollback_exc.__class__.__name__,
-                payload={"role": role},
-            )
-
-
-def _ticker_set(rows: Iterable[Mapping[str, Any]]) -> set[str]:
-    return {str(row.get("ticker") or "").strip().upper() for row in rows if str(row.get("ticker") or "").strip()}
-
-
-def _update_portfolio_positions(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(UpdatePortfolioPositionsInput, input_model)
-    if not typed.positions:
-        raise ActionValidationError("At least one position is required.")
-    _ensure_unique_tickers(typed.positions)
-
-    from portfolio import core_db
-    from portfolio.portfolio_db import get_positions, save_positions
-
-    previous = get_positions(include_hedges=False)
-    preserve_existing_valuation = context.actor_type == "approval_apply"
-    rows = _position_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
-    removed_tickers = sorted(_ticker_set(previous) - _ticker_set(rows))
-    try:
-        save_positions(rows, role="position", preserve_existing_valuation=preserve_existing_valuation)
-        updated = get_positions(include_hedges=False)
-        if len(updated) != len(rows):
-            raise RuntimeError("Portfolio position postcondition failed: saved row count mismatch")
-        resolved_alert_count = core_db.resolve_optimization_alerts_for_tickers(removed_tickers)
-    except Exception as exc:
-        _restore_positions(previous, role="position", context=context, reason=str(exc) or exc.__class__.__name__)
-        raise
-    output: dict[str, Any] = {"status": "ok", "count": len(rows)}
-    if removed_tickers:
-        output["removed_tickers"] = removed_tickers
-        output["resolved_alert_count"] = resolved_alert_count
-    return ActionResult(output, _portfolio_callbacks())
-
-
-def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(UpdateHedgePositionsInput, input_model)
-    _ensure_unique_tickers(typed.positions)
-
-    from portfolio.portfolio_db import get_positions, save_positions
-
-    preserve_existing_valuation = context.actor_type == "approval_apply"
-    rows = _hedge_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
-    tickers = {row["ticker"] for row in rows}
-    existing_position_tickers = {p["ticker"] for p in get_positions(include_hedges=False)}
-    collisions = tickers & existing_position_tickers
-    if collisions:
-        raise ActionConflictError(
-            f"Ticker(s) already exist as portfolio positions: {sorted(collisions)}. "
-            "A ticker cannot be both a position and a hedge."
-        )
-
-    previous = get_positions(include_hedges=True)
-    previous_hedges = [row for row in previous if row.get("role") == "hedge"]
-    try:
-        save_positions(rows, role="hedge", preserve_existing_valuation=preserve_existing_valuation)
-        updated = get_positions(include_hedges=True)
-        hedge_count = len([row for row in updated if row.get("role") == "hedge"])
-        if hedge_count != len(rows):
-            raise RuntimeError("Hedge position postcondition failed: saved row count mismatch")
-    except Exception as exc:
-        _restore_positions(previous_hedges, role="hedge", context=context, reason=str(exc) or exc.__class__.__name__)
-        raise
-    return ActionResult({"status": "ok", "count": len(rows)}, _portfolio_callbacks())
-
-
-def _change_thesis_status(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(ChangeThesisStatusInput, input_model)
-    from portfolio.thesis_db import get_thesis_meta, update_thesis_status
-
-    current = get_thesis_meta(typed.ticker)
-    if not current:
-        raise ActionNotFoundError("Thesis", typed.ticker)
-    old_status = str(current.get("status") or "")
-    if old_status == typed.status:
-        return ActionResult(
-            {
-                "ticker": typed.ticker,
-                "old_status": old_status,
-                "new_status": typed.status,
-                "updated_at": current.get("updated_at"),
-                "changed": False,
-            }
-        )
-    updated = update_thesis_status(typed.ticker, typed.status, typed.reason)
-    updated["changed"] = True
-    return ActionResult(updated)
-
-
-def _source_type_from_context(context: ActionContext) -> Literal["workflow", "agent", "user"]:
-    if context.source_type in {"workflow", "agent", "user"}:
-        return cast(Literal["workflow", "agent", "user"], context.source_type)
-    if context.actor_type in {"workflow", "agent"}:
-        return cast(Literal["workflow", "agent", "user"], context.actor_type)
-    return "user"
-
-
-def _source_requirements_payload(values: list[SourceRequirementActionValue] | None) -> list[Any]:
-    result: list[Any] = []
-    for value in values or []:
-        if isinstance(value, str):
-            result.append(value)
-        else:
-            result.append(value.model_dump())
-    return result
-
-
-def _sync_markdown_from_entities_callback(ticker: str | None) -> ActionCallback:
-    def _sync() -> None:
-        if not ticker:
-            return
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(ticker)
-
-    return ActionCallback("sync_markdown_from_entities", _sync)
-
-
-def _sync_entities_from_markdown_callback(ticker: str) -> ActionCallback:
-    def _sync() -> None:
-        from portfolio.thesis_sync import sync_entities_from_markdown
-
-        sync_entities_from_markdown(ticker)
-
-    return ActionCallback("sync_entities_from_markdown", _sync)
-
-
-def _index_thesis_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
-    def _index() -> None:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="thesis",
-            content=content,
-            ticker=ticker,
-            source_path=source_path,
-            doc_id=f"thesis-{ticker}",
-        )
-
-    return ActionCallback("index_thesis", _index)
-
-
-def _index_overview_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
-    def _index() -> None:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="overview",
-            content=content,
-            ticker=ticker,
-            source_path=source_path,
-            doc_id=f"overview-{ticker}",
-        )
-
-    return ActionCallback("index_overview", _index)
-
-
-def _index_management_quality_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
-    def _index() -> None:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="management_quality",
-            content=content,
-            ticker=ticker,
-            source_path=source_path,
-            doc_id=f"management_quality-{ticker}",
-        )
-
-    return ActionCallback("index_management_quality", _index)
-
-
-def _raise_not_found_or_validation(exc: ValueError, resource: str, identifier: int | str) -> None:
-    message = str(exc)
-    if message.lower().startswith(f"no {resource.lower()}"):
-        raise ActionNotFoundError(resource, str(identifier)) from exc
-    raise ActionValidationError(message) from exc
-
-
-def _legacy_numeric_id(value: int | str, resource: str) -> int:
-    if isinstance(value, int):
-        return value
-    text = str(value or "").strip()
-    if text.isdigit():
-        return int(text)
-    raise ActionValidationError(f"{resource} id must be a numeric legacy id: {text}")
-
-
-def _create_catalyst(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateCatalystInput, input_model)
-    from portfolio import core_db
-
-    result = core_db.create_catalyst(
-        ticker=typed.ticker,
-        description=typed.description,
-        category=typed.category,
-        target_date=typed.target_date,
-        evidence=typed.evidence,
-        created_by=_source_type_from_context(context),
-    )
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
-
-
-def _update_catalyst_status(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(UpdateCatalystStatusInput, input_model)
-    from portfolio import core_db
-
-    catalyst_id = _legacy_numeric_id(typed.catalyst_id, "Catalyst")
-    try:
-        result = core_db.update_catalyst_status(catalyst_id, typed.status, typed.evidence)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Catalyst", catalyst_id)
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
-
-
-def _create_kill_condition(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateKillConditionInput, input_model)
-    from portfolio import core_db
-
-    result = core_db.create_kill_condition(
-        ticker=typed.ticker,
-        condition=typed.condition,
-        metric=typed.metric,
-        threshold=typed.threshold,
-        created_by=_source_type_from_context(context),
-    )
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
-
-
-def _update_kill_condition_status(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(UpdateKillConditionStatusInput, input_model)
-    from portfolio import core_db
-
-    kill_condition_id = _legacy_numeric_id(typed.kill_condition_id, "Kill condition")
-    try:
-        result = core_db.update_kill_condition_status(kill_condition_id, typed.status)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Kill condition", kill_condition_id)
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
-
-
-def _create_thesis_claim(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateThesisClaimInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.create_thesis_claim(
-            {
-                "ticker": typed.ticker,
-                "claim": typed.claim,
-                "expected_evidence": typed.expected_evidence,
-                "disconfirming_evidence": typed.disconfirming_evidence,
-                "source_requirements": _source_requirements_payload(typed.source_requirements),
-                "cadence": typed.cadence,
-                "confidence": typed.confidence,
-                "status": typed.status,
-                "linked_catalyst_ids": typed.linked_catalyst_ids,
-                "linked_kill_condition_ids": typed.linked_kill_condition_ids,
-                "source_type": typed.source_type or _source_type_from_context(context),
-                "source_id": typed.source_id or context.source_id,
-            }
-        )
-    except ValueError as exc:
-        raise ActionValidationError(str(exc)) from exc
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result.get("ticker")),))
-
-
-def _update_thesis_claim(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(UpdateThesisClaimInput, input_model)
-    from portfolio import core_db
-
-    updates = typed.model_dump(exclude={"claim_id"}, exclude_unset=True)
-    if "source_requirements" in updates:
-        updates["source_requirements"] = _source_requirements_payload(typed.source_requirements)
-    try:
-        result = core_db.update_thesis_claim(typed.claim_id, updates)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Thesis claim", typed.claim_id)
-    return ActionResult(result, (_sync_markdown_from_entities_callback(result.get("ticker")),))
-
-
-def _create_action_item(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateActionItemInput, input_model)
-    from portfolio import core_db
-
-    result = core_db.create_action_item(
-        description=typed.description,
-        action_type=typed.action_type,
-        ticker=typed.ticker,
-        urgency=typed.urgency,
-        source_type=_source_type_from_context(context),
-        source_id=context.source_id,
-    )
-    return ActionResult(result)
-
-
-def _complete_action_item(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CompleteActionItemInput, input_model)
-    from portfolio import core_db
-
-    try:
-        item_id = _legacy_action_item_id(typed.item_id)
-        if item_id is None:
-            raise ValueError(f"No action item with id {typed.item_id}")
-        result = core_db.complete_action_item(item_id, typed.resolution_note)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Action item", typed.item_id)
-    return ActionResult(result)
-
-
-def _dismiss_action_item(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(DismissActionItemInput, input_model)
-    from portfolio import core_db
-
-    try:
-        item_id = _legacy_action_item_id(typed.item_id)
-        if item_id is None:
-            raise ValueError(f"No action item with id {typed.item_id}")
-        result = core_db.dismiss_action_item(item_id)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Action item", typed.item_id)
-    return ActionResult(result)
-
-
-def _create_watch_trigger(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateWatchTriggerInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.create_watch_trigger(
-            condition=typed.condition,
-            trigger_type=typed.trigger_type,
-            ticker=typed.ticker,
-            source_type=_source_type_from_context(context),
-            source_id=context.source_id,
-            expires_at=typed.expires_at,
-            definition=typed.definition,
-        )
-    except ValueError as exc:
-        raise ActionValidationError(str(exc)) from exc
-    return ActionResult(result)
-
-
-def _fire_watch_trigger(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(FireWatchTriggerInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.fire_watch_trigger(typed.trigger_id, result=typed.result, evidence=typed.evidence)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
-    return ActionResult(result)
-
-
-def _cancel_watch_trigger(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CancelWatchTriggerInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.cancel_watch_trigger(typed.trigger_id)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
-    return ActionResult(result)
-
-
-def _update_watch_trigger_check(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(UpdateWatchTriggerCheckInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.update_watch_trigger_check(typed.trigger_id, result=typed.result, evidence=typed.evidence)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
-    return ActionResult(result)
-
-
-def _update_watch_trigger_definition(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(UpdateWatchTriggerDefinitionInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.update_watch_trigger_definition(typed.trigger_id, typed.definition)
-    except ValueError as exc:
-        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
-    return ActionResult(result)
-
-
-def _save_thesis_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(SaveThesisContentInput, input_model)
-    from portfolio.thesis_content import save_thesis_content
-
-    saved = save_thesis_content(
-        typed.ticker,
-        typed.content,
-        preserve_exact_content=typed.preserve_exact_content,
-    )
-    return ActionResult(
-        saved.output,
-        (
-            _index_thesis_callback(typed.ticker, saved.index_content, saved.source_path),
-            _sync_entities_from_markdown_callback(typed.ticker),
-        ),
-    )
-
-
-def _save_overview_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(SaveOverviewContentInput, input_model)
-    from portfolio.overview_content import save_overview_content
-
-    saved = save_overview_content(
-        typed.ticker,
-        typed.content,
-        preserve_exact_content=typed.preserve_exact_content,
-    )
-    return ActionResult(
-        saved.output,
-        (_index_overview_callback(typed.ticker, saved.index_content, saved.source_path),),
-    )
-
-
-def _save_management_quality_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(SaveManagementQualityContentInput, input_model)
-    from portfolio.management_quality_content import save_management_quality_content
-
-    saved = save_management_quality_content(
-        typed.ticker,
-        typed.content,
-        preserve_exact_content=typed.preserve_exact_content,
-    )
-    return ActionResult(
-        saved.output,
-        (_index_management_quality_callback(typed.ticker, saved.index_content, saved.source_path),),
-    )
-
-
-def _save_evaluation(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(SaveEvaluationInput, input_model)
-    from portfolio.thesis_db import save_evaluations
-
-    evaluated_at = typed.evaluated_at or datetime.now(UTC).isoformat()
-    payload = typed.model_dump(exclude={"evaluated_at"})
-    inserted = save_evaluations(evaluated_at, [payload])
-    return ActionResult(
-        {
-            "status": "ok",
-            "ticker": typed.ticker,
-            "evaluated_at": evaluated_at,
-            "count": inserted,
-        }
-    )
-
-
-def _create_research_note(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CreateResearchNoteInput, input_model)
-    return ActionResult({"status": "ok", **typed.model_dump()})
-
-
-def _create_analyst_feedback(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CreateAnalystFeedbackInput, input_model)
-    return ActionResult({"status": "ok", **typed.model_dump(exclude_none=True)})
-
-
-def _delete_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(DeletePortfolioNewsDigestInput, input_model)
-    from api.routers.portfolio_news import _delete_digest_index_best_effort
-    from portfolio.news_digests import delete_digest
-
-    deleted = delete_digest(typed.digest_id)
-    if not deleted:
-        raise ActionNotFoundError("News digest", typed.digest_id)
-    return ActionResult(
-        {"status": "ok", "digest_id": typed.digest_id, "deleted": True},
-        (ActionCallback("delete_digest_index", lambda: _delete_digest_index_best_effort(typed.digest_id)),),
-    )
-
-
-def _create_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CreatePortfolioNewsDigestInput, input_model)
-    from api.routers.portfolio_news import _index_digest_best_effort
-    from portfolio.news_digests import save_digest
-
-    detail = save_digest(typed.content, filename=typed.filename)
-    return ActionResult(
-        {"status": "ok", "digest": detail, "id": detail.get("id")},
-        (ActionCallback("index_digest", lambda: _index_digest_best_effort(detail)),),
-    )
-
-
-def _create_recommendation(input_model: BaseModel, _context: ActionContext) -> ActionResult:
-    typed = cast(CreateRecommendationInput, input_model)
-    from portfolio import core_db
-
-    record = typed.record
-    result = (
-        core_db.upsert_recommendation(record)
-        if record.get("idempotency_key")
-        else core_db.create_recommendation(record)
-    )
-    policy_gate_decision = str(result.get("policy_gate_decision") or result.get("policy_gate_status") or "").lower()
-    if (
-        result.get("recommendation_status") == "clear"
-        and policy_gate_decision in {"pass", "warn"}
-        and result.get("action")
-        in {
-            "buy",
-            "sell",
-            "reduce",
-            "exit",
-            "rebalance",
-            "hedge",
-        }
-    ):
-        description = f"{str(result.get('action') or '').replace('_', ' ').title()} {result.get('instrument') or result.get('ticker') or 'portfolio'}"
-        if result.get("target_change"):
-            description += f" ({result['target_change']})"
-        approval = propose_action(
-            "create_action_item",
-            {
-                "recommendation_id": result["id"],
-                "ticker": result.get("ticker"),
-                "description": description,
-                "action_type": _recommendation_action_type(str(result.get("action") or "")),
-                "urgency": "high" if result.get("action") in {"exit", "reduce"} else "normal",
-            },
-            ActionContext(
-                actor_type="workflow",
-                source_type="workflow",
-                source_id=result.get("report_id") or f"{result.get('report_type')}:{result.get('as_of')}",
-            ),
-            reason=result.get("rationale", ""),
-            once=True,
-        )
-        result = core_db.update_recommendation_approval(result["id"], approval["id"], "pending")
-    return ActionResult(result)
-
-
-def _recommendation_action_type(action: str) -> str:
-    if action in {"buy", "enter"}:
-        return "enter"
-    if action in {"sell", "exit"}:
-        return "exit"
-    if action in {"reduce", "rebalance"}:
-        return "resize"
-    if action == "hedge":
-        return "hedge"
-    return "review"
-
-
-def _resolve_approval(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(ResolveApprovalInput, input_model)
-    from portfolio import core_db
-
-    try:
-        result = core_db.apply_approval_resolution(
-            typed.approval_id,
-            typed.status,
-            typed.note,
-            parent_action_run_id=context.action_run_id,
-            resolved_by_actor_id=context.actor_id,
-        )
-    except core_db.ApprovalApplicationError as exc:
-        raise ActionConflictError(str(exc)) from exc
-    except ValueError as exc:
-        message = str(exc)
-        if "not found" in message.lower() or "no pending" in message.lower():
-            raise ActionNotFoundError("Approval", str(typed.approval_id)) from exc
-        raise ActionValidationError(message) from exc
-    return ActionResult(result)
+def _disabled_action_handler(_input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    _assert_metadata_registry_not_executed()
+    return ActionResult({"status": "disabled"})
+
+
+_update_portfolio_positions = _disabled_action_handler
+_update_hedge_positions = _disabled_action_handler
+_change_thesis_status = _disabled_action_handler
+_create_catalyst = _disabled_action_handler
+_update_catalyst_status = _disabled_action_handler
+_create_kill_condition = _disabled_action_handler
+_update_kill_condition_status = _disabled_action_handler
+_create_thesis_claim = _disabled_action_handler
+_update_thesis_claim = _disabled_action_handler
+_create_action_item = _disabled_action_handler
+_complete_action_item = _disabled_action_handler
+_dismiss_action_item = _disabled_action_handler
+_create_watch_trigger = _disabled_action_handler
+_fire_watch_trigger = _disabled_action_handler
+_cancel_watch_trigger = _disabled_action_handler
+_update_watch_trigger_check = _disabled_action_handler
+_update_watch_trigger_definition = _disabled_action_handler
+_save_thesis_content = _disabled_action_handler
+_save_overview_content = _disabled_action_handler
+_save_management_quality_content = _disabled_action_handler
+_save_evaluation = _disabled_action_handler
+_create_research_note = _disabled_action_handler
+_create_analyst_feedback = _disabled_action_handler
+_delete_portfolio_news_digest = _disabled_action_handler
+_create_portfolio_news_digest = _disabled_action_handler
+_create_recommendation = _disabled_action_handler
+_resolve_approval = _disabled_action_handler
 
 
 def _thesis_status_approval_payload(model: BaseModel) -> dict[str, Any]:
@@ -3225,63 +1987,6 @@ def list_actions() -> list[dict[str, Any]]:
 
 for _action in _ACTIONS.values():
     register_action_schema_version(_action.action_id, _action.schema_version, _action.input_model)
-
-
-def _upgrade_portfolio_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
-    rows = []
-    for row in payload.get("positions") or []:
-        if not isinstance(row, Mapping):
-            rows.append(row)
-            continue
-        ticker = str(row.get("ticker") or "").strip().upper()
-        rows.append(
-            {
-                **dict(row),
-                "quantity": row.get("shares"),
-                "instrument_type": "security",
-                "price_symbol": ticker,
-                "contract_multiplier": 1.0,
-            }
-        )
-    return {**payload, "positions": rows}
-
-
-def _upgrade_portfolio_positions_v2_to_v3(payload: dict[str, Any]) -> dict[str, Any]:
-    rows = []
-    for row in payload.get("positions") or []:
-        if not isinstance(row, Mapping):
-            rows.append(row)
-            continue
-        rows.append({**dict(row), "group_name": None, "group_conviction": None})
-    return {**payload, "positions": rows}
-
-
-def _upgrade_hedge_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
-    rows = []
-    for row in payload.get("positions") or []:
-        if not isinstance(row, Mapping):
-            rows.append(row)
-            continue
-        ticker = str(row.get("ticker") or "").strip().upper()
-        rows.append(
-            {
-                **dict(row),
-                "asset": "equity",
-                "quantity": row.get("shares"),
-                "instrument_type": "security",
-                "price_symbol": ticker,
-                "contract_multiplier": 1.0,
-            }
-        )
-    return {**payload, "positions": rows}
-
-
-register_action_schema_version("update_portfolio_positions", 1, UpdatePortfolioPositionsInputV1)
-register_action_schema_version("update_portfolio_positions", 2, UpdatePortfolioPositionsInputV2)
-register_action_upgrade_adapter("update_portfolio_positions", 1, 2, _upgrade_portfolio_positions_v1_to_v2)
-register_action_upgrade_adapter("update_portfolio_positions", 2, 3, _upgrade_portfolio_positions_v2_to_v3)
-register_action_schema_version("update_hedge_positions", 1, UpdateHedgePositionsInputV1)
-register_action_upgrade_adapter("update_hedge_positions", 1, 2, _upgrade_hedge_positions_v1_to_v2)
 
 
 WorkflowArtifactPayloadAdapter = Callable[[dict[str, Any], str | None], dict[str, Any]]
@@ -3989,26 +2694,8 @@ def validate_tool_input(tool_name: str, raw_input: dict[str, Any]) -> BaseModel:
 
 
 def propose_action_from_tool(tool_name: str, raw_input: dict[str, Any], context: ActionContext) -> dict[str, Any]:
-    _assert_legacy_action_runtime_enabled()
-    exposure = get_tool_exposure(tool_name)
-    if exposure.access_mode != "proposal" or not exposure.action_id or exposure.to_action_input is None:
-        raise ActionValidationError(f"Tool {tool_name} is not a proposal tool")
-    try:
-        typed_input = exposure.input_model.model_validate(raw_input)
-    except PydanticValidationError as exc:
-        raise ActionValidationError(_validation_message(exc)) from exc
-    action_input = exposure.to_action_input(typed_input)
-    reason = exposure.reason_builder(typed_input) if exposure.reason_builder else None
-    entity_id = exposure.entity_id_builder(typed_input) if exposure.entity_id_builder else None
-    approval = propose_action(
-        exposure.action_id,
-        action_input,
-        context,
-        reason=reason,
-        entity_id=entity_id,
-        once=exposure.once,
-    )
-    return approval
+    _assert_metadata_registry_not_executed()
+    return {}
 
 
 def workflow_artifact_keys() -> set[str]:
@@ -4016,229 +2703,5 @@ def workflow_artifact_keys() -> set[str]:
 
 
 def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id: str, ticker: str | None) -> int:
-    _assert_legacy_action_runtime_enabled()
-    binding = _WORKFLOW_ARTIFACT_BINDINGS.get(artifact_key)
-    if binding is None:
-        return 0
-    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id)
-    items: list[dict[str, Any]]
-    if binding.multiple:
-        items = [item for item in artifact_value if isinstance(item, dict)] if isinstance(artifact_value, list) else []
-    else:
-        items = [artifact_value] if isinstance(artifact_value, dict) else []
-
-    count = 0
-    for item_index, item in enumerate(items):
-        if binding.required_keys and any(not item.get(key) for key in binding.required_keys):
-            continue
-        payload = binding.payload_adapter(item, ticker) if binding.payload_adapter else dict(item)
-        entity_id = (
-            int(item[binding.entity_id_field])
-            if binding.entity_id_field and item.get(binding.entity_id_field)
-            else None
-        )
-        artifact_event_id: str | None = None
-        try:
-            from api import provenance
-
-            artifact_event_id = provenance.deterministic_id("pv:workflow_artifact", run_id, artifact_key, item_index)
-            provenance.start_event(
-                event_id=artifact_event_id,
-                event_type="workflow_artifact",
-                event_name=artifact_key,
-                actor=context,
-                parent_event_id=provenance.deterministic_id("pv:workflow_run", run_id),
-                workflow_run_id=run_id,
-                input_value=item,
-                summary={
-                    "artifact_key": artifact_key,
-                    "artifact_index": item_index,
-                    "ticker": ticker,
-                    "action_id": binding.action_id,
-                    "entity_id": entity_id,
-                },
-                metadata={
-                    "item_keys": sorted(str(key) for key in item.keys()),
-                    "multiple": binding.multiple,
-                },
-                criticality="financial_critical",
-                lineage_root_id=f"workflow_run:{run_id}",
-                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:started",
-                retention_class="financial_lineage_7y",
-                fail_closed=True,
-            )
-            provenance.link_refs(
-                event_id=artifact_event_id,
-                source_ref_type="workflow_run",
-                source_ref_id=run_id,
-                target_ref_type="workflow_artifact",
-                target_ref_id=artifact_event_id,
-                link_type="produced",
-                metadata={"artifact_key": artifact_key, "artifact_index": item_index},
-                lineage_root_id=f"workflow_run:{run_id}",
-                fail_closed=True,
-            )
-        except Exception:
-            artifact_event_id = None
-            raise
-        try:
-            approval = propose_action(
-                binding.action_id,
-                payload,
-                replace(context, provenance_event_id=artifact_event_id),
-                reason=binding.reason,
-                entity_id=entity_id,
-            )
-        except Exception as exc:
-            try:
-                from api import provenance
-
-                provenance.finish_event(
-                    artifact_event_id,
-                    status="failed",
-                    summary={
-                        "artifact_key": artifact_key,
-                        "artifact_index": item_index,
-                        "action_id": binding.action_id,
-                    },
-                    error=str(exc) or exc.__class__.__name__,
-                    fail_closed=True,
-                )
-            except Exception:
-                pass
-            raise
-        try:
-            from api import provenance
-            from portfolio import core_db
-
-            record = provenance.record_workflow_artifact(
-                workflow_run_id=run_id,
-                artifact_key=artifact_key,
-                artifact_index=item_index,
-                artifact_value=item,
-                approval_id=int(approval["id"]),
-                provenance_event_id=artifact_event_id,
-                retention_class="financial_lineage_7y",
-                fail_closed=True,
-            )
-            artifact_id = str(record.get("artifact_id")) if record and record.get("artifact_id") else artifact_event_id
-            core_db.set_pending_approval_provenance(int(approval["id"]), origin_artifact_id=artifact_id)
-            try:
-                from ontology.decision_writeback import record_workflow_artifact_proposal
-
-                record_workflow_artifact_proposal(
-                    run_id=run_id,
-                    artifact_key=artifact_key,
-                    artifact_index=item_index,
-                    artifact_value=item,
-                    approval_id=int(approval["id"]),
-                    action_id=binding.action_id,
-                    ticker=ticker,
-                    artifact_id=artifact_id,
-                    actor={"actor_type": "workflow", "actor_id": run_id},
-                    provenance=artifact_event_id,
-                )
-            except Exception:
-                from ontology.domain_write_service import ontology_primary_writes_enabled
-
-                if ontology_primary_writes_enabled():
-                    raise
-            provenance.link_refs(
-                event_id=artifact_event_id,
-                source_ref_type="workflow_artifact",
-                source_ref_id=artifact_id or artifact_key,
-                target_ref_type="approval",
-                target_ref_id=str(approval["id"]),
-                link_type="proposed",
-                metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
-                lineage_root_id=f"approval:{approval['id']}",
-                fail_closed=True,
-            )
-            provenance.finish_event(
-                artifact_event_id,
-                status="succeeded",
-                output_value={"approval_id": approval["id"], "artifact_id": artifact_id},
-                summary={
-                    "artifact_key": artifact_key,
-                    "artifact_index": item_index,
-                    "approval_id": approval["id"],
-                    "action_id": binding.action_id,
-                    "status": "pending_approval_created",
-                },
-                fail_closed=True,
-            )
-        except Exception as exc:
-            from api import governance
-
-            artifact_id = artifact_event_id or governance.deterministic_id(
-                "workflow_artifact", run_id, artifact_key, item_index
-            )
-            lineage_root_id = governance.lineage_root(governance.REF_APPROVAL, approval["id"])
-            bundle = governance.event_bundle(
-                lineage_root_id=lineage_root_id,
-                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:approval:{approval['id']}:retry",
-                provenance_events=[
-                    governance.provenance_event(
-                        event_id=artifact_event_id,
-                        event_type="workflow_artifact",
-                        event_name=artifact_key,
-                        status="succeeded",
-                        lineage_root_id=lineage_root_id,
-                        workflow_run_id=run_id,
-                        approval_id=int(approval["id"]),
-                        summary={
-                            "artifact_key": artifact_key,
-                            "artifact_index": item_index,
-                            "approval_id": approval["id"],
-                            "action_id": binding.action_id,
-                        },
-                        metadata={"item_keys": sorted(str(key) for key in item.keys())},
-                        error=str(exc) or exc.__class__.__name__,
-                    )
-                ],
-                audit_events=[
-                    governance.audit_event(
-                        action_name=governance.EVENT_APPROVAL_CREATED,
-                        status="pending",
-                        lineage_root_id=lineage_root_id,
-                        object_refs=[
-                            {"type": governance.REF_WORKFLOW_ARTIFACT, "id": artifact_id},
-                            {"type": governance.REF_APPROVAL, "id": approval["id"]},
-                        ],
-                        after_summary={
-                            "artifact_key": artifact_key,
-                            "artifact_index": item_index,
-                            "approval_id": approval["id"],
-                            "action_id": binding.action_id,
-                        },
-                        error=str(exc) or exc.__class__.__name__,
-                    )
-                ],
-                provenance_links=[
-                    governance.provenance_link(
-                        event_id=artifact_event_id,
-                        source_ref_type=governance.REF_WORKFLOW_ARTIFACT,
-                        source_ref_id=artifact_id,
-                        target_ref_type=governance.REF_APPROVAL,
-                        target_ref_id=approval["id"],
-                        link_type=governance.LINK_PROPOSED,
-                        lineage_root_id=lineage_root_id,
-                        metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
-                    )
-                ],
-                approval_updates=[
-                    {
-                        "approval_id": int(approval["id"]),
-                        "origin_artifact_id": artifact_id,
-                        "lineage_completeness": "complete",
-                    }
-                ],
-            )
-            core_db.enqueue_governance_outbox(
-                bundle,
-                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:approval:{approval['id']}:retry",
-                lineage_root_id=lineage_root_id,
-            )
-            core_db.set_pending_approval_lineage_completeness(int(approval["id"]), "retry_pending")
-        count += 1
-    return count
+    _assert_metadata_registry_not_executed()
+    return 0

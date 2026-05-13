@@ -10,6 +10,7 @@ Analyzes market breadth and price/volume signals for U.S. equities.
   - `GET /api/top50-breadth`
   - `GET /api/price-volume-signals`
   - `GET /api/vix-term-structure`
+  - `POST /api/market-technicals/analyze` for the LLM-assisted combined summary
 - React UI: “Market Technicals” page in `frontend/`
 
 ## Quick Start
@@ -73,17 +74,18 @@ Uses ^VIX and ^VIX3M (falls back to ^VXV if needed).
 | File | Description |
 |------|-------------|
 | `get_top50.py` | Fetches S&P 500 constituents and ranks by 6-month return |
-| `sp500_top50_6mo.csv` | Output from get_top50 (auto-generated) |
+| `sp500_top50_tickers` | Postgres table refreshed by `python -m equities.market_technicals.get_top50`; request-time code falls back to live computation if the table is empty |
 | `tickers.txt` | Optional custom ticker list for market_breadth.py |
 
 ## Running Individual Scripts
 
 ```bash
-python3 market_breadth.py              # S&P 500 breadth
-python3 market_breadth.py --universe /path/to/tickers.txt  # Custom universe
+python3 equities/market_technicals/market_breadth.py              # S&P 500 breadth
+python3 equities/market_technicals/market_breadth.py --universe /path/to/tickers.txt  # Custom universe
 
-python3 top50_breadth.py               # Top 50 analysis
+python3 -m equities.market_technicals.get_top50                   # Refresh daily top-50 table
+python3 equities/market_technicals/top50_breadth.py               # Top 50 analysis
 
-python3 price_volume_signals.py        # Index signals
-python3 vix_term_structure.py          # VIX term structure ratio
+python3 equities/market_technicals/price_volume_signals.py        # Index signals
+python3 equities/market_technicals/vix_term_structure.py          # VIX term structure ratio
 ```

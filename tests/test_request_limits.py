@@ -42,18 +42,18 @@ def test_main_multipart_endpoint_body_limits_include_form_overhead():
     from api.routers import economic_growth as economic_growth_router
     from api.routers import portfolio_news as portfolio_news_router
 
-    assert main._ENDPOINT_BODY_LIMITS["/api/v1/thesis/generate"] == (
+    assert main._ENDPOINT_BODY_LIMITS["/api/thesis/generate"] == (
         thesis_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )
-    assert main._ENDPOINT_BODY_LIMITS["/api/v1/overview/generate"] == (
+    assert main._ENDPOINT_BODY_LIMITS["/api/overview/generate"] == (
         overview_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )
-    assert main._ENDPOINT_BODY_LIMITS["/api/v1/management-quality/generate"] == (
+    assert main._ENDPOINT_BODY_LIMITS["/api/management-quality/generate"] == (
         management_quality_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )
-    assert main._ENDPOINT_BODY_LIMITS["/api/v1/economic-growth/crb-file"] == (
+    assert main._ENDPOINT_BODY_LIMITS["/api/economic-growth/crb-file"] == (
         economic_growth_router.MAX_CRB_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )
-    assert main._ENDPOINT_BODY_LIMITS["/api/v1/portfolio-news"] == (
+    assert main._ENDPOINT_BODY_LIMITS["/api/portfolio-news"] == (
         portfolio_news_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )

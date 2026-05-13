@@ -32,11 +32,11 @@ def test_sync_payload_sends_report_sync_schema_headers(monkeypatch):
 
     assert sync_report_state.sync_payload("daily", {"as_of": "2026-05-03"}) == {"ok": True}
 
-    assert captured["url"] == "https://example.test/api/v1/report-sync/daily"
+    assert captured["url"] == "https://example.test/api/report-sync/daily"
     assert captured["headers"] == {
         "Content-Type": "application/json",
         "X-Report-Sync-Secret": "sync-secret",
-        "X-Request-Schema-Name": "post:/api/v1/report-sync/{report_type}",
+        "X-Request-Schema-Name": "post:/api/report-sync/{report_type}",
         "X-Request-Schema-Version": "1",
         "X-Api-Proxy-Secret": "proxy-secret",
     }

@@ -4,11 +4,11 @@
 
 The ontology is the authoritative operational object model for current Talisman domains. Portfolio, thesis, process, source, decision, and derived snapshot state is represented as temporal ontology object and relation versions in Postgres.
 
-This is a breaking Postgres-only architecture. SQLite-backed state paths are legacy migration inputs, not canonical stores for the temporal ontology.
+This is a Postgres-only architecture. Runtime state paths write and read temporal ontology rows.
 
 ## Ownership
 
-`ontology/object_service.py` is the write boundary for operational objects and relations. Domain routes, workflow handlers, approval application, ingestion, and agent tools should call the object service instead of mutating `portfolio_db.py`, `thesis_db.py`, or `core_db.py` as canonical state.
+`ontology/object_service.py` is the write boundary for operational objects and relations. Domain routes, workflow handlers, approval application, ingestion, and agent tools call the object service for canonical state.
 
 The supported domain scope is the existing Talisman domain model:
 
@@ -41,7 +41,7 @@ The authoritative tables are:
 - `source_record_versions`
 - `computed_snapshot_versions`
 
-Legacy ontology runs and snapshot tables may exist during migration, but query and mutation paths should move to temporal object/relation/source/snapshot tables. Old snapshot tables are migration input and compatibility scaffolding only.
+Ontology runs and snapshot tables support query materialization; query and mutation paths use temporal object/relation/source/snapshot tables.
 
 Postgres `btree_gist` is required for exclusion constraints that reject overlapping current valid intervals for the same object or relation UID.
 
@@ -124,11 +124,11 @@ The migration sequence is:
 1. Enable Postgres migrations, including `btree_gist`.
 2. Create the temporal ontology tables and constraints.
 3. Freeze writes with `WRITE_FREEZE=true`.
-4. Run the one-time operational and temporal backfills from legacy stores and ontology snapshots into temporal versions.
+4. Run one-time operational validation and temporal snapshot seeding into temporal versions.
 5. Mark reconstructed rows with `temporal_confidence='backfilled'`.
 6. Switch routes, workflow handlers, action application, ingestion, and agent tools to object-service writes.
 7. Update UI surfaces to show or carry temporal metadata where relevant.
-8. Remove or hard-disable legacy SQLite-backed state paths after tests pass.
+8. Remove domain-table state paths after tests pass.
 9. After production verification gates pass, delete the one-time ontology backfill utilities and their dedicated tests. Preserve Alembic migrations and schema history permanently.
 
-Backfilled historical precision is limited by timestamps already present in the legacy data. Unknown or reconstructed timestamps should use the cutover time and explicit backfilled confidence.
+Backfilled historical precision is limited by timestamps already present in the source data. Unknown or reconstructed timestamps should use the cutover time and explicit backfilled confidence.

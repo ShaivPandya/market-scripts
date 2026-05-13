@@ -6,7 +6,6 @@ from typing import Any
 
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
-from ontology.domain_write_service import ontology_read_model_enabled
 from ontology.ingestion import ingest_into_repository
 from ontology.parser import parse_hybrid_query
 from ontology.policy import (
@@ -151,11 +150,10 @@ class OntologyQueryService:
             known_sectors=KNOWN_SECTORS,
         )
 
-        if ontology_read_model_enabled() and not run_id:
+        if not run_id:
             if refresh_snapshot:
                 raise ValueError(
-                    "refresh_snapshot is deprecated when ONTOLOGY_READ_MODEL=true; "
-                    "omit refresh_snapshot for temporal read-model queries or provide run_id for snapshot compatibility."
+                    "refresh_snapshot is not supported for current ontology read-model queries; provide run_id for replay."
                 )
             return self._query_temporal_read_model(
                 interpreted=interpreted,

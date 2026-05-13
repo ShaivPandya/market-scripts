@@ -639,21 +639,19 @@ def _read_overview_markdown(ticker: str) -> str | None:
 def _read_management_quality_markdown(ticker: str) -> str | None:
     normalized = str(ticker).strip().upper()
     try:
-        from ontology.domain_write_service import ontology_primary_writes_enabled
         from ontology.runtime_read_service import OntologyRuntimeReadService
         from portfolio.management_quality_content import management_quality_exists, read_management_quality
 
-        if ontology_primary_writes_enabled():
-            try:
-                from api.routers.management_quality import _render_management_quality_markdown
+        try:
+            from api.routers.management_quality import _render_management_quality_markdown
 
-                assessment = OntologyRuntimeReadService().management_quality_assessment(normalized)
-                if assessment:
-                    if management_quality_exists(normalized):
-                        return read_management_quality(normalized)
-                    return _render_management_quality_markdown(normalized, assessment)
-            except Exception:
-                pass
+            assessment = OntologyRuntimeReadService().management_quality_assessment(normalized)
+            if assessment:
+                if management_quality_exists(normalized):
+                    return read_management_quality(normalized)
+                return _render_management_quality_markdown(normalized, assessment)
+        except Exception:
+            pass
 
         if management_quality_exists(normalized):
             return read_management_quality(normalized)
@@ -2393,7 +2391,7 @@ def build_raw_weights(
         - All longs (equity and non-equity) use absolute signal mapping
           (no within-bucket normalization):
           weight = LONG_MAX * clip(signal, 0, LONG_SIGNAL_CAP) / LONG_SIGNAL_CAP
-        - Shorts keep legacy inverse-vol + inverted-signal tilt within shorts bucket
+        - Shorts keep current inverse-vol + inverted-signal tilt within shorts bucket
     """
     w_raw = pd.Series(0.0, index=meta.index)
     longs = meta[meta["direction"].str.lower().eq("long")]
@@ -2423,7 +2421,7 @@ def build_raw_weights(
                 base_w = invv / invv.sum()
                 w_raw.loc[long_other.index] = LONG_MAX * base_w
 
-    # 3) Shorts: keep legacy relative inverse-vol sizing.
+    # 3) Shorts: keep current relative inverse-vol sizing.
     if len(shorts) > 0:
         invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power_short)
         invv = invv.fillna(0.0)
@@ -4021,9 +4019,9 @@ def get_data(
     Fetch portfolio analyzer results for GUI consumption.
 
     Args:
-        book: Legacy optimizer argument, ignored for analyzer output.
-        target_leverage: Legacy optimizer argument, ignored for analyzer output.
-        beta_neutral: Legacy optimizer argument, ignored for analyzer output.
+        book: Deprecated optimizer argument, ignored for analyzer output.
+        target_leverage: Deprecated optimizer argument, ignored for analyzer output.
+        beta_neutral: Deprecated optimizer argument, ignored for analyzer output.
         universe_mode: portfolio-only or portfolio plus explicitly enabled ideas.
 
     Returns:

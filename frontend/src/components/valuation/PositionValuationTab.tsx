@@ -308,7 +308,7 @@ function valueRangeAssumptions(data: PositionValuation): Partial<Record<ValueRan
   if (Object.keys(assumptions).length === 0 && data.value_range?.saved && isValueRangeMetricKey(data.value_range.metric)) {
     assumptions[data.value_range.metric] = {
       denominator_currency: data.value_range.stored_denominator_currency ?? data.value_range.denominator_currency ?? null,
-      legacy_denominator_currency: Boolean(data.value_range.legacy_denominator_currency),
+      source_denominator_currency: Boolean(data.value_range.source_denominator_currency),
       wacc: data.value_range.wacc ?? null,
       scenarios: data.value_range.scenarios ?? {},
     }
@@ -340,7 +340,7 @@ function valueRangeCurrencyConversionRate(data: PositionValuation, from: unknown
 function valueRangeDisplayContext(data: PositionValuation, assumption?: PositionValueRangeAssumption | null) {
   const outputCurrency = valueRangeOutputCurrency(data)
   const financial = financialCurrency(data) ?? outputCurrency
-  const storedCurrency = cleanCurrency(assumption?.denominator_currency) ?? (assumption?.legacy_denominator_currency ? priceCurrency(data) : financial)
+  const storedCurrency = cleanCurrency(assumption?.denominator_currency) ?? (assumption?.source_denominator_currency ? priceCurrency(data) : financial)
   let denominatorCurrency = financial ?? storedCurrency
   let displayRate = valueRangeCurrencyConversionRate(data, storedCurrency, denominatorCurrency)
   if (displayRate == null) {

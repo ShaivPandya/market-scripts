@@ -5,25 +5,20 @@ objects, relations, source records, materialized risk snapshots, and the
 action/tool metadata that lets workflows and agents interact with those objects
 safely.
 
-The important distinction is that the package is in a migration window. The
-target architecture is a Postgres-backed bitemporal ontology. Several current
-paths still materialize compatibility snapshots from legacy domain stores, and
-agent/domain actions still mutate those legacy stores directly. Treat those
-paths as compatibility scaffolding unless the code says otherwise.
-
-See also `docs/architecture/ontology.md` for the target cutover model. This
-README maps the code that exists in `ontology/`.
+The runtime architecture is Postgres-backed bitemporal ontology. Snapshot rows
+remain for explicit `run_id` inspection, but operational writes and semantic
+reads use temporal objects, relations, source records, and read models.
 
 ## Boundary
 
 `ontology/` is responsible for:
 
 - Defining ontology node, edge, object, relation, and action schemas.
-- Normalizing legacy payloads into versioned ontology object/relation schemas.
+- Normalizing source payloads into versioned ontology object/relation schemas.
 - Ingesting portfolio, market, macro, liquidity, sector, sentiment, positioning,
   thesis, and process data into ontology snapshots.
 - Writing temporal object, relation, source record, and computed snapshot
-  versions when Postgres state is enabled.
+  versions.
 - Serving ontology reads through policy-aware service methods.
 - Describing the safe tool/action surface exposed to agents and workflows.
 
@@ -32,50 +27,48 @@ README maps the code that exists in `ontology/`.
 - Order management, broker execution, fills, or counterparties.
 - Raw market-data vendor clients outside the adapter outputs consumed here.
 - UI presentation beyond shaping API/tool responses.
-- Arbitrary direct mutation of legacy portfolio/thesis/process state except
-  through the domain action compatibility layer in `action_registry.py`.
+- Arbitrary direct mutation of portfolio/thesis/process state outside
+  `OntologyCommandService`.
 - OMS, broker orders, fills, broker execution, or counterparties. Decision
   records such as `TradeProposal` and `ExecutedAction` stop at governed
   decision support and do not model execution.
 
 ## Source-Of-Truth Stores
 
-Current code has two different notions of truth.
+Current runtime state has one write authority: the temporal ontology.
 
 | Domain | Current write authority | Ontology representation |
 | --- | --- | --- |
-| Portfolio and hedge positions | `portfolio.portfolio_db` via `save_positions()` | Materialized as `Position`, `Asset`, `Sector`, and risk edges during ingestion. |
-| Thesis status and evaluations | `portfolio.thesis_db` plus thesis content/sync modules | Materialized as `Thesis`, `Evaluation`, and optional thesis relations during ingestion. |
-| Catalysts, kill conditions, thesis claims, action items, watch triggers, approvals, action runs, audit/provenance | `portfolio.core_db` | Linked through action/provenance metadata and selected snapshot entities. |
+| Portfolio and hedge positions | `OntologyCommandService` | Materialized as `Position`, `Asset`, `Sector`, and risk edges during ingestion. |
+| Thesis status and evaluations | `OntologyCommandService` plus thesis content helpers | Materialized as `Thesis`, `Evaluation`, and optional thesis relations during ingestion. |
+| Catalysts, kill conditions, thesis claims, action items, watch triggers, approvals, action runs, audit/provenance | `OntologyCommandService` and `OntologyObjectService` | Linked through action/provenance metadata and selected snapshot entities. |
 | Source adapter records | `source_record_versions` through `TemporalOntologyRepository` when Postgres state is enabled | Authoritative temporal source record history for normalized adapter outputs. |
 | Ontology objects and relations | `ontology_object_versions` and `ontology_relation_versions` through `OntologyObjectService` in the target architecture | Bitemporal object/relation versions with actor, approval, action, source, input hash, and provenance links. |
 | Query snapshots | `ontology_runs`, `ontology_snapshot_nodes`, `ontology_snapshot_edges` through `OntologyRepository` | Materialized read model for semantic ontology queries and historical snapshot comparison. |
 
-The target authority is `OntologyObjectService` backed by
-`TemporalOntologyRepository`. Current action handlers still mutate
-`portfolio_db`, `thesis_db`, and `core_db`; ingestion then reflects those writes
-into snapshot rows and, when Postgres state is enabled, temporal ontology
-versions.
+The runtime authority is `OntologyObjectService` backed by
+`TemporalOntologyRepository`. Governed actions, approvals, proposals, and
+workflow artifacts write directly to temporal ontology objects and relations.
 
 ## Module Map
 
-- `models.py` defines the in-memory compatibility graph types:
+- `models.py` defines the in-memory graph types:
   `OntologyNode`, `OntologyEdge`, and `InterpretedQuery`.
-- `schemas/objects.py` defines object payload schemas such as `PositionV1`,
-  `AssetV1`, `SignalV1`, `ThesisV1`, `EvaluationV1`, and `CatalystV1`.
+- `schemas/objects.py` defines canonical object payload schemas such as
+  `Position`, `Asset`, `Signal`, `Thesis`, `Evaluation`, and `Catalyst`.
 - `schemas/relations.py` defines allowed relation names, source/target types,
   cardinality, and required relation properties.
-- `schemas/registry.py` normalizes nodes/edges, upgrades legacy payloads, checks
+- `schemas/registry.py` normalizes nodes/edges, checks
   canonical IDs, and validates relation cardinality/core graph constraints.
 - `schema_definitions.py` stores schema definitions and per-run schema bindings.
 - `sources/` contains adapter wrappers that normalize raw module payloads into
   DTOs with status, quality, lineage, drift, and coverage metadata.
 - `ingestion.py` runs adapters, computes risk components, builds the snapshot
-  graph, writes temporal source/object/relation versions where enabled, saves a
-  snapshot run, and prunes old runs.
-- `repository.py` stores and queries live/snapshot compatibility graph rows. It
-  uses SQLite by default and `PostgresCompatConnection` when Postgres state is
-  enabled.
+  graph, writes temporal source/object/relation versions, saves a snapshot run,
+  and prunes old runs.
+- `repository.py` stores and queries live/snapshot graph rows. Runtime use is
+  Postgres-backed through `PostgresStateConnection`; explicit SQLite `db_path`
+  usage remains compatibility/test scaffolding for snapshot tables.
 - `temporal_repository.py` is the authoritative Postgres repository for
   bitemporal object, relation, source record, and computed snapshot versions.
 - `object_service.py` is the typed write/read boundary above the temporal
@@ -88,15 +81,14 @@ versions.
 - `service.py` is the policy-aware semantic query service used by API routes and
   agent tools.
 - `action_registry.py` is the canonical domain action and agent tool metadata
-  registry. Despite living here, current handlers still write legacy stores.
+  registry. Mutations are applied by `OntologyCommandService`.
 - `policy.py` defines ontology actions, actors, object/edge resources,
   redaction, graph filtering, and the default admin/system policy.
 
 ## Snapshot Graph
 
-Semantic ontology queries can read indexed temporal Postgres read models when
-`ONTOLOGY_READ_MODEL=true`. Snapshot graph rows remain a migration/debug
-compatibility path, especially for explicit `run_id` queries during cutover.
+Semantic ontology queries read indexed temporal Postgres read models. Snapshot
+graph rows remain available for explicit `run_id` migration/debug queries.
 
 The graph shape is:
 
@@ -119,25 +111,22 @@ Snapshot ingestion flow:
    `vix_term_structure`, `sector_metrics`, and `liquidity`.
 3. Optional adapters add `sentiment`, `positioning_summary`, `economic_growth`,
    and `labor_market`. The deep adapter bucket is currently empty.
-4. Adapter results become source status metadata and, with Postgres state
-   enabled, `source_record_versions`.
+4. Adapter results become source status metadata and `source_record_versions`.
 5. Ingestion builds graph nodes and edges, computes volatility, breadth, sector,
    and macro risk components, and attaches top signal evidence to each position.
-6. `normalize_graph()` upgrades legacy node/edge payloads, enforces canonical
-   IDs, validates relation types, and records optional thesis warnings as partial
-   source status.
-7. With Postgres state enabled, `_write_temporal_graph_versions()` writes the
-   normalized nodes and edges through `OntologyObjectService`.
-8. When `ONTOLOGY_READ_MODEL=true`, temporal read models are refreshed after
-   successful temporal writes.
+6. `normalize_graph()` enforces canonical IDs, validates relation types, and
+   records optional thesis warnings as partial source status.
+7. `_write_temporal_graph_versions()` writes the normalized nodes and edges
+   through `OntologyObjectService`.
+8. Temporal read models are refreshed after successful temporal writes.
 9. `OntologyRepository.save_snapshot()` writes `ontology_runs`,
    `ontology_snapshot_nodes`, `ontology_snapshot_edges`, schema bindings, audit,
    and provenance links.
 10. Runs older than `SNAPSHOT_RETENTION_DAYS` are pruned.
 
 `schema_mode="upgraded"` is the semantic-query mode. Repository helpers can
-load stored legacy payloads, but service-level semantic queries intentionally
-require upgraded schemas.
+load stored snapshot payloads, but service-level semantic queries intentionally
+require current schemas.
 
 ## Temporal Model
 
@@ -165,11 +154,11 @@ against the schema registry, preserves actor/provenance/action/approval/source
 metadata, and returns `_meta.temporal` envelopes.
 
 The `/ontology/objects`, `/ontology/relations`, and `/ontology/source-records`
-routes read temporal tables. With `ONTOLOGY_READ_MODEL=true`, `/ontology/query`
-returns `mode="temporal_read_model"` and object-bearing rows include mandatory
-`_meta.temporal` fields. Snapshot compatibility remains available for explicit
-`run_id` debug/migration queries; `refresh_snapshot` is deprecated in read-model
-mode unless paired with `run_id`.
+routes read temporal tables. `/ontology/query` returns
+`mode="temporal_read_model"` and object-bearing rows include mandatory
+`_meta.temporal` fields. Snapshot rows remain available for explicit `run_id`
+debug/migration queries; `refresh_snapshot` is deprecated unless paired with
+`run_id`.
 
 The one-time ontology backfill utilities are cutover-only scaffolding. After
 production verification gates pass, remove those utilities and their dedicated
@@ -190,8 +179,8 @@ Important conventions:
 - Object schema names generally match object types, versioned from `1`.
 - Relation schema names match relation types, versioned from `1`.
 - Edge property schema names are `Relation` or `PositionSignalExposure`.
-- Legacy payloads are marked as schema `legacy` version `0` and upgraded at
-  read/write boundaries unless `ONTOLOGY_STRICT_SCHEMAS` disables legacy input.
+- Snapshot payloads use the current object schema contract at read/write
+  boundaries.
 - Decision schemas include `Recommendation`, `Scenario`, `TradeProposal`,
   `Approval`, `ActionRun`, `ExecutedAction`, `AuditEvent`, `SourceRecord`,
   `ObjectVersionRef`, `RiskMetric`, `InvestmentPolicy`, and
@@ -219,9 +208,8 @@ Runtime mutation flow is ontology-primary:
    provenance, and audit objects through `OntologyObjectService`.
 3. Approval application writes new temporal object versions plus
    `ActionRun`/`ExecutedDecisionRecord` lineage.
-4. `action_registry.execute_action()`, `action_registry.propose_action()`, and
-   workflow-artifact proposal helpers are fail-closed legacy paths retained only
-   so existing tool metadata can be read during the cutover.
+4. `action_registry` exposes action/tool metadata; mutation execution is
+   fail-closed and delegated to `OntologyCommandService`.
 
 ## Decision Writeback
 
@@ -248,16 +236,11 @@ The target decision lineage is:
 
 `ReportRun/WorkflowRun -> SourceRecord/WorkflowArtifact -> Recommendation -> RiskMetric/Scenario/PolicyGateResult/InvestmentPolicy -> TradeProposal -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef -> AuditEvent`.
 
-Current migration flags:
+Cutover runtime invariants:
 
-- `ONTOLOGY_SHADOW_WRITES=true` mirrors legacy report, workflow, approval, and
-  action paths into ontology objects/relations.
-- `ONTOLOGY_PRIMARY_WRITES=true` makes ontology writeback failures fail the
-  caller.
-- `ONTOLOGY_READ_MODEL=true` is reserved for compatibility reads from ontology
-  read adapters.
-- `LEGACY_WRITE_GUARD=true` blocks unapproved direct legacy domain writes except
-  projection refreshes.
+- Governed writes use ontology objects/relations directly.
+- Ontology writeback failures fail the caller.
+- Query routes use temporal read models by default.
 
 ## Agent Safety Model
 
@@ -329,9 +312,8 @@ When touching this package:
 
 - Decide whether the change belongs to the temporal authority, the snapshot
   compatibility graph, or the agent/action safety layer before editing.
-- Do not make legacy stores and temporal tables both authoritative for the same
-  fact. During migration, writes may be mirrored, but one side must be named as
-  the source of truth.
+- Do not make non-ontology stores and temporal tables both authoritative for the
+  same fact.
 - Use `OntologyObjectService` for new temporal object/relation writes.
 - Use `OntologyRepository` only for compatibility graph snapshots and snapshot
   queries.

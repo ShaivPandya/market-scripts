@@ -83,7 +83,7 @@ def run_hedging_tool(req: HedgingRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     row, _disposition = enqueue_registered_job("hedging", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/hedging-tool/async/{job_id}")
+    return enqueue_response(row, "/api/hedging-tool/async/{job_id}")
 
 
 @router.post("/hedging-tool/async")
@@ -93,7 +93,7 @@ def start_hedging_tool(req: HedgingRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     row, _disposition = enqueue_registered_job("hedging", req.model_dump(), cache_key=key)
-    return enqueue_response(row, "/api/v1/hedging-tool/async/{job_id}")
+    return enqueue_response(row, "/api/hedging-tool/async/{job_id}")
 
 
 @router.get("/hedging-tool/async/{job_id}")

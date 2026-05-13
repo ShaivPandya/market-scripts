@@ -1,24 +1,14 @@
-"""Decision-centered ontology writeback helpers.
-
-The functions here are intentionally safe to call from legacy report, workflow,
-and approval paths. They no-op unless ontology shadow or primary writes are
-enabled, and they raise only when primary writes are configured.
-"""
+"""Decision-centered ontology writeback helpers."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from ontology.domain_write_service import (
-    OPERATIONAL_ONTOLOGY_RUN_ID,
-    ontology_primary_writes_enabled,
-    ontology_shadow_writes_enabled,
-)
+from ontology.domain_write_service import OPERATIONAL_ONTOLOGY_RUN_ID
 from ontology.object_service import OntologyObjectService
 from ontology.schemas.identity import (
     account_id,
@@ -51,8 +41,6 @@ from ontology.schemas.identity import (
     recommendation_id as recommendation_uid,
 )
 
-logger = logging.getLogger(__name__)
-
 ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
 
 
@@ -63,7 +51,7 @@ class DecisionOntologyWriteback:
         self.object_service = object_service or OntologyObjectService()
 
     def enabled(self) -> bool:
-        return ontology_shadow_writes_enabled()
+        return True
 
     def record_report_output(
         self,
@@ -398,8 +386,7 @@ class DecisionOntologyWriteback:
         )
         rows.append(recommendation_row)
         recommendation_object_uid = recommendation_uid(
-            record.get("legacy_id")
-            or record.get("id")
+            record.get("id")
             or record.get("idempotency_key")
             or f"{record.get('report_type')}:{record.get('as_of')}:{record.get('action')}:{record.get('ticker')}"
         )
@@ -947,7 +934,6 @@ def apply_approved_decision(**kwargs: Any) -> list[dict[str, Any]]:
 def _recommendation_key(record: Mapping[str, Any]) -> str:
     return str(
         record.get("id")
-        or record.get("legacy_id")
         or record.get("idempotency_key")
         or _hash_value(
             {
@@ -970,7 +956,6 @@ def _recommendation_properties(record: Mapping[str, Any], *, approval_id: int | 
         decision_state = "closed" if status in {"blocked", "error", "closed"} else "generated"
     return {
         "recommendation_id": _recommendation_key(record),
-        "legacy_id": _optional_int(record.get("id") or record.get("legacy_id")),
         "idempotency_key": record.get("idempotency_key"),
         "source_kind": "report",
         "report_type": record.get("report_type"),
@@ -1054,9 +1039,7 @@ def _provenance_id(provenance: Mapping[str, Any] | str | None, default: str) -> 
 
 
 def _handle_writeback_error(surface: str, exc: Exception) -> None:
-    if ontology_primary_writes_enabled():
-        raise exc
-    logger.warning("Decision ontology writeback failed in %s: %s", surface, exc, exc_info=True)
+    raise exc
 
 
 def _now() -> str:

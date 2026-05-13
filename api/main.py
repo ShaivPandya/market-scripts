@@ -145,11 +145,11 @@ def _multipart_request_body_limit(file_limit_bytes: int) -> int:
 
 
 _ENDPOINT_BODY_LIMITS = {
-    "/api/v1/thesis/generate": _multipart_request_body_limit(30 * 1024 * 1024),
-    "/api/v1/overview/generate": _multipart_request_body_limit(30 * 1024 * 1024),
-    "/api/v1/management-quality/generate": _multipart_request_body_limit(30 * 1024 * 1024),
-    "/api/v1/economic-growth/crb-file": _multipart_request_body_limit(10 * 1024 * 1024),
-    "/api/v1/portfolio-news": _multipart_request_body_limit(10 * 1024 * 1024),
+    "/api/thesis/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/overview/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/management-quality/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/economic-growth/crb-file": _multipart_request_body_limit(10 * 1024 * 1024),
+    "/api/portfolio-news": _multipart_request_body_limit(10 * 1024 * 1024),
 }
 
 app.add_middleware(BodySizeLimitMiddleware, path_limits=_ENDPOINT_BODY_LIMITS)
@@ -320,7 +320,7 @@ async def _require_proxy_secret(request: Request, call_next):
 async def _write_freeze_middleware(request: Request, call_next):
     """Reject mutating API calls during cutover freeze."""
     if _WRITE_FREEZE and request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        if request.url.path not in {"/api/v1/auth/login", "/api/health", "/api/v1/admin/quiescence"}:
+        if request.url.path not in {"/api/auth/login", "/api/health", "/api/admin/quiescence"}:
             emit_audit_event(
                 "permission.write_freeze_denied",
                 "permission",
@@ -347,24 +347,24 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Router registration — versioned at /api/v1
+# Router registration
 # ---------------------------------------------------------------------------
 _auth_dep = [Depends(require_actor)]
-_V1 = "/api/v1"
+_API_PREFIX = "/api"
 
 # Core routers (always available)
-app.include_router(auth_router.router, prefix=_V1, tags=["auth"])
-app.include_router(portfolio.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(overview.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(management_quality.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(document_generation.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
-app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
-app.include_router(settings.router, prefix=_V1, dependencies=_auth_dep, tags=["settings"])
+app.include_router(auth_router.router, prefix=_API_PREFIX, tags=["auth"])
+app.include_router(portfolio.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(portfolio_edit.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(thesis.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(overview.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(management_quality.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(document_generation.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(memory.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["agent"])
+app.include_router(agent.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["agent"])
+app.include_router(settings.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["settings"])
 
-# Investing OS routers (core_db entities + aggregates)
+# Investing OS routers
 from api.routers import (
     action_items,
     admin_jobs,
@@ -383,25 +383,25 @@ from api.routers import (
     workspace,
 )
 
-app.include_router(workspace.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
-app.include_router(dossier.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
-app.include_router(ideas.router, prefix=_V1, dependencies=_auth_dep, tags=["ideas"])
-app.include_router(approvals.router, prefix=_V1, dependencies=_auth_dep, tags=["approvals"])
-app.include_router(domain_actions.router, prefix=_V1, dependencies=_auth_dep, tags=["domain-actions"])
-app.include_router(action_items.router, prefix=_V1, dependencies=_auth_dep, tags=["actions"])
-app.include_router(triggers.router, prefix=_V1, dependencies=_auth_dep, tags=["triggers"])
-app.include_router(process_entities.router, prefix=_V1, dependencies=_auth_dep, tags=["process"])
-app.include_router(provenance.router, prefix=_V1, dependencies=_auth_dep, tags=["provenance"])
-app.include_router(recommendations.router, prefix=_V1, dependencies=_auth_dep, tags=["recommendations"])
-app.include_router(optimization.router, prefix=_V1, dependencies=_auth_dep, tags=["optimization"])
-app.include_router(policy_gate.router, prefix=_V1, dependencies=_auth_dep, tags=["policy-gate"])
-app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
-app.include_router(admin_jobs.router, prefix=_V1, tags=["admin"])
-app.include_router(report_sync.router, prefix=_V1, tags=["reports"])
+app.include_router(workspace.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["workspace"])
+app.include_router(dossier.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["workspace"])
+app.include_router(ideas.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["ideas"])
+app.include_router(approvals.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["approvals"])
+app.include_router(domain_actions.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["domain-actions"])
+app.include_router(action_items.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["actions"])
+app.include_router(triggers.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["triggers"])
+app.include_router(process_entities.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["process"])
+app.include_router(provenance.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["provenance"])
+app.include_router(recommendations.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["recommendations"])
+app.include_router(optimization.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["optimization"])
+app.include_router(policy_gate.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["policy-gate"])
+app.include_router(workflow_runs.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["workflows"])
+app.include_router(admin_jobs.router, prefix=_API_PREFIX, tags=["admin"])
+app.include_router(report_sync.router, prefix=_API_PREFIX, tags=["reports"])
 
 # Optional routers (gracefully degraded if import failed)
 for _name, (_router, _tag, _healthy) in _optional_routers.items():
-    app.include_router(_router, prefix=_V1, dependencies=_auth_dep, tags=[_tag])
+    app.include_router(_router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=[_tag])
 
 
 def _seed_runtime_schema_registry() -> None:
@@ -428,7 +428,7 @@ _seed_runtime_schema_registry()
 # ---------------------------------------------------------------------------
 # Utility endpoints
 # ---------------------------------------------------------------------------
-@app.delete("/api/v1/cache", dependencies=_auth_dep, tags=["admin"])
+@app.delete("/api/cache", dependencies=_auth_dep, tags=["admin"])
 def clear_cache():
     from api.cache import invalidate_all
 
@@ -475,7 +475,7 @@ def _detailed_health_response() -> JSONResponse:
     if degraded:
         checks["degraded_modules"] = list(degraded.keys())
 
-    db_ok = checks.get("portfolio_db") == "ok" and checks.get("thesis_db") == "ok" and checks.get("core_db") == "ok"
+    db_ok = checks.get("postgres") == "ok"
     all_ok = all(v == "ok" for v in checks.values() if isinstance(v, str))
 
     if all_ok and not degraded:
@@ -489,12 +489,12 @@ def _detailed_health_response() -> JSONResponse:
     return JSONResponse({"status": status, "checks": checks}, status_code=status_code)
 
 
-@app.get("/api/v1/admin/health", dependencies=_auth_dep, tags=["admin"])
+@app.get("/api/admin/health", dependencies=_auth_dep, tags=["admin"])
 def admin_health():
     return _detailed_health_response()
 
 
-@app.get("/api/v1/admin/quiescence", dependencies=_auth_dep, tags=["admin"])
+@app.get("/api/admin/quiescence", dependencies=_auth_dep, tags=["admin"])
 def quiescence():
     active_jobs = 0
     try:

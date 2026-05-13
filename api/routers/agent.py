@@ -42,7 +42,6 @@ from api.agent_governance import (
 from api.agent_models import (
     AgentChatJobRequest,
     AgentChatRequest,
-    AgentChatRequestV2,
     AgentResponsePreferences,
     ChatMessage,
     ScreenContextModel,
@@ -375,7 +374,7 @@ def _domain_guardrail_stream(classification: AgentDomainClassification):
     yield _sse("done", {"usage": {}, **_domain_done_meta(classification)})
 
 
-def _domain_guardrail_stream_v2(req: AgentChatRequestV2, classification: AgentDomainClassification):
+def _domain_guardrail_stream_v2(req: AgentChatRequest, classification: AgentDomainClassification):
     from api import memory_db
     from api.memory_manager import finalize_turn, finalize_turn_async
 
@@ -439,7 +438,7 @@ def _agent_async_payload(row: dict[str, Any], *, events: list[dict[str, Any]] | 
 
 
 def _enqueue_agent_chat_turn(
-    req: AgentChatRequestV2,
+    req: AgentChatRequest,
     actor: Actor,
     *,
     emit_starting_event: bool = True,
@@ -1705,7 +1704,7 @@ def _start_agent_turn_provenance(
 
         event_id = provenance.deterministic_id(
             "pv:agent_turn",
-            session_id or "legacy",
+            session_id or "session",
             provenance.stable_hash(message),
             int(time.time() * 1_000_000),
         )
@@ -1775,7 +1774,7 @@ def _start_model_call_provenance(
         tools = stream_kwargs.get("tools") or config.get("tools")
         event_id = provenance.deterministic_id(
             "pv:model_call",
-            session_id or workflow_run_id or "legacy",
+            session_id or workflow_run_id or "session",
             purpose,
             round_index,
             attempt,
@@ -1856,7 +1855,7 @@ def _record_model_timing(
     if isinstance(models, list):
         models.append(dict(model_timing))
     logger.info(
-        "agent_v2_model_call phase=%s purpose=%s attempt=%s round=%s provider=%s model=%s duration_ms=%.1f first_token_ms=%s status=%s",
+        "agent_chat_model_call phase=%s purpose=%s attempt=%s round=%s provider=%s model=%s duration_ms=%.1f first_token_ms=%s status=%s",
         model_timing.get("phase"),
         model_timing.get("purpose"),
         model_timing.get("attempt"),
@@ -1891,502 +1890,12 @@ def _attach_tool_provenance_context(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint
-# ---------------------------------------------------------------------------
-
-
-@router.post("/agent/chat")
-def agent_chat(req: AgentChatRequest, actor: ActorDep):
-    tool_actor = agent_actor(actor)
-    latest_user_text = _extract_last_user_text(req.messages)
-    domain_classification = analyze_agent_domain(latest_user_text, screen_context=req.screen_context)
-    if domain_classification.decision != "allow":
-        return StreamingResponse(
-            _domain_guardrail_stream(domain_classification),
-            media_type="text/event-stream",
-            headers=_sse_headers(),
-        )
-
-    provider, api_key = _read_llm_api_key()
-    reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
-    instructions = _with_domain_guardrail_instruction(
-        _with_response_preferences(
-            _build_agent_instructions(screen_context=req.screen_context),
-            req.response_preferences,
-        ),
-        domain_classification,
-    )
-    casual = _is_casual(latest_user_text)
-    workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
-    tool_defs = _tool_definitions_for_provider(provider)
-    logger.info(
-        "agent_tool_policy provider=%s casual=%s workflow=%s ticker=%s tools=%d",
-        provider,
-        casual,
-        workflow_name,
-        workflow_ticker,
-        len(tool_defs),
-    )
-
-    def generate():  # noqa: C901 — complex but linear control flow
-        yield _sse_ping()
-        client = _get_provider_client(provider, api_key)
-        budget = AgentBudgetState()
-        agent_turn_event_id = _start_agent_turn_provenance(
-            session_id=None,
-            message=[m.model_dump() for m in req.messages],
-            provider=provider,
-            actor=tool_actor,
-            workflow_name=workflow_name,
-            workflow_ticker=workflow_ticker,
-        )
-
-        # --- Workflow path: deterministic tool execution → single synthesis ---
-        if workflow_name:
-            try:
-                wf_def = AVAILABLE_WORKFLOWS.get(workflow_name, {})
-                if wf_def.get("requires_ticker") and not workflow_ticker:
-                    yield _sse(
-                        "delta",
-                        {
-                            "text": f"I need a ticker to run the **{wf_def.get('label', workflow_name)}** workflow. Which position would you like me to review?"
-                        },
-                    )
-                    _finish_agent_turn_provenance(agent_turn_event_id, status="succeeded", usage={})
-                    yield _sse("done", {"usage": {}})
-                    return
-
-                # Emit tool calls as they execute
-                run_id, synthesis_prompt, sections = yield from _execute_workflow_keepalive(
-                    workflow_name,
-                    workflow_ticker,
-                    actor=tool_actor,
-                )
-                workflow_tool_calls = [
-                    {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
-                ]
-                for section in sections:
-                    yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
-                    yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
-
-                # Single synthesis call — no tools, just model reasoning over the data
-                synthesis_chunks: list[str] = []
-                for attempt in range(MAX_API_RETRIES):
-                    try:
-                        synthesis_conversation = _user_prompt_for_provider(provider, synthesis_prompt)
-                        stream_kwargs = _model_stream_kwargs(
-                            provider=provider,
-                            instructions=instructions,
-                            conversation=synthesis_conversation,
-                            max_tokens=LLM_MAX_TOKENS,
-                            reasoning_effort=reasoning_effort,
-                        )
-                        stream_kwargs, egress_meta = prepare_model_egress(
-                            provider=provider,
-                            purpose="workflow_synthesis",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            budget=budget,
-                            parent_event_id=agent_turn_event_id,
-                            session_id=None,
-                            workflow_run_id=run_id,
-                        )
-                        yield _sse("egress_recorded", egress_meta)
-                        yield _sse("budget_update", budget.to_meta())
-                        model_event_id = _start_model_call_provenance(
-                            parent_event_id=agent_turn_event_id,
-                            session_id=None,
-                            workflow_run_id=run_id,
-                            provider=provider,
-                            purpose="workflow_synthesis",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            attempt=attempt,
-                        )
-                        final_message = yield from _stream_llm_response(
-                            client,
-                            provider,
-                            stream_kwargs,
-                            synthesis_chunks,
-                        )
-                        _finish_model_call_provenance(
-                            model_event_id,
-                            status="succeeded",
-                            final_message=final_message,
-                            output_text="".join(synthesis_chunks),
-                        )
-                        budget.record_model_usage(_usage_dict(final_message))
-                        yield _sse("budget_update", budget.to_meta())
-                        break
-                    except ModelGatewayDenied as exc:
-                        yield _sse("egress_recorded", exc.manifest)
-                        yield _sse("blocked", _blocked_model_egress_payload(exc))
-                        raise
-                    except Exception as retry_exc:
-                        _finish_model_call_provenance(
-                            locals().get("model_event_id"),
-                            status="failed",
-                            error=str(retry_exc) or retry_exc.__class__.__name__,
-                        )
-                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            delay = RETRY_BASE_DELAY * (2**attempt)
-                            logger.warning(
-                                "Retryable API error (attempt %d/%d), retrying in %.1fs: %s",
-                                attempt + 1,
-                                MAX_API_RETRIES,
-                                delay,
-                                retry_exc,
-                            )
-                            time.sleep(delay)
-                            continue
-                        raise
-
-                # Persist the completed workflow run
-                synthesis_text = "".join(synthesis_chunks)
-                try:
-                    from api.workflow_artifacts import extract_artifacts, persist_artifacts
-                    from api.workflows import complete_workflow_run
-
-                    artifacts = extract_artifacts(synthesis_text, workflow_name)
-                    complete_workflow_run(run_id, synthesis_text, artifacts, sections)
-                    if artifacts:
-                        persist_artifacts(run_id, workflow_ticker, artifacts)
-                except Exception:
-                    logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
-
-                usage = _usage_dict(final_message)
-                _finish_agent_turn_provenance(
-                    agent_turn_event_id,
-                    status="succeeded",
-                    output_value=synthesis_text,
-                    usage=usage,
-                )
-                yield _sse(
-                    "done",
-                    {
-                        "usage": usage,
-                        "workflow_run_id": run_id,
-                        "tool_calls": workflow_tool_calls,
-                        "tools_used": [call["name"] for call in workflow_tool_calls],
-                    },
-                )
-                return
-
-            except Exception as exc:
-                logger.exception("Workflow %s failed", workflow_name)
-                try:
-                    from api.workflows import fail_workflow_run
-
-                    fail_workflow_run(run_id, str(exc))
-                except Exception:
-                    pass
-                _finish_agent_turn_provenance(
-                    agent_turn_event_id,
-                    status="failed",
-                    usage={},
-                    error=str(exc) or exc.__class__.__name__,
-                )
-                yield _sse("error", {"message": f"Workflow failed: {exc}"})
-                yield _sse("done", {"usage": {}})
-                return
-
-        # --- Normal tool-calling path ---
-        conversation = _initial_conversation(provider, req.messages)
-        continuation_round = 0
-        # Force tool use on the first round for non-casual queries so
-        # answers are always grounded in live data.  When rich screen
-        # context is present (metrics or summary from the frontend),
-        # the agent already has data to reason from — let it decide
-        # whether additional tool calls are needed.
-        has_rich_screen_data = req.screen_context is not None and (
-            req.screen_context.metrics or req.screen_context.summary
-        )
-        force_tool_use = not casual and not has_rich_screen_data
-        tool_result_cache: dict[str, str] = {}
-
-        try:
-            while True:
-                final_synthesis_round = continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS
-                round_tool_defs = [] if final_synthesis_round else tool_defs
-                round_force_tool_use = False if final_synthesis_round else force_tool_use
-
-                stream_kwargs = _model_stream_kwargs(
-                    provider=provider,
-                    instructions=instructions,
-                    conversation=conversation,
-                    max_tokens=LLM_MAX_TOKENS,
-                    tool_defs=round_tool_defs,
-                    force_tool_use=round_force_tool_use,
-                    reasoning_effort=reasoning_effort,
-                )
-
-                model_event_id: str | None = None
-                for attempt in range(MAX_API_RETRIES):
-                    try:
-                        stream_kwargs, egress_meta = prepare_model_egress(
-                            provider=provider,
-                            purpose="agent_chat",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            budget=budget,
-                            parent_event_id=agent_turn_event_id,
-                            session_id=None,
-                            workflow_run_id=None,
-                        )
-                        yield _sse("egress_recorded", egress_meta)
-                        yield _sse("budget_update", budget.to_meta())
-                        model_event_id = _start_model_call_provenance(
-                            parent_event_id=agent_turn_event_id,
-                            session_id=None,
-                            workflow_run_id=None,
-                            provider=provider,
-                            purpose="agent_chat",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            attempt=attempt,
-                            round_index=continuation_round,
-                        )
-                        final_message = yield from _stream_llm_response(client, provider, stream_kwargs)
-                        _finish_model_call_provenance(
-                            model_event_id,
-                            status="succeeded",
-                            final_message=final_message,
-                        )
-                        budget.record_model_usage(_usage_dict(final_message))
-                        yield _sse("budget_update", budget.to_meta())
-                        break
-                    except ModelGatewayDenied as exc:
-                        yield _sse("egress_recorded", exc.manifest)
-                        yield _sse("blocked", _blocked_model_egress_payload(exc))
-                        raise
-                    except Exception as retry_exc:
-                        _finish_model_call_provenance(
-                            model_event_id,
-                            status="failed",
-                            error=str(retry_exc) or retry_exc.__class__.__name__,
-                        )
-                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            delay = RETRY_BASE_DELAY * (2**attempt)
-                            logger.warning(
-                                "Retryable API error (attempt %d/%d), retrying in %.1fs: %s",
-                                attempt + 1,
-                                MAX_API_RETRIES,
-                                delay,
-                                retry_exc,
-                            )
-                            time.sleep(delay)
-                            continue
-                        raise
-
-                if provider == PROVIDER_ANTHROPIC:
-                    assistant_content = _serialize_content_blocks(list(final_message.content))
-                    deferred_calls = _extract_tool_calls(assistant_content)
-                elif provider == PROVIDER_GEMINI:
-                    assistant_content = _serialize_gemini_response_parts(final_message)
-                    deferred_calls = _extract_gemini_tool_calls(assistant_content)
-                else:
-                    assistant_content = _serialize_output_items(final_message)
-                    deferred_calls = _extract_openai_tool_calls(assistant_content)
-                if final_synthesis_round:
-                    deferred_calls = []
-
-                if deferred_calls:
-                    tool_counts = Counter(c["name"] for c in deferred_calls)
-                    repeated_high_cost = [
-                        f"{name}x{count}"
-                        for name, count in tool_counts.items()
-                        if name in _HIGH_COST_TOOLS and count > 1
-                    ]
-                    if repeated_high_cost:
-                        logger.warning("agent tool round has repeated high-cost calls: %s", repeated_high_cost)
-
-                    unique_calls = _dedupe_tool_calls(deferred_calls)
-                    logger.info(
-                        "agent_tool_round requested=%s unique=%s",
-                        [c["name"] for c in deferred_calls],
-                        [c["name"] for c in unique_calls],
-                    )
-
-                    tool_results: list[dict] = []
-                    turn_cache_hits: set[str] = set()
-                    pending_calls: list[dict] = []
-                    executed_by_signature: dict[str, tuple[str, float]] = {}
-
-                    for call_info in unique_calls:
-                        signature = _tool_call_signature(call_info["name"], call_info["args"])
-                        if signature in tool_result_cache:
-                            turn_cache_hits.add(signature)
-                            continue
-                        pending_calls.append(call_info)
-
-                    if pending_calls:
-                        budgeted_pending: list[dict] = []
-                        for call_info in pending_calls:
-                            signature = _tool_call_signature(call_info["name"], call_info["args"])
-                            try:
-                                budget.check_tool_call(get_tool_exposure(call_info["name"]))
-                                budgeted_pending.append(call_info)
-                                for call_id in call_info.get("call_ids", []):
-                                    yield _sse(
-                                        "tool_progress",
-                                        {"name": call_info["name"], "id": call_id, "status": "running"},
-                                    )
-                            except AgentBudgetExceeded as exc:
-                                result_str = _blocked_tool_result(call_info["name"], exc)
-                                executed_by_signature[signature] = (result_str, 0.0)
-                                for call_id in call_info.get("call_ids", []):
-                                    payload = {
-                                        "name": call_info["name"],
-                                        "id": call_id,
-                                        "status": "blocked",
-                                        "message": str(exc),
-                                    }
-                                    yield _sse("policy_failure", payload)
-                                    yield _sse("blocked", payload)
-                        pending_calls = budgeted_pending
-                        yield _sse("budget_update", budget.to_meta())
-
-                    if pending_calls:
-                        _attach_tool_provenance_context(
-                            pending_calls,
-                            parent_event_id=model_event_id,
-                            session_id=None,
-                            workflow_run_id=None,
-                            source="agent.chat",
-                        )
-                        for tool_item in _execute_tools_parallel_keepalive(
-                            pending_calls,
-                            actor=tool_actor,
-                            domain_classification=domain_classification,
-                        ):
-                            if tool_item is None:
-                                yield _sse_ping()
-                                continue
-                            call_info, result_str, elapsed_ms = tool_item
-                            signature = _tool_call_signature(call_info["name"], call_info["args"])
-                            tool_result_cache[signature] = result_str
-                            executed_by_signature[signature] = (result_str, elapsed_ms)
-
-                    for call_info in unique_calls:
-                        signature = _tool_call_signature(call_info["name"], call_info["args"])
-                        if signature in turn_cache_hits:
-                            result_str = tool_result_cache[signature]
-                            elapsed_ms = 0.0
-                        else:
-                            result_str, elapsed_ms = executed_by_signature[signature]
-
-                        err_msg = _tool_error_message(result_str)
-                        meta = _tool_meta(result_str)
-                        result_status = _tool_result_status(result_str)
-                        cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
-                        logger.info(
-                            "agent_tool_exec name=%s duration_ms=%.1f cache=%s status=%s quality_ok=%s",
-                            call_info["name"],
-                            elapsed_ms,
-                            cache_status,
-                            result_status,
-                            str(meta.get("quality_ok", "n/a")),
-                        )
-
-                        for call_id in call_info.get("call_ids", []):
-                            payload = {
-                                "name": call_info["name"],
-                                "id": call_id,
-                                "status": result_status,
-                            }
-                            if meta.get("policy_decision_id"):
-                                payload["policy_decision_id"] = meta.get("policy_decision_id")
-                            if meta.get("duration_ms") is not None:
-                                payload["elapsed_ms"] = meta.get("duration_ms")
-                            if err_msg:
-                                payload["message"] = err_msg
-                            yield _sse("tool_result", payload)
-                            if result_status == "blocked":
-                                yield _sse("policy_failure", payload)
-                                yield _sse("blocked", payload)
-                            elif result_status == "timeout":
-                                yield _sse("timeout", payload)
-
-                            if provider == PROVIDER_ANTHROPIC:
-                                result_block: dict[str, object] = {
-                                    "type": "tool_result",
-                                    "tool_use_id": call_id,
-                                    "content": result_str,
-                                }
-                                if err_msg:
-                                    result_block["is_error"] = True
-                            elif provider == PROVIDER_GEMINI:
-                                result_block = {
-                                    "function_response": {
-                                        "name": call_info["name"],
-                                        "response": {"result": result_str},
-                                    }
-                                }
-                            else:
-                                result_block = {
-                                    "type": "function_call_output",
-                                    "call_id": call_id,
-                                    "output": result_str,
-                                }
-                            tool_results.append(result_block)
-
-                    if provider == PROVIDER_ANTHROPIC:
-                        conversation.append({"role": "assistant", "content": assistant_content})
-                        conversation.append({"role": "user", "content": tool_results})
-                    elif provider == PROVIDER_GEMINI:
-                        conversation.append({"role": "model", "parts": assistant_content})
-                        conversation.append({"role": "tool", "parts": tool_results})
-                    else:
-                        conversation.extend(assistant_content)
-                        conversation.extend(tool_results)
-                    # After the first tool round, let the model decide whether it
-                    # needs more data (tool_choice: auto).
-                    force_tool_use = False
-                    continuation_round += 1
-                    continue
-
-                if provider == PROVIDER_ANTHROPIC and final_message.stop_reason == "pause_turn":
-                    conversation.append({"role": "assistant", "content": assistant_content})
-                    conversation.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
-                    force_tool_use = False
-                    continuation_round += 1
-                    continue
-
-                usage = _usage_dict(final_message)
-                _finish_agent_turn_provenance(
-                    agent_turn_event_id,
-                    status="succeeded",
-                    output_value=final_message,
-                    usage=usage,
-                )
-                yield _sse("done", {"usage": usage})
-                return
-
-        except Exception as exc:
-            logger.exception("Agent stream error")
-            _finish_agent_turn_provenance(
-                agent_turn_event_id,
-                status="failed",
-                usage={},
-                error=str(exc) or exc.__class__.__name__,
-            )
-            yield _sse("error", {"message": _format_stream_error(exc)})
-            yield _sse("done", {"usage": {}})
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers=_sse_headers(),
-    )
-
-
-# ---------------------------------------------------------------------------
-# V2 Endpoint — server-managed rolling memory
+# Endpoint — server-managed rolling memory
 # ---------------------------------------------------------------------------
 
 
 @router.post("/agent/chat/async")
-def start_agent_chat_async(req: AgentChatRequestV2, actor: ActorDep):
+def start_agent_chat_async(req: AgentChatRequest, actor: ActorDep):
     payload, _disposition = _enqueue_agent_chat_turn(req, actor)
     status_code = 200 if payload.get("status") in {"done", "error", "cancelled"} else 202
     return JSONResponse(payload, status_code=status_code)
@@ -2452,8 +1961,8 @@ def cancel_agent_chat_async(job_id: str):
     return payload
 
 
-@router.post("/agent/chat/v2")
-def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
+@router.post("/agent/chat")
+def agent_chat(req: AgentChatRequest, actor: ActorDep):
     tool_actor = agent_actor(actor)
     """Chat endpoint with server-managed conversation memory.
 
@@ -2486,7 +1995,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
-        "agent_v2 provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
+        "agent_chat provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
         provider_label,
         casual,
         workflow_name,
@@ -2594,7 +2103,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 parent_event_id=agent_turn_event_id,
                 session_id=session_id,
                 workflow_run_id=None,
-                source="agent.chat.v2.portfolio_summary",
+                source="agent.chat.portfolio_summary",
             )
             portfolio_result = ""
             portfolio_elapsed_ms = 0.0
@@ -2621,7 +2130,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 }
             )
             logger.info(
-                "agent_v2_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
+                "agent_chat_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
                 call_info["name"],
                 portfolio_elapsed_ms,
                 cache_status,
@@ -2964,7 +2473,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 return
 
             except Exception as exc:
-                logger.exception("Workflow %s failed (v2)", workflow_name)
+                logger.exception("Workflow %s failed", workflow_name)
                 try:
                     from api.workflows import fail_workflow_run
 
@@ -3130,7 +2639,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             user_text=req.message,
                         )
                     logger.info(
-                        "agent_v2_tool_round requested=%s unique=%s",
+                        "agent_chat_tool_round requested=%s unique=%s",
                         [c["name"] for c in deferred_calls],
                         [c["name"] for c in unique_calls],
                     )
@@ -3186,7 +2695,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             parent_event_id=model_event_id,
                             session_id=session_id,
                             workflow_run_id=None,
-                            source="agent.chat.v2",
+                            source="agent.chat",
                         )
                         for tool_item in _execute_tools_parallel_keepalive(
                             pending_calls,
@@ -3214,7 +2723,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         result_status = _tool_result_status(result_str)
                         cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
                         logger.info(
-                            "agent_v2_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
+                            "agent_chat_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
                             call_info["name"],
                             elapsed_ms,
                             cache_status,
@@ -3237,7 +2746,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             if discovered:
                                 active_tool_names.extend(discovered)
                                 tool_defs = _tool_definitions_from_names(provider, active_tool_names)
-                                logger.info("agent_v2_tool_expansion added=%s total=%d", discovered, len(tool_defs))
+                                logger.info("agent_chat_tool_expansion added=%s total=%d", discovered, len(tool_defs))
 
                         for call_id in call_info.get("call_ids", []):
                             payload = {
@@ -3319,7 +2828,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 return
 
         except Exception as exc:
-            logger.exception("Agent v2 stream error")
+            logger.exception("Agent stream error")
             _finish_agent_turn_provenance(
                 agent_turn_event_id,
                 status="failed",

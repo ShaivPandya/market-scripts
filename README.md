@@ -7,7 +7,7 @@ The repository is intentionally mixed-mode:
 - Most market and portfolio analysis lives in plain Python modules under topical folders.
 - The FastAPI app exposes those modules through authenticated JSON APIs.
 - The React frontend is the main operating surface for dashboards, screeners, thesis management, portfolio workflows, and agent-assisted research.
-- Local development uses SQLite and local files by default. Production runs on Google Cloud with Cloud Run, Cloud SQL, Cloud Storage, Cloud Scheduler, and Firebase Hosting.
+- Local development uses Postgres for runtime state and local files for document/blob state by default. Production runs on Google Cloud with Cloud Run, Cloud SQL, Cloud Storage, Cloud Scheduler, and Firebase Hosting.
 
 Nothing in this repository is investment advice.
 
@@ -65,14 +65,22 @@ Generate a bcrypt login hash with:
 python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(12)).decode())"
 ```
 
-Local development can stay on the default local state backends. To make the defaults explicit:
+Local development uses Postgres for runtime state. To make the defaults explicit:
 
 ```bash
 ENVIRONMENT=development
-STATE_DB_BACKEND=sqlite
+STATE_DB_BACKEND=postgres
+DATABASE_URL=postgresql://localhost/talisman_dev
 STATE_STORAGE_BACKEND=local
 ASYNC_JOB_BACKEND=local
 AUTH_MODE=password
+```
+
+Create the local database and apply the state schema before starting the API:
+
+```bash
+createdb talisman_dev
+DATABASE_URL=postgresql://localhost/talisman_dev alembic upgrade head
 ```
 
 ### Run the backend
@@ -81,7 +89,8 @@ From the repository root:
 
 ```bash
 ENVIRONMENT=development \
-STATE_DB_BACKEND=sqlite \
+STATE_DB_BACKEND=postgres \
+DATABASE_URL=postgresql://localhost/talisman_dev \
 STATE_STORAGE_BACKEND=local \
 ASYNC_JOB_BACKEND=local \
 uvicorn api.main:app --reload --port 8000
@@ -105,7 +114,7 @@ npm install
 npm run dev
 ```
 
-The UI runs at `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:8000`, and the frontend API client defaults to `/api/v1`.
+The UI runs at `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:8000`, and the frontend API client defaults to `/api`.
 
 You can run the API and UI together from `frontend/`:
 
@@ -151,19 +160,21 @@ Market and macro modules:
 
 ## API Shape
 
-The backend exposes versioned application routes under `/api/v1`. The unversioned `/api/health` endpoint is public for service health checks.
+The backend exposes application routes under `/api`. The `/api/health` endpoint is public for service health checks.
 
-Important route groups include:
+Important route groups include these paths under `/api` unless the path already
+starts with `/api`:
 
-- Auth: `/api/v1/auth/login`, `/api/v1/auth/logout`, `/api/v1/auth/me`
+- Auth: `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`
 - Portfolio: `/portfolio`, `/portfolio-positions`, `/hedge-positions`, `/portfolio-analyzer`, `/portfolio-sizer`, `/hedging-tool`
-- Research documents: `/thesis/*`, `/overview/*`, `/dossier/{ticker}`, `/portfolio-news`, `/weekly-report`
-- Agent and retrieval: `/agent/chat`, `/agent/chat/v2`, `/agent/workflows`, `/memory/sessions`, `/ontology/*`
+- Research documents: `/thesis/*`, `/overview/*`, `/management-quality/*`, `/document-generation/*`, `/dossier/{ticker}`, `/portfolio-news`
+- Agent and retrieval: `/agent/chat`, `/agent/chat/async`, `/agent/workflows`, `/memory/sessions`, `/ontology/*`
 - Investing OS state: `/workspace`, `/actions`, `/approvals`, `/triggers`, `/catalysts`, `/kill-conditions`, `/recommendations`, `/workflow-runs`
 - Markets: `/momentum`, `/chart`, `/quality-screen`, `/short-screen`, `/long-screen`, `/fundamental-momentum`, `/financials`, `/dcf/*`
-- Macro and cross-asset: `/economic-growth`, `/labor-market`, `/housing`, `/liquidity`, `/country-dashboard`, `/central-banks`, `/positioning/*`, `/sentiment/*`, `/signal-aggregator`
+- Macro and cross-asset: `/economic-growth`, `/labor-market`, `/housing`, `/liquidity`, `/country-dashboard`, `/central-banks`, `/positioning/*`, `/sentiment/*`, `/signal-aggregator`, `/industry-monitor`
 - FX, commodities, and rates: `/fx-dashboard`, `/fx-model`, `/commodities`, `/commodities-curve`, `/commodity-research`, `/yield-curve`, `/bond-dashboard`
-- Admin: `/api/v1/cache`, `/api/v1/admin/health`, `/api/v1/admin/quiescence`, `/api/v1/admin/jobs/*`
+- Governance and provenance: `/domain-actions/*`, `/policy-gate/*`, `/risk/*`, `/provenance/*`, `/source-ingestion/*`, `/report-sync/*`
+- Admin/settings: `/cache`, `/admin/health`, `/admin/quiescence`, `/admin/jobs/*`, `/settings/*`
 
 Optional routers are imported with graceful degradation. If a heavy dependency or data module fails to import, the API can still start and report degraded modules from admin health.
 
@@ -188,8 +199,8 @@ Cloudflare Access mode is also supported:
 
 State backends:
 
-- Local development defaults to SQLite databases and local markdown/file storage.
-- Production uses `STATE_DB_BACKEND=postgres`, `STATE_STORAGE_BACKEND=gcs`, `DATABASE_URL`, and `GCS_STATE_BUCKET`.
+- Normal development, CI, and production runtime paths use `STATE_DB_BACKEND=postgres` and `DATABASE_URL`; a few isolated tests still exercise explicit SQLite compatibility paths.
+- Production additionally uses `STATE_STORAGE_BACKEND=gcs` and `GCS_STATE_BUCKET`.
 - Async work runs locally unless `ASYNC_JOB_BACKEND=cloud_run_jobs` or `CLOUD_RUN_JOBS_ENABLED=true` opts into dispatching the generic Cloud Run Job configured by `ASYNC_CLOUD_RUN_JOB=talisman-async-job`.
 
 ## Development Commands
@@ -227,7 +238,7 @@ Production is deployed through the scripts in `infra/gcp/`:
 - A generic Cloud Run Job runs async work with `python -m api.async_job_runner run`.
 - Cloud SQL stores application state with Alembic migrations.
 - Cloud Storage stores generated and migrated research documents.
-- Cloud Scheduler enqueues sweeps and scheduled market snapshot refreshes.
+- Cloud Scheduler enqueues async sweeps, top-50 refreshes, market/macro snapshot refreshes, and continuous optimizer runs.
 - Firebase Hosting serves `frontend/dist` and rewrites `/api/**` to Cloud Run.
 
 First-time setup and routine deploy commands are documented in `infra/gcp/README.md`. The common entry points are:
@@ -246,8 +257,8 @@ Routine full-stack deploy:
 ./infra/gcp/deploy-all.sh
 ```
 
-Routine backend deploys use the fast path: they build a smaller backend image
-context, deploy non-migration Cloud Run Jobs in parallel, and skip IAM,
+Routine backend deploys use the fast path: they build the API image with Cloud
+Build, deploy non-migration Cloud Run Jobs in parallel, and skip IAM,
 Scheduler, and monitoring reconciliation unless requested. After infra/config
 changes, run:
 
@@ -259,8 +270,11 @@ FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
 
 - `frontend/README.md`
 - `infra/gcp/README.md`
+- `ontology/README.md`
 - `fx/model/README.md`
 - `government_bonds/README.md`
+- `government_bonds/data/README.md`
+- `commodities/aluminum/README.md`
 - `macro/economic_growth/README.md`
 - `macro/liquidity/README.md`
 - `macro/positioning/README.md`
@@ -270,7 +284,7 @@ FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
 ## Troubleshooting
 
 - `401 Not authenticated`: verify `AUTH_PASSWORD_HASH` and `JWT_SECRET`, then log in at `/login`.
-- API starts but a page returns a dependency/degraded error: check `/api/v1/admin/health` and the optional router import logs.
+- API starts but a page returns a dependency/degraded error: check `/api/admin/health` and the optional router import logs.
 - FRED-backed pages fail: verify `FRED_API_KEY` is present in `.env`.
 - Direct script imports fail: run from the repository root so top-level package imports resolve.
 - Production writes fail locally: production mode intentionally blocks direct project-root writes unless the configured state storage backend is safe for production.

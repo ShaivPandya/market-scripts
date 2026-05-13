@@ -1062,7 +1062,6 @@ def persist_recommendations(
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
-    from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.object_service import OntologyObjectService
     from ontology.policy import actor_to_dict, system_actor
     from ontology.schemas.identity import policy_gate_result_id
@@ -1077,10 +1076,8 @@ def persist_recommendations(
         source_type="workflow",
         source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
     )
-    ontology_primary = ontology_primary_writes_enabled()
-    command_service = OntologyCommandService() if ontology_primary else None
-    object_service = OntologyObjectService() if ontology_primary else None
-    active_idempotency_keys: list[str] = []
+    command_service = OntologyCommandService()
+    object_service = OntologyObjectService()
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -1095,8 +1092,6 @@ def persist_recommendations(
             }
         )
         idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
-        if idempotency_key:
-            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -1147,26 +1142,25 @@ def persist_recommendations(
             gate_target_id = idempotency_key or action_hash
             gate_key = f"create_recommendation:{gate_target_id}"
             gate_uid = policy_gate_result_id(gate_key)
-            if object_service is not None:
-                object_service.write_object(
-                    "PolicyGateResult",
-                    gate_uid,
-                    {
-                        "gate_result_id": gate_key,
-                        "decision": gate.get("decision") or "review_required",
-                        "review_required": bool(gate.get("review_required")),
-                        "failure_reasons": gate.get("failure_reasons", []),
-                        "warnings": gate.get("warnings", []),
-                        "evaluated_at": payload["as_of"],
-                        "ontology_run_id": "operational",
-                    },
-                    payload["as_of"],
-                    actor=actor_to_dict(actor),
-                    provenance=f"pv:recommendation_policy_gate:{gate_target_id}",
-                    input_hash=stable_hash({"gate": gate, "record": record}),
-                )
-                gate["policy_gate_result_id"] = gate_uid
-                record["policy_gate_result_id"] = gate_uid
+            object_service.write_object(
+                "PolicyGateResult",
+                gate_uid,
+                {
+                    "gate_result_id": gate_key,
+                    "decision": gate.get("decision") or "review_required",
+                    "review_required": bool(gate.get("review_required")),
+                    "failure_reasons": gate.get("failure_reasons", []),
+                    "warnings": gate.get("warnings", []),
+                    "evaluated_at": payload["as_of"],
+                    "ontology_run_id": "operational",
+                },
+                payload["as_of"],
+                actor=actor_to_dict(actor),
+                provenance=f"pv:recommendation_policy_gate:{gate_target_id}",
+                input_hash=stable_hash({"gate": gate, "record": record}),
+            )
+            gate["policy_gate_result_id"] = gate_uid
+            record["policy_gate_result_id"] = gate_uid
             record["policy_gate_result"] = gate
             record["policy_gate_status"] = gate.get("decision")
             record["policy_gate_decision"] = gate.get("decision")
@@ -1178,32 +1172,13 @@ def persist_recommendations(
             f"{payload['report_type'].title()} recommendation for "
             f"{action.get('instrument') or action.get('ticker') or 'portfolio'}"
         )
-        if command_service is not None:
-            approval = command_service.propose_action(
-                "create_recommendation",
-                {"record": record},
-                context,
-                reason=reason,
-            )
-        else:
-            from portfolio.action_registry import ActionContext, propose_action
-
-            approval = propose_action(
-                "create_recommendation",
-                {"record": record},
-                ActionContext(
-                    actor_type="workflow",
-                    source_type=context.source_type,
-                    source_id=context.source_id,
-                ),
-                reason=reason,
-                once=True,
-            )
+        approval = command_service.propose_action(
+            "create_recommendation",
+            {"record": record},
+            context,
+            reason=reason,
+        )
         persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
-    if report_id and not ontology_primary:
-        from portfolio import core_db
-
-        core_db.supersede_report_recommendations(str(report_id), active_idempotency_keys)
     return persisted
 
 
@@ -1313,44 +1288,21 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
 
 
 def evaluate_due_recommendations(limit: int = 50) -> dict:
-    from ontology.domain_write_service import ontology_primary_writes_enabled
+    from ontology.object_service import OntologyObjectService
+    from ontology.policy import actor_to_dict, system_actor
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
     today = datetime.now(UTC).date()
     reads = OntologyRuntimeReadService()
-    primary_writes = ontology_primary_writes_enabled()
-    objects = None
-    actor = None
-    if primary_writes:
-        from ontology.object_service import OntologyObjectService
-        from ontology.policy import system_actor
-
-        objects = OntologyObjectService()
-        actor = system_actor("recommendation_evaluator")
+    objects = OntologyObjectService()
+    actor = system_actor("recommendation_evaluator")
 
     def update_recommendation_outcome(rec: dict[str, Any], status: str, outcome: dict[str, Any]) -> None:
-        if not primary_writes:
-            from portfolio import core_db
-
-            core_db.update_recommendation_outcome(int(rec["id"]), status, outcome)
-            return
-
-        from ontology.policy import actor_to_dict
-
-        assert objects is not None
-        assert actor is not None
         rec_uid = str(rec.get("object_uid") or rec.get("id") or rec.get("recommendation_id") or "")
         payload = dict(rec.get("payload") or {})
         payload["outcome"] = outcome
-        legacy_id = rec.get("legacy_id")
-        if legacy_id is None:
-            try:
-                legacy_id = int(str(rec.get("id") or "").rsplit(":", 1)[-1])
-            except (TypeError, ValueError):
-                legacy_id = None
         props = {
             "recommendation_id": rec.get("recommendation_id") or rec_uid,
-            "legacy_id": legacy_id,
             "idempotency_key": rec.get("idempotency_key"),
             "source_kind": rec.get("source_kind") or "report",
             "report_type": rec.get("report_type"),

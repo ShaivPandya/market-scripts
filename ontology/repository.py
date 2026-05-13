@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 from api.audit import emit_audit_event
 from api.postgres import use_postgres_state
-from api.postgres_compat import PostgresCompatConnection
+from api.postgres_state import PostgresStateConnection
 from ontology.models import EntityType, OntologyEdge, OntologyNode, RelationType
 from ontology.schema_definitions import (
     SCHEMA_KIND_ONTOLOGY_EDGE_PROPERTIES,
@@ -112,7 +112,7 @@ def _resolve_default_db_path() -> Path:
 class OntologyRepository:
     """Persist ontology graph rows and materialized snapshot runs.
 
-    The repository stores queryable graph snapshots and legacy live graph
+    The repository stores queryable graph snapshots and canonical live graph
     tables. Canonical portfolio, thesis, and process state remains in the
     backing stores that ingestion reads from.
     """
@@ -126,9 +126,9 @@ class OntologyRepository:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-    def _connect(self) -> sqlite3.Connection | PostgresCompatConnection:
+    def _connect(self) -> sqlite3.Connection | PostgresStateConnection:
         if self._use_postgres:
-            return PostgresCompatConnection(
+            return PostgresStateConnection(
                 table_map={
                     "nodes": "ontology_nodes",
                     "edges": "ontology_edges",
@@ -147,7 +147,7 @@ class OntologyRepository:
         if self._use_postgres:
             return
         with self._connect() as conn:
-            # Legacy tables are intentionally preserved for additive migration.
+            # Snapshot tables are intentionally preserved for explicit run_id inspection.
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS nodes (
@@ -155,7 +155,7 @@ class OntologyRepository:
                     type TEXT NOT NULL,
                     label TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
-                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_name TEXT NOT NULL DEFAULT 'canonical',
                     schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
@@ -168,9 +168,9 @@ class OntologyRepository:
                     target_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL CHECK (relation_type IN ({RELATION_TYPE_SQL_VALUES})),
                     properties_json TEXT NOT NULL,
-                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_name TEXT NOT NULL DEFAULT 'canonical',
                     schema_version INTEGER NOT NULL DEFAULT 0,
-                    relation_schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    relation_schema_name TEXT NOT NULL DEFAULT 'canonical',
                     relation_schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (source_id, target_id, relation_type),
@@ -205,7 +205,7 @@ class OntologyRepository:
                     type TEXT NOT NULL,
                     label TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
-                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_name TEXT NOT NULL DEFAULT 'canonical',
                     schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (run_id, id),
@@ -221,9 +221,9 @@ class OntologyRepository:
                     target_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL CHECK (relation_type IN ({RELATION_TYPE_SQL_VALUES})),
                     properties_json TEXT NOT NULL,
-                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_name TEXT NOT NULL DEFAULT 'canonical',
                     schema_version INTEGER NOT NULL DEFAULT 0,
-                    relation_schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    relation_schema_name TEXT NOT NULL DEFAULT 'canonical',
                     relation_schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (run_id, source_id, target_id, relation_type),
@@ -255,7 +255,7 @@ class OntologyRepository:
     def upsert_nodes(self, nodes: list[OntologyNode]) -> None:
         if not nodes:
             return
-        normalized_nodes = [normalize_node(n, allow_legacy=_allow_legacy_schemas()) for n in nodes]
+        normalized_nodes = [normalize_node(n) for n in nodes]
         rows = [
             (
                 n.id,
@@ -362,7 +362,7 @@ class OntologyRepository:
         )
 
     def upsert_graph(self, nodes: list[OntologyNode], edges: list[OntologyEdge]) -> None:
-        normalized = normalize_graph(nodes, edges, allow_legacy=_allow_legacy_schemas())
+        normalized = normalize_graph(nodes, edges)
         _emit_ontology_audit(
             "ontology.graph.upsert.started",
             status="started",
@@ -389,7 +389,7 @@ class OntologyRepository:
         edges: list[OntologyEdge],
     ) -> None:
         """Save one materialized semantic/risk graph run for read/query paths."""
-        normalized = normalize_graph(nodes, edges, run_id=run_id, allow_legacy=_allow_legacy_schemas())
+        normalized = normalize_graph(nodes, edges, run_id=run_id)
         nodes = normalized.nodes
         edges = normalized.edges
         node_rows = [
@@ -841,7 +841,7 @@ class OntologyRepository:
                         else None
                     ),
                     "position_asset_edge_relation_schema_name": _row_value(
-                        row, "position_asset_edge_relation_schema_name", "legacy"
+                        row, "position_asset_edge_relation_schema_name", "canonical"
                     ),
                     "position_asset_edge_relation_schema_version": int(
                         _row_value(row, "position_asset_edge_relation_schema_version", 0) or 0
@@ -865,7 +865,7 @@ class OntologyRepository:
                         else None
                     ),
                     "asset_sector_edge_relation_schema_name": _row_value(
-                        row, "asset_sector_edge_relation_schema_name", "legacy"
+                        row, "asset_sector_edge_relation_schema_name", "canonical"
                     ),
                     "asset_sector_edge_relation_schema_version": int(
                         _row_value(row, "asset_sector_edge_relation_schema_version", 0) or 0
@@ -1005,7 +1005,7 @@ class OntologyRepository:
                     ),
                     "edge_schema_name": row["edge_schema_name"],
                     "edge_schema_version": int(row["edge_schema_version"] or 0),
-                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "legacy"),
+                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "canonical"),
                     "edge_relation_schema_version": int(_row_value(row, "relation_schema_version", 0) or 0),
                     "edge_updated_at": row["edge_updated_at"],
                 }
@@ -1246,7 +1246,7 @@ class OntologyRepository:
                 "properties": _edge_properties_for_mode(r, schema_mode=schema_mode, run_id=run_id),
                 "schema_name": r["schema_name"],
                 "schema_version": int(r["schema_version"] or 0),
-                "relation_schema_name": _row_value(r, "relation_schema_name", "legacy"),
+                "relation_schema_name": _row_value(r, "relation_schema_name", "canonical"),
                 "relation_schema_version": int(_row_value(r, "relation_schema_version", 0) or 0),
                 "updated_at": r["updated_at"],
             }
@@ -1401,7 +1401,7 @@ class OntologyRepository:
                         schema_name_key="edge_schema_name",
                         schema_version_key="edge_schema_version",
                     ),
-                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "legacy"),
+                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "canonical"),
                     "edge_relation_schema_version": int(_row_value(row, "relation_schema_version", 0) or 0),
                 }
             )
@@ -1466,7 +1466,7 @@ class OntologyRepository:
                         schema_name_key="edge_schema_name",
                         schema_version_key="edge_schema_version",
                     ),
-                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "legacy"),
+                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "canonical"),
                     "edge_relation_schema_version": int(_row_value(row, "relation_schema_version", 0) or 0),
                 }
             )
@@ -1518,7 +1518,7 @@ class OntologyRepository:
                 "properties": _load_edge_properties(r),
                 "schema_name": r["schema_name"],
                 "schema_version": int(r["schema_version"] or 0),
-                "relation_schema_name": _row_value(r, "relation_schema_name", "legacy"),
+                "relation_schema_name": _row_value(r, "relation_schema_name", "canonical"),
                 "relation_schema_version": int(_row_value(r, "relation_schema_version", 0) or 0),
                 "updated_at": r["updated_at"],
             }
@@ -1646,7 +1646,7 @@ class OntologyRepository:
                         schema_name_key="edge_schema_name",
                         schema_version_key="edge_schema_version",
                     ),
-                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "legacy"),
+                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "canonical"),
                     "edge_relation_schema_version": int(_row_value(row, "relation_schema_version", 0) or 0),
                 }
             )
@@ -1675,11 +1675,6 @@ def _load_json_list(raw: Any) -> list[str]:
         return []
 
 
-def _allow_legacy_schemas() -> bool:
-    value = (os.getenv("ONTOLOGY_STRICT_SCHEMAS") or "").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
 def _ontology_run_provenance_id(run_id: str) -> str:
     try:
         from api import provenance
@@ -1689,13 +1684,13 @@ def _ontology_run_provenance_id(run_id: str) -> str:
         return f"pv:ontology_run:{str(run_id).replace('+', '_')}"
 
 
-RepositoryConnection = sqlite3.Connection | PostgresCompatConnection
+RepositoryConnection = sqlite3.Connection | PostgresStateConnection
 
 
 def _ensure_schema_columns(conn: RepositoryConnection, table: str) -> None:
     existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if "schema_name" not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'legacy'")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'canonical'")
     if "schema_version" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0")
 
@@ -1703,7 +1698,7 @@ def _ensure_schema_columns(conn: RepositoryConnection, table: str) -> None:
 def _ensure_relation_schema_columns(conn: RepositoryConnection, table: str) -> None:
     existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if "relation_schema_name" not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_name TEXT NOT NULL DEFAULT 'legacy'")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_name TEXT NOT NULL DEFAULT 'canonical'")
     if "relation_schema_version" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_version INTEGER NOT NULL DEFAULT 0")
 
@@ -1858,7 +1853,6 @@ def _load_node_properties(
     label = _row_value(row, label_key, str(node_id))
     if not node_type:
         return props
-    allow_legacy = _allow_legacy_schemas()
     try:
         normalized = normalize_node(
             OntologyNode(
@@ -1866,17 +1860,14 @@ def _load_node_properties(
                 type=cast(EntityType, str(node_type)),
                 label=str(label or node_id),
                 properties=props,
-                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
+                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "canonical")),
                 schema_version=int(_row_value(row, schema_version_key, props.get("schema_version") or 0) or 0),
             ),
             run_id=run_id,
-            allow_legacy=allow_legacy,
         )
         return normalized.properties
     except Exception:
-        if not allow_legacy:
-            raise
-        return props
+        raise
 
 
 def _load_edge_properties(
@@ -1895,7 +1886,6 @@ def _load_edge_properties(
     relation_type = relation_type_value or _row_value(row, relation_type_key)
     if not relation_type:
         return props
-    allow_legacy = _allow_legacy_schemas()
     try:
         normalized = normalize_edge(
             OntologyEdge(
@@ -1903,21 +1893,18 @@ def _load_edge_properties(
                 target_id=str(_row_value(row, target_id_key, "unknown")),
                 relation_type=cast(RelationType, str(relation_type)),
                 properties=props,
-                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
+                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "canonical")),
                 schema_version=int(_row_value(row, schema_version_key, props.get("schema_version") or 0) or 0),
             ),
             run_id=run_id,
-            allow_legacy=allow_legacy,
         )
         return normalized.properties
     except Exception:
-        if not allow_legacy:
-            raise
-        return props
+        raise
 
 
 def _fetch_node_envelopes(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     *,
     table: str,
     run_id: str | None = None,
@@ -1933,7 +1920,7 @@ def _fetch_node_envelopes(
             type=cast(EntityType, str(row["type"])),
             label=str(row["label"]),
             properties=_load_json(row["properties_json"]),
-            schema_name=str(row["schema_name"] or "legacy"),
+            schema_name=str(row["schema_name"] or "canonical"),
             schema_version=int(row["schema_version"] or 0),
         )
         for row in rows
@@ -1941,7 +1928,7 @@ def _fetch_node_envelopes(
 
 
 def _fetch_edge_envelopes(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     *,
     table: str,
     run_id: str | None = None,
@@ -1969,16 +1956,16 @@ def _fetch_edge_envelopes(
             target_id=str(row["target_id"]),
             relation_type=cast(RelationType, str(row["relation_type"])),
             properties=_load_json(row["properties_json"]),
-            schema_name=str(row["schema_name"] or "legacy"),
+            schema_name=str(row["schema_name"] or "canonical"),
             schema_version=int(row["schema_version"] or 0),
-            relation_schema_name=str(_row_value(row, "relation_schema_name", "legacy") or "legacy"),
+            relation_schema_name=str(_row_value(row, "relation_schema_name", "canonical") or "canonical"),
             relation_schema_version=int(_row_value(row, "relation_schema_version", 0) or 0),
         )
         for row in rows
     ]
 
 
-def _insert_live_nodes(conn: sqlite3.Connection | PostgresCompatConnection, nodes: list[OntologyNode]) -> None:
+def _insert_live_nodes(conn: sqlite3.Connection | PostgresStateConnection, nodes: list[OntologyNode]) -> None:
     if not nodes:
         return
     conn.executemany(
@@ -1993,7 +1980,7 @@ def _insert_live_nodes(conn: sqlite3.Connection | PostgresCompatConnection, node
     )
 
 
-def _insert_live_edges(conn: sqlite3.Connection | PostgresCompatConnection, edges: list[OntologyEdge]) -> None:
+def _insert_live_edges(conn: sqlite3.Connection | PostgresStateConnection, edges: list[OntologyEdge]) -> None:
     if not edges:
         return
     conn.executemany(
@@ -2028,7 +2015,7 @@ def _insert_live_edges(conn: sqlite3.Connection | PostgresCompatConnection, edge
 
 
 def _insert_snapshot_nodes(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     run_id: str,
     nodes: list[OntologyNode],
 ) -> None:
@@ -2049,7 +2036,7 @@ def _insert_snapshot_nodes(
 
 
 def _insert_snapshot_edges(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     run_id: str,
     edges: list[OntologyEdge],
 ) -> None:
@@ -2260,14 +2247,12 @@ def _source_record_ref_for_edge(edge: OntologyEdge, provenance: Any) -> str | No
 
 
 def _normalize_live_edges_for_storage(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     edges: list[OntologyEdge],
 ) -> list[OntologyEdge]:
     endpoint_ids = {edge.source_id for edge in edges} | {edge.target_id for edge in edges}
     node_types = _fetch_node_type_map(conn, endpoint_ids)
-    normalized_edges = [
-        validate_edge_relation(edge, node_types, allow_legacy=_allow_legacy_schemas()) for edge in edges
-    ]
+    normalized_edges = [validate_edge_relation(edge, node_types) for edge in edges]
 
     cardinality_relations = {
         edge.relation_type
@@ -2301,7 +2286,7 @@ def _normalize_live_edges_for_storage(
 
 
 def _fetch_node_type_map(
-    conn: sqlite3.Connection | PostgresCompatConnection,
+    conn: sqlite3.Connection | PostgresStateConnection,
     node_ids: set[str],
 ) -> dict[str, EntityType]:
     if not node_ids:
@@ -2502,7 +2487,7 @@ def _edge_payload_from_row(
         ),
         "schema_name": _row_value(row, f"{prefix}_schema_name"),
         "schema_version": int(_row_value(row, f"{prefix}_schema_version", 0) or 0),
-        "relation_schema_name": _row_value(row, f"{prefix}_relation_schema_name", "legacy"),
+        "relation_schema_name": _row_value(row, f"{prefix}_relation_schema_name", "canonical"),
         "relation_schema_version": int(_row_value(row, f"{prefix}_relation_schema_version", 0) or 0),
         "updated_at": updated_at,
     }

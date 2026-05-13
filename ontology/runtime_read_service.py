@@ -1,45 +1,17 @@
-"""Ontology-backed runtime read helpers.
-
-This module is the runtime replacement for the old domain SQLite readers. It
-keeps API routers from depending on legacy table modules while read models are
-still being filled out route by route.
-"""
+"""Ontology-backed runtime read helpers."""
 
 from __future__ import annotations
 
-import importlib
 import logging
-from typing import Any, cast
+from typing import Any
 
 from ontology.object_service import OntologyObjectService
 
 logger = logging.getLogger(__name__)
 
 
-def _ontology_primary_writes_enabled() -> bool:
-    try:
-        from ontology.domain_write_service import ontology_primary_writes_enabled
-
-        return ontology_primary_writes_enabled()
-    except Exception:
-        return False
-
-
-def _ontology_read_model_enabled() -> bool:
-    try:
-        from ontology.domain_write_service import ontology_read_model_enabled
-
-        return ontology_read_model_enabled()
-    except Exception:
-        return False
-
-
 def get_positions(*, include_hedges: bool = False) -> list[dict[str, Any]]:
-    """Ontology-native replacement for legacy portfolio_db.get_positions."""
-    if not _ontology_primary_writes_enabled():
-        portfolio_db = importlib.import_module("portfolio.portfolio_db")
-
-        return _legacy_positions(portfolio_db, include_hedges=include_hedges)
+    """Return current ontology positions."""
     return OntologyRuntimeReadService().positions(include_hedges=include_hedges)
 
 
@@ -58,19 +30,11 @@ def object_props(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def get_positions_df(*, include_hedges: bool = False, fallback_to_csv: bool = False):
-    """Ontology-native replacement for legacy portfolio_db.get_positions_df."""
-    if not _ontology_primary_writes_enabled():
-        _legacy_get_positions_df = importlib.import_module("portfolio.portfolio_db").get_positions_df
-
-        return _legacy_get_positions_df(include_hedges=include_hedges, fallback_to_csv=fallback_to_csv)
+    """Return current ontology positions as a DataFrame."""
     return OntologyRuntimeReadService().positions_df(include_hedges=include_hedges)
 
 
 def get_hedge_positions() -> list[dict[str, Any]]:
-    if not _ontology_primary_writes_enabled():
-        _legacy_get_hedge_positions = importlib.import_module("portfolio.portfolio_db").get_hedge_positions
-
-        return cast(list[dict[str, Any]], _legacy_get_hedge_positions())
     rows = OntologyRuntimeReadService().positions(include_hedges=True)
     return [row for row in rows if str(row.get("role") or "").lower() == "hedge"]
 
@@ -81,8 +45,6 @@ class OntologyRuntimeReadService:
         self.read_model_repo = read_model_repository
 
     def get(self, object_uid: str) -> dict[str, Any] | None:
-        if not _ontology_primary_writes_enabled():
-            return _legacy_get(object_uid)
         row = self.objects.get_object(object_uid)
         if not row:
             return None
@@ -95,16 +57,12 @@ class OntologyRuntimeReadService:
         filters: dict[str, Any] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        if not _ontology_primary_writes_enabled():
-            return _legacy_list_objects(object_type, filters=filters, limit=limit)
         return [
             self._project_object(object_type, object_props(row))
             for row in self.objects.query_objects(object_type, filters=_clean_filters(filters), limit=limit)
         ]
 
     def workspace_bundle(self) -> dict[str, Any]:
-        if not _ontology_primary_writes_enabled() or not _ontology_read_model_enabled():
-            return self._workspace_bundle_from_objects()
         repo = self._read_model_repository()
         bundle = repo.fetch_workspace_bundle()
         recent_workflow_runs = self._merge_fresh_workflow_runs(
@@ -131,8 +89,6 @@ class OntologyRuntimeReadService:
         }
 
     def dossier_bundle(self, ticker: str) -> dict[str, Any]:
-        if not _ontology_primary_writes_enabled() or not _ontology_read_model_enabled():
-            return self._dossier_bundle_from_objects(ticker)
         repo = self._read_model_repository()
         bundle = repo.fetch_dossier_bundle(ticker)
         workflow_runs = self._merge_fresh_workflow_runs(
@@ -155,8 +111,6 @@ class OntologyRuntimeReadService:
         }
 
     def management_quality_assessment(self, ticker: str) -> dict[str, Any] | None:
-        if not _ontology_primary_writes_enabled():
-            return None
         normalized = _ticker(ticker)
         rows = self.list_objects("ManagementQualityAssessment", filters={"ticker": normalized}, limit=20)
         active = [row for row in rows if str(row.get("status") or "active").lower() == "active"]
@@ -165,10 +119,6 @@ class OntologyRuntimeReadService:
         return candidates[0] if candidates else None
 
     def positions(self, *, include_hedges: bool = False, limit: int = 1000) -> list[dict[str, Any]]:
-        if not _ontology_primary_writes_enabled():
-            portfolio_db = importlib.import_module("portfolio.portfolio_db")
-
-            return _legacy_positions(portfolio_db, include_hedges=include_hedges)[:limit]
         rows = self.list_objects("Position", limit=limit)
         if include_hedges:
             rows.extend(self.list_objects("HedgePosition", limit=limit))
@@ -305,10 +255,7 @@ class OntologyRuntimeReadService:
         return rows
 
     def workflow_runs(self, *, ticker: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        if _ontology_primary_writes_enabled():
-            return self._fresh_workflow_runs_from_objects(ticker=ticker, limit=limit)
-        filters = {"ticker": _ticker(ticker)} if ticker else None
-        return _sort_workflow_runs(self.list_objects("WorkflowRun", filters=filters, limit=limit))[:limit]
+        return self._fresh_workflow_runs_from_objects(ticker=ticker, limit=limit)
 
     def report_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.list_objects("ReportRun", limit=limit)
@@ -375,7 +322,7 @@ class OntologyRuntimeReadService:
     def _fresh_workflow_runs_from_objects(self, *, ticker: str | None, limit: int) -> list[dict[str, Any]]:
         normalized = _ticker(ticker) if ticker else None
         filters = {"ticker": normalized} if normalized else None
-        fetch_limit = 500 if _ontology_primary_writes_enabled() else limit
+        fetch_limit = 500
         rows = self.list_objects("WorkflowRun", filters=filters, limit=fetch_limit)
         return _sort_workflow_runs(rows)[:limit]
 
@@ -540,233 +487,6 @@ class OntologyRuntimeReadService:
                 row[key] = sorted(children, key=lambda item: int(item.get("ordinal") or 0))
         row["parsed"] = _management_quality_parsed_from_assessment(row)
         return row
-
-
-def _legacy_get(object_uid: str) -> dict[str, Any] | None:
-    prefix, _, raw_id = str(object_uid or "").partition(":")
-    if not prefix or not raw_id:
-        return None
-    from portfolio import core_db
-
-    if prefix == "action_item":
-        return _find_by_id(core_db.get_action_items(), raw_id)
-    if prefix == "watch_trigger":
-        return _find_by_id(core_db.get_watch_triggers(), raw_id)
-    if prefix == "approval":
-        try:
-            return core_db.get_pending_approval(int(raw_id))
-        except (TypeError, ValueError):
-            return None
-    if prefix == "workflow_run":
-        return core_db.get_workflow_run(raw_id)
-    if prefix == "thesis":
-        thesis_db = importlib.import_module("portfolio.thesis_db")
-
-        return cast(dict[str, Any] | None, thesis_db.get_thesis_meta(raw_id))
-    if prefix == "investment_idea":
-        try:
-            return core_db.get_investment_idea(int(raw_id))
-        except (TypeError, ValueError):
-            return None
-    if prefix == "idea_evaluation":
-        try:
-            return core_db.get_idea_evaluation(int(raw_id))
-        except (TypeError, ValueError):
-            return None
-    if prefix == "idea_comparison_run":
-        return core_db.get_idea_comparison_run(raw_id)
-    if prefix in {"optimizationmission", "optimization_mission"}:
-        return core_db.get_optimization_mission(_optional_int(raw_id))
-    if prefix in {"optimizationrun", "optimization_run"}:
-        return core_db.get_optimization_run(raw_id)
-    if prefix in {"optimizationalert", "optimization_alert"}:
-        alert_id = _optional_int(raw_id)
-        if alert_id is None:
-            return None
-        for alert in core_db.get_optimization_alerts(status=None, limit=200):
-            if _optional_int(alert.get("id")) == alert_id:
-                return alert
-        return None
-    if prefix == "recommendation":
-        try:
-            return core_db.get_recommendation(int(raw_id))
-        except (TypeError, ValueError):
-            return None
-    if prefix == "thesis_claim":
-        try:
-            return core_db.get_thesis_claim(int(raw_id))
-        except (TypeError, ValueError):
-            return None
-    if prefix == "document_artifact" and raw_id.startswith("news_digest:"):
-        from portfolio import news_digests
-
-        digest_id = raw_id.removeprefix("news_digest:")
-        try:
-            digest = news_digests.get_digest(digest_id)
-        except FileNotFoundError:
-            return None
-        return _digest_artifact(digest)
-    return None
-
-
-def _legacy_list_objects(
-    object_type: str,
-    *,
-    filters: dict[str, Any] | None = None,
-    limit: int = 100,
-) -> list[dict[str, Any]]:
-    filters = _clean_filters(filters)
-    from portfolio import core_db
-
-    portfolio_db = importlib.import_module("portfolio.portfolio_db")
-
-    if object_type == "Position":
-        return _legacy_positions(portfolio_db, include_hedges=False)[:limit]
-    if object_type == "HedgePosition":
-        return cast(list[dict[str, Any]], portfolio_db.get_hedge_positions())[:limit]
-    if object_type == "Thesis":
-        thesis_db = importlib.import_module("portfolio.thesis_db")
-        thesis_rows = cast(list[dict[str, Any]], thesis_db.get_all_thesis_meta())
-        ticker = filters.get("ticker")
-        status = filters.get("status")
-        return [
-            row
-            for row in thesis_rows
-            if (not ticker or str(row.get("ticker") or "").upper() == str(ticker).upper())
-            and (not status or row.get("status") == status)
-        ][:limit]
-    if object_type == "Evaluation":
-        thesis_db = importlib.import_module("portfolio.thesis_db")
-        ticker = filters.get("ticker")
-        if ticker:
-            return cast(list[dict[str, Any]], thesis_db.get_evaluations(str(ticker).upper(), limit=limit))
-        return cast(list[dict[str, Any]], thesis_db.get_latest_evaluations())[:limit]
-    if object_type == "ActionItem":
-        return core_db.get_action_items(status=filters.get("status"), ticker=filters.get("ticker"))[:limit]
-    if object_type == "WatchTrigger":
-        return core_db.get_watch_triggers(status=filters.get("status"), ticker=filters.get("ticker"))[:limit]
-    if object_type == "Catalyst":
-        ticker = filters.get("ticker")
-        catalyst_rows = core_db.get_catalysts(str(ticker)) if ticker else []
-        status = filters.get("status")
-        return [row for row in catalyst_rows if not status or row.get("status") == status][:limit]
-    if object_type == "KillCondition":
-        ticker = filters.get("ticker")
-        condition_rows = core_db.get_kill_conditions(str(ticker)) if ticker else []
-        status = filters.get("status")
-        return [row for row in condition_rows if not status or row.get("status") == status][:limit]
-    if object_type == "ThesisClaim":
-        return core_db.get_thesis_claims(
-            ticker=filters.get("ticker"),
-            status=filters.get("status"),
-            limit=limit,
-        )
-    if object_type == "Approval":
-        return core_db.get_pending_approvals(
-            ticker=filters.get("ticker"),
-            status=filters.get("status"),
-            application_status=filters.get("application_status"),
-        )[:limit]
-    if object_type == "Recommendation":
-        return core_db.get_recommendations(
-            report_type=filters.get("report_type"),
-            status=filters.get("status"),
-            ticker=filters.get("ticker"),
-            approval_status=filters.get("approval_status"),
-            outcome_status=filters.get("outcome_status"),
-            limit=limit,
-        )
-    if object_type == "WorkflowRun":
-        return core_db.get_workflow_runs(ticker=filters.get("ticker"), limit=limit)
-    if object_type == "DocumentArtifact":
-        document_type = filters.get("document_type")
-        document_id = filters.get("document_id")
-        if document_type and document_type != "news_digest":
-            return []
-        from portfolio import news_digests
-
-        if document_id:
-            try:
-                return [_digest_artifact(news_digests.get_digest(str(document_id)))]
-            except FileNotFoundError:
-                return []
-        return [_digest_artifact(item) for item in news_digests.list_digests().get("items", [])][:limit]
-    if object_type == "InvestmentIdea":
-        return core_db.list_investment_ideas(
-            status=filters.get("status"),
-            include_archived=True,
-            limit=limit,
-        )
-    if object_type == "IdeaEvaluation":
-        idea_id = _optional_int(filters.get("idea_id"))
-        if idea_id is not None:
-            return core_db.get_idea_evaluations(idea_id, limit=limit)
-        idea_rows: list[dict[str, Any]] = []
-        for idea in core_db.list_investment_ideas(include_archived=True, limit=500):
-            idea_rows.extend(core_db.get_idea_evaluations(int(idea["id"]), limit=limit))
-        return sorted(idea_rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)[:limit]
-    if object_type == "IdeaComparisonRun":
-        return core_db.list_idea_comparison_runs(limit=limit)
-    if object_type == "OptimizationMission":
-        status = filters.get("status")
-        return core_db.get_optimization_missions(status=status)[:limit]
-    if object_type == "OptimizationRun":
-        return core_db.get_optimization_runs(mission_id=_optional_int(filters.get("mission_id")), limit=limit)
-    if object_type == "OptimizationActionSnapshot":
-        return core_db.get_optimization_snapshots(
-            run_id=filters.get("run_id"),
-            mission_id=_optional_int(filters.get("mission_id")),
-            ticker=filters.get("ticker"),
-        )[:limit]
-    if object_type == "OptimizationAlert":
-        rows = core_db.get_optimization_alerts(
-            mission_id=_optional_int(filters.get("mission_id")),
-            status=filters.get("status"),
-            limit=limit,
-        )
-        ticker = filters.get("ticker")
-        return [row for row in rows if not ticker or str(row.get("ticker") or "").upper() == str(ticker).upper()]
-    return []
-
-
-def _legacy_positions(portfolio_db: Any, *, include_hedges: bool) -> list[dict[str, Any]]:
-    try:
-        return cast(list[dict[str, Any]], portfolio_db.get_positions(include_hedges=include_hedges))
-    except TypeError as exc:
-        if "include_hedges" not in str(exc):
-            raise
-        return cast(list[dict[str, Any]], portfolio_db.get_positions())
-
-
-def _find_by_id(rows: list[dict[str, Any]], raw_id: str) -> dict[str, Any] | None:
-    for row in rows:
-        if str(row.get("id")) == str(raw_id):
-            return row
-    return None
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    text = str(value).strip()
-    if ":" in text:
-        text = text.rsplit(":", 1)[-1]
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        return None
-
-
-def _digest_artifact(digest: dict[str, Any]) -> dict[str, Any]:
-    digest_id = str(digest.get("id") or digest.get("digest_id") or "")
-    return {
-        **digest,
-        "id": f"document_artifact:news_digest:{digest_id}" if digest_id else "",
-        "object_uid": f"document_artifact:news_digest:{digest_id}" if digest_id else "",
-        "document_type": "news_digest",
-        "document_id": digest_id,
-        "status": "active",
-    }
 
 
 def _clean_filters(filters: dict[str, Any] | None) -> dict[str, Any]:

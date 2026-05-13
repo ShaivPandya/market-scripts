@@ -120,7 +120,6 @@ def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeyp
 def test_normalize_approval_recomputes_base_state_in_ontology_primary_mode(monkeypatch):
     import portfolio.action_registry as action_registry
 
-    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
     monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _change: "current")
 
     stale = normalize_approval(
@@ -162,7 +161,7 @@ def test_normalize_recommendation_keeps_execution_capability_none():
     assert rec["quality_state"] == "degraded"
 
 
-def _legacy_policy_reason() -> dict:
+def _previous_policy_reason() -> dict:
     return {
         "code": "tax_flag",
         "check": ".".join(("tax", "_".join(("tax", "lots")))),
@@ -205,10 +204,10 @@ def test_normalize_recommendation_filters_obsolete_policy_warning():
             "policy_gate_result": {
                 "decision": "warn",
                 "review_required": False,
-                "warnings": [_legacy_policy_reason()],
+                "warnings": [_previous_policy_reason()],
                 "failure_reasons": [],
-                "check_results": [_legacy_policy_reason()],
-                "uncertainty": {"missing_constraint_count": 1, "level": "high", "notes": ["legacy"]},
+                "check_results": [_previous_policy_reason()],
+                "uncertainty": {"missing_constraint_count": 1, "level": "high", "notes": ["canonical"]},
             },
         }
     )
@@ -232,9 +231,9 @@ def test_normalize_approval_filters_obsolete_policy_warning():
                 "policy_gate_result": {
                     "decision": "warn",
                     "review_required": False,
-                    "warnings": [_legacy_policy_reason()],
+                    "warnings": [_previous_policy_reason()],
                     "failure_reasons": [],
-                    "check_results": [_legacy_policy_reason()],
+                    "check_results": [_previous_policy_reason()],
                 }
             },
         }

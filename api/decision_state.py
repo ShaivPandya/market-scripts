@@ -81,7 +81,7 @@ def _approval_base_state(record: dict[str, Any]) -> dict[str, Any]:
         }
 
     try:
-        from portfolio.action_registry import compute_action_base_state_hash
+        from ontology.action_registry import compute_action_base_state_hash
 
         current_hash = compute_action_base_state_hash(action_id, proposed_change)
         if current_hash and current_hash != stored_hash:
@@ -306,7 +306,7 @@ def _quality_state(value: Any) -> str:
 
 def _lineage_state(value: Any) -> str:
     state = str(value or "").strip().lower()
-    if state in {"complete", "partial", "legacy_partial", "retry_pending", "missing"}:
+    if state in {"complete", "partial", "retry_pending", "missing"}:
         return state
     if state:
         return state

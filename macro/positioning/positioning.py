@@ -51,7 +51,7 @@ DATASETS = {
     # Add others if you want:
     # "disagg_futures_only": "72hh-3qpy",
     # "disagg_combined": "kh3c-gbw2",
-    # "legacy_futures_only": "6dca-aqww",
+    # "supplemental_futures_only": "6dca-aqww",
 }
 
 # Predefined instruments mapping friendly names to exact CFTC market names

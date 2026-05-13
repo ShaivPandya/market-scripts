@@ -1,8 +1,12 @@
 # Bond Data Files
 
-This directory contains the CSV files with historical government bond yield data for UK and Japan.
+This directory contains CSV files with historical government bond yield data for
+UK and Japan.
 
-These files are read by `government_bonds/government_bond_yields.py`.
+These files are read only by the standalone terminal tracker
+`government_bonds/government_bond_yields.py`. The app-facing yield-curve and
+bond-dashboard APIs fetch UK data from the Bank of England and Japan data from
+Japan MOF instead.
 
 ## Required Files
 
@@ -40,7 +44,7 @@ Germany is fetched live from Deutsche Bundesbank and does not require local CSV 
 ## Notes
 
 - The script requires at least 1 year of historical data for accurate change calculations
-- Missing files will be reported as errors when running the script
+- Missing files will be reported as errors when running the standalone tracker
 - The most recent date in each file will be used as the current yield
 
 If you want to use different filenames, update `BOND_DATA_FILES` in `government_bonds/government_bond_yields.py`.

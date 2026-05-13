@@ -1185,7 +1185,7 @@ OPTIONAL_RELATIONS = {name for name, definition in RELATION_REGISTRY.items() if 
 RELATION_TYPE_SQL_VALUES = ", ".join(f"'{relation_type}'" for relation_type in RELATION_REGISTRY)
 
 
-class RelationPropertiesV1(OntologySchemaBase):
+class RelationProperties(OntologySchemaBase):
     ontology_run_id: NonBlankStr
     event_id: str | None = None
     source: str | None = None
@@ -1248,7 +1248,7 @@ class RelationPropertiesV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class PositionSignalExposureV1(OntologySchemaBase):
+class PositionSignalExposure(OntologySchemaBase):
     component: NonBlankStr
     source: NonBlankStr
     name: NonBlankStr
@@ -1272,7 +1272,7 @@ class PositionSignalExposureV1(OntologySchemaBase):
         return "unknown"
 
 
-EdgePropertiesV1 = RelationPropertiesV1 | PositionSignalExposureV1
+EdgeProperties = RelationProperties | PositionSignalExposure
 
 
 def get_relation_definition(relation_type: str) -> RelationDefinition:
@@ -1292,9 +1292,9 @@ def edge_schema_name(relation_type: str) -> str:
 def edge_schema_for_relation(relation_type: str):
     get_relation_definition(relation_type)
     if relation_type == EXPOSED_TO_SIGNAL:
-        return PositionSignalExposureV1
-    return RelationPropertiesV1
+        return PositionSignalExposure
+    return RelationProperties
 
 
-def dump_edge_properties(model: EdgePropertiesV1) -> dict[str, Any]:
+def dump_edge_properties(model: EdgeProperties) -> dict[str, Any]:
     return model.model_dump(mode="json")
