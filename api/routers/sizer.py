@@ -43,7 +43,7 @@ class SizerPosition(BaseModel):
 class SizerRequest(BaseModel):
     book: float | None = None
     target_leverage: float = 2.0
-    beta_hedge_mode: Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq"] = "spy_iwm"
+    beta_hedge_mode: Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq", "spy_iwm_qqq"] = "spy_iwm"
     positions: list[SizerPosition] = Field(default_factory=list)
 
     @model_validator(mode="after")

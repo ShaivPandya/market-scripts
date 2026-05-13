@@ -1761,7 +1761,7 @@ type SizerJobResponse =
   | { job_id: string; status: "error"; error?: string; timeout_s?: number }
   | { job_id: string; status: "done"; result?: unknown; timeout_s?: number }
 
-export type BetaHedgeMode = "spy" | "iwm" | "qqq" | "spy_iwm" | "spy_qqq" | "iwm_qqq"
+export type BetaHedgeMode = "spy" | "iwm" | "qqq" | "spy_iwm" | "spy_qqq" | "iwm_qqq" | "spy_iwm_qqq"
 
 export type PortfolioSizerRequest = {
   book: number

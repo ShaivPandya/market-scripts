@@ -62,7 +62,7 @@ LOGGER = logging.getLogger(__name__)
 
 CONVICTION_MIN = 1
 CONVICTION_MAX = 5
-BetaHedgeMode = Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq"]
+BetaHedgeMode = Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq", "spy_iwm_qqq"]
 BETA_HEDGE_MODE_SPY_IWM: BetaHedgeMode = "spy_iwm"
 BETA_HEDGE_MODE_SPY: BetaHedgeMode = "spy"
 MARKET_TICKER_QQQ = "QQQ"
@@ -74,6 +74,7 @@ BETA_HEDGE_MODE_TICKERS: dict[str, tuple[str, ...]] = {
     "spy_iwm": (MARKET_TICKER_LONG, MARKET_TICKER_SHORT),
     "spy_qqq": (MARKET_TICKER_LONG, MARKET_TICKER_QQQ),
     "iwm_qqq": (MARKET_TICKER_SHORT, MARKET_TICKER_QQQ),
+    "spy_iwm_qqq": (MARKET_TICKER_LONG, MARKET_TICKER_SHORT, MARKET_TICKER_QQQ),
 }
 
 
@@ -426,7 +427,7 @@ def size_portfolio(
         book: Book size in USD.
         target_leverage: Target gross leverage (0.5–4.0).
         beta_hedge_mode: Hedge basket to use. Valid values are spy, iwm, qqq,
-            spy_iwm, spy_qqq, and iwm_qqq.
+            spy_iwm, spy_qqq, iwm_qqq, and spy_iwm_qqq.
 
     Returns:
         Same output dict structure as optimize_portfolio().

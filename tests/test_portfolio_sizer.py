@@ -165,6 +165,39 @@ def test_spy_qqq_beta_hedge_uses_selected_legs_only():
     assert abs(summary["post_hedge_beta_iwm"]) > 0.01
 
 
+def test_all_three_beta_hedge_uses_all_selected_legs():
+    weights = pd.Series({"AAA": 0.40, "BBB": -0.10})
+    beta_by_benchmark = {
+        "SPY": pd.Series({"AAA": 1.0, "BBB": 1.0}),
+        "IWM": pd.Series({"AAA": 1.5, "BBB": 1.0}),
+        "QQQ": pd.Series({"AAA": 1.4, "BBB": 0.8}),
+    }
+    betas_all_by_benchmark = {
+        "SPY": pd.Series({"SPY": 1.0, "IWM": 0.0, "QQQ": 0.0}),
+        "IWM": pd.Series({"SPY": 0.0, "IWM": 1.0, "QQQ": 0.0}),
+        "QQQ": pd.Series({"SPY": 0.0, "IWM": 0.0, "QQQ": 1.0}),
+    }
+
+    _hedged_weights, summary = portfolio_sizer._apply_beta_hedges_with_gross_cap(
+        weights,
+        beta_by_benchmark,
+        betas_all_by_benchmark,
+        long_mask=np.array([True, False]),
+        short_mask=np.array([False, True]),
+        eq_mask=np.array([True, True]),
+        beta_hedge_mode="spy_iwm_qqq",
+    )
+
+    assert summary["selected_hedges"] == ["SPY", "IWM", "QQQ"]
+    assert set(summary["hedge_weights"]) == {"SPY", "IWM", "QQQ"}
+    assert summary["hedge_spy_weight"] != 0.0
+    assert summary["hedge_iwm_weight"] != 0.0
+    assert summary["hedge_qqq_weight"] != 0.0
+    assert abs(summary["post_hedge_beta_spy"]) < 1e-5
+    assert abs(summary["post_hedge_beta_iwm"]) < 1e-5
+    assert abs(summary["post_hedge_beta_qqq"]) < 1e-5
+
+
 def test_grouped_convictions_size_group_then_split_members():
     meta = pd.DataFrame(
         {"direction": ["long", "long", "long"]},

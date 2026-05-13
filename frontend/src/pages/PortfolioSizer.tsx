@@ -110,6 +110,7 @@ const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, HedgeTicker[]> = {
   spy_iwm: ["SPY", "IWM"],
   spy_qqq: ["SPY", "QQQ"],
   iwm_qqq: ["IWM", "QQQ"],
+  spy_iwm_qqq: ["SPY", "IWM", "QQQ"],
 }
 const HEDGE_MODE_LABELS: Record<BetaHedgeMode, string> = {
   spy: "SPY",
@@ -118,6 +119,7 @@ const HEDGE_MODE_LABELS: Record<BetaHedgeMode, string> = {
   spy_iwm: "SPY + IWM",
   spy_qqq: "SPY + QQQ",
   iwm_qqq: "IWM + QQQ",
+  spy_iwm_qqq: "SPY + IWM + QQQ",
 }
 
 const ALWAYS_HIDDEN_COLUMNS = ["direction_intended", "days_since_new_low"] as const
@@ -294,13 +296,12 @@ function betaHedgeModeToTickers(mode: BetaHedgeMode): HedgeTicker[] {
 }
 
 function tickersToBetaHedgeMode(tickers: HedgeTicker[]): BetaHedgeMode {
-  const key = [...tickers].sort().join("_").toLowerCase()
-  if (key === "spy") return "spy"
-  if (key === "iwm") return "iwm"
-  if (key === "qqq") return "qqq"
-  if (key === "iwm_spy") return "spy_iwm"
-  if (key === "qqq_spy") return "spy_qqq"
-  if (key === "iwm_qqq") return "iwm_qqq"
+  const selected = [...tickers].sort()
+  const match = Object.entries(HEDGE_MODE_TO_TICKERS).find(([, modeTickers]) => {
+    const normalized = [...modeTickers].sort()
+    return normalized.length === selected.length && normalized.every((ticker, idx) => ticker === selected[idx])
+  })
+  if (match) return match[0] as BetaHedgeMode
   return DEFAULT_BETA_HEDGE_MODE
 }
 
@@ -565,7 +566,6 @@ export function PortfolioSizer() {
     const selected = betaHedgeModeToTickers(betaHedgeMode)
     const isSelected = selected.includes(ticker)
     if (isSelected && selected.length === 1) return
-    if (!isSelected && selected.length === 2) return
 
     const next = isSelected
       ? selected.filter(t => t !== ticker)
@@ -673,23 +673,24 @@ export function PortfolioSizer() {
       ? "Potential hedge direction mismatch detected."
       : null
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
-  const netBetaSpy = firstNumber(data?.net_beta_spy, data?.net_betas?.SPY)
-  const netBetaIwm = firstNumber(data?.net_beta_iwm, data?.net_betas?.IWM)
-  const netBetaQqq = firstNumber(data?.net_beta_qqq, data?.net_betas?.QQQ)
-  const postHedgeBetaSpy = firstNumber(data?.post_hedge_beta_spy, data?.post_hedge_betas?.SPY)
-  const postHedgeBetaIwm = firstNumber(data?.post_hedge_beta_iwm, data?.post_hedge_betas?.IWM)
-  const postHedgeBetaQqq = firstNumber(data?.post_hedge_beta_qqq, data?.post_hedge_betas?.QQQ)
+  const betaMetricCards = Array.from(new Set([
+    ...HEDGE_TICKERS,
+    ...Object.keys(data?.net_betas ?? {}),
+    ...Object.keys(data?.post_hedge_betas ?? {}),
+  ])).flatMap(ticker => {
+    const key = ticker.toLowerCase()
+    const preHedge = firstNumber(data?.[`net_beta_${key}`], data?.net_betas?.[ticker])
+    const postHedge = firstNumber(data?.[`post_hedge_beta_${key}`], data?.post_hedge_betas?.[ticker])
+    return [
+      ...(preHedge != null ? [{ key: `${ticker}-pre`, title: `Equity Beta ${ticker} (pre-hedge)`, value: preHedge.toFixed(3) }] : []),
+      ...(postHedge != null ? [{ key: `${ticker}-post`, title: `Equity Beta ${ticker} (post-hedge)`, value: postHedge.toFixed(3) }] : []),
+    ]
+  })
   const showHeaderMetrics = [
     volDaily,
     grossLeverage,
     equityNet,
-    netBetaSpy,
-    netBetaIwm,
-    netBetaQqq,
-    postHedgeBetaSpy,
-    postHedgeBetaIwm,
-    postHedgeBetaQqq,
-  ].some(v => v != null)
+  ].some(v => v != null) || betaMetricCards.length > 0
   const groupState = sizerGroupState(rows)
 
   const sizingDeltas = useMemo(() => {
@@ -802,7 +803,7 @@ export function PortfolioSizer() {
             <div className="grid grid-cols-3 gap-2">
               {HEDGE_TICKERS.map(ticker => {
                 const selected = selectedHedgeTickers.includes(ticker)
-                const disabled = !selected && selectedHedgeTickers.length >= 2
+                const disabled = selected && selectedHedgeTickers.length === 1
 
                 return (
                   <button
@@ -964,12 +965,9 @@ export function PortfolioSizer() {
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}
               {grossLeverage != null && <MetricCard title="Gross Leverage (incl. hedges)" value={`${grossLeverage.toFixed(2)}x`} />}
               {equityNet != null && <MetricCard title="Equity Net" value={formatRatioPercent(equityNet, true, 1)} />}
-              {netBetaSpy != null && <MetricCard title="Equity Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
-              {netBetaIwm != null && <MetricCard title="Equity Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
-              {netBetaQqq != null && <MetricCard title="Equity Beta QQQ (pre-hedge)" value={netBetaQqq.toFixed(3)} />}
-              {postHedgeBetaSpy != null && <MetricCard title="Equity Beta SPY (post-hedge)" value={postHedgeBetaSpy.toFixed(3)} />}
-              {postHedgeBetaIwm != null && <MetricCard title="Equity Beta IWM (post-hedge)" value={postHedgeBetaIwm.toFixed(3)} />}
-              {postHedgeBetaQqq != null && <MetricCard title="Equity Beta QQQ (post-hedge)" value={postHedgeBetaQqq.toFixed(3)} />}
+              {betaMetricCards.map(card => (
+                <MetricCard key={card.key} title={card.title} value={card.value} />
+              ))}
             </div>
           )}
 
