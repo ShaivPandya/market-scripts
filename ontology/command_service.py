@@ -8,7 +8,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService
 from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
@@ -2695,8 +2695,8 @@ def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> 
         raise OntologyCommandValidationError(f"{loc}: {msg}" if loc else msg) from exc
 
     if action.approval_spec and action.approval_spec.payload_builder:
-        return action.approval_spec.payload_builder(typed)
-    return typed.model_dump()
+        return cast(dict[str, Any], action.approval_spec.payload_builder(typed))
+    return cast(dict[str, Any], typed.model_dump())
 
 
 def _base_state_hash(action_id: str, payload: Mapping[str, Any]) -> str | None:
