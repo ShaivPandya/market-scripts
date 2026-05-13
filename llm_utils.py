@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import os
 import threading
 from collections.abc import Sequence
@@ -789,6 +790,7 @@ def _normalize_reasoning_effort(
     resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_ANTHROPIC and normalized == REASONING_NONE:
         return None
+    options: Sequence[str]
     if resolved_provider == PROVIDER_OPENAI:
         options = OPENAI_REASONING_EFFORTS
     elif resolved_provider == PROVIDER_GEMINI:
@@ -862,9 +864,7 @@ def _client_factory(provider: str) -> Any:
 
         return anthropic.Anthropic
     if provider == PROVIDER_GEMINI:
-        from google import genai
-
-        return genai.Client
+        return importlib.import_module("google.genai").Client
     from openai import OpenAI
 
     return OpenAI

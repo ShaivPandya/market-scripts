@@ -195,7 +195,7 @@ def test_get_thesis_not_found(auth_client, monkeypatch, tmp_path):
     assert resp.status_code == 404
 
 
-def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
+def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path, temp_core_db):
     _use_document_generation_warm_worker(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     import llm_utils
@@ -204,6 +204,15 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
+    import portfolio.thesis_sync as thesis_sync
+
+    monkeypatch.setattr(
+        thesis_sync,
+        "_thesis_paths",
+        lambda ticker: (thesis_dir / f"{ticker}.md", f"live/theses/{ticker}.md"),
+    )
+    indexed: list[dict] = []
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
     llm_calls = []
 
     class FakeMessages:
@@ -244,20 +253,30 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
     assert llm_calls == []
 
     payload = _finish_document_generation_job(auth_client, queued["job_id"])
-    assert payload["status"] == "pending_approval_created"
+    assert payload["status"] == "applied"
     assert payload["ticker"] == "MU"
     assert "## Thesis" in payload["proposed_change"]["content"]
     assert len(llm_calls) == 1
-    approved = auth_client.post(f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply thesis"})
-    assert approved.status_code == 200
     assert (thesis_dir / "MU.md").exists()
+    assert indexed[0]["doc_type"] == "thesis"
+    assert indexed[0]["doc_id"] == "thesis-MU"
+    assert len(temp_core_db.get_catalysts("MU")) == 1
+    assert len(temp_core_db.get_kill_conditions("MU")) == 1
 
 
-def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
+def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path, temp_core_db):
     _use_document_generation_warm_worker(monkeypatch)
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
+    import portfolio.thesis_sync as thesis_sync
+
+    monkeypatch.setattr(
+        thesis_sync,
+        "_thesis_paths",
+        lambda ticker: (thesis_dir / f"{ticker}.md", f"live/theses/{ticker}.md"),
+    )
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: None)
 
     def fail_pdf_call(*args, **kwargs):
         raise AssertionError("PDF generation should not run for markdown uploads")
@@ -270,20 +289,25 @@ def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
         files={
             "file": (
                 "thesis.md",
-                b"# Old Title\n\n## Thesis\n- Memory cycle improving\n",
+                (
+                    b"# Old Title\n\n"
+                    b"## Thesis\n- Memory cycle improving\n\n"
+                    b"## Key Catalysts\n- **HBM ramp:** HBM3 fully sold out\n\n"
+                    b"## Risk Factors\n- **Pricing pressure:** DRAM pricing rolls over\n"
+                ),
                 "text/markdown",
             )
         },
     )
     assert resp.status_code == 202
     payload = _finish_document_generation_job(auth_client, resp.json()["job_id"])
-    assert payload["status"] == "pending_approval_created"
+    assert payload["status"] == "applied"
     assert payload["ticker"] == "MU"
     assert payload["proposed_change"]["content"].startswith("# MU")
     assert "## Key Catalysts" in payload["proposed_change"]["content"]
-    approved = auth_client.post(f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply thesis"})
-    assert approved.status_code == 200
     assert (thesis_dir / "MU.md").read_text(encoding="utf-8") == payload["proposed_change"]["content"]
+    assert len(temp_core_db.get_catalysts("MU")) == 1
+    assert len(temp_core_db.get_kill_conditions("MU")) == 1
 
 
 def test_save_thesis_syncs_catalysts_kill_conditions_and_claims(auth_client, monkeypatch, tmp_path, temp_core_db):

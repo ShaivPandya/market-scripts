@@ -819,13 +819,13 @@ export function Workspace() {
 
         {/* Open Action Items */}
         {data.open_actions.count > 0 && (
-          <section className="theme-surface rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Play size={14} className="text-purple-500" />
               Internal Action Items
               <span className="ml-auto text-xs text-subtle">{data.open_actions.count} total</span>
             </h2>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.open_actions.items.map(a => {
                 const key = `action-${a.id}`
                 const expanded = expandedIds.has(key)
@@ -869,13 +869,13 @@ export function Workspace() {
 
         {/* Active Watch Triggers */}
         {data.active_triggers.count > 0 && (
-          <section className="theme-surface rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Eye size={14} className="text-cyan-500" />
               Active Triggers
               <span className="ml-auto text-xs text-subtle">{data.active_triggers.count} total</span>
             </h2>
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.active_triggers.items.map(t => (
                 <div key={t.id} className="rounded-lg px-3 py-2 text-sm">
                   <div className="flex items-center gap-3">

@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from datetime import date as _date
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,26 @@ from portfolio.momentum.fundamental_momentum.edgar_fetcher import (  # noqa: E40
 from utils.retry import yf_download, yf_ticker_info  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+class _ProjectionRow(TypedDict):
+    year: int
+    year_label: str
+    revenue: float
+    revenue_growth: float
+    ebitda: float
+    ebitda_margin: float
+    da: float
+    ebit: float
+    tax_rate: float
+    nopat: float
+    capex: float
+    nwc: float
+    delta_nwc: float
+    ufcf: float
+    discount_rate: float
+    pv_ufcf: float
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -889,7 +909,7 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("wacc must be > 0 and < 1")
 
     # Build projection
-    projection = []
+    projection: list[_ProjectionRow] = []
     prev_revenue = base_revenue
     prev_nwc = prev_revenue * nwc_pcts[0]
 

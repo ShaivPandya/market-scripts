@@ -537,7 +537,7 @@ def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
     assert "boom" in tool_results[0]["message"]
 
 
-def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
+def test_agent_stream_synthesizes_when_tool_loop_limit_is_reached(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args: json.dumps({"ok": True}))
@@ -555,6 +555,16 @@ def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
                 ),
             )
         )
+    streams.append(
+        (
+            [_event_text_delta("I gathered the available data and stopped calling tools.")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "I gathered the available data and stopped calling tools."}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=8),
+            ),
+        )
+    )
 
     fake_client = _install_fake_anthropic(monkeypatch, streams)
 
@@ -565,9 +575,11 @@ def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
 
     assert resp.status_code == 200
     parsed = _parse_sse(resp.text)
-    assert any(e == "error" and "loop limit" in str(p.get("message", "")).lower() for e, p in parsed)
+    assert not any(e == "error" and "loop limit" in str(p.get("message", "")).lower() for e, p in parsed)
+    assert any(e == "delta" and "stopped calling tools" in str(p.get("text", "")) for e, p in parsed)
     assert any(e == "done" for e, _p in parsed)
-    assert fake_client.messages.calls == agent_router.MAX_TOOL_CONTINUATION_ROUNDS
+    assert fake_client.messages.calls == agent_router.MAX_TOOL_CONTINUATION_ROUNDS + 1
+    assert "tools" not in fake_client.messages.kwargs_history[-1]
 
 
 def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):

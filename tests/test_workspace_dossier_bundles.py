@@ -36,9 +36,11 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
                 },
                 "latest_weekly_recommendation": None,
                 "pending_actionable_recommendations": [{"id": 4, "approval_status": "pending", "action": "buy"}],
-                "open_action_items": [{"id": 5, "status": "open", "ticker": "MU"}],
+                "open_action_items": [{"id": action_id, "status": "open", "ticker": "MU"} for action_id in range(1, 8)],
                 "optimizer_alerts": [{"id": 6, "status": "open", "ticker": "MU"}],
-                "active_watch_triggers": [{"id": 8, "status": "active", "ticker": "MU"}],
+                "active_watch_triggers": [
+                    {"id": trigger_id, "status": "active", "ticker": "MU"} for trigger_id in range(1, 8)
+                ],
                 "recent_workflow_runs": [{"id": "workflow_run:1"}],
                 "recent_report_runs": [{"id": "report_run:1"}],
                 "challenged_claims": [{"id": 9, "status": "challenged"}],
@@ -58,8 +60,11 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     assert payload["pending_approvals"]["count"] == 1
     assert payload["recommendations"]["latest_daily"]["id"] == 3
     assert payload["recommendations"]["pending_actionable"]["count"] == 1
-    assert payload["open_actions"]["count"] == 1
+    assert payload["open_actions"]["count"] == 7
+    assert len(payload["open_actions"]["items"]) == 7
     assert payload["continuous_optimization"]["open_alert_count"] == 1
+    assert payload["active_triggers"]["count"] == 7
+    assert len(payload["active_triggers"]["items"]) == 7
     assert payload["thesis_claims"]["challenged_count"] == 2
 
 

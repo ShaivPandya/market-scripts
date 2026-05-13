@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import struct
 import threading
@@ -91,6 +92,20 @@ _CREATE_DOCS_TICKER_IDX = """
 CREATE INDEX IF NOT EXISTS idx_documents_ticker ON documents(ticker)
 """
 
+_SQLITE_CHUNK_METADATA_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("object_uid", "TEXT"),
+    ("object_version_id", "TEXT"),
+    ("source_record_id", "TEXT"),
+    ("source_record_version_id", "TEXT"),
+    ("citation_span_start", "INTEGER"),
+    ("citation_span_end", "INTEGER"),
+    ("permission_scope", "TEXT NOT NULL DEFAULT 'owner'"),
+    ("freshness_as_of", "TEXT"),
+    ("stale_after", "TEXT"),
+    ("is_stale", "INTEGER NOT NULL DEFAULT 0"),
+    ("content_hash", "TEXT"),
+)
+
 # ---------------------------------------------------------------------------
 # Connection
 # ---------------------------------------------------------------------------
@@ -124,10 +139,21 @@ def _get_conn() -> sqlite3.Connection:
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_DOCUMENTS)
     conn.execute(_CREATE_CHUNKS)
+    _migrate_sqlite_chunks_schema(conn)
     conn.execute(_CREATE_CHUNKS_IDX)
     conn.execute(_CREATE_DOCS_TYPE_IDX)
     conn.execute(_CREATE_DOCS_TICKER_IDX)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_object_uid ON chunks(object_uid)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source_record ON chunks(source_record_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_permission_freshness ON chunks(permission_scope, is_stale)")
     conn.commit()
+
+
+def _migrate_sqlite_chunks_schema(conn: sqlite3.Connection) -> None:
+    existing = {str(row["name"]) for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    for name, column_sql in _SQLITE_CHUNK_METADATA_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE chunks ADD COLUMN {name} {column_sql}")
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +439,18 @@ def search(
     if not query or not query.strip():
         return []
 
-    query_emb = _embed_single(query)
+    try:
+        query_emb = _embed_single(query)
+    except Exception as exc:
+        logger.warning("Embedding search unavailable; falling back to lexical retrieval", exc_info=True)
+        return _lexical_search(
+            query,
+            doc_types=doc_types,
+            tickers=tickers,
+            top_k=top_k,
+            fallback_reason=str(exc) or exc.__class__.__name__,
+        )
+
     if use_postgres_state():
         return _pg_search(query_emb, doc_types=doc_types, tickers=tickers, top_k=top_k)
 
@@ -496,6 +533,199 @@ def search(
         )
 
     return results
+
+
+def _lexical_search(
+    query: str,
+    *,
+    doc_types: list[str] | None,
+    tickers: list[str] | None,
+    top_k: int,
+    fallback_reason: str,
+) -> list[dict[str, Any]]:
+    if use_postgres_state():
+        return _pg_lexical_search(
+            query,
+            doc_types=doc_types,
+            tickers=tickers,
+            top_k=top_k,
+            fallback_reason=fallback_reason,
+        )
+    return _sqlite_lexical_search(
+        query,
+        doc_types=doc_types,
+        tickers=tickers,
+        top_k=top_k,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _sqlite_lexical_search(
+    query: str,
+    *,
+    doc_types: list[str] | None,
+    tickers: list[str] | None,
+    top_k: int,
+    fallback_reason: str,
+) -> list[dict[str, Any]]:
+    conn = _get_conn()
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if doc_types:
+        placeholders = ",".join("?" for _ in doc_types)
+        where_parts.append(f"d.doc_type IN ({placeholders})")
+        params.extend(doc_types)
+
+    if tickers:
+        upper_tickers = [t.upper() for t in tickers]
+        placeholders = ",".join("?" for _ in upper_tickers)
+        where_parts.append(f"UPPER(d.ticker) IN ({placeholders})")
+        params.extend(upper_tickers)
+
+    where_parts.append("c.is_stale = 0")
+    where_clause = f"WHERE {' AND '.join(where_parts)}"
+    with _lock:
+        rows = conn.execute(
+            f"""
+            SELECT c.chunk_id, c.doc_id, c.chunk_index, c.content,
+                   c.heading, c.object_uid, c.object_version_id, c.source_record_id,
+                   c.source_record_version_id, c.citation_span_start, c.citation_span_end,
+                   c.permission_scope, c.freshness_as_of, c.stale_after, c.is_stale,
+                   c.content_hash, d.doc_type, d.ticker, d.source_path, d.created_at
+            FROM chunks c
+            JOIN documents d ON c.doc_id = d.doc_id
+            {where_clause}
+            """,
+            params,
+        ).fetchall()
+    return _rank_lexical_rows(query, rows, top_k=top_k, fallback_reason=fallback_reason)
+
+
+def _pg_lexical_search(
+    query: str,
+    *,
+    doc_types: list[str] | None,
+    tickers: list[str] | None,
+    top_k: int,
+    fallback_reason: str,
+) -> list[dict[str, Any]]:
+    where_parts: list[str] = ["COALESCE(c.is_stale, false) = false"]
+    params: list[Any] = []
+    if doc_types:
+        where_parts.append("d.doc_type = ANY(%s)")
+        params.append(doc_types)
+    if tickers:
+        where_parts.append("UPPER(d.ticker) = ANY(%s)")
+        params.append([t.upper() for t in tickers])
+    where_clause = f"WHERE {' AND '.join(where_parts)}"
+
+    with open_connection(register_pgvector=False) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT c.chunk_id, c.doc_id, c.chunk_index, c.content,
+                   c.heading, c.object_uid, c.object_version_id, c.source_record_id,
+                   c.source_record_version_id, c.citation_span_start, c.citation_span_end,
+                   c.permission_scope, c.freshness_as_of, c.stale_after, c.is_stale,
+                   c.content_hash, d.doc_type, d.ticker, d.source_path, d.created_at
+            FROM retrieval_chunks c
+            JOIN retrieval_documents d ON c.doc_id = d.doc_id
+            {where_clause}
+            LIMIT 1000
+            """,
+            tuple(params),
+        ).fetchall()
+    return _rank_lexical_rows(query, rows, top_k=top_k, fallback_reason=fallback_reason)
+
+
+def _rank_lexical_rows(
+    query: str,
+    rows: list[Any],
+    *,
+    top_k: int,
+    fallback_reason: str,
+) -> list[dict[str, Any]]:
+    scored: list[tuple[float, Any]] = []
+    for row in rows:
+        score = _lexical_score(
+            query,
+            " ".join(
+                str(part or "")
+                for part in (
+                    _row_get(row, "ticker"),
+                    _row_get(row, "doc_type"),
+                    _row_get(row, "heading"),
+                    _row_get(row, "content"),
+                )
+            ),
+        )
+        if score > 0:
+            scored.append((score, row))
+    scored.sort(key=lambda item: (-item[0], str(_row_get(item[1], "doc_id") or "")))
+    return [
+        _retrieval_result_from_row(row, score=score, mode="lexical", fallback_reason=fallback_reason)
+        for score, row in scored[:top_k]
+    ]
+
+
+def _lexical_score(query: str, text: str) -> float:
+    normalized_query = " ".join(_lexical_terms(query))
+    terms = normalized_query.split()
+    if not terms:
+        return 0.0
+    haystack = " ".join(_lexical_terms(text))
+    if not haystack:
+        return 0.0
+    score = 0.0
+    if normalized_query and normalized_query in haystack:
+        score += 5.0
+    for term in terms:
+        score += haystack.count(term)
+    covered = sum(1 for term in set(terms) if term in haystack)
+    score += covered / max(1, len(set(terms)))
+    return score
+
+
+def _lexical_terms(value: str) -> list[str]:
+    return [term for term in re.findall(r"[a-z0-9]+", str(value or "").lower()) if len(term) >= 2]
+
+
+def _retrieval_result_from_row(
+    row: Any,
+    *,
+    score: float,
+    mode: str,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    content = str(_row_get(row, "content") or "")
+    result = {
+        "doc_type": _row_get(row, "doc_type"),
+        "ticker": _row_get(row, "ticker"),
+        "heading": _row_get(row, "heading"),
+        "content_snippet": content[:500],
+        "relevance_score": round(float(score), 4),
+        "source_path": _row_get(row, "source_path"),
+        "created_at": _iso_value(_row_get(row, "created_at")),
+        "doc_id": _row_get(row, "doc_id"),
+        "chunk_id": _row_get(row, "chunk_id"),
+        "object_uid": _row_get(row, "object_uid"),
+        "object_version_id": _row_get(row, "object_version_id"),
+        "source_record_id": _row_get(row, "source_record_id"),
+        "source_record_version_id": _row_get(row, "source_record_version_id"),
+        "citation_span": {
+            "start": _row_get(row, "citation_span_start"),
+            "end": _row_get(row, "citation_span_end"),
+        },
+        "permission_scope": _row_get(row, "permission_scope") or "owner",
+        "freshness_as_of": _iso_value(_row_get(row, "freshness_as_of")),
+        "stale_after": _iso_value(_row_get(row, "stale_after")),
+        "is_stale": bool(_row_get(row, "is_stale", False)),
+        "content_hash": _row_get(row, "content_hash"),
+        "retrieval_mode": mode,
+    }
+    if fallback_reason:
+        result["fallback_reason"] = fallback_reason
+    return result
 
 
 def delete_document(doc_id: str) -> bool:

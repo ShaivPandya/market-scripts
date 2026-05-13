@@ -1274,6 +1274,12 @@ def _obj_value(value: object, key: str, default: object = None) -> object:
     return getattr(value, key, default)
 
 
+def _dict_value(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
 @cache
 def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
     tools: list[dict] = []
@@ -1364,7 +1370,7 @@ def _model_stream_kwargs(
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
-        config = dict(kwargs.get("config") or {})
+        config = _dict_value(kwargs.get("config"))
         if tool_defs:
             config["tools"] = [{"function_declarations": tool_defs}]
             config["tool_config"] = {
@@ -1507,7 +1513,7 @@ def _stream_llm_response(
             return final_message
 
     if provider == PROVIDER_GEMINI:
-        emitted_call_ids: set[str] = set()
+        gemini_emitted_call_ids: set[str] = set()
         aggregate_parts: list[dict] = []
         last_chunk: object | None = None
         for chunk in client.models.generate_content_stream(**stream_kwargs):
@@ -1526,8 +1532,8 @@ def _stream_llm_response(
                         part["function_call"] = {**function_call, "id": call_id}
                     elif "functionCall" in part:
                         part["functionCall"] = {**function_call, "id": call_id}
-                    if isinstance(name, str) and isinstance(call_id, str) and call_id not in emitted_call_ids:
-                        emitted_call_ids.add(call_id)
+                    if isinstance(name, str) and isinstance(call_id, str) and call_id not in gemini_emitted_call_ids:
+                        gemini_emitted_call_ids.add(call_id)
                         yield _sse("tool_call", {"name": name, "id": call_id})
                     continue
                 if part.get("thought") is True:
@@ -1675,7 +1681,7 @@ def _start_model_call_provenance(
         from api import provenance
 
         model = stream_kwargs.get("model")
-        config = stream_kwargs.get("config") if isinstance(stream_kwargs.get("config"), dict) else {}
+        config = _dict_value(stream_kwargs.get("config"))
         conversation = stream_kwargs.get("messages") or stream_kwargs.get("input") or stream_kwargs.get("contents")
         tools = stream_kwargs.get("tools") or config.get("tools")
         event_id = provenance.deterministic_id(
@@ -1996,27 +2002,17 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 
         try:
             while True:
-                if continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS:
-                    yield _sse(
-                        "error",
-                        {"message": (f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).")},
-                    )
-                    _finish_agent_turn_provenance(
-                        agent_turn_event_id,
-                        status="failed",
-                        usage={},
-                        error=f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).",
-                    )
-                    yield _sse("done", {"usage": {}})
-                    return
+                final_synthesis_round = continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS
+                round_tool_defs = [] if final_synthesis_round else tool_defs
+                round_force_tool_use = False if final_synthesis_round else force_tool_use
 
                 stream_kwargs = _model_stream_kwargs(
                     provider=provider,
                     instructions=instructions,
                     conversation=conversation,
                     max_tokens=LLM_MAX_TOKENS,
-                    tool_defs=tool_defs,
-                    force_tool_use=force_tool_use,
+                    tool_defs=round_tool_defs,
+                    force_tool_use=round_force_tool_use,
                     reasoning_effort=reasoning_effort,
                 )
 
@@ -2083,6 +2079,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 else:
                     assistant_content = _serialize_output_items(final_message)
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
+                if final_synthesis_round:
+                    deferred_calls = []
 
                 if deferred_calls:
                     tool_counts = Counter(c["name"] for c in deferred_calls)
@@ -2859,27 +2857,17 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
         try:
             while True:
-                if continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS:
-                    yield _sse(
-                        "error",
-                        {"message": f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds)."},
-                    )
-                    _finish_agent_turn_provenance(
-                        agent_turn_event_id,
-                        status="failed",
-                        usage={},
-                        error=f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).",
-                    )
-                    yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
-                    return
+                final_synthesis_round = continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS
+                round_tool_defs = [] if final_synthesis_round else tool_defs
+                round_force_tool_use = False if final_synthesis_round else force_tool_use
 
                 stream_kwargs = _model_stream_kwargs(
                     provider=provider,
                     instructions=instructions,
                     conversation=conversation,
                     max_tokens=LLM_CHAT_MAX_TOKENS,
-                    tool_defs=tool_defs,
-                    force_tool_use=force_tool_use,
+                    tool_defs=round_tool_defs,
+                    force_tool_use=round_force_tool_use,
                     reasoning_effort=reasoning_effort,
                 )
 
@@ -2981,6 +2969,8 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 else:
                     assistant_content = _serialize_output_items(final_message)
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
+                if final_synthesis_round:
+                    deferred_calls = []
 
                 if deferred_calls:
                     tool_counts = Counter(c["name"] for c in deferred_calls)

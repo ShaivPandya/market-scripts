@@ -35,6 +35,7 @@ from ontology.schemas.identity import (
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
+    position_id,
     position_risk_snapshot_id,
     recommendation_id,
     supply_chain_relationship_id,
@@ -2028,6 +2029,17 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
+        refs.extend(
+            self._write_thesis_markdown_entities(
+                ticker=ticker,
+                thesis_uid=thesis_id(ticker),
+                content=index_content,
+                actor=actor,
+                provenance_id=provenance_id,
+                input_hash=input_hash,
+                now=now,
+            )
+        )
         _best_effort_index_document(
             "thesis",
             index_content,
@@ -2037,6 +2049,202 @@ class OntologyCommandService:
             thesis_doc_uid,
             _version_ref_from_row(thesis_doc_row).get("version_id"),
         )
+        return refs
+
+    def _write_thesis_markdown_entities(
+        self,
+        *,
+        ticker: str,
+        thesis_uid: str,
+        content: str,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+        now: str,
+    ) -> list[dict[str, Any]]:
+        """Project thesis markdown sections into ontology-native process objects."""
+        from portfolio.thesis_backfill import _categorize_catalyst, _extract_label_and_description, _parse_bullets
+        from portfolio.thesis_sync import _normalize_match_text, _parse_legacy_claims, _parse_structured_claims
+
+        refs: list[dict[str, Any]] = []
+        catalyst_by_label: dict[str, str] = {}
+        kill_condition_by_label: dict[str, str] = {}
+
+        position_uid = position_id(ticker)
+        try:
+            position_row = self.objects.get_object(position_uid)
+        except Exception:
+            position_row = None
+        if position_row:
+            self.objects.write_relation(
+                position_uid,
+                thesis_uid,
+                "has_thesis",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+
+        for bullet in _parse_bullets(content, "Key Catalysts"):
+            if _blank_markdown_item(bullet):
+                continue
+            label, desc = _extract_label_and_description(bullet)
+            description = f"{label}: {desc}" if desc != label else label
+            row = self.objects.write_object(
+                "Catalyst",
+                f"{ticker}:{description}",
+                {
+                    "ticker": ticker,
+                    "name": label,
+                    "description": description,
+                    "source": "thesis_markdown",
+                    "category": _categorize_catalyst(label, desc),
+                    "status": "pending",
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            ref = _version_ref_from_row(row)
+            refs.append(ref)
+            catalyst_uid = str(ref.get("object_uid") or "")
+            if catalyst_uid:
+                for key in {label, description}:
+                    normalized = _normalize_match_text(str(key))
+                    if normalized:
+                        catalyst_by_label[normalized] = catalyst_uid
+                self.objects.write_relation(
+                    thesis_uid,
+                    catalyst_uid,
+                    "has_catalyst",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+
+        for bullet in _parse_bullets(content, "Risk Factors"):
+            if _blank_markdown_item(bullet):
+                continue
+            label, desc = _extract_label_and_description(bullet)
+            condition = f"{label}: {desc}" if desc != label else label
+            row = self.objects.write_object(
+                "KillCondition",
+                f"{ticker}:{condition}",
+                {
+                    "ticker": ticker,
+                    "condition": condition,
+                    "status": "active",
+                    "created_at": now,
+                    "updated_at": now,
+                    "created_by": "thesis_markdown",
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            ref = _version_ref_from_row(row)
+            refs.append(ref)
+            kill_condition_uid = str(ref.get("object_uid") or "")
+            if kill_condition_uid:
+                for key in {label, condition}:
+                    normalized = _normalize_match_text(str(key))
+                    if normalized:
+                        kill_condition_by_label[normalized] = kill_condition_uid
+                self.objects.write_relation(
+                    thesis_uid,
+                    kill_condition_uid,
+                    "thesis_has_kill_condition",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+
+        parsed_claims = _parse_structured_claims(content)
+        claim_records = parsed_claims if parsed_claims is not None else _parse_legacy_claims(content)
+        for raw_record in claim_records:
+            record = dict(raw_record)
+            if _blank_markdown_item(record.get("claim")):
+                continue
+            linked_catalyst_labels = list(record.pop("linked_catalyst_labels", []) or [])
+            linked_kill_condition_labels = list(record.pop("linked_kill_condition_labels", []) or [])
+            record.pop("legacy_seed", None)
+            record.pop("id", None)
+            claim = _non_blank(record.get("claim"), "claim")
+            row = self.objects.write_object(
+                "ThesisClaim",
+                f"{ticker}:{claim}",
+                {
+                    "ticker": ticker,
+                    "claim": claim,
+                    "expected_evidence": record.get("expected_evidence"),
+                    "disconfirming_evidence": record.get("disconfirming_evidence"),
+                    "source_requirements": _list(record.get("source_requirements")),
+                    "cadence": record.get("cadence"),
+                    "confidence": record.get("confidence"),
+                    "status": record.get("status") or "active",
+                    "source_type": "thesis_markdown",
+                    "source_id": f"thesis_markdown:{ticker}",
+                    "created_at": now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            ref = _version_ref_from_row(row)
+            refs.append(ref)
+            claim_uid = str(ref.get("object_uid") or "")
+            if not claim_uid:
+                continue
+            self.objects.write_relation(
+                thesis_uid,
+                claim_uid,
+                "thesis_has_claim",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            for label in linked_catalyst_labels:
+                catalyst_uid = catalyst_by_label.get(_normalize_match_text(str(label)))
+                if catalyst_uid:
+                    self.objects.write_relation(
+                        claim_uid,
+                        catalyst_uid,
+                        "claim_links_catalyst",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=input_hash,
+                    )
+            for label in linked_kill_condition_labels:
+                kill_condition_uid = kill_condition_by_label.get(_normalize_match_text(str(label)))
+                if kill_condition_uid:
+                    self.objects.write_relation(
+                        claim_uid,
+                        kill_condition_uid,
+                        "claim_links_kill_condition",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=input_hash,
+                    )
+
         return refs
 
     def _write_management_quality_content(
@@ -2544,6 +2752,11 @@ def _non_blank(value: Any, field: str) -> str:
     if not text:
         raise OntologyCommandValidationError(f"{field} is required.")
     return text
+
+
+def _blank_markdown_item(value: Any) -> bool:
+    text = str(value or "").strip()
+    return not text or text.upper() == "TBD"
 
 
 def _dict(value: Any) -> dict[str, Any]:

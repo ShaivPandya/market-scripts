@@ -740,6 +740,58 @@ def test_audit_write_failure_does_not_break_ontology_rejection():
     assert rejected["application_status"] == "not_applicable"
 
 
+def test_save_thesis_content_writes_native_markdown_entities_and_relations(monkeypatch, tmp_path):
+    import portfolio.thesis_content as thesis_content
+
+    indexed: list[dict[str, Any]] = []
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    monkeypatch.setattr(thesis_content, "THESES_DIR", thesis_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+    content = """# META
+
+## Thesis
+- AI ad tools improve monetization.
+
+## Key Catalysts
+- **AI capex ramp:** Llama and ad-ranking investments convert into revenue growth.
+
+## Risk Factors
+- **Ad deceleration:** Reels and AI ad load stop improving.
+
+## Thesis Claims
+- **AI capex remains durable:** Infrastructure spend creates monetization leverage.
+  - Status: active
+  - Catalysts: AI capex ramp
+  - Kill conditions: Ad deceleration
+"""
+
+    approval = service.propose_action(
+        "save_thesis_content",
+        {"ticker": "meta", "content": content},
+        context,
+        reason="unit",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    assert (thesis_dir / "META.md").read_text(encoding="utf-8").endswith("\n")
+    object_types = {row["object_type"] for row in repo.objects.values()}
+    assert {"ThesisDocument", "ThesisSection", "Catalyst", "KillCondition", "ThesisClaim"} <= object_types
+    relation_types = {row["relation_type"] for row in repo.relations}
+    assert "has_catalyst" in relation_types
+    assert "thesis_has_kill_condition" in relation_types
+    assert "thesis_has_claim" in relation_types
+    assert "claim_links_catalyst" in relation_types
+    assert "claim_links_kill_condition" in relation_types
+    assert indexed and indexed[0]["doc_type"] == "thesis"
+
+
 def test_save_management_quality_content_writes_ontology_children_and_markdown(monkeypatch, tmp_path):
     import portfolio.management_quality_content as management_quality_content
 

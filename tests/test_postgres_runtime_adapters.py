@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -195,6 +196,137 @@ def test_retrieval_search_uses_pgvector_tables(monkeypatch):
     assert "retrieval_chunks" in sql
     assert "retrieval_documents" in sql
     assert "<=>" in sql
+
+
+def test_retrieval_sqlite_migrates_legacy_chunk_schema(monkeypatch, tmp_path):
+    from api import retrieval
+
+    db_path = tmp_path / "embeddings.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            doc_id TEXT PRIMARY KEY,
+            doc_type TEXT NOT NULL,
+            source_path TEXT,
+            ticker TEXT,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE chunks (
+            chunk_id TEXT PRIMARY KEY,
+            doc_id TEXT NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            heading TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "thesis-META",
+            "thesis",
+            "investment_theses/META.md",
+            "META",
+            "META AI ad thesis",
+            "2026-05-12T00:00:00+00:00",
+            "2026-05-12T00:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "chunk-1",
+            "thesis-META",
+            0,
+            "META AI ad ranking catalysts",
+            retrieval._embedding_to_blob([1.0, 0.0]),
+            "Key Catalysts",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    existing = retrieval._conn
+    if existing is not None:
+        existing.close()
+    monkeypatch.setattr(retrieval, "_conn", None)
+    monkeypatch.setattr(retrieval, "_DB_PATH", db_path)
+    monkeypatch.setenv("STATE_DB_BACKEND", "sqlite")
+    monkeypatch.setattr(retrieval, "_embed_single", lambda _query: [1.0, 0.0])
+
+    results = retrieval.search("META AI catalysts", doc_types=["thesis"], tickers=["META"], top_k=1)
+
+    assert results[0]["doc_id"] == "thesis-META"
+    migrated = retrieval._get_conn()
+    columns = {row["name"] for row in migrated.execute("PRAGMA table_info(chunks)").fetchall()}
+    assert "object_uid" in columns
+    assert "content_hash" in columns
+    migrated.close()
+    monkeypatch.setattr(retrieval, "_conn", None)
+
+
+def test_retrieval_search_falls_back_to_lexical_when_embeddings_unavailable(monkeypatch, tmp_path):
+    from api import retrieval
+
+    existing = retrieval._conn
+    if existing is not None:
+        existing.close()
+    monkeypatch.setattr(retrieval, "_conn", None)
+    monkeypatch.setattr(retrieval, "_DB_PATH", tmp_path / "embeddings.db")
+    monkeypatch.setenv("STATE_DB_BACKEND", "sqlite")
+
+    conn = retrieval._get_conn()
+    conn.execute(
+        """
+        INSERT INTO documents (doc_id, doc_type, source_path, ticker, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "thesis-META",
+            "thesis",
+            "investment_theses/META.md",
+            "META",
+            "META AI ad thesis",
+            "2026-05-12T00:00:00+00:00",
+            "2026-05-12T00:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO chunks (chunk_id, doc_id, chunk_index, content, embedding, heading)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "chunk-1",
+            "thesis-META",
+            0,
+            "META AI ad ranking catalysts and Reels monetization",
+            retrieval._embedding_to_blob([0.0, 1.0]),
+            "Key Catalysts",
+        ),
+    )
+    conn.commit()
+
+    def fail_embed(_query):
+        raise ImportError("sentence-transformers not installed")
+
+    monkeypatch.setattr(retrieval, "_embed_single", fail_embed)
+
+    results = retrieval.search("META ad catalysts", doc_types=["thesis"], tickers=["META"], top_k=1)
+
+    assert results[0]["doc_id"] == "thesis-META"
+    assert results[0]["retrieval_mode"] == "lexical"
+    assert "sentence-transformers not installed" in results[0]["fallback_reason"]
+    conn.close()
+    monkeypatch.setattr(retrieval, "_conn", None)
 
 
 def test_compat_layer_maps_legacy_table_names(monkeypatch):

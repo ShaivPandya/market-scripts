@@ -233,7 +233,7 @@ def get_workspace():
         },
         "open_actions": {
             "count": len(open_actions),
-            "items": open_actions[:5],
+            "items": open_actions,
         },
         "continuous_optimization": {
             "open_alert_count": len(optimizer_alerts),
@@ -241,7 +241,7 @@ def get_workspace():
         },
         "active_triggers": {
             "count": len(active_triggers),
-            "items": active_triggers[:5],
+            "items": active_triggers,
         },
         "recent_workflow_runs": recent_runs,
         "recent_report_runs": recent_report_runs,

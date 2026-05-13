@@ -64,6 +64,15 @@ function toolStateLabel(status: ToolCall["status"]): string {
   }
 }
 
+function humanizeToolName(name: string): string {
+  return name
+    .replace(/^propose_/, "")
+    .split("_")
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
 const ARTIFACT_JSON_KEYS = [
   "evaluation_draft",
   "action_items",
@@ -113,10 +122,12 @@ function stripArtifactBlocks(value: string): string {
 }
 
 function ToolCallChip({ tc }: { tc: ToolCall }) {
-  const label = TOOL_LABELS[tc.name] ?? tc.name
+  const label = TOOL_LABELS[tc.name] ?? humanizeToolName(tc.name)
   const scope = toolEffectScope(tc.name)
   const isBusy = tc.status === "pending" || tc.status === "running" || tc.status === "retrying"
   const isFailure = tc.status === "error" || tc.status === "blocked" || tc.status === "timeout" || tc.status === "cancelled"
+  const titleParts = [tc.message || `${label}: ${toolStateLabel(tc.status)}`]
+  if (tc.policyDecisionId) titleParts.push(`Policy decision: ${tc.policyDecisionId}`)
   const Icon = isBusy
     ? Loader2
     : tc.status === "ok"
@@ -137,13 +148,12 @@ function ToolCallChip({ tc }: { tc: ToolCall }) {
             ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
             : "bg-muted-surface border-app text-muted"
       }`}
-      title={tc.message || `${label}: ${toolStateLabel(tc.status)}`}
+      title={titleParts.join("\n")}
     >
       {scope === "internal_state" && <GitPullRequest size={10} aria-hidden="true" />}
       <Icon size={10} className={isBusy ? "animate-spin text-blue-500" : ""} aria-hidden="true" />
       {label}
       <span className="opacity-75">· {toolStateLabel(tc.status)}</span>
-      {tc.policyDecisionId && <span className="opacity-75">· policy {tc.policyDecisionId}</span>}
     </span>
   )
 }

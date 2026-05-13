@@ -200,6 +200,8 @@ def generate_thesis_from_upload_bytes(
         {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
         source_id="thesis.generate_thesis",
         reason=f"Generate thesis for {normalized_ticker} from uploaded document",
+        apply=True,
+        approval_note=f"Apply uploaded thesis for {normalized_ticker}.",
     )
 
 
