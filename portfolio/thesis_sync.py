@@ -152,6 +152,15 @@ def _parse_bool(value: str | None, default: bool = True) -> bool:
     return value.strip().lower() not in {"false", "0", "no", "optional"}
 
 
+def _parse_nonnegative_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
     """Normalize source requirements into typed requirement objects."""
 
@@ -183,13 +192,7 @@ def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
         description = str(item.get("description") or item.get("label") or req_type).strip()
         required_raw = item.get("required", True)
         required = _parse_bool(required_raw, default=True) if isinstance(required_raw, str) else bool(required_raw)
-        freshness_raw = item.get("freshness_days")
-        freshness_days = None
-        if freshness_raw not in (None, ""):
-            try:
-                freshness_days = max(0, int(freshness_raw))
-            except (TypeError, ValueError):
-                freshness_days = None
+        freshness_days = _parse_nonnegative_int(item.get("freshness_days"))
         normalized.append(
             {
                 "type": req_type,

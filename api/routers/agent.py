@@ -1980,6 +1980,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 
     casual = _is_casual(req.message)
     workflow_name, workflow_ticker = _detect_workflow(req.message)
+    llm_credentials: tuple[str, str] | None = None
     if workflow_name and req.allow_workflow_handoff:
         provider_label = "deferred"
         active_tool_names: list[str] = []
@@ -1992,6 +1993,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         provider_label = provider
         active_tool_names = [] if casual else _select_tool_names(req.message)
         tool_defs = _tool_definitions_from_names(provider, active_tool_names)
+        if not casual:
+            llm_credentials = _read_llm_api_key()
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
@@ -2049,7 +2052,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
             return
 
-        provider, api_key = _read_llm_api_key()
+        provider, api_key = llm_credentials or _read_llm_api_key()
         reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
         instructions = _with_domain_guardrail_instruction(
             _with_response_preferences(

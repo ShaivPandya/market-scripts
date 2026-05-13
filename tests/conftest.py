@@ -16,8 +16,9 @@ os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
 os.environ["ASYNC_JOB_BACKEND"] = "local"
 os.environ.setdefault("LLM_PROVIDER", "anthropic")
 os.environ["ENVIRONMENT"] = "development"
-os.environ.setdefault("STATE_DB_BACKEND", "postgres")
-os.environ.setdefault("DATABASE_URL", "postgresql://localhost/talisman_test")
+os.environ["TALISMAN_ALLOW_SQLITE_STATE"] = "true"
+os.environ["STATE_DB_BACKEND"] = "sqlite"
+os.environ["DATABASE_URL"] = ""
 os.environ["STATE_STORAGE_BACKEND"] = "local"
 
 collect_ignore = []
@@ -33,8 +34,9 @@ def client():
     os.environ["AUTH_MODE"] = "password"
     os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
     os.environ["ENVIRONMENT"] = "development"
-    os.environ.setdefault("STATE_DB_BACKEND", "postgres")
-    os.environ.setdefault("DATABASE_URL", "postgresql://localhost/talisman_test")
+    os.environ["TALISMAN_ALLOW_SQLITE_STATE"] = "true"
+    os.environ["STATE_DB_BACKEND"] = "sqlite"
+    os.environ["DATABASE_URL"] = ""
     os.environ["STATE_STORAGE_BACKEND"] = "local"
     from api.main import app
 

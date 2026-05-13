@@ -36,6 +36,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_int_or_none(name: str) -> int | None:
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 def _env_queue(name: str, default: str) -> str:
     return (os.getenv(name) or "").strip() or default
 
@@ -115,10 +125,10 @@ JOB_SPECS: dict[str, JobSpec] = {
         compute_func="api.routers.sizer._compute_sizer_result",
         cache_key_func="api.routers.sizer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_SIZER", "sizer"),
-        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 30),
+        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 3 * 60),
         completed_ttl_s=_env_int("ASYNC_SIZER_COMPLETED_TTL_SECONDS", 300),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
-        stale_grace_s=_env_int("ASYNC_STALE_GRACE_SIZER_SECONDS", 15),
+        stale_grace_s=_env_int_or_none("ASYNC_STALE_GRACE_SIZER_SECONDS"),
         error_message="Portfolio sizer failed",
     ),
     "idea_evaluation": JobSpec(

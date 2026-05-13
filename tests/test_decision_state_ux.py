@@ -63,7 +63,7 @@ def test_normalize_approval_distinguishes_pending_failed_and_applied():
 
 
 def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeypatch):
-    import portfolio.action_registry as action_registry
+    import ontology.action_registry as action_registry
 
     monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _change: "current")
 
@@ -118,7 +118,7 @@ def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeyp
 
 
 def test_normalize_approval_recomputes_base_state_in_ontology_primary_mode(monkeypatch):
-    import portfolio.action_registry as action_registry
+    import ontology.action_registry as action_registry
 
     monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _change: "current")
 

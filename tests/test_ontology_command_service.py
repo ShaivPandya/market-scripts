@@ -615,7 +615,7 @@ def test_unsupported_action_is_rejected_before_any_write():
 
 
 def test_restaged_approval_uses_distinct_uid_and_survives_original_rejection(monkeypatch):
-    import portfolio.action_registry as action_registry
+    import ontology.action_registry as action_registry
 
     monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _payload: "base")
     service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
@@ -682,7 +682,7 @@ def test_action_item_status_proposal_accepts_ontology_uid_and_keeps_item_context
 
 
 def test_approve_rejects_stale_ontology_base_state(monkeypatch):
-    import portfolio.action_registry as action_registry
+    import ontology.action_registry as action_registry
 
     current_hash = {"value": "old"}
     monkeypatch.setattr(

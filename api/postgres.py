@@ -34,6 +34,10 @@ def require_database_url(env_var: str = "DATABASE_URL") -> str:
 
 def use_postgres_state() -> bool:
     backend = (os.getenv("STATE_DB_BACKEND") or "postgres").strip().lower()
+    if backend == "postgres":
+        return True
+    if backend == "sqlite" and _env_bool("TALISMAN_ALLOW_SQLITE_STATE", default=False):
+        return False
     if backend != "postgres":
         raise RuntimeError("Talisman runtime is ontology-primary and Postgres-only; STATE_DB_BACKEND must be postgres.")
     return True

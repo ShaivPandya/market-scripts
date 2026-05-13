@@ -62,6 +62,8 @@ def test_p0_async_job_completed_ttl_policy_defaults():
 
     assert get_job_spec("analyzer").completed_ttl_s == 24 * 60 * 60
     assert get_job_spec("sizer").completed_ttl_s == 300
+    assert get_job_spec("sizer").timeout_s == 3 * 60
+    assert get_job_spec("sizer").stale_grace_s is None
     assert get_job_spec("hedging").completed_ttl_s == 300
 
     ontology_spec = get_job_spec("ontology")
@@ -80,6 +82,8 @@ def test_p0_async_job_completed_ttl_policy_env_overrides(monkeypatch):
 
     monkeypatch.setenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", "11")
     monkeypatch.setenv("ASYNC_SIZER_COMPLETED_TTL_SECONDS", "22")
+    monkeypatch.setenv("ASYNC_TIMEOUT_SIZER_SECONDS", "222")
+    monkeypatch.setenv("ASYNC_STALE_GRACE_SIZER_SECONDS", "66")
     monkeypatch.setenv("ASYNC_HEDGING_COMPLETED_TTL_SECONDS", "33")
     monkeypatch.setenv("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", "44")
     monkeypatch.setenv("ASYNC_ONTOLOGY_REPLAY_COMPLETED_TTL_SECONDS", "55")
@@ -87,6 +91,8 @@ def test_p0_async_job_completed_ttl_policy_env_overrides(monkeypatch):
     try:
         assert registry.get_job_spec("analyzer").completed_ttl_s == 11
         assert registry.get_job_spec("sizer").completed_ttl_s == 22
+        assert registry.get_job_spec("sizer").timeout_s == 222
+        assert registry.get_job_spec("sizer").stale_grace_s == 66
         assert registry.get_job_spec("hedging").completed_ttl_s == 33
 
         ontology_spec = registry.get_job_spec("ontology")
@@ -98,6 +104,8 @@ def test_p0_async_job_completed_ttl_policy_env_overrides(monkeypatch):
     finally:
         monkeypatch.delenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", raising=False)
         monkeypatch.delenv("ASYNC_SIZER_COMPLETED_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_TIMEOUT_SIZER_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_STALE_GRACE_SIZER_SECONDS", raising=False)
         monkeypatch.delenv("ASYNC_HEDGING_COMPLETED_TTL_SECONDS", raising=False)
         monkeypatch.delenv("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", raising=False)
         monkeypatch.delenv("ASYNC_ONTOLOGY_REPLAY_COMPLETED_TTL_SECONDS", raising=False)
@@ -329,18 +337,20 @@ def test_analyzer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     assert persisted["queue_name"] == "analyzer"
 
 
-def test_sizer_dispatches_to_cloud_run_jobs(monkeypatch):
+def test_sizer_inline_dispatch_completes_without_cloud_run_job(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job
+    from api.routers import sizer
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
-    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "inline")
+    monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
     monkeypatch.setattr(
         async_job_runner,
         "_enqueue_cloud_run_job",
-        lambda job_type, job_id: dispatched.append((job_type, job_id)),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
     )
 
     row, disposition = async_job_runner.enqueue_registered_job(
@@ -350,10 +360,10 @@ def test_sizer_dispatches_to_cloud_run_jobs(monkeypatch):
     )
 
     assert disposition == "created"
-    assert dispatched == [("sizer", row["job_id"])]
     persisted = get_job(row["job_id"])
     assert persisted is not None
-    assert persisted["status"] == "queued"
+    assert persisted["status"] == "completed"
+    assert persisted["result_json"] == {"ok": "AAA"}
     assert persisted["queue_name"] == "sizer"
 
 
@@ -998,17 +1008,19 @@ def test_analyzer_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
     assert poll_resp.json()["status"] == "cancelled"
 
 
-def test_sizer_async_endpoint_dispatches_cloud_run_job(auth_client, monkeypatch):
+def test_sizer_async_endpoint_runs_inline_without_cloud_run_job(auth_client, monkeypatch):
     from api import async_job_runner, cache
+    from api.routers import sizer
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
-    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "inline")
+    monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
     monkeypatch.setattr(
         async_job_runner,
         "_enqueue_cloud_run_job",
-        lambda job_type, job_id: dispatched.append((job_type, job_id)),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
     )
 
     started = auth_client.post(
@@ -1016,12 +1028,15 @@ def test_sizer_async_endpoint_dispatches_cloud_run_job(auth_client, monkeypatch)
         json={"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
     )
 
-    assert started.status_code == 202
-    job_id = started.json()["job_id"]
-    assert dispatched == [("sizer", job_id)]
+    assert started.status_code == 200
+    payload = started.json()
+    job_id = payload["job_id"]
+    assert payload["status"] == "done"
+    assert payload["result"] == {"ok": "AAA"}
 
-    queued = auth_client.get(f"/api/portfolio-sizer/async/{job_id}").json()
-    assert queued["status"] == "queued"
+    completed = auth_client.get(f"/api/portfolio-sizer/async/{job_id}").json()
+    assert completed["status"] == "done"
+    assert completed["result"] == {"ok": "AAA"}
 
 
 def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client, monkeypatch):

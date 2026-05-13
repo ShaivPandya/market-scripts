@@ -5,7 +5,13 @@ from typing import Any
 from fastapi import HTTPException
 
 from api.decision_state import normalize_staged_response
-from api.exceptions import ConflictError, DataFetchError, NotFoundError, ValidationError
+from api.exceptions import (
+    ConfigurationError,
+    ConflictError,
+    DataFetchError,
+    NotFoundError,
+    ValidationError,
+)
 from ontology.command_service import (
     OntologyCommandConflict,
     OntologyCommandContext,
@@ -45,6 +51,8 @@ def execute_api_action(
     except OntologyCommandConflict as exc:
         raise ConflictError(exc.message) from exc
     except Exception as exc:
+        if "DATABASE_URL is required" in str(exc):
+            raise ConfigurationError("DATABASE_URL") from exc
         if data_fetch_source:
             raise DataFetchError(source=data_fetch_source, detail=str(exc)) from exc
         raise
@@ -107,6 +115,8 @@ def stage_api_action(
     except OntologyCommandConflict as exc:
         raise ConflictError(exc.message) from exc
     except Exception as exc:
+        if "DATABASE_URL is required" in str(exc):
+            raise ConfigurationError("DATABASE_URL") from exc
         if data_fetch_source:
             raise DataFetchError(source=data_fetch_source, detail=str(exc)) from exc
         raise

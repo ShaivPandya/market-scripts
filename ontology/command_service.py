@@ -167,7 +167,11 @@ class OntologyCommandService:
         action_id = _non_blank(action_id, "action_id")
         payload_dict = dict(payload)
         _validate_governed_action(action_id, payload_dict)
-        payload_dict = _approval_payload_for_action(action_id, payload_dict)
+        from ontology.runtime_read_service import runtime_object_service
+
+        with runtime_object_service(self.objects):
+            payload_dict = _approval_payload_for_action(action_id, payload_dict)
+            base_state_hash = _base_state_hash(action_id, payload_dict)
         policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
         now = _now()
         input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
@@ -210,7 +214,7 @@ class OntologyCommandService:
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
             "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
-            "base_state_hash": _base_state_hash(action_id, payload_dict),
+            "base_state_hash": base_state_hash,
             "requested_by_actor_id": context.actor.actor_id,
             "created_at": now,
             "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
@@ -287,7 +291,10 @@ class OntologyCommandService:
         if status == "approved":
             if str(approval.get("policy_gate_decision") or "").strip().lower() == "blocked":
                 raise OntologyCommandValidationError("Blocked policy gate results cannot be approved.")
-            _ensure_fresh_base_state(approval)
+            from ontology.runtime_read_service import runtime_object_service
+
+            with runtime_object_service(self.objects):
+                _ensure_fresh_base_state(approval)
 
         input_hash = str(approval.get("action_input_hash") or _stable_hash(approval))
         now = _now()
@@ -2795,11 +2802,16 @@ def _now() -> str:
 
 
 def _refresh_temporal_read_models_after_command() -> None:
-    try:
-        from ontology.read_model import TemporalReadModelRepository
+    from api.postgres import use_postgres_state
+    from ontology.read_model import TemporalReadModelRepository
 
+    fail_closed = use_postgres_state()
+    try:
         TemporalReadModelRepository().refresh()
     except Exception:
+        if not fail_closed:
+            logger.debug("ontology read model refresh skipped outside Postgres state", exc_info=True)
+            return
         logger.exception("ontology read model refresh failed after command write")
         raise
 

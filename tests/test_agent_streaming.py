@@ -636,7 +636,7 @@ def test_agent_stream_skips_forced_tools_for_casual_prompt(auth_client, monkeypa
     )
 
     assert resp.status_code == 200
-    assert "tool_choice" not in fake_client.messages.kwargs_history[0]
+    assert fake_client.messages.calls == 0
     parsed = _parse_sse(resp.text)
     assert any(e == "done" for e, _p in parsed)
 

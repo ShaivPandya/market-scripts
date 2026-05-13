@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 ChatText = Annotated[str, Field(min_length=1, max_length=64 * 1024)]
 ScreenShortText = Annotated[str, Field(max_length=512)]
@@ -53,6 +53,23 @@ class AgentChatRequest(BaseModel):
     response_preferences: AgentResponsePreferences | None = None
     finalize_synchronously: bool = False
     allow_workflow_handoff: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_messages(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or data.get("message"):
+            return data
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return data
+        for item in reversed(messages):
+            if not isinstance(item, dict):
+                continue
+            if item.get("role") == "user" and item.get("content"):
+                updated = dict(data)
+                updated["message"] = item["content"]
+                return updated
+        return data
 
 
 class AgentChatJobRequest(AgentChatRequest):

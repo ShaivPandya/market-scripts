@@ -1757,9 +1757,9 @@ export async function runHedgingToolAsync(body: { book: number; positions: { tic
 }
 
 type SizerJobResponse =
-  | { job_id: string; status: "queued" | "running" }
-  | { job_id: string; status: "error"; error?: string }
-  | { job_id: string; status: "done"; result?: unknown }
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number }
+  | { job_id: string; status: "error"; error?: string; timeout_s?: number }
+  | { job_id: string; status: "done"; result?: unknown; timeout_s?: number }
 
 export type BetaHedgeMode = "spy" | "iwm" | "qqq" | "spy_iwm" | "spy_qqq" | "iwm_qqq"
 
@@ -1782,7 +1782,8 @@ export async function runPortfolioSizerAsync(body: PortfolioSizerRequest) {
   if (started.status === "error") throw new Error(started.error || "Sizer failed")
 
   const job_id = started.job_id
-  const deadline = Date.now() + 180_000
+  const serverTimeoutMs = Number.isFinite(started.timeout_s) ? Math.max(180, Number(started.timeout_s)) * 1000 : 180_000
+  const deadline = Date.now() + serverTimeoutMs + 30_000
 
   for (; ;) {
     if (Date.now() > deadline) throw new Error("Timeout: Sizer is taking too long. Try again.")

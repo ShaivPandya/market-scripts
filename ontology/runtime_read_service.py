@@ -3,11 +3,42 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
+from api.postgres import use_postgres_state
 from ontology.object_service import OntologyObjectService
 
 logger = logging.getLogger(__name__)
+_DEFAULT_OBJECT_SERVICE: ContextVar[Any | None] = ContextVar("ontology_runtime_object_service", default=None)
+
+
+class _EmptyObjectService:
+    def get_object(self, object_uid: str, **kwargs: Any) -> None:
+        return None
+
+    def query_objects(self, object_type: str | None = None, filters: dict[str, Any] | None = None, **kwargs: Any):
+        return []
+
+    def query_relations(self, relation_type: str | None = None, **kwargs: Any):
+        return []
+
+
+@contextmanager
+def runtime_object_service(object_service: Any) -> Iterator[None]:
+    token = _DEFAULT_OBJECT_SERVICE.set(object_service)
+    try:
+        yield
+    finally:
+        _DEFAULT_OBJECT_SERVICE.reset(token)
+
+
+def _default_object_service() -> Any:
+    if not use_postgres_state():
+        return _EmptyObjectService()
+    return OntologyObjectService()
 
 
 def get_positions(*, include_hedges: bool = False) -> list[dict[str, Any]]:
@@ -41,7 +72,7 @@ def get_hedge_positions() -> list[dict[str, Any]]:
 
 class OntologyRuntimeReadService:
     def __init__(self, object_service: OntologyObjectService | None = None, read_model_repository: Any | None = None):
-        self.objects = object_service or OntologyObjectService()
+        self.objects = object_service or _DEFAULT_OBJECT_SERVICE.get() or _default_object_service()
         self.read_model_repo = read_model_repository
 
     def get(self, object_uid: str) -> dict[str, Any] | None:

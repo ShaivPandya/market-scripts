@@ -126,6 +126,8 @@ def _normalize_dispatch_backend(value: str) -> str:
         return "warm_worker"
     if value in {"cloud_run_jobs", "cloudrunjobs", "rq"}:
         return "cloud_run_jobs"
+    if value in {"inline", "sync", "synchronous"}:
+        return "inline"
     if value in {"local", "memory", "in_memory", "in_process"}:
         return "local"
     return value
@@ -289,6 +291,13 @@ def enqueue_registered_job(
             logger.info("async job queued for warm worker job_type=%s job_id=%s", job_type, row["job_id"])
         elif dispatch_backend in {"cloud_run_jobs", "cloudrunjobs"}:
             _enqueue_cloud_run_job(job_type, str(row["job_id"]))
+        elif dispatch_backend == "inline":
+            logger.info("async job running inline job_type=%s job_id=%s", job_type, row["job_id"])
+            try:
+                perform_job(str(row["job_id"]))
+            except Exception:
+                logger.exception("inline async job failed job_type=%s job_id=%s", job_type, row["job_id"])
+            row = get_job(str(row["job_id"])) or row
         else:
             _enqueue_local_job(str(row["job_id"]))
     except Exception as exc:
@@ -307,7 +316,7 @@ def enqueue_registered_job(
     _emit_job_audit(
         "async_job.enqueued",
         row=row,
-        status="queued",
+        status=str(row.get("status") or "queued"),
         metadata={"disposition": disposition, "reuse_completed": reuse_completed},
         after_summary={"status": row.get("status"), "disposition": disposition},
     )
