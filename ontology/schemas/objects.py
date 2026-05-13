@@ -1851,6 +1851,7 @@ class ExtrinsicSensitivityV1(OntologySchemaBase):
     factor: NonBlankStr
     sensitivity: str | None = None
     capacity: str | None = None
+    rationale: str | None = None
     ordinal: int = Field(default=0, ge=0)
     ontology_run_id: NonBlankStr = "operational"
 
@@ -1864,7 +1865,7 @@ class ExtrinsicSensitivityV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("sensitivity", "capacity", mode="before")
+    @field_validator("sensitivity", "capacity", "rationale", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)

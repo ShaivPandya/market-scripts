@@ -108,6 +108,28 @@ Data not available in source document.
     assert parsed is None
 
 
+def test_parse_overview_sensitivity_supports_capacity_rationale_column():
+    parsed = overview_router.parse_overview_markdown(
+        """# MU Overview
+
+## Sensitivity to Extrinsic Factors
+| Factor | Sensitivity | Capacity to Deal | Rationale |
+|--------|-------------|------------------|-----------|
+| Memory pricing | High | Medium-high | Contracted supply helps, but spot pricing still moves margins. |
+"""
+    )
+
+    assert parsed is not None
+    assert parsed["sensitivity"] == [
+        {
+            "factor": "Memory pricing",
+            "sensitivity": "High",
+            "capacity": "Medium-high",
+            "rationale": "Contracted supply helps, but spot pricing still moves margins.",
+        }
+    ]
+
+
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()

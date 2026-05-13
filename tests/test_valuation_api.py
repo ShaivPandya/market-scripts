@@ -92,6 +92,35 @@ def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch
     assert all(not key.startswith(("valuation_current:", "valuation_peer_row:")) for key in deleted_keys)
 
 
+def test_update_position_valuation_value_range_endpoint_accepts_dcf_gordon(auth_client, monkeypatch):
+    monkeypatch.setattr(multiples, "read_profile_override", lambda ticker: None)
+    monkeypatch.setattr(valuation_router, "delete_cached", lambda cache, key: None)
+
+    def _write(ticker, payload):
+        return {"ticker": ticker, "value_range": payload}
+
+    monkeypatch.setattr(multiples, "write_value_range_assumption", _write)
+
+    resp = auth_client.put(
+        "/api/v1/valuation/ZZVALUATION/value-range",
+        json={
+            "metric": "dcf_gordon_growth",
+            "denominator_currency": "USD",
+            "wacc": 0.08,
+            "scenarios": {
+                "bear": {"terminal_growth": 0.01, "denominator": 90000000},
+                "base": {"terminal_growth": 0.03, "denominator": 100000000},
+                "bull": {"terminal_growth": 0.04, "denominator": 110000000},
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["value_range"]["metric"] == "dcf_gordon_growth"
+    assert resp.json()["value_range"]["wacc"] == 0.08
+    assert resp.json()["value_range"]["scenarios"]["base"]["terminal_growth"] == 0.03
+
+
 def test_delete_position_valuation_value_range_endpoint(auth_client, monkeypatch):
     deleted_keys = []
 

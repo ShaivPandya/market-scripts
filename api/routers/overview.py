@@ -41,13 +41,13 @@ Output only markdown and follow this structure exactly:
 - **Reinvestment Costs**: capex, R&D, or other reinvestment requirements
 
 ## Sensitivity to Extrinsic Factors
-Present as a markdown table with three columns:
+Present as a markdown table with four columns:
 
-| Factor | Sensitivity | Capacity to Deal |
-|--------|------------|-----------------|
+| Factor | Sensitivity | Capacity to Deal | Rationale |
+|--------|-------------|------------------|-----------|
 
 Include rows for all applicable factors from this list: commodity prices, interest rates, currency/FX, tariffs/trade policy, war/geopolitical disruption, regulatory changes, inflation, labor costs.
-Rate sensitivity as Low, Low-medium, Medium, Medium-high, or High. Describe capacity to deal briefly.
+Rate sensitivity and capacity to deal as Low, Low-medium, Medium, Medium-high, or High. Put only the capacity rating in Capacity to Deal, and put the brief source-backed explanation for both ratings in Rationale.
 Only include factors relevant to this company. If the source document does not cover a factor, omit it.
 
 ## Industry
@@ -257,13 +257,14 @@ def _parse_sensitivity(text: str) -> list[dict] | None:
         if not in_table:
             continue
         if len(cells) >= 3:
-            rows.append(
-                {
-                    "factor": cells[0],
-                    "sensitivity": cells[1],
-                    "capacity": cells[2],
-                }
-            )
+            row = {
+                "factor": cells[0],
+                "sensitivity": cells[1],
+                "capacity": cells[2],
+            }
+            if len(cells) >= 4:
+                row["rationale"] = cells[3]
+            rows.append(row)
     return rows if rows else None
 
 

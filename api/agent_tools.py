@@ -2004,6 +2004,10 @@ _THESES_DIR = _PROJECT_ROOT / "investment_theses"
 _MAX_THESIS_CONTENT_CHARS = 8_000
 
 
+def _thesis_gcs_key(ticker: str) -> str:
+    return f"live/theses/{ticker.strip().upper()}.md"
+
+
 def _find_thesis_file(ticker: str) -> Path | None:
     """Case-insensitive glob for a thesis markdown file."""
     ticker_upper = ticker.strip().upper()
@@ -2015,21 +2019,34 @@ def _find_thesis_file(ticker: str) -> Path | None:
     return None
 
 
+def _read_thesis_content_for_agent(ticker: str) -> tuple[str | None, str | None]:
+    """Read thesis content through the configured state-storage backend."""
+    ticker_upper = ticker.strip().upper()
+    if not ticker_upper:
+        return None, None
+    thesis_path = _find_thesis_file(ticker_upper) or (_THESES_DIR / f"{ticker_upper}.md")
+    thesis_key = _thesis_gcs_key(ticker_upper)
+    try:
+        from api.state_storage import exists_text, read_text
+
+        if not exists_text(thesis_path, thesis_key):
+            return None, str(thesis_path)
+        return read_text(thesis_path, thesis_key, encoding="utf-8").strip(), str(thesis_path)
+    except Exception:
+        logger.debug("Failed to read thesis content for %s", ticker_upper, exc_info=True)
+        return None, str(thesis_path)
+
+
 def _fetch_thesis(ticker: str) -> dict[str, Any]:
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
     meta = OntologyRuntimeReadService().thesis(ticker)
-    thesis_path = _find_thesis_file(ticker)
-    content: str | None = None
+    content, source_file = _read_thesis_content_for_agent(ticker)
     truncated = False
 
-    if thesis_path and thesis_path.is_file():
-        raw = thesis_path.read_text(encoding="utf-8").strip()
-        if len(raw) > _MAX_THESIS_CONTENT_CHARS:
-            content = raw[:_MAX_THESIS_CONTENT_CHARS]
-            truncated = True
-        else:
-            content = raw
+    if content and len(content) > _MAX_THESIS_CONTENT_CHARS:
+        content = content[:_MAX_THESIS_CONTENT_CHARS]
+        truncated = True
 
     if meta is None and content is None:
         return {"error": f"No thesis found for ticker '{ticker}'", "ticker": ticker}
@@ -2039,8 +2056,101 @@ def _fetch_thesis(ticker: str) -> dict[str, Any]:
         "meta": meta,
         "content": content,
         "content_truncated": truncated,
-        "source_file": str(thesis_path) if thesis_path else None,
+        "source_file": source_file,
+        "source_key": _thesis_gcs_key(ticker),
     }
+
+
+def _blank_markdown_item(text: str) -> bool:
+    normalized = re.sub(r"[*_`>\s-]+", " ", str(text or "").strip()).strip().lower()
+    return not normalized or normalized in {"tbd", "todo", "none", "n/a"}
+
+
+def _normalize_catalyst_match_text(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"<!--.*?-->", "", text)
+    text = text.replace("**", "").replace("__", "")
+    text = re.sub(r"[^a-z0-9]+", " ", text.lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _catalyst_match_keys(row: Mapping[str, Any]) -> set[str]:
+    values = {
+        row.get("description"),
+        row.get("name"),
+        row.get("label"),
+    }
+    description = str(row.get("description") or "")
+    if ": " in description:
+        label, rest = description.split(": ", 1)
+        values.update({label, rest})
+    return {key for key in (_normalize_catalyst_match_text(value) for value in values) if key}
+
+
+def _markdown_catalyst_candidates(ticker: str, content: str, source_file: str | None) -> list[dict[str, Any]]:
+    from portfolio.thesis_backfill import _categorize_catalyst, _extract_label_and_description, _parse_bullets
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, bullet in enumerate(_parse_bullets(content, "Key Catalysts"), start=1):
+        if _blank_markdown_item(bullet):
+            continue
+        label, desc = _extract_label_and_description(bullet)
+        description = f"{label}: {desc}" if desc != label else label
+        match_key = _normalize_catalyst_match_text(description)
+        if not match_key or match_key in seen:
+            continue
+        seen.add(match_key)
+        rows.append(
+            {
+                "id": f"thesis_markdown:{ticker}:catalyst:{index}",
+                "ticker": ticker,
+                "name": label,
+                "description": description,
+                "category": _categorize_catalyst(label, desc),
+                "status": "pending",
+                "target_date": None,
+                "evidence": None,
+                "source": "thesis_markdown",
+                "persisted": False,
+                "provenance": {
+                    "source": "thesis_markdown",
+                    "source_file": source_file,
+                    "source_key": _thesis_gcs_key(ticker),
+                    "section": "Key Catalysts",
+                    "bullet": bullet,
+                },
+            }
+        )
+    return rows
+
+
+def _with_catalyst_markdown_fallback(
+    ticker: str | None,
+    rows: list[dict[str, Any]],
+    *,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    normalized_ticker = str(ticker or "").strip().upper()
+    if not normalized_ticker:
+        return rows
+    content, source_file = _read_thesis_content_for_agent(normalized_ticker)
+    if not content:
+        return rows
+    existing_keys: set[str] = set()
+    for row in rows:
+        if isinstance(row, Mapping):
+            existing_keys.update(_catalyst_match_keys(row))
+    merged = list(rows)
+    for candidate in _markdown_catalyst_candidates(normalized_ticker, content, source_file):
+        if status and candidate.get("status") != status:
+            continue
+        candidate_keys = _catalyst_match_keys(candidate)
+        if existing_keys and candidate_keys & existing_keys:
+            continue
+        merged.append(candidate)
+        existing_keys.update(candidate_keys)
+    return merged
 
 
 def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
@@ -3116,13 +3226,7 @@ def _dispatch(
         ticker_raw = str(args.get("ticker") or "").strip().upper()
         if not ticker_raw:
             return {"error": "Missing required parameter: ticker"}, {"cache": "n/a"}
-        key = f"thesis:{ticker_raw}"
-
-        def _load():
-            return _fetch_thesis(ticker_raw)
-
-        data, meta = fetch(long_cache, key, _load)
-        return data, meta
+        return _fetch_thesis(ticker_raw), {"cache": "n/a"}
 
     if name == "get_thesis_evaluations":
         ticker_raw = str(args.get("ticker") or "").strip().upper()
@@ -3225,6 +3329,7 @@ def _dispatch(
 
         ticker = args.get("ticker", "").strip().upper()
         rows = OntologyRuntimeReadService().catalysts(ticker)
+        rows = _with_catalyst_markdown_fallback(ticker, rows)
         return _collection_payload("catalysts", rows, ticker=ticker), {"cache": "n/a"}
 
     if name == "get_kill_conditions":
@@ -3262,7 +3367,12 @@ def _dispatch(
         from api.routers.dossier import get_dossier as _get_dossier
 
         ticker = args.get("ticker", "").strip().upper()
-        return _get_dossier(ticker), {"cache": "n/a"}
+        dossier = _get_dossier(ticker)
+        if isinstance(dossier, dict):
+            catalysts = dossier.get("catalysts")
+            if isinstance(catalysts, list):
+                dossier = {**dossier, "catalysts": _with_catalyst_markdown_fallback(ticker, catalysts)}
+        return dossier, {"cache": "n/a"}
 
     if name == "get_workflow_history":
         from ontology.runtime_read_service import OntologyRuntimeReadService

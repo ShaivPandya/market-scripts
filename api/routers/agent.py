@@ -748,6 +748,13 @@ def _select_tool_names(user_text: str) -> list[str]:
         add("get_portfolio", "get_dossier", "search_knowledge_base")
     if re.search(r"\b(thesis|catalyst|kill condition|dossier|conviction)\b", text):
         add("get_portfolio", "get_dossier", "get_thesis", "get_thesis_evaluations")
+    if re.search(r"\bcatalysts?\b", text):
+        add("get_catalysts")
+    if re.search(r"\bcatalysts?\b", text) and re.search(
+        r"\b(create|add|stage|propose|generate|build|track|persist|save)\b",
+        text,
+    ):
+        add("propose_catalyst")
     if re.search(r"\b(action item|approval|trigger|workflow)\b", text):
         add("get_action_items", "get_pending_approvals", "get_watch_triggers", "get_workflow_history")
     if re.search(r"\b(search|news|latest|catalyst status|regulatory)\b", text):

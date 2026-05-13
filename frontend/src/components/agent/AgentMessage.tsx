@@ -27,8 +27,15 @@ const TOOL_LABELS: Record<string, string> = {
   query_ontology: "Ontology Query",
   search_web: "Web Search",
   search_knowledge_base: "Knowledge Base",
+  get_dossier: "Position Dossier",
+  get_catalysts: "Catalysts",
   propose_thesis_status_change: "Thesis Status Proposal",
   propose_action_item: "Action Item Proposal",
+  propose_catalyst: "Catalyst Proposal",
+  propose_catalyst_status_change: "Catalyst Status Proposal",
+  propose_kill_condition: "Kill Condition Proposal",
+  propose_kill_condition_status_change: "Kill Condition Status Proposal",
+  propose_watch_trigger: "Watch Trigger Proposal",
   propose_portfolio_positions_update: "Portfolio Update Proposal",
   propose_hedge_positions_update: "Hedge Update Proposal",
   propose_thesis_content_update: "Thesis Content Proposal",
@@ -174,14 +181,18 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
   }
 
   const displayContent = stripArtifactBlocks(message.content)
+  const messageScope = message.toolCalls?.some(tc => toolEffectScope(tc.name) === "internal_state")
+    ? "internal_state"
+    : "read_only"
+  const messageDecisionState = messageScope === "internal_state" ? "proposal" : "analysis"
 
   // Assistant message
   return (
     <div className="flex justify-start mb-3">
       <div className="max-w-[85%] rounded-2xl bg-card border border-app px-4 py-2.5 text-sm text-app leading-relaxed">
         <div className="mb-2 flex flex-wrap gap-2">
-          <DecisionStateBadge state="analysis" />
-          <EffectScopeBadge scope="read_only" />
+          <DecisionStateBadge state={messageDecisionState} />
+          <EffectScopeBadge scope={messageScope} />
         </div>
         {/* Tool call indicators */}
         {message.toolCalls && message.toolCalls.length > 0 && (

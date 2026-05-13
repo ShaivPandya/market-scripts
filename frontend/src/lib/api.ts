@@ -2079,12 +2079,15 @@ export interface PositionValuation {
 
 export interface PositionValueRangeScenario {
   multiple?: number | null
+  terminal_growth?: number | null
+  wacc?: number | null
   denominator?: number | null
   denominator_currency?: string | null
   denominator_converted?: number | null
   denominator_converted_currency?: string | null
   denominator_to_output_fx_rate?: number | null
   fx_rate_as_of?: string | null
+  enterprise_value?: number | null
   equity_value?: number | null
   expected_price?: number | null
   percent_change?: number | null
@@ -2096,7 +2099,8 @@ export interface PositionValueRangeScenario {
 export interface PositionValueRangeAssumption {
   denominator_currency?: string | null
   legacy_denominator_currency?: boolean
-  scenarios: Record<string, { multiple?: number | null; denominator?: number | null }>
+  wacc?: number | null
+  scenarios: Record<string, { multiple?: number | null; terminal_growth?: number | null; denominator?: number | null }>
   computed_scenarios?: Record<string, PositionValueRangeScenario>
 }
 
@@ -2111,6 +2115,7 @@ export interface PositionValueRange {
   denominator_currency?: string | null
   stored_denominator_currency?: string | null
   legacy_denominator_currency?: boolean
+  wacc?: number | null
   denominator_to_price_fx_rate?: number | null
   fx_rate_as_of?: string | null
   calculation_method: string
@@ -2125,7 +2130,8 @@ export interface PositionValueRange {
 export interface PositionValueRangeRequest {
   metric: string
   denominator_currency?: string | null
-  scenarios: Record<string, { multiple: number; denominator: number }>
+  wacc?: number | null
+  scenarios: Record<string, { multiple?: number; terminal_growth?: number; denominator: number }>
 }
 
 export const fetchPositionValuation = (ticker: string) =>

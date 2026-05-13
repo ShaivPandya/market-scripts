@@ -17,13 +17,15 @@ class ValuationProfileOverrideRequest(BaseModel):
 
 
 class ValuationValueRangeScenarioRequest(BaseModel):
-    multiple: float
+    multiple: float | None = None
+    terminal_growth: float | None = None
     denominator: float
 
 
 class ValuationValueRangeRequest(BaseModel):
     metric: str
     denominator_currency: str | None = None
+    wacc: float | None = None
     scenarios: dict[str, ValuationValueRangeScenarioRequest]
 
 

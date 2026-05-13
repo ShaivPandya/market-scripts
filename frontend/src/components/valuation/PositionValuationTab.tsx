@@ -26,6 +26,15 @@ const VALUATION_METRIC_ORDER = [
 ] as const
 type ValuationMetricKey = typeof VALUATION_METRIC_ORDER[number]
 
+const DCF_VALUE_RANGE_METHODS = [
+  "dcf_gordon_growth",
+  "dcf_ev_ebitda",
+  "dcf_ev_revenue",
+] as const
+
+const VALUE_RANGE_METHOD_ORDER = [...VALUATION_METRIC_ORDER, ...DCF_VALUE_RANGE_METHODS] as const
+type ValueRangeMetricKey = typeof VALUE_RANGE_METHOD_ORDER[number]
+
 const VALUE_RANGE_SCENARIOS = ["bear", "base", "bull"] as const
 type ValueRangeScenarioKey = typeof VALUE_RANGE_SCENARIOS[number]
 
@@ -37,22 +46,28 @@ const VALUE_RANGE_SCENARIO_LABELS: Record<ValueRangeScenarioKey, string> = {
 
 type ValuationTabView = "inputs" | "football_field"
 
-const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
+const ENTERPRISE_VALUE_RANGE_METHODS = new Set<ValueRangeMetricKey>([
   "price_sales",
   "price_ebitda",
   "price_operating_income",
   "price_fcf",
+  "dcf_ev_ebitda",
+  "dcf_ev_revenue",
+  "dcf_gordon_growth",
 ])
 const PER_SHARE_VALUE_RANGE_METRICS = new Set<ValuationMetricKey>(["price_earnings"])
+const DCF_GORDON_GROWTH_METHOD = "dcf_gordon_growth" as const
 
 interface ValueRangeDraft {
   scenarios: Record<ValueRangeScenarioKey, { multiple: string; denominator: string }>
 }
 
-type ValueRangeDraftMap = Partial<Record<ValuationMetricKey, ValueRangeDraft["scenarios"]>>
+type ValueRangeDraftMap = Partial<Record<ValueRangeMetricKey, ValueRangeDraft["scenarios"]>>
 
 interface ComputedValueRangeScenario {
   multiple: number | null
+  terminalGrowth: number | null
+  wacc: number | null
   denominator: number | null
   denominatorConverted: number | null
   expectedPrice: number | null
@@ -127,6 +142,34 @@ function isValuationMetricKey(value: unknown): value is ValuationMetricKey {
   return typeof value === "string" && (VALUATION_METRIC_ORDER as readonly string[]).includes(value)
 }
 
+function isValueRangeMetricKey(value: unknown): value is ValueRangeMetricKey {
+  return typeof value === "string" && (VALUE_RANGE_METHOD_ORDER as readonly string[]).includes(value)
+}
+
+function isDcfGordonGrowthMetric(metric: ValueRangeMetricKey): metric is typeof DCF_GORDON_GROWTH_METHOD {
+  return metric === DCF_GORDON_GROWTH_METHOD
+}
+
+function valueRangeMetricLabel(data: PositionValuation, metric: ValueRangeMetricKey): string {
+  if (isValuationMetricKey(metric)) return data.metrics[metric]?.label ?? metric
+  if (metric === "dcf_gordon_growth") return "DCF (Gordon Growth)"
+  if (metric === "dcf_ev_ebitda") return "DCF (EV/EBITDA)"
+  if (metric === "dcf_ev_revenue") return "DCF (EV/Revenue)"
+  return metric
+}
+
+function valueRangeDenominatorLabel(metric: ValueRangeMetricKey, currency: string | null): string {
+  const suffix = currency ? ` (${currency})` : ""
+  if (metric === "dcf_gordon_growth") return `Terminal UFCF${suffix}`
+  if (metric === "dcf_ev_ebitda") return `Terminal EBITDA${suffix}`
+  if (metric === "dcf_ev_revenue") return `Terminal Revenue${suffix}`
+  return currency ? `Denominator (${currency})` : "Denominator"
+}
+
+function valueRangeFirstInputLabel(metric: ValueRangeMetricKey): string {
+  return isDcfGordonGrowthMetric(metric) ? "Terminal Growth (%)" : "Multiple"
+}
+
 function finiteNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null
   return value
@@ -157,11 +200,31 @@ function formatMultipleInput(value: unknown): string {
   return trimNumberText(parsed.toFixed(2))
 }
 
+function formatPercentInput(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return ""
+  return trimNumberText((parsed * 100).toFixed(2))
+}
+
 function parseMultipleInput(value: string): number | null {
   const cleaned = value.trim().replace(/x$/i, "").replace(/,/g, "")
   if (!cleaned) return null
   const parsed = Number(cleaned)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function parseTerminalGrowthInput(value: string): number | null {
+  const cleaned = value.trim().replace(/%$/i, "").replace(/,/g, "")
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) && parsed > -100 ? parsed / 100 : null
+}
+
+function parseWaccInput(value: string): number | null {
+  const cleaned = value.trim().replace(/%$/i, "").replace(/,/g, "")
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed / 100 : null
 }
 
 function parseScaledNumberInput(value: string): number | null {
@@ -197,7 +260,7 @@ function scenarioChangeClass(value: unknown): string {
   return "text-subtle"
 }
 
-function valueRangeDefaultMetric(data: PositionValuation): ValuationMetricKey {
+function valueRangeDefaultMetric(data: PositionValuation): ValueRangeMetricKey {
   let selected: ValuationMetricKey | null = null
   let selectedWeight = 0
   for (const metric of VALUATION_METRIC_ORDER) {
@@ -227,25 +290,26 @@ function blankValueRangeScenarioDrafts(): ValueRangeDraft["scenarios"] {
   }
 }
 
-function valueRangeSelectedMetric(data: PositionValuation): ValuationMetricKey {
+function valueRangeSelectedMetric(data: PositionValuation): ValueRangeMetricKey {
   const selected = data.value_range?.selected_metric ?? data.value_range?.metric
-  return isValuationMetricKey(selected) ? selected : valueRangeDefaultMetric(data)
+  return isValueRangeMetricKey(selected) ? selected : valueRangeDefaultMetric(data)
 }
 
-function valueRangeAssumptions(data: PositionValuation): Partial<Record<ValuationMetricKey, PositionValueRangeAssumption>> {
+function valueRangeAssumptions(data: PositionValuation): Partial<Record<ValueRangeMetricKey, PositionValueRangeAssumption>> {
   const raw = data.value_range?.metric_assumptions
-  const assumptions: Partial<Record<ValuationMetricKey, PositionValueRangeAssumption>> = {}
+  const assumptions: Partial<Record<ValueRangeMetricKey, PositionValueRangeAssumption>> = {}
   if (raw && typeof raw === "object") {
     for (const [metric, value] of Object.entries(raw)) {
-      if (isValuationMetricKey(metric) && value && typeof value === "object") {
+      if (isValueRangeMetricKey(metric) && value && typeof value === "object") {
         assumptions[metric] = value
       }
     }
   }
-  if (Object.keys(assumptions).length === 0 && data.value_range?.saved && isValuationMetricKey(data.value_range.metric)) {
+  if (Object.keys(assumptions).length === 0 && data.value_range?.saved && isValueRangeMetricKey(data.value_range.metric)) {
     assumptions[data.value_range.metric] = {
       denominator_currency: data.value_range.stored_denominator_currency ?? data.value_range.denominator_currency ?? null,
       legacy_denominator_currency: Boolean(data.value_range.legacy_denominator_currency),
+      wacc: data.value_range.wacc ?? null,
       scenarios: data.value_range.scenarios ?? {},
     }
   }
@@ -289,6 +353,7 @@ function valueRangeDisplayContext(data: PositionValuation, assumption?: Position
 
 function valueRangeDraftFromAssumption(
   data: PositionValuation,
+  metric: ValueRangeMetricKey,
   assumption: PositionValueRangeAssumption,
 ): ValueRangeDraft["scenarios"] {
   const { displayRate } = valueRangeDisplayContext(data, assumption)
@@ -296,7 +361,7 @@ function valueRangeDraftFromAssumption(
     const row = assumption.scenarios?.[scenario]
     const denominator = positiveNumber(row?.denominator)
     acc[scenario] = {
-      multiple: formatMultipleInput(row?.multiple),
+      multiple: isDcfGordonGrowthMetric(metric) ? formatPercentInput(row?.terminal_growth) : formatMultipleInput(row?.multiple),
       denominator: formatInputNumber(denominator != null ? denominator * displayRate : null),
     }
     return acc
@@ -305,11 +370,20 @@ function valueRangeDraftFromAssumption(
 
 function valueRangeInitialDrafts(data: PositionValuation): ValueRangeDraftMap {
   const assumptions = valueRangeAssumptions(data)
-  const drafts = VALUATION_METRIC_ORDER.reduce((acc, metric) => {
-    acc[metric] = assumptions[metric] ? valueRangeDraftFromAssumption(data, assumptions[metric]) : blankValueRangeScenarioDrafts()
+  const drafts = VALUE_RANGE_METHOD_ORDER.reduce((acc, metric) => {
+    acc[metric] = assumptions[metric] ? valueRangeDraftFromAssumption(data, metric, assumptions[metric]) : blankValueRangeScenarioDrafts()
     return acc
   }, {} as ValueRangeDraftMap)
   return drafts
+}
+
+function valueRangeInitialWaccDrafts(data: PositionValuation): Partial<Record<ValueRangeMetricKey, string>> {
+  const assumptions = valueRangeAssumptions(data)
+  return VALUE_RANGE_METHOD_ORDER.reduce((acc, metric) => {
+    const wacc = assumptions[metric]?.wacc
+    acc[metric] = formatPercentInput(wacc ?? (isDcfGordonGrowthMetric(metric) ? 0.1 : null))
+    return acc
+  }, {} as Partial<Record<ValueRangeMetricKey, string>>)
 }
 
 function inferredShareCount(data: PositionValuation): number | null {
@@ -322,68 +396,103 @@ function inferredShareCount(data: PositionValuation): number | null {
 
 function computeDraftValueRangeScenario(
   data: PositionValuation,
-  metric: ValuationMetricKey,
+  metric: ValueRangeMetricKey,
   draft: ValueRangeDraft["scenarios"][ValueRangeScenarioKey],
   denominatorToPriceRate: number | null,
+  waccDraft: string,
 ): ComputedValueRangeScenario {
-  const multiple = parseMultipleInput(draft.multiple)
+  const terminalGrowth = isDcfGordonGrowthMetric(metric) ? parseTerminalGrowthInput(draft.multiple) : null
+  const multiple = isDcfGordonGrowthMetric(metric) ? null : parseMultipleInput(draft.multiple)
+  const wacc = isDcfGordonGrowthMetric(metric) ? parseWaccInput(waccDraft) : null
   const denominator = parseScaledNumberInput(draft.denominator)
   const denominatorConverted = denominator != null && denominatorToPriceRate != null ? denominator * denominatorToPriceRate : null
   const shares = inferredShareCount(data)
   const currentPrice = positiveNumber(data.market_data?.current_price)
   const netDebt = finiteNumber(data.value_range?.net_debt ?? data.market_data?.net_debt)
 
-  if (multiple == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
-  if (denominator == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
-  if (denominatorToPriceRate == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing fx rate" }
-  if (!PER_SHARE_VALUE_RANGE_METRICS.has(metric) && shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
-  if (ENTERPRISE_VALUE_METRICS.has(metric) && netDebt == null) {
-    return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
+  if (isDcfGordonGrowthMetric(metric)) {
+    if (terminalGrowth == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing terminal growth" }
+    if (wacc == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing WACC" }
+    if (denominator == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
+    if (denominatorToPriceRate == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing fx rate" }
+    if (shares == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+    if (netDebt == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
+    if (wacc <= terminalGrowth) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "WACC must exceed growth" }
+    const grossValue = (denominatorConverted ?? 0) * (1 + terminalGrowth) / (wacc - terminalGrowth)
+    const equityValue = grossValue - netDebt
+    if (!Number.isFinite(equityValue) || equityValue <= 0) {
+      return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
+    }
+    const expectedPrice = equityValue / shares
+    const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
+    return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
   }
 
-  if (PER_SHARE_VALUE_RANGE_METRICS.has(metric)) {
+  if (multiple == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
+  if (denominator == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
+  if (denominatorToPriceRate == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing fx rate" }
+  if (!PER_SHARE_VALUE_RANGE_METRICS.has(metric as ValuationMetricKey) && shares == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+  if (ENTERPRISE_VALUE_RANGE_METHODS.has(metric) && netDebt == null) {
+    return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
+  }
+
+  if (PER_SHARE_VALUE_RANGE_METRICS.has(metric as ValuationMetricKey)) {
     const expectedPrice = multiple * (denominatorConverted ?? 0)
     if (!Number.isFinite(expectedPrice) || expectedPrice <= 0) {
-      return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive expected price" }
+      return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive expected price" }
     }
     const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
-    return { multiple, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
+    return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
   }
-  if (shares == null) return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+  if (shares == null) return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
 
   const grossValue = multiple * (denominatorConverted ?? 0)
-  const equityValue = ENTERPRISE_VALUE_METRICS.has(metric) ? grossValue - (netDebt ?? 0) : grossValue
+  const equityValue = ENTERPRISE_VALUE_RANGE_METHODS.has(metric) ? grossValue - (netDebt ?? 0) : grossValue
   if (!Number.isFinite(equityValue) || equityValue <= 0) {
-    return { multiple, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
+    return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
   }
   const expectedPrice = equityValue / shares
   const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
-  return { multiple, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
+  return { multiple, terminalGrowth, wacc, denominator, denominatorConverted, expectedPrice, percentChange, status: "ok", reason: null }
 }
 
 function valueRangeRequestFromDraft(
-  metric: ValuationMetricKey,
+  metric: ValueRangeMetricKey,
   draft: ValueRangeDraft["scenarios"],
   denominatorCurrency: string | null,
+  waccDraft: string,
 ): PositionValueRangeRequest {
   const scenarios: PositionValueRangeRequest["scenarios"] = {}
+  const wacc = isDcfGordonGrowthMetric(metric) ? parseWaccInput(waccDraft) : null
+  if (isDcfGordonGrowthMetric(metric) && wacc == null) {
+    throw new Error("DCF (Gordon Growth) requires WACC greater than 0% and below 100%.")
+  }
   for (const scenario of VALUE_RANGE_SCENARIOS) {
     const row = draft[scenario]
-    const multiple = parseMultipleInput(row.multiple)
     const denominator = parseScaledNumberInput(row.denominator)
-    if (multiple == null || denominator == null) {
-      throw new Error(`${VALUE_RANGE_SCENARIO_LABELS[scenario]} requires a positive multiple and denominator.`)
+    if (isDcfGordonGrowthMetric(metric)) {
+      const terminalGrowth = parseTerminalGrowthInput(row.multiple)
+      if (terminalGrowth == null || denominator == null) {
+        throw new Error(`${VALUE_RANGE_SCENARIO_LABELS[scenario]} requires terminal growth above -100% and a positive denominator.`)
+      }
+      scenarios[scenario] = { terminal_growth: terminalGrowth, denominator }
+    } else {
+      const multiple = parseMultipleInput(row.multiple)
+      if (multiple == null || denominator == null) {
+        throw new Error(`${VALUE_RANGE_SCENARIO_LABELS[scenario]} requires a positive multiple and denominator.`)
+      }
+      scenarios[scenario] = { multiple, denominator }
     }
-    scenarios[scenario] = { multiple, denominator }
   }
-  return { metric, denominator_currency: denominatorCurrency, scenarios }
+  return { metric, denominator_currency: denominatorCurrency, ...(wacc != null ? { wacc } : {}), scenarios }
 }
 
 function valueRangeDraftFromRequest(payload: PositionValueRangeRequest): ValueRangeDraft["scenarios"] {
+  const metric = isValueRangeMetricKey(payload.metric) ? payload.metric : "price_sales"
   return VALUE_RANGE_SCENARIOS.reduce((acc, scenario) => {
     const row = payload.scenarios[scenario]
     acc[scenario] = {
-      multiple: formatMultipleInput(row?.multiple),
+      multiple: isDcfGordonGrowthMetric(metric) ? formatPercentInput(row?.terminal_growth) : formatMultipleInput(row?.multiple),
       denominator: formatInputNumber(row?.denominator),
     }
     return acc
@@ -400,6 +509,10 @@ function valueRangeDraftsMatch(a: ValueRangeDraft["scenarios"], b: ValueRangeDra
 
 function valueRangeDraftHasAnyValue(draft: ValueRangeDraft["scenarios"]): boolean {
   return VALUE_RANGE_SCENARIOS.some(scenario => draft[scenario].multiple.trim() || draft[scenario].denominator.trim())
+}
+
+function savedWaccDraft(assumption: PositionValueRangeAssumption | null): string {
+  return formatPercentInput(assumption?.wacc)
 }
 
 function valuationStatusClass(status?: string | null): string {
@@ -423,10 +536,11 @@ function ValueRangePanel({
   saveError: unknown
   clearError: unknown
   onSave: (payload: PositionValueRangeRequest) => void
-  onClear: (metric: ValuationMetricKey) => void
+  onClear: (metric: ValueRangeMetricKey) => void
 }) {
-  const [activeMetric, setActiveMetric] = useState<ValuationMetricKey>(() => valueRangeSelectedMetric(valuation))
+  const [activeMetric, setActiveMetric] = useState<ValueRangeMetricKey>(() => valueRangeSelectedMetric(valuation))
   const [drafts, setDrafts] = useState<ValueRangeDraftMap>(() => valueRangeInitialDrafts(valuation))
+  const [waccDrafts, setWaccDrafts] = useState<Partial<Record<ValueRangeMetricKey, string>>>(() => valueRangeInitialWaccDrafts(valuation))
   const [validationError, setValidationError] = useState<string | null>(null)
 
   function updateScenario(scenario: ValueRangeScenarioKey, patch: Partial<ValueRangeDraft["scenarios"][ValueRangeScenarioKey]>) {
@@ -444,17 +558,24 @@ function ValueRangePanel({
   }
 
   function handleMetricChange(value: string) {
-    if (!isValuationMetricKey(value)) return
+    if (!isValueRangeMetricKey(value)) return
     setValidationError(null)
     setDrafts(prev => (prev[value] ? prev : { ...prev, [value]: blankValueRangeScenarioDrafts() }))
+    setWaccDrafts(prev => (prev[value] != null ? prev : { ...prev, [value]: isDcfGordonGrowthMetric(value) ? "10" : "" }))
     setActiveMetric(value)
+  }
+
+  function handleWaccChange(value: string) {
+    setValidationError(null)
+    setWaccDrafts(prev => ({ ...prev, [activeMetric]: value }))
   }
 
   function handleSave() {
     try {
       setValidationError(null)
-      const payload = valueRangeRequestFromDraft(activeMetric, activeDraft, activeContext.denominatorCurrency)
+      const payload = valueRangeRequestFromDraft(activeMetric, activeDraft, activeContext.denominatorCurrency, activeWaccDraft)
       setDrafts(prev => ({ ...prev, [activeMetric]: valueRangeDraftFromRequest(payload) }))
+      setWaccDrafts(prev => ({ ...prev, [activeMetric]: formatPercentInput(payload.wacc) }))
       onSave(payload)
     } catch (err) {
       setValidationError(err instanceof Error ? err.message : "Invalid value range.")
@@ -462,9 +583,10 @@ function ValueRangePanel({
   }
 
   function handleClear() {
-    const fallbackMetric = VALUATION_METRIC_ORDER.find(metric => metric !== activeMetric && savedAssumptions[metric]) ?? valueRangeDefaultMetric(valuation)
+    const fallbackMetric = VALUE_RANGE_METHOD_ORDER.find(metric => metric !== activeMetric && savedAssumptions[metric]) ?? valueRangeDefaultMetric(valuation)
     setValidationError(null)
     setDrafts(prev => ({ ...prev, [activeMetric]: blankValueRangeScenarioDrafts() }))
+    setWaccDrafts(prev => ({ ...prev, [activeMetric]: isDcfGordonGrowthMetric(activeMetric) ? "10" : "" }))
     setActiveMetric(fallbackMetric)
     onClear(activeMetric)
   }
@@ -472,17 +594,18 @@ function ValueRangePanel({
   const savedAssumptions = valueRangeAssumptions(valuation)
   const activeAssumption = savedAssumptions[activeMetric] ?? null
   const activeDraft = drafts[activeMetric] ?? blankValueRangeScenarioDrafts()
-  const activeSavedDraft = activeAssumption ? valueRangeDraftFromAssumption(valuation, activeAssumption) : null
+  const activeSavedDraft = activeAssumption ? valueRangeDraftFromAssumption(valuation, activeMetric, activeAssumption) : null
+  const activeWaccDraft = waccDrafts[activeMetric] ?? (isDcfGordonGrowthMetric(activeMetric) ? "10" : "")
   const activeContext = valueRangeDisplayContext(valuation, activeAssumption)
   const hasSavedMetric = Boolean(activeAssumption)
-  const metricLabel = valuation.metrics[activeMetric]?.label ?? activeMetric
+  const metricLabel = valueRangeMetricLabel(valuation, activeMetric)
   const outputCurrency = valueRangeOutputCurrency(valuation)
   const denominatorCurrency = activeContext.denominatorCurrency
   const currentPrice = formatSharePrice(valuation.market_data?.current_price, outputCurrency)
   const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
   const clearErrorText = clearError instanceof Error ? clearError.message : clearError ? String(clearError) : null
   const hasUnsavedChanges = activeSavedDraft
-    ? !valueRangeDraftsMatch(activeDraft, activeSavedDraft)
+    ? !valueRangeDraftsMatch(activeDraft, activeSavedDraft) || (isDcfGordonGrowthMetric(activeMetric) && activeWaccDraft !== savedWaccDraft(activeAssumption))
     : valueRangeDraftHasAnyValue(activeDraft)
 
   return (
@@ -504,9 +627,9 @@ function ValueRangePanel({
             label="Metric"
             value={activeMetric}
             onChange={handleMetricChange}
-            options={VALUATION_METRIC_ORDER.map(metric => ({
+            options={VALUE_RANGE_METHOD_ORDER.map(metric => ({
               value: metric,
-              label: `${savedAssumptions[metric] ? "• " : ""}${valuation.metrics[metric]?.label ?? metric}`,
+              label: `${savedAssumptions[metric] ? "• " : ""}${valueRangeMetricLabel(valuation, metric)}`,
             }))}
           />
           <button
@@ -529,9 +652,20 @@ function ValueRangePanel({
         </div>
       </div>
 
+      {isDcfGordonGrowthMetric(activeMetric) && (
+        <div className="max-w-xs">
+          <TextInput
+            label="WACC (%)"
+            value={activeWaccDraft}
+            onChange={handleWaccChange}
+            placeholder="10"
+          />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {VALUE_RANGE_SCENARIOS.map(scenario => {
-          const computed = computeDraftValueRangeScenario(valuation, activeMetric, activeDraft[scenario], activeContext.denominatorToPriceRate)
+          const computed = computeDraftValueRangeScenario(valuation, activeMetric, activeDraft[scenario], activeContext.denominatorToPriceRate, activeWaccDraft)
           return (
             <article key={scenario} className="rounded-lg border border-app bg-card px-3 py-3">
               <div className="flex items-start justify-between gap-3">
@@ -549,16 +683,16 @@ function ValueRangePanel({
               </p>
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <TextInput
-                  label="Multiple"
+                  label={valueRangeFirstInputLabel(activeMetric)}
                   value={activeDraft[scenario].multiple}
                   onChange={value => updateScenario(scenario, { multiple: value })}
-                  placeholder="10x"
+                  placeholder={isDcfGordonGrowthMetric(activeMetric) ? "3" : "10x"}
                 />
                 <TextInput
-                  label={denominatorCurrency ? `Denominator (${denominatorCurrency})` : "Denominator"}
+                  label={valueRangeDenominatorLabel(activeMetric, denominatorCurrency)}
                   value={activeDraft[scenario].denominator}
                   onChange={value => updateScenario(scenario, { denominator: value })}
-                  placeholder={PER_SHARE_VALUE_RANGE_METRICS.has(activeMetric) ? "5.25" : "1.5B"}
+                  placeholder={isValuationMetricKey(activeMetric) && PER_SHARE_VALUE_RANGE_METRICS.has(activeMetric) ? "5.25" : "1.5B"}
                 />
               </div>
               {computed.reason && <p className="mt-2 text-xs text-subtle">{computed.reason}</p>}
@@ -603,7 +737,7 @@ function valuationFootballFieldRows(data: PositionValuation): {
   let savedMetricCount = 0
   let skippedMetricCount = 0
 
-  for (const metric of VALUATION_METRIC_ORDER) {
+  for (const metric of VALUE_RANGE_METHOD_ORDER) {
     const assumption = assumptions[metric]
     if (!assumption) continue
     savedMetricCount += 1
@@ -617,8 +751,8 @@ function valuationFootballFieldRows(data: PositionValuation): {
     }
     rows.push({
       id: metric,
-      label: data.metrics[metric]?.label ?? metric,
-      subtitle: data.metrics[metric]?.denominator_label ?? data.value_range?.denominator_label ?? "Saved range",
+      label: valueRangeMetricLabel(data, metric),
+      subtitle: isValuationMetricKey(metric) ? data.metrics[metric]?.denominator_label ?? data.value_range?.denominator_label ?? "Saved range" : valueRangeDenominatorLabel(metric, null),
       low: Math.min(bear, base, bull),
       high: Math.max(bear, base, bull),
       base,
@@ -796,7 +930,7 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
   })
 
   const clearValueRangeMutation = useMutation({
-    mutationFn: (metric: ValuationMetricKey) => deletePositionValueRange(ticker, metric),
+    mutationFn: (metric: ValueRangeMetricKey) => deletePositionValueRange(ticker, metric),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["valuation", ticker] })
     },
