@@ -49,7 +49,6 @@ import json
 import logging
 import math
 import os
-import pickle
 import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -94,7 +93,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SP500_CACHE_DIR = _REPO_ROOT / "data_cache" / "signal_aggregator"
-_SP500_CACHE_DATA = _SP500_CACHE_DIR / "sp500_prices.pkl"
+_SP500_CACHE_DATA = _SP500_CACHE_DIR / "sp500_prices.parquet"
 _SP500_CACHE_META = _SP500_CACHE_DIR / "sp500_prices_meta.json"
 _SP500_CACHE_TTL_SECONDS = 24 * 60 * 60
 _CLOSE_PROBE_TICKER = "SPY"
@@ -108,8 +107,9 @@ def _load_sp500_cache() -> tuple[pd.DataFrame | None, dict[str, Any] | None]:
         meta = json.loads(_SP500_CACHE_META.read_text(encoding="utf-8"))
         if not isinstance(meta, dict) or not isinstance(meta.get("fetched_at"), str):
             return None, None
-        with open(_SP500_CACHE_DATA, "rb") as f:
-            df = pickle.load(f)  # noqa: S301
+        # Security: Use Parquet instead of Pickle to avoid arbitrary code execution risks (RCE)
+        # on deserialization of the shared price cache.
+        df = pd.read_parquet(_SP500_CACHE_DATA)
         if not isinstance(df, pd.DataFrame) or df.empty:
             return None, None
         return df, meta
@@ -123,8 +123,7 @@ def _save_sp500_cache(df: pd.DataFrame, as_of_date: str | None) -> None:
         _SP500_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_data = _SP500_CACHE_DATA.with_suffix(".tmp")
         tmp_meta = _SP500_CACHE_META.with_suffix(".tmp")
-        with open(tmp_data, "wb") as f:
-            pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)
+        df.to_parquet(tmp_data)
         meta = {
             "fetched_at": datetime.now().isoformat(),
             "as_of_date": as_of_date,
