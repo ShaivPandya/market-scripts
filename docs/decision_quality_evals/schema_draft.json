@@ -130,6 +130,8 @@
         "price_action_read",
         "actionability",
         "recommended_action",
+        "expression",
+        "conviction",
         "confidence",
         "confidence_reason",
         "sizing_context",
@@ -283,7 +285,7 @@
           "properties": {
             "status": {
               "type": "string",
-              "enum": ["actionable", "watch", "research", "do_nothing"]
+              "enum": ["actionable", "missing_inputs", "blocked_by_policy", "watch_only", "do_nothing"]
             },
             "reason": {
               "type": "string"
@@ -302,14 +304,66 @@
             "buy",
             "add",
             "short",
+            "sell",
             "trim",
             "reduce",
             "exit",
             "hedge",
+            "rebalance",
+            "hold",
             "watch",
             "research",
+            "avoid",
             "do_nothing"
           ]
+        },
+        "expression": {
+          "type": "object",
+          "required": ["primary", "instrument_type", "directness", "alternatives", "follow_on"],
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "string"
+            },
+            "instrument_type": {
+              "type": "string"
+            },
+            "directness": {
+              "type": "string",
+              "enum": ["direct", "proxy", "mixed", "not_applicable"]
+            },
+            "alternatives": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "follow_on": {
+              "type": "string"
+            }
+          }
+        },
+        "conviction": {
+          "type": "object",
+          "required": ["level", "max_level", "raw_target_weight", "upgrade_condition"],
+          "additionalProperties": false,
+          "properties": {
+            "level": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 5
+            },
+            "max_level": {
+              "type": "integer",
+              "const": 5
+            },
+            "raw_target_weight": {
+              "type": ["number", "null"]
+            },
+            "upgrade_condition": {
+              "type": "string"
+            }
+          }
         },
         "confidence": {
           "type": ["number", "null"],
@@ -325,7 +379,8 @@
             "starting_size",
             "add_conditions",
             "liquidity_constraints",
-            "portfolio_constraints"
+            "portfolio_constraints",
+            "sizing_delta"
           ],
           "additionalProperties": false,
           "properties": {
@@ -340,6 +395,39 @@
             },
             "portfolio_constraints": {
               "type": "string"
+            },
+            "sizing_delta": {
+              "type": "object",
+              "required": ["direction", "amount", "unit", "basis", "condition"],
+              "additionalProperties": false,
+              "properties": {
+                "direction": {
+                  "type": "string",
+                  "enum": ["increase", "decrease", "hold", "exit", "not_applicable"]
+                },
+                "amount": {
+                  "type": ["number", "null"]
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "portfolio_weight",
+                    "bps",
+                    "shares",
+                    "contracts",
+                    "notional",
+                    "fraction_of_position",
+                    "not_applicable"
+                  ]
+                },
+                "basis": {
+                  "type": "string",
+                  "enum": ["target_weight", "current_position", "risk_budget", "gross_exposure", "not_applicable"]
+                },
+                "condition": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

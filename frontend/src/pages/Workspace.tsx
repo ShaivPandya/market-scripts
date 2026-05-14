@@ -153,7 +153,7 @@ const URGENCY_COLORS: Record<string, string> = {
   low: "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
 }
 
-const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exit", "rebalance", "hedge"])
+const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "add", "short", "sell", "trim", "reduce", "exit", "hedge", "rebalance"])
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
 const WORKSPACE_APPROVAL_LIMIT = 50
 type ApprovalDialogAction = "approve" | "reject" | "restage"

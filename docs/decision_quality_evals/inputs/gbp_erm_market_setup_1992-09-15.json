@@ -1,0 +1,41 @@
+{
+  "instrument": "GBP/DEM",
+  "as_of_date": "1992-09-15",
+  "trade_direction": "short_GBP_long_DEM",
+  "market_structure": {
+    "regime": "European Exchange Rate Mechanism fixed-band currency regime",
+    "constraint": "GBP had to remain inside its permitted ERM band versus the Deutsche mark.",
+    "asymmetry": "If the peg held, adverse movement was limited by the band; if the peg broke, sterling could devalue materially."
+  },
+  "macro_setup": {
+    "uk_conditions": [
+      "UK economy was in recession.",
+      "UK housing and mortgage channel was highly sensitive to short rates because mortgages were generally floating rate.",
+      "Raising rates to defend sterling would quickly hit household cash flow and consumption."
+    ],
+    "germany_conditions": [
+      "German reunification created inflation pressure.",
+      "Bundesbank priority was monetary stability and anti-inflation credibility.",
+      "Bundesbank had limited willingness to cut rates to protect weaker ERM currencies."
+    ],
+    "political_constraint": "UK authorities faced a choice between defending the ERM peg with recessionary rate hikes or allowing sterling to devalue."
+  },
+  "trigger": {
+    "event": "Bundesbank President Helmut Schlesinger comments suggested broader currency realignment after lira adjustment.",
+    "date": "1992-09-15",
+    "interpretation": "The Bundesbank was not willing to underwrite sterling at any price, making UK devaluation much more likely."
+  },
+  "risk_reward": {
+    "downside_if_wrong": "Limited by the ERM band and ability to exit a liquid currency position; source case frames near-term loss as small relative to fund capital.",
+    "upside_if_right": "Large devaluation gain if sterling exited or was forced out of the ERM.",
+    "probability_view": "High probability over a short horizon once Schlesinger comments clarified German incentives."
+  },
+  "liquidity_and_capacity": {
+    "boe_reserves_constraint": "The Bank of England and other central banks were the main remaining buyers; finite reserves constrained how much sterling could be bought to defend the peg.",
+    "position_scale_note": "Source case discusses Druckenmiller moving from a large existing short toward a much larger, highly concentrated position after the trigger."
+  },
+  "trade_after_trade": {
+    "primary_follow_on": "Buy UK equities and government gilts after ERM exit because the UK would be free to cut rates. UK equities could also benefit from lower rates and weaker currency."
+  },
+  "human_notes": ""
+}

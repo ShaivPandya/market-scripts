@@ -1,0 +1,19 @@
+{
+  "as_of_date": "1992-09-15",
+  "decision_context": "Press existing short GBP/long DEM position after trigger",
+  "human_initiation_rationale": "Short GBP because the ERM peg created a bounded-loss, large-upside trade: the UK economy and floating-rate mortgage channel made rate hikes unsustainable, Germany would not cut enough to protect sterling, and Schlesinger's comments showed the Bundesbank was prepared to tolerate devaluation.",
+  "selected_inputs": [
+    "UK recession and housing/mortgage sensitivity",
+    "German reunification inflation and Bundesbank anti-inflation mandate",
+    "ERM band asymmetry",
+    "Finite Bank of England reserves",
+    "Schlesinger comments as trigger",
+    "Trade-after-the-trade: buy UK equities and gilts after sterling devaluation"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Schlesinger comments signaling broader ERM realignment risk.",
+    "expected_date": "1992-09-15",
+    "why_it_mattered": "The comments clarified that Germany would not subordinate monetary stability to defending weak ERM currencies, making a sterling break much more likely."
+  },
+  "human_notes": "User specifically requested the historical Soros/Druckenmiller Bank of England trade and noted that the trade after the trade was buying UK equities and gilts."
+}

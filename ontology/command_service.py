@@ -49,7 +49,17 @@ from ontology.schemas.identity import (
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
 logger = logging.getLogger(__name__)
-ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+ACTIONABLE_ACTIONS = {
+    "buy",
+    "add",
+    "short",
+    "sell",
+    "trim",
+    "reduce",
+    "exit",
+    "hedge",
+    "rebalance",
+}
 FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
 RESEARCH_ACTION_IDS = {
     "change_thesis_status",
@@ -1413,6 +1423,8 @@ class OntologyCommandService:
                     "horizon": record.get("horizon"),
                     "rationale_summary": record.get("rationale") or record.get("rationale_summary"),
                     "source_quality": record.get("critical_data_quality") or record.get("source_quality"),
+                    "decision_quality": record.get("decision_quality"),
+                    "decision_quality_gate": record.get("decision_quality_gate"),
                     "payload": record,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },

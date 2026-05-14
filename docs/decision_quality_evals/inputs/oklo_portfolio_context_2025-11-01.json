@@ -6,7 +6,12 @@
   "existing_position_before_initiation": false,
   "portfolio_role": "Single-name short",
   "intended_role_notes": "New short position initiated from the OKLO short thesis and early price deterioration.",
-  "target_size": null,
+  "conviction_at_initiation": 3,
+  "raw_target_weight_at_initiation": -0.06,
+  "post_confirmation_conviction": 5,
+  "post_confirmation_raw_target_weight": -0.1,
+  "conviction_mapping_source": "portfolio/portfolio_optimizer/portfolio_sizer.py maps short raw target weight as SHORT_MIN * conviction / 5, with SHORT_MIN = -0.10.",
+  "target_size": "-6% raw target weight at conviction 3; -10% raw target weight if confirmed at conviction 5.",
   "initial_size": null,
   "current_nuclear_exposure": null,
   "current_ai_infrastructure_exposure": null,
@@ -14,6 +19,5 @@
   "borrow_notes": "",
   "liquidity_notes": "",
   "risk_budget_notes": "",
-  "human_notes": "User stated this was a new short position as of the thesis initiation date."
+  "human_notes": "User stated this was a new short position as of the thesis initiation date, conviction 3 at initiation, and conviction 5 if confirmed."
 }
-

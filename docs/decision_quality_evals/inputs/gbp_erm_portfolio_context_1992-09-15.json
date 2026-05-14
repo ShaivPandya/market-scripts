@@ -1,0 +1,12 @@
+{
+  "as_of_date": "1992-09-15",
+  "position_status": "existing_position_to_press",
+  "position_direction": "short_GBP_long_DEM",
+  "portfolio_role": "Concentrated macro/FX policy-break trade",
+  "conviction_at_trigger": 5,
+  "sizing_context": "Historical case: Druckenmiller had built a large short GBP position before the trigger; after Schlesinger's comments, Soros pushed for an aggressive increase rather than gradual scaling.",
+  "sizing_principle": "Special-situation macro sizing: when downside is bounded by the peg/band and the trigger makes devaluation highly likely, sizing can be much larger than ordinary position sizing, subject to liquidity and reserve-capacity constraints.",
+  "risk_capacity_notes": "The source case frames the maximum adverse movement as limited by the ERM band and the fund's year-to-date profits; this is not a generic rule for normal FX trades.",
+  "human_notes": "This eval is historical and should teach recognition of rare asymmetric policy-break trades, not routine leverage."
+}
+

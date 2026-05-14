@@ -1,6 +1,6 @@
 {
   "id": "oklo_pre_revenue_smr_short_2025",
-  "status": "draft",
+  "status": "review",
   "decision_type": "new_idea",
   "as_of_date": "2025-11-01",
   "user_question": "Using the OKLO short thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
@@ -22,7 +22,7 @@
     {
       "type": "portfolio_context",
       "path": "docs/decision_quality_evals/inputs/oklo_portfolio_context_2025-11-01.json",
-      "sha256": "02a526ac0ca1dcf6847769874421e54173df7bf4a57e123b1427ded62adcbb34",
+      "sha256": "1d906ef6f12f445a3408ea15180554ad7b80aab22eecd682623f1ee30e685377",
       "description": "Portfolio context: OKLO was a new short position as of thesis initiation.",
       "required": true
     },
@@ -38,7 +38,8 @@
     "This draft case uses the OKLO source-document summary, human-provided price action, portfolio context, and initiation notes.",
     "The short thesis was initiated on 2025-11-01. Because that date was a Saturday, price action uses the most recent market close, 2025-10-31.",
     "Context says OKLO was a new short initiated because of the thesis and because the stock had started to decline from its all-time high.",
-    "No exact initial size, borrow availability/cost, short interest, option skew, or full portfolio exposure input has been selected yet."
+    "Portfolio conviction input says OKLO would have been conviction 3 at initiation, implying -6% raw target weight under portfolio_sizer.py; confirmation would raise conviction to 5, implying -10% raw target weight.",
+    "No exact executed initial size, borrow availability/cost, short interest, option skew, or full portfolio exposure input has been selected yet."
   ],
   "gold_output": {
     "simple_thesis": "Short OKLO because the stock priced in an AI/nuclear SMR dream despite no revenue, no reactor license, no binding power contracts, no secured HALEU supply, and early signs that the market was starting to reject the story.",
@@ -130,7 +131,7 @@
       "status": "actionable",
       "reason": "The setup had a clear short thesis, extreme valuation, concrete commercial/regulatory gaps, and initial price confirmation from a large drawdown and relative underperformance.",
       "missing_inputs": [
-        "Exact initial size",
+        "Exact executed initial size",
         "Borrow availability and borrow cost",
         "Short interest and squeeze risk",
         "Average daily volume/liquidity constraint",
@@ -138,13 +139,33 @@
       ]
     },
     "recommended_action": "short",
+    "expression": {
+      "primary": "Short OKLO common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Press only after further price confirmation and no offsetting commercial/regulatory progress."
+    },
+    "conviction": {
+      "level": 3,
+      "max_level": 5,
+      "raw_target_weight": -0.06,
+      "upgrade_condition": "Short confirmation raises conviction to 5, which maps to a -10% raw target weight."
+    },
     "confidence": 0.69,
     "confidence_reason": "Moderately high because thesis quality and first price confirmation aligned; capped because the stock remained above major moving averages after a huge 12-month advance and because borrow/squeeze/liquidity inputs are missing.",
     "sizing_context": {
-      "starting_size": "Start smaller than an equivalent long because this is a new single-name short in a high-volatility, high-narrative stock.",
-      "add_conditions": "Add only if price continues to make lower highs/lower lows, underperformance persists, and no binding commercial/regulatory milestone undermines the thesis.",
+      "starting_size": "Conviction 3 at initiation maps to a -6% raw target weight under portfolio_sizer.py.",
+      "add_conditions": "If the short confirms, raise to conviction 5, which maps to a -10% raw target weight, subject to borrow, liquidity, and squeeze constraints.",
       "liquidity_constraints": "No ADV, borrow, or exit-cost input selected; do not infer maximum short size from this case.",
-      "portfolio_constraints": "No full portfolio exposure input selected; final size should account for existing high-beta AI, speculative growth, nuclear/energy, and short-book exposures."
+      "portfolio_constraints": "No full portfolio exposure input selected; final size should account for existing high-beta AI, speculative growth, nuclear/energy, and short-book exposures.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": -0.06,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initial conviction 3 short; press toward -10% only after price confirmation and borrow/liquidity review."
+      }
     },
     "trade_after_trade": {
       "if_right": "If the stock continues to decline and the company fails to produce binding commercial/regulatory progress, press only after confirming borrow/liquidity and price trend continuation.",
@@ -166,5 +187,5 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Second draft case. Review the gold output before moving this to approved."
+  "human_notes": "Review case. Gold output reflects an actionable short at conviction 3, rising to conviction 5 if confirmed."
 }

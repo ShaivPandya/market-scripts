@@ -1,0 +1,206 @@
+{
+  "id": "nvda_ai_platform_long_2026",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2026-04-10",
+  "user_question": "Using the NVDA thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "thesis",
+      "path": "investment_theses/NVDA.md",
+      "sha256": "2ceb18039f9537b8ff55d7d6953392c01f062fbe7c3321388096f949525a9d52",
+      "description": "NVDA AI accelerator platform thesis with catalysts and risk factors.",
+      "required": true
+    },
+    {
+      "type": "overview",
+      "path": "investment_overviews/NVDA.md",
+      "sha256": "a70e878467e97b8437dd8bead9f7d80722f84b97575f8445493ffb80ca92d4f5",
+      "description": "NVDA business, financial, industry, supply, demand, and sensitivity overview.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/nvda_price_action_2026-04-10.json",
+      "sha256": "f81e4e389a0f7a18dbbf5a2e26194b41998dc59b610fdac2701be21610ac8596",
+      "description": "Historical NVDA price-action snapshot through the 2026-04-10 close: close, moving averages, ROC, S&P 500 relative outperformance, and $198 bear-case validation level.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/nvda_portfolio_context_2026-04-10.json",
+      "sha256": "73ca702e25ac07742db0825177bf1aff9c8691e6894defde639701b992923332",
+      "description": "Portfolio context: NVDA was a new long position at conviction 4.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/nvda_initiation_notes_2026-04-10.json",
+      "sha256": "12d051a50f47a6ff63b06441b3324210e3b22c703548801d5658f98809f2a45f",
+      "description": "Initiation rationale: thesis plus technical confirmation and further investigation, with earnings and $198 price validation still pending.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The thesis was initiated on 2026-04-10 as a new long position.",
+    "User-provided context says conviction was 4 at initiation, implying 16% raw target weight under portfolio_sizer.py.",
+    "The setup had 2 of 3 confirmations: technical confirmation and further-investigation confirmation; a close above $198 and strong May 20, 2026 earnings were validation items.",
+    "No exact executed initial size, full portfolio exposure, or liquidity input has been selected yet."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy NVDA because it is the dominant full-stack AI accelerator platform, with hyperscaler capex, Blackwell/Rubin visibility, CUDA/software lock-in, and supply commitments supporting earnings power that the market may still underprice.",
+    "opportunity_type": "quality_compounder",
+    "embedded_macro_exposure": "Long AI infrastructure capex, hyperscaler data-center spend, semiconductor supply-chain execution, large-cap growth, and continued demand for accelerated computing.",
+    "mispricing": {
+      "consensus_view": "The market recognizes NVDA as the AI leader but worries that valuation, customer concentration, export controls, and future AI capex digestion limit forward upside.",
+      "variant_view": "NVDA's full-stack platform, backlog visibility, generation-over-generation cost-per-result advantage, and hyperscaler capex commitments make the earnings runway more durable than a normal semiconductor cycle.",
+      "pricing_evidence": "The thesis cites $215.9B FY26 revenue, $102.7B operating cash flow, a $4.58T market cap, 75.0% Q4 FY26 gross margins, and catalysts including Vera Rubin, May 20 earnings, hyperscaler capex, and Blackwell/Rubin backlog.",
+      "why_consensus_is_wrong": "Consensus may over-anchor on the size of the market cap and underweight how much demand visibility, software lock-in, supply pre-emption, and inference throughput improvements extend the runway."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Technical confirmation at initiation, further research confirmation, and the May 20, 2026 earnings catalyst.",
+      "expected_timeframe": "Initiation on 2026-04-10 with earnings validation on 2026-05-20.",
+      "why_now": "The position was initiated after NVDA closed above all selected moving averages with positive 1m/3m/12m ROC and S&P 500 relative outperformance, while further investigation supported the thesis and earnings were approaching.",
+      "source_evidence": [
+        "investment_theses/NVDA.md: platform dominance, hyperscaler capex, Vera Rubin, May 20 earnings, backlog, and risk factors",
+        "investment_overviews/NVDA.md: financials, supply outlook, demand outlook, and sensitivity analysis",
+        "docs/decision_quality_evals/inputs/nvda_price_action_2026-04-10.json: close above all selected moving averages with positive 1m/3m/12m ROC and S&P 500 relative outperformance",
+        "docs/decision_quality_evals/inputs/nvda_initiation_notes_2026-04-10.json: setup had 2 of 3 confirmations"
+      ]
+    },
+    "invalidation": {
+      "observable": "NVDA fails the remaining price or earnings validation, or core AI demand/margin assumptions deteriorate.",
+      "metric_or_event": "Close above $198 bear-case validation level, May 20, 2026 earnings/guidance, hyperscaler capex commentary, gross margin trajectory, export-control impact, and post-earnings price response.",
+      "threshold": "Force review if NVDA cannot close above $198 after initiation, May 20 earnings/guidance fail to confirm AI accelerator demand and margin durability, hyperscaler capex commitments weaken, or the stock breaks back below the 100D/150D/200D/40W moving-average cluster on thesis-relevant news.",
+      "timeframe": "Price validation and earnings validation through the May 20, 2026 catalyst and the following 1-2 trading weeks.",
+      "implication": "The market may already price the AI platform thesis, or the next leg of earnings power may be less certain than the thesis requires."
+    },
+    "evidence_for": [
+      {
+        "claim": "NVDA had dominant AI platform economics.",
+        "support": "The thesis cites full-stack moat from CUDA, NVLink, Mellanox networking, DPUs, and generation-level cost-per-result advantages.",
+        "source_refs": [
+          "investment_theses/NVDA.md"
+        ]
+      },
+      {
+        "claim": "Demand visibility was unusually strong.",
+        "support": "The thesis and overview cite hyperscaler capex expansion, Vera Rubin ramp, OpenAI LOI, and Blackwell/Rubin backlog visibility.",
+        "source_refs": [
+          "investment_theses/NVDA.md",
+          "investment_overviews/NVDA.md"
+        ]
+      },
+      {
+        "claim": "Financial quality supported a high-conviction long.",
+        "support": "The thesis cites FY26 revenue of $215.9B, $102.7B operating cash flow, a net-cash balance sheet, and a roughly 50% FCF return target.",
+        "source_refs": [
+          "investment_theses/NVDA.md"
+        ]
+      },
+      {
+        "claim": "Price action confirmed the thesis at initiation.",
+        "support": "On 2026-04-10, NVDA closed above all selected moving averages with positive 1-month, 3-month, and 12-month ROC and relative outperformance versus the S&P 500.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nvda_price_action_2026-04-10.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "AI capex monetization is the key left-tail risk.",
+        "support": "The thesis warns that hyperscaler ROI disappointment could pull capex down sharply while NVDA holds $95.2B in supply obligations due substantially through FY27.",
+        "source_refs": [
+          "investment_theses/NVDA.md"
+        ]
+      },
+      {
+        "claim": "Customer and supply-chain concentration create real risk.",
+        "support": "The thesis identifies major customer concentration, TSMC/HBM/CoWoS dependencies, and Taiwan/geopolitical risks.",
+        "source_refs": [
+          "investment_theses/NVDA.md",
+          "investment_overviews/NVDA.md"
+        ]
+      },
+      {
+        "claim": "Custom silicon and inference ASICs can erode future share.",
+        "support": "The thesis and overview cite hyperscaler in-house chips, Broadcom custom ASICs, TPU/Trainium/MTIA, and inference substitution risk.",
+        "source_refs": [
+          "investment_theses/NVDA.md",
+          "investment_overviews/NVDA.md"
+        ]
+      },
+      {
+        "claim": "The $198 bear-case validation level had not yet been cleared at initiation.",
+        "support": "The April 10 close was $188.63, below the user-defined $198 bear-case validation level.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nvda_price_action_2026-04-10.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "NVDA closed at $188.63 on 2026-04-10, above the provided 100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages, with 1-month ROC of 1.40%, 3-month ROC of 1.94%, and 12-month ROC of 95.88%; it also outperformed the S&P 500. It had not yet closed above the $198 bear-case validation level.",
+      "interpretation": "Price action supported initiation but not full validation: trend and relative strength were positive, while the $198 level and May 20 earnings remained confirmation gates.",
+      "confirms_thesis": true,
+      "data_needed": []
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear quality-compounder thesis, technical confirmation, relative outperformance, further research confirmation, and a near-term earnings catalyst, with remaining validation gates clearly defined.",
+      "missing_inputs": [
+        "Exact executed initial size",
+        "Full portfolio semiconductor/AI/large-cap-growth exposure",
+        "Average daily volume/liquidity constraint"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy NVDA common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Add or maintain conviction after a close above $198 and strong May 20, 2026 earnings."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": 0.16,
+      "upgrade_condition": "Further validation from a close above $198 and strong May 20, 2026 earnings could justify maintaining or increasing conviction toward 5, subject to portfolio concentration."
+    },
+    "confidence": 0.74,
+    "confidence_reason": "Moderately high because thesis quality, technical confirmation, relative strength, and further investigation aligned; capped because the $198 validation level and May 20 earnings confirmation were still pending and valuation/AI capex risks were material.",
+    "sizing_context": {
+      "starting_size": "Conviction 4 at initiation maps to a 16% raw target weight under portfolio_sizer.py.",
+      "add_conditions": "Add or maintain higher conviction only if NVDA closes above $198 and May 20 earnings/guidance confirm demand, margins, and backlog strength.",
+      "liquidity_constraints": "No ADV or exit-cost input selected; do not infer maximum size from this case.",
+      "portfolio_constraints": "Portfolio conviction target is selected, but full exposure input is not; final size should account for existing semiconductor, AI infrastructure, and large-cap growth exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": 0.16,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initial conviction 4 buy; add or maintain higher conviction only after $198 and earnings validation."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If $198 is cleared and earnings are strong, keep pressing the AI infrastructure leader or add toward higher conviction rather than treating the first move as complete.",
+      "if_wrong": "If NVDA fails $198, disappoints on earnings/guidance, or rejects good news, reduce confidence and avoid adding.",
+      "next_review_trigger": "Review on a close above or failure at $198, May 20 earnings, hyperscaler capex commentary, export-control developments, or a break below the moving-average cluster."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Gold output reflects an actionable buy at conviction 4 with 2 of 3 confirmations present."
+}

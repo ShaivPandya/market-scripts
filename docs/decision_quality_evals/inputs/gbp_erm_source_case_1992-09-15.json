@@ -1,0 +1,16 @@
+{
+  "case": "Soros/Druckenmiller short GBP vs DEM into the 1992 ERM break",
+  "as_of_date": "1992-09-15",
+  "source_type": "historical_case_study",
+  "source_summary": "Historical macro/FX case study of Soros and Druckenmiller shorting the British pound against the Deutsche mark before the UK exited the ERM in September 1992. The setup combined UK recession pressure, floating-rate mortgage transmission, German reunification inflation, Bundesbank unwillingness to cut rates, ERM band asymmetry, finite Bank of England reserves, and Schlesinger's comments indicating Germany would not sacrifice monetary stability to defend weak ERM currencies.",
+  "key_claims": [
+    "German reunification created inflationary pressure, pushing the Bundesbank toward high rates while the UK economy was in recession and needed lower rates.",
+    "UK floating-rate mortgages made Bank of England rate hikes especially painful because mortgage costs passed through quickly to households.",
+    "The pound was constrained by the ERM band, creating an asymmetric trade: limited near-term upside against the short while devaluation offered large downside.",
+    "The Bank of England had finite reserves, making its defense of sterling vulnerable once private buyers disappeared and speculators sold aggressively.",
+    "Schlesinger's September 1992 comments signaled that the Bundesbank was willing to tolerate broader ERM realignment rather than cut rates enough to protect sterling.",
+    "Druckenmiller already held a large short GBP position and, after the trigger, Soros pushed him to size the trade much more aggressively.",
+    "The trade-after-the-trade was to buy UK government bonds and equities because ERM exit would free the UK to cut interest rates."
+  ],
+  "human_notes": "User requested this as a macro/FX decision-quality eval."
+}

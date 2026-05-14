@@ -1,6 +1,6 @@
 {
   "id": "mu_ai_memory_cycle_2025",
-  "status": "draft",
+  "status": "review",
   "decision_type": "new_idea",
   "as_of_date": "2025-09-06",
   "user_question": "Using the MU thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
@@ -22,7 +22,7 @@
     {
       "type": "portfolio_context",
       "path": "docs/decision_quality_evals/inputs/mu_portfolio_context_2025-09-06.json",
-      "sha256": "c8ddbfb76cf7ca02703d3289b0e368d8d4a9b4fe74b7811188ba3c75809ff7a0",
+      "sha256": "98d5b99277a6a0fcc7aa29254c8f61ab592d2e86327acf9edb218b035fbe3cfb",
       "description": "Portfolio context: MU was a new position as of thesis initiation.",
       "required": true
     },
@@ -39,8 +39,8 @@
     "The thesis was initiated on 2025-09-06. Because that date was a Saturday, any price-action snapshot should use the most recent market close, 2025-09-05.",
     "Human-provided context says MU was a new position initiated based on thesis plus price confirmation into upcoming earnings.",
     "Historical price-action input shows MU closed above all selected moving averages with positive 1-month, 3-month, and 12-month rate of change.",
-    "No portfolio sizing, liquidity, or contemporaneous news input has been selected yet.",
-    "Gold output fields are intentionally blank until the human author defines the ideal decision object."
+    "Portfolio conviction input says MU would have been conviction 4 before earnings, implying 16% raw target weight under portfolio_sizer.py; good earnings would raise conviction to 5, implying 20% raw target weight.",
+    "No liquidity or contemporaneous news input has been selected yet."
   ],
   "gold_output": {
     "simple_thesis": "Buy MU as an AI memory-cycle upturn where HBM scarcity, data-center memory demand, and conservative earnings guidance can drive upside faster than the market is pricing.",
@@ -132,19 +132,39 @@
       "status": "actionable",
       "reason": "The setup had a clear thesis, valuation upside, near-term earnings catalyst, explicit cyclical risks, and confirming price action into the event.",
       "missing_inputs": [
-        "Exact initial size",
-        "Portfolio concentration and existing semiconductor/AI exposure",
+        "Exact executed initial size",
+        "Portfolio concentration and existing semiconductor/AI exposure beyond conviction target",
         "Average daily volume/liquidity constraint"
       ]
     },
     "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy MU common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Add after earnings/guidance confirm HBM and data-center strength."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": 0.16,
+      "upgrade_condition": "Good earnings confirmation raises conviction to 5, which maps to a 20% raw target weight."
+    },
     "confidence": 0.72,
     "confidence_reason": "Moderately high because thesis, catalyst, and price confirmation aligned; capped because memory cyclicality, AI capex risk, and missing portfolio/liquidity context create real downside risk.",
     "sizing_context": {
-      "starting_size": "Start with a partial position because this is a new position initiated before an earnings catalyst.",
-      "add_conditions": "Add only if earnings/guidance confirm HBM and data-center strength and the stock handles the news constructively.",
+      "starting_size": "Conviction 4 before earnings maps to a 16% raw target weight under portfolio_sizer.py.",
+      "add_conditions": "If earnings/guidance confirm HBM and data-center strength and the stock handles the news constructively, raise to conviction 5, which maps to a 20% raw target weight.",
       "liquidity_constraints": "No ADV or exit-cost input selected; do not infer maximum size from this case.",
-      "portfolio_constraints": "No portfolio exposure input selected; final size should account for existing semiconductor, AI infrastructure, and cyclical exposure."
+      "portfolio_constraints": "Portfolio conviction target is selected, but full exposure input is not; final size should account for existing semiconductor, AI infrastructure, and cyclical exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": 0.16,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initial conviction 4 buy before earnings; add toward 20% only after earnings confirmation."
+      }
     },
     "trade_after_trade": {
       "if_right": "If earnings confirm the thesis and price action remains constructive, add toward intended size rather than treating the first move as fully played out.",
@@ -166,5 +186,5 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "First draft case. Fill the gold output manually or ask Codex to draft a proposed gold output for review."
+  "human_notes": "Review case. Gold output reflects an actionable buy at conviction 4 before earnings, rising to conviction 5 after good earnings."
 }

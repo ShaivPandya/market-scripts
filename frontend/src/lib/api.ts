@@ -210,11 +210,55 @@ export interface RecommendationRecord extends DecisionStateFields {
   risk_level?: string | null
   risk_source_status?: Record<string, unknown> | null
   risk_bindings?: Record<string, unknown> | null
+  decision_quality?: DecisionQuality | null
+  decision_quality_gate?: DecisionQualityGate | null
 }
 
 export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "accepted" | "rejected" | "archived"
-export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
+export type IdeaAction =
+  | "buy"
+  | "add"
+  | "short"
+  | "sell"
+  | "trim"
+  | "reduce"
+  | "exit"
+  | "hedge"
+  | "rebalance"
+  | "hold"
+  | "watch"
+  | "research"
+  | "avoid"
+  | "do_nothing"
 export type IdeaAnalyzerDirection = "inactive" | "long" | "short"
+
+export interface DecisionQualityGateReason {
+  code: string
+  severity: "info" | "warning" | "blocker" | string
+  message: string
+}
+
+export interface DecisionQualityGate {
+  status: "pass" | "downgraded" | "blocked" | "invalid" | string
+  original_action: string
+  final_action: string
+  original_recommendation_status: string
+  final_recommendation_status: string
+  confidence_cap?: number | null
+  reasons: DecisionQualityGateReason[]
+}
+
+export interface DecisionQuality extends Record<string, unknown> {
+  simple_thesis?: string
+  recommended_action?: string
+  actionability?: {
+    status?: string
+    reason?: string
+    missing_inputs?: string[]
+  }
+  invalidation?: Record<string, unknown>
+  catalyst_or_reason_now?: Record<string, unknown>
+}
 
 export interface InvestmentIdeaMetadata {
   analyzer_direction?: IdeaAnalyzerDirection | string
@@ -331,6 +375,8 @@ export interface IdeaEvaluation {
   catalyst: string | null
   invalidation: string | null
   portfolio_fit: Record<string, unknown>
+  decision_quality?: DecisionQuality | null
+  decision_quality_gate?: DecisionQualityGate | null
   recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
   analyzer_context?: IdeaAnalyzerContext
   evaluation_schema_version?: string | null

@@ -16,6 +16,17 @@ from pydantic import BaseModel, Field, field_validator
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import NotFoundError, ValidationError
+from decision_quality import (
+    ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_ACTIONS,
+)
+from decision_quality import (
+    CANONICAL_ACTIONS,
+    DecisionQuality,
+    apply_decision_quality_gates,
+    decision_quality_schema,
+    normalize_action,
+    parse_decision_quality,
+)
 from ontology.object_service import OntologyObjectService
 from ontology.policy import actor_to_dict, admin_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -24,9 +35,9 @@ router = APIRouter()
 LOGGER = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
-IDEA_EVALUATION_VERSION = "v3_portfolio_context_toggle"
-IDEA_EVALUATION_SCHEMA_VERSION = "idea_evaluator_v3_portfolio_context_toggle"
-IDEA_ACTIONS = {"buy", "watch", "avoid", "do_nothing"}
+IDEA_EVALUATION_VERSION = "v4_decision_quality"
+IDEA_EVALUATION_SCHEMA_VERSION = "idea_evaluator_v4_decision_quality"
+IDEA_ACTIONS = set(CANONICAL_ACTIONS)
 IDEA_ANALYZER_DIRECTIONS = {"inactive", "long", "short"}
 CANONICAL_IDEA_FACTORS = (
     "macro_support",
@@ -711,6 +722,59 @@ def _quality_value(value: Any, *, fallback: str = "ok") -> str:
     return normalized if normalized in SOURCE_QUALITY_VALUES else fallback
 
 
+def _as_json_dict(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump(mode="json")
+        return cast(dict[str, Any], dumped) if isinstance(dumped, dict) else None
+    return cast(dict[str, Any], value) if isinstance(value, dict) else None
+
+
+def _idea_evaluator_json_schema() -> dict[str, Any]:
+    object_schema = {"type": "object", "additionalProperties": True}
+    array_object_schema = {"type": "array", "items": object_schema}
+    nullable_string = {"type": ["string", "null"]}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "thesis_statement",
+            "action",
+            "recommendation_status",
+            "score",
+            "confidence",
+            "rationale",
+            "factor_scores",
+            "missing_information",
+            "data_quality",
+            "evidence",
+            "disconfirming_evidence",
+            "catalyst",
+            "invalidation",
+            "portfolio_fit",
+            "decision_quality",
+        ],
+        "properties": {
+            "thesis_statement": {"type": "string"},
+            "action": {"type": "string", "enum": list(CANONICAL_ACTIONS)},
+            "recommendation_status": {"type": "string", "enum": sorted(RECOMMENDATION_STATUSES)},
+            "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+            "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+            "rationale": {"type": "string"},
+            "factor_scores": object_schema,
+            "missing_information": array_object_schema,
+            "data_quality": object_schema,
+            "evidence": array_object_schema,
+            "disconfirming_evidence": array_object_schema,
+            "catalyst": nullable_string,
+            "invalidation": nullable_string,
+            "portfolio_fit": object_schema,
+            "decision_quality": decision_quality_schema(),
+        },
+    }
+
+
 def _numeric_or_none(value: Any, *, minimum: float | None = None, maximum: float | None = None) -> float | None:
     try:
         numeric = float(value)
@@ -1369,12 +1433,19 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
         )
 
     data_quality = _source_quality_from_missing(missing, tool_errors)
+    gate = apply_decision_quality_gates(
+        None,
+        current_action=action,
+        recommendation_status="review_required" if data_quality["critical_data_quality"] != "ok" else "clear",
+        data_quality=data_quality,
+    )
+    action = gate.final_action
     result = {
         "idea_id": idea["id"],
         "ticker": ticker,
         "evaluated_at": context["evaluated_at"],
         "action": action,
-        "recommendation_status": "review_required" if data_quality["critical_data_quality"] != "ok" else "clear",
+        "recommendation_status": gate.final_recommendation_status,
         "score": score,
         "confidence": 0.35 if missing else 0.55,
         "thesis_statement": f"{ticker} may be worth monitoring, but the evidence set is incomplete.",
@@ -1396,6 +1467,8 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
         "catalyst": "Define a reason-now catalyst before treating this as actionable.",
         "invalidation": "Do not act if the missing overview, valuation, or management evidence cannot support the thesis.",
         "portfolio_fit": {"status": "needs_review", "note": "No position change is staged by evaluation."},
+        "decision_quality": None,
+        "decision_quality_gate": gate.model_dump(mode="json"),
     }
     result = _merge_analyzer_context_into_result(context, result)
     result["recommendation_record"] = _recommendation_record_from_result(idea, result)
@@ -1408,9 +1481,7 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
 
     idea = context["idea"]
     ticker = context["ticker"]
-    action = str(parsed.get("action") or "watch").strip().lower()
-    if action not in IDEA_ACTIONS:
-        action = "watch"
+    action = normalize_action(parsed.get("action"), fallback="watch")
     missing = _normalize_missing_rows(parsed.get("missing_information"))
     tool_errors = list(context.get("tool_errors") or [])
     data_quality_raw = parsed.get("data_quality")
@@ -1432,15 +1503,27 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
     )
     score = _numeric_or_none(parsed.get("score"), minimum=0, maximum=100)
     confidence = _numeric_or_none(parsed.get("confidence"), minimum=0, maximum=1)
+    decision_quality, decision_quality_errors = parse_decision_quality(parsed.get("decision_quality"))
+    gate = apply_decision_quality_gates(
+        decision_quality,
+        current_action=action,
+        recommendation_status=_recommendation_status(
+            parsed.get("recommendation_status"),
+            fallback="review_required" if _has_critical_missing(missing) else "clear",
+        ),
+        data_quality=data_quality,
+        parse_errors=decision_quality_errors,
+    )
+    action = gate.final_action
+    recommendation_status = gate.final_recommendation_status
+    if confidence is not None and gate.confidence_cap is not None:
+        confidence = min(confidence, gate.confidence_cap)
     result: dict[str, Any] = {
         "idea_id": idea["id"],
         "ticker": ticker,
         "evaluated_at": str(parsed.get("evaluated_at") or context["evaluated_at"]),
         "action": action,
-        "recommendation_status": _recommendation_status(
-            parsed.get("recommendation_status"),
-            fallback="review_required" if _has_critical_missing(missing) else "clear",
-        ),
+        "recommendation_status": recommendation_status,
         "score": score,
         "confidence": confidence,
         "thesis_statement": str(parsed.get("thesis_statement") or f"{ticker} idea evaluation"),
@@ -1455,6 +1538,9 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         "catalyst": parsed.get("catalyst"),
         "invalidation": parsed.get("invalidation"),
         "portfolio_fit": parsed.get("portfolio_fit") if isinstance(parsed.get("portfolio_fit"), dict) else {},
+        "decision_quality": decision_quality.model_dump(mode="json") if decision_quality else None,
+        "decision_quality_gate": gate.model_dump(mode="json"),
+        "decision_quality_errors": decision_quality_errors,
     }
     result = _merge_analyzer_context_into_result(context, result)
     if not result["rationale"]:
@@ -1480,6 +1566,7 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
             _read_prompt("system.md"),
             _read_prompt("agent_system.md"),
             _read_prompt("recommendations_system.md"),
+            _read_prompt("decision_quality.md"),
             (
                 "You are evaluating independent watchlist ideas. Return only valid JSON. "
                 "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing. "
@@ -1492,12 +1579,13 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         "Evaluate the investment idea below against the investment philosophy and recommendation contract. "
         "Use current web/news search only to fill high-level current context; cite sources inside evidence items when used. "
         "Return JSON with keys: thesis_statement, action, recommendation_status, score, confidence, rationale, "
-        "factor_scores, missing_information, data_quality, evidence, disconfirming_evidence, catalyst, invalidation, portfolio_fit. "
+        "factor_scores, missing_information, data_quality, evidence, disconfirming_evidence, catalyst, invalidation, "
+        "portfolio_fit, decision_quality. "
         "factor_scores must include macro_support, industry_attractiveness, business_quality, management_quality, "
         "valuation_asymmetry, and portfolio_fit. Analyzer raw qualitative scores, when present, will override "
         "business/industry/management quality factors on the native 0-100 scale. Analyzer valuation_signal, when "
-        "present, will be clipped to +/-3 and mapped to 0-100 with 50 neutral. action must be one of buy, watch, "
-        "avoid, do_nothing.\n\n"
+        "present, will be clipped to +/-3 and mapped to 0-100 with 50 neutral. action must use the shared "
+        "canonical decision action vocabulary.\n\n"
         f"Context JSON:\n{json.dumps(context, default=str, sort_keys=True)}"
     )
     try:
@@ -1507,6 +1595,8 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
             max_tokens=3000,
             system=system,
             max_web_search_uses=4,
+            json_schema=_idea_evaluator_json_schema(),
+            json_schema_name="idea_evaluation_decision_quality",
         )
         parsed = parse_json_text(text)
         result = _normalize_llm_result(context, parsed)
@@ -1568,6 +1658,12 @@ def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, A
         "alternatives": [],
         "opportunity_cost": [],
         "source_quality_summary": data_quality,
+        "decision_quality": result.get("decision_quality")
+        if isinstance(result.get("decision_quality"), dict)
+        else None,
+        "decision_quality_gate": (
+            result.get("decision_quality_gate") if isinstance(result.get("decision_quality_gate"), dict) else None
+        ),
         "validation_status": IDEA_EVALUATION_SCHEMA_VERSION,
         "idempotency_key": f"idea:{idea.get('id')}:evaluation:{result.get('evaluated_at')}:action:{action}",
         "source_type": "idea_evaluator",
@@ -1640,7 +1736,22 @@ def _ranking_confidence(evaluation: dict[str, Any], value: Any | None = None) ->
 
 
 def _action_priority(action: Any) -> int:
-    return {"buy": 3, "watch": 2, "do_nothing": 1, "avoid": 0}.get(str(action or "").lower(), 1)
+    return {
+        "buy": 6,
+        "add": 6,
+        "short": 6,
+        "sell": 6,
+        "trim": 5,
+        "reduce": 5,
+        "exit": 5,
+        "hedge": 4,
+        "rebalance": 4,
+        "research": 3,
+        "watch": 2,
+        "hold": 1,
+        "do_nothing": 1,
+        "avoid": 0,
+    }.get(str(action or "").lower(), 1)
 
 
 def _comparison_sort_key(evaluation: dict[str, Any]) -> tuple[int, float, float, str]:
@@ -2151,10 +2262,19 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
     action_proposal = None
     action_error = None
     action = str(evaluation.get("action") or "").lower()
-    if action in {"buy", "watch"}:
-        action_type = "enter" if action == "buy" else "research"
+    if action in DECISION_ACTIONABLE_ACTIONS | {"watch", "research"}:
+        if action in {"buy", "add", "short", "sell"}:
+            action_type = "enter"
+        elif action in {"trim", "reduce", "rebalance"}:
+            action_type = "resize"
+        elif action == "exit":
+            action_type = "exit"
+        elif action == "hedge":
+            action_type = "hedge"
+        else:
+            action_type = "research"
         description = (
-            f"{'Evaluate initial entry' if action == 'buy' else 'Research remaining evidence'} for "
+            f"{'Evaluate position change' if action in DECISION_ACTIONABLE_ACTIONS else 'Research remaining evidence'} for "
             f"{idea['ticker']} from idea evaluator recommendation approval {recommendation_id}."
         )
         missing = (
@@ -2172,7 +2292,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
                     "ticker": idea.get("ticker"),
                     "description": description,
                     "action_type": action_type,
-                    "urgency": "normal" if action == "buy" else "low",
+                    "urgency": "normal" if action in DECISION_ACTIONABLE_ACTIONS else "low",
                 },
                 source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
                 reason=(body.note if body else None)

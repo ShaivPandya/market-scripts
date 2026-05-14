@@ -14,9 +14,26 @@ import { formatDate, formatLabel, scoreText } from "@/lib/ideaUtils"
 
 const ACTION_TONE: Record<string, StatusTone> = {
   buy: "success",
+  add: "success",
+  short: "error",
+  sell: "error",
+  trim: "warning",
+  reduce: "warning",
+  exit: "error",
+  hedge: "warning",
+  rebalance: "warning",
+  hold: "neutral",
   watch: "info",
+  research: "info",
   avoid: "error",
   do_nothing: "neutral",
+}
+
+const GATE_TONE: Record<string, StatusTone> = {
+  pass: "success",
+  downgraded: "warning",
+  blocked: "error",
+  invalid: "error",
 }
 
 const CANONICAL_FACTORS = [
@@ -60,6 +77,58 @@ export function ConfidencePill({ level, confidence }: { level?: string | null; c
       <StatusBadge tone={tone}>{formatLabel(normalized || "low")}</StatusBadge>
       <span className="font-mono text-xs text-subtle">{confidenceLabel}</span>
     </span>
+  )
+}
+
+function DecisionQualityGatePanel({ evaluation }: { evaluation: IdeaEvaluation }) {
+  const gate = evaluation.decision_quality_gate
+  if (!gate) return null
+  const reasons = Array.isArray(gate.reasons) ? gate.reasons : []
+  return (
+    <div className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Decision Quality</span>
+        <StatusBadge tone={GATE_TONE[String(gate.status)] ?? "neutral"}>{formatLabel(String(gate.status || "unknown"))}</StatusBadge>
+        {gate.original_action !== gate.final_action && (
+          <span className="text-xs text-subtle">
+            {formatLabel(gate.original_action)} to {formatLabel(gate.final_action)}
+          </span>
+        )}
+      </div>
+      {reasons.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {reasons.slice(0, 4).map((reason, index) => (
+            <p key={`${reason.code}-${index}`} className="leading-6">
+              <span className="font-mono text-xs text-subtle">{reason.code}</span>
+              {reason.message ? `: ${reason.message}` : ""}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DecisionQualitySummary({ evaluation }: { evaluation: IdeaEvaluation }) {
+  const dq = evaluation.decision_quality
+  if (!dq) return null
+  const catalyst = dq.catalyst_or_reason_now || {}
+  const invalidation = dq.invalidation || {}
+  const catalystTimeframe = String(catalyst.expected_timeframe || "")
+  const invalidationTimeframe = String(invalidation.timeframe || "")
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Structured Catalyst</h3>
+        <p className="mt-2 text-sm leading-6 text-muted">{String(catalyst.event_or_condition || evaluation.catalyst || "N/A")}</p>
+        {catalystTimeframe && <p className="mt-1 text-xs text-subtle">{catalystTimeframe}</p>}
+      </div>
+      <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Structured Invalidation</h3>
+        <p className="mt-2 text-sm leading-6 text-muted">{String(invalidation.threshold || evaluation.invalidation || "N/A")}</p>
+        {invalidationTimeframe && <p className="mt-1 text-xs text-subtle">{invalidationTimeframe}</p>}
+      </div>
+    </div>
   )
 }
 
@@ -328,6 +397,8 @@ export function EvaluationPanel({
       )}
       {evaluation.rationale && <p className="text-sm leading-6 text-muted">{evaluation.rationale}</p>}
 
+      <DecisionQualityGatePanel evaluation={evaluation} />
+
       {factors.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {factors.map(([name, factor]) => <FactorScore key={name} name={name} factor={factor} />)}
@@ -376,6 +447,8 @@ export function EvaluationPanel({
           <p className="mt-2 text-sm leading-6 text-muted">{evaluation.invalidation || "N/A"}</p>
         </div>
       </div>
+
+      <DecisionQualitySummary evaluation={evaluation} />
 
       <div className="flex flex-wrap gap-2">
         <button
