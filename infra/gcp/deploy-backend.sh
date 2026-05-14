@@ -142,6 +142,42 @@ else
   require_image_exists
 fi
 
+# ---------------------------------------------------------------------------
+# Generate release manifest (SHA-33)
+# ---------------------------------------------------------------------------
+log "Generating release manifest"
+
+_manifest_output="${_repo_root}/infra/gcp/release-manifest.json"
+_prior_manifest=""
+if [[ -f "${_manifest_output}" ]]; then
+  _prior_manifest="--prior-manifest=${_manifest_output}"
+fi
+
+# Resolve image digest if possible (best-effort; digest is optional)
+_image_digest=""
+if _digest="$(gcloud artifacts docker images describe "$(image_uri)" \
+      --project="${PROJECT_ID}" --format='value(image_summary.digest)' 2>/dev/null)"; then
+  _image_digest="--image-digest=${_digest}"
+fi
+
+# Resolve Alembic migration head if alembic is available (best-effort)
+_migration_head=""
+if command -v alembic >/dev/null 2>&1; then
+  if _head="$(cd "${_repo_root}" && alembic heads 2>/dev/null | head -1 | awk '{print $1}')"; then
+    [[ -n "${_head}" ]] && _migration_head="--migration-head=${_head}"
+  fi
+fi
+
+python -m infra.gcp.release_manifest \
+  --image-uri="$(image_uri)" \
+  ${_image_digest:+"${_image_digest}"} \
+  ${_migration_head:+"${_migration_head}"} \
+  --environment=production \
+  --config-profile=default \
+  ${_prior_manifest:+"${_prior_manifest}"} \
+  --output="${_manifest_output}" \
+  --repo-root="${_repo_root}"
+
 # deploy-backend has either just built the image or checked it once above.
 export SKIP_IMAGE_CHECK=1
 

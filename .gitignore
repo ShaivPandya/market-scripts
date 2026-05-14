@@ -79,6 +79,8 @@ cloud-sql-proxy
 
 # Local deploy config (copy of infra/gcp/config.example.sh)
 infra/gcp/config.sh
+# Generated release manifest (deploy-backend.sh writes on each deploy)
+infra/gcp/release-manifest.json
 
 # Local editor/agent config
 .claude/

@@ -141,3 +141,57 @@ def test_generic_async_job_defaults_to_smaller_fallback_resources() -> None:
     assert '--cpu="${ASYNC_JOB_CPU:-1}"' in script
     assert '--memory="${ASYNC_JOB_MEMORY:-1Gi}"' in script
     assert '"ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"' in script
+
+
+# ---------------------------------------------------------------------------
+# SHA-33: release manifest + release env vars
+# ---------------------------------------------------------------------------
+
+
+def test_backend_deploy_invokes_manifest_generation() -> None:
+    """deploy-backend.sh must call the release manifest generator."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "release_manifest" in script or "release-manifest" in script
+    assert "python -m infra.gcp.release_manifest" in script
+    assert "--image-uri" in script
+    assert "--output" in script
+
+
+def test_backend_deploy_preserves_dirty_tree_guard() -> None:
+    """The dirty-tree deploy guard must remain intact after manifest integration."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "ALLOW_DIRTY" in script
+    assert "Working tree is dirty" in script
+    assert 'git -C "${_repo_root}" diff --quiet' in script
+
+
+def test_backend_deploy_manifest_rollback_refs() -> None:
+    """deploy-backend.sh should attempt to pass prior manifest for rollback refs."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "--prior-manifest" in script
+    assert "release-manifest.json" in script
+
+
+def test_api_deploy_includes_release_env_vars() -> None:
+    """deploy-api.sh must set TALISMAN_RELEASE_* env vars for the health endpoints."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    assert "TALISMAN_RELEASE_GIT_SHA=" in script
+    assert "TALISMAN_RELEASE_GIT_SHA_SHORT=" in script
+    assert "TALISMAN_RELEASE_IMAGE_TAG=" in script
+    assert "TALISMAN_RELEASE_ENVIRONMENT=" in script
+
+
+def test_api_deploy_does_not_expose_secrets_as_release_vars() -> None:
+    """Release env vars must not include any secret references."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    # Find lines with TALISMAN_RELEASE and check none reference secrets
+    for line in script.splitlines():
+        if "TALISMAN_RELEASE" in line:
+            assert "SECRET" not in line.upper(), f"Release var references a secret: {line.strip()}"
+            assert "PASSWORD" not in line.upper(), f"Release var references a password: {line.strip()}"
+            assert "API_KEY" not in line.upper(), f"Release var references an API key: {line.strip()}"

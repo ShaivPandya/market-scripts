@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from auto_report.recommendations import validate_recommendations_payload
-from decision_quality import DecisionQuality, apply_decision_quality_gates
+from decision_quality import DecisionQuality, apply_decision_quality_gates, parse_decision_quality
 
 CASES_DIR = Path("docs/decision_quality_evals/cases")
 
@@ -59,6 +59,40 @@ def test_decision_quality_rejects_missing_invalidation_threshold():
 
     with pytest.raises(ValidationError):
         DecisionQuality.model_validate(raw)
+
+
+def test_parse_decision_quality_normalizes_common_llm_aliases():
+    raw = _valid_dq()
+    raw["catalyst"] = {
+        "primary": raw["catalyst_or_reason_now"]["event_or_condition"],
+        "timeframe": raw["catalyst_or_reason_now"]["expected_timeframe"],
+        "why_now": raw["catalyst_or_reason_now"]["why_now"],
+        "evidence": raw["catalyst_or_reason_now"]["source_evidence"],
+    }
+    raw.pop("catalyst_or_reason_now")
+    raw["invalidation"] = {
+        "metric": "Revenue growth and gross margin",
+        "threshold": "Revenue misses guidance or gross margin falls below thesis threshold",
+        "timeframe": "Next 2 quarters",
+        "implication": "The AI memory-cycle thesis is not confirming.",
+    }
+    raw["evidence_for"] = [{"summary": "HBM demand supports the thesis.", "source": "dossier"}]
+    raw["evidence_against"] = [{"summary": "Memory cycles can reverse quickly.", "source": "dossier"}]
+    raw["sizing_context"]["sizing_delta"] = {
+        "direction": "add",
+        "amount": 200,
+        "unit": "basis_points",
+        "basis": "target",
+        "condition": "Earnings confirm.",
+    }
+
+    dq, errors = parse_decision_quality(raw)
+
+    assert errors == []
+    assert dq is not None
+    assert dq.invalidation.metric_or_event == "Revenue growth and gross margin"
+    assert dq.sizing_context.sizing_delta.direction == "increase"
+    assert dq.sizing_context.sizing_delta.unit == "bps"
 
 
 def test_missing_catalyst_downgrades_actionable_decision():
