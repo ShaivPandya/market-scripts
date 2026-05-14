@@ -73,6 +73,7 @@ export function WatchTriggerEditDialog({
   const [definition, setDefinition] = useState("")
   const [definitionError, setDefinitionError] = useState<string | null>(null)
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open || !trigger) return
     setCondition(String(trigger.condition ?? ""))
@@ -82,6 +83,7 @@ export function WatchTriggerEditDialog({
     setDefinition(formatDefinition(trigger.definition))
     setDefinitionError(null)
   }, [open, trigger])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function submit() {
     setDefinitionError(null)

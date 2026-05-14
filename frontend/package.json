@@ -11,7 +11,9 @@
     "dev:all": "concurrently -n api,ui -c blue,green \"cd .. && ENVIRONMENT=development STATE_DB_BACKEND=postgres STATE_STORAGE_BACKEND=local ASYNC_JOB_BACKEND=local uvicorn api.main:app --reload --port 8000\" \"vite\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:smoke": "playwright test",
+    "test:smoke:headed": "playwright test --headed"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",
@@ -40,6 +42,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.7",
