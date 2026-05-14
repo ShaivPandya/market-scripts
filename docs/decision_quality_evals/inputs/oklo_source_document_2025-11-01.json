@@ -1,0 +1,24 @@
+{
+  "ticker": "OKLO",
+  "as_of_date": "2025-11-01",
+  "source_type": "presentation_pdf",
+  "source_path": "/Users/shaivpandya/Downloads/Oklo-11-01-2025-Presentation.pdf",
+  "source_sha256": "53eda91ebfd6805a0958c991e286d65952e7520008df046c8e946e1a70dadf8a",
+  "title": "Oklo Inc: Meltdown",
+  "source_summary": "Short-thesis presentation arguing that OKLO's valuation was detached from commercial reality because the company had no revenue, no reactor operating license, no legally binding power-supply contracts, questionable unit economics, large capital needs, prior NRC application rejection, no secured HALEU fuel supply, no smaller-scale or non-nuclear prototype, insider selling, and a stock that had started to decline from its peak.",
+  "key_claims": [
+    "OKLO was a designer of small modular reactors with a market capitalization of almost $19.6B at a $132.77 stock price.",
+    "The company had no revenues, no license to operate reactors, and no legally binding contracts to supply power.",
+    "Despite being pre-revenue, OKLO traded around a $20B valuation.",
+    "The business model depended on aggressive fuel-cost assumptions and large external capital needs not currently secured.",
+    "OKLO lacked NRC approval needed to build its first reactor, and the NRC had previously rejected a combined operating and construction license application.",
+    "OKLO lacked a long-term HALEU fuel supply in a market with extremely limited domestic commercial supply.",
+    "The company was pursuing a commercial license without having built or operated a smaller-scale or non-nuclear prototype first.",
+    "SMRs were unlikely to play as large a role in powering AI as the stock price implied.",
+    "The stock had fallen almost 24% in late October while the S&P 500 was up almost 3% over the same period.",
+    "The Financial Times reported on October 22, 2025 that Oklo executives, including the DeWittes, had sold shares worth about $250M over the prior six months.",
+    "The presentation listed P/B above 25x and future revenue based on non-binding agreements."
+  ],
+  "human_notes": "Source text was extracted with pypdf for eval authoring; this JSON intentionally summarizes the PDF rather than copying the full presentation."
+}
+

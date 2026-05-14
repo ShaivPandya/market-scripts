@@ -1,0 +1,17 @@
+{
+  "ticker": "MU",
+  "as_of_date": "2025-09-06",
+  "position_status": "new_position",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "",
+  "intended_role_notes": "New position initiated from the MU thesis.",
+  "target_size": null,
+  "initial_size": null,
+  "current_semiconductor_exposure": null,
+  "current_ai_infrastructure_exposure": null,
+  "current_cyclical_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "User stated this was a new position as of the thesis initiation date."
+}
+

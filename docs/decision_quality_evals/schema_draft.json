@@ -79,6 +79,7 @@
             "market_data",
             "news",
             "report",
+            "source_document",
             "user_notes",
             "other"
           ]
@@ -440,4 +441,3 @@
     }
   }
 }
-

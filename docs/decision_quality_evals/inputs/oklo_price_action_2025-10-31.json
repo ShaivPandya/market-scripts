@@ -1,0 +1,40 @@
+{
+  "ticker": "OKLO",
+  "as_of_date": "2025-10-31",
+  "close": 132.77,
+  "moving_averages": {
+    "100d_sma": 90.64,
+    "10m_sma": 62.37,
+    "150d_sma": 71.29,
+    "200d_sma": 62.35,
+    "200w_sma": 21.76,
+    "20m_sma": 37.89,
+    "40w_sma": 63.89
+  },
+  "rate_of_change": {
+    "1m_pct": 3.08,
+    "3m_pct": 73.76,
+    "12m_pct": 434.5
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_10m_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": "Russell 2000",
+    "underperformed_benchmark": true,
+    "notes": "User stated OKLO underperformed relative to the Russell 2000."
+  },
+  "drawdown_from_high": {
+    "from_all_time_high_pct": -23.76,
+    "notes": "User stated the stock had started to decline and was down about 23.76% from its all-time high."
+  },
+  "interpretation": "OKLO remained far above long-term moving averages after an extreme 12-month run, but short-term behavior had started to deteriorate: it underperformed the Russell 2000 and was down about 23.76% from its all-time high. For a short thesis, this is initial reversal confirmation rather than full trend breakdown.",
+  "human_notes": "User provided close, moving averages, ROC values, relative underperformance, and drawdown from all-time high."
+}
+

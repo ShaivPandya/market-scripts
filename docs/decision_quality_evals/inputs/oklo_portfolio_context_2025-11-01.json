@@ -1,0 +1,19 @@
+{
+  "ticker": "OKLO",
+  "as_of_date": "2025-11-01",
+  "position_status": "new_position",
+  "position_direction": "short",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "Single-name short",
+  "intended_role_notes": "New short position initiated from the OKLO short thesis and early price deterioration.",
+  "target_size": null,
+  "initial_size": null,
+  "current_nuclear_exposure": null,
+  "current_ai_infrastructure_exposure": null,
+  "current_high_beta_growth_exposure": null,
+  "borrow_notes": "",
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "User stated this was a new short position as of the thesis initiation date."
+}
+

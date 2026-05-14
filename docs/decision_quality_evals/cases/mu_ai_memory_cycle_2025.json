@@ -2,8 +2,8 @@
   "id": "mu_ai_memory_cycle_2025",
   "status": "draft",
   "decision_type": "new_idea",
-  "as_of_date": "2026-05-14",
-  "user_question": "Using the MU thesis, should this be actionable now, watch, research, or do_nothing?",
+  "as_of_date": "2025-09-06",
+  "user_question": "Using the MU thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
   "input_refs": [
     {
       "type": "thesis",
@@ -11,62 +11,145 @@
       "sha256": "25f52d08d28fdbc96efc2483842faa43fe23161d122f9a46cbf299e5af30c3a7",
       "description": "Micron AI memory cycle thesis with HBM ramp catalysts, valuation target range, and cyclical risk factors.",
       "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/mu_price_action_2025-09-05.json",
+      "sha256": "2187d7c09ac5dd73ac1d7feadea77d222fb2f9bb9914139b47d8b8c77c33a02c",
+      "description": "Historical MU price-action snapshot through the 2025-09-05 close: close, moving averages, and 1m/3m/12m rate of change.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/mu_portfolio_context_2025-09-06.json",
+      "sha256": "c8ddbfb76cf7ca02703d3289b0e368d8d4a9b4fe74b7811188ba3c75809ff7a0",
+      "description": "Portfolio context: MU was a new position as of thesis initiation.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/mu_initiation_notes_2025-09-06.json",
+      "sha256": "c8d7d38fb8f3401b3c74641d4c067ccd08160c5d60a28170ff242ae35a1044f4",
+      "description": "Human-provided initiation rationale: thesis plus price confirmation into upcoming earnings.",
+      "required": true
     }
   ],
   "assumptions": [
-    "This draft case only includes the local MU thesis as input.",
-    "No live price action, portfolio sizing, liquidity, or current news input has been selected yet.",
+    "This draft case includes the local MU thesis plus human-provided initiation context.",
+    "The thesis was initiated on 2025-09-06. Because that date was a Saturday, any price-action snapshot should use the most recent market close, 2025-09-05.",
+    "Human-provided context says MU was a new position initiated based on thesis plus price confirmation into upcoming earnings.",
+    "Historical price-action input shows MU closed above all selected moving averages with positive 1-month, 3-month, and 12-month rate of change.",
+    "No portfolio sizing, liquidity, or contemporaneous news input has been selected yet.",
     "Gold output fields are intentionally blank until the human author defines the ideal decision object."
   ],
   "gold_output": {
-    "simple_thesis": "",
-    "opportunity_type": "unclear",
-    "embedded_macro_exposure": "",
+    "simple_thesis": "Buy MU as an AI memory-cycle upturn where HBM scarcity, data-center memory demand, and conservative earnings guidance can drive upside faster than the market is pricing.",
+    "opportunity_type": "cyclical_upturn",
+    "embedded_macro_exposure": "Long AI infrastructure capex, memory pricing recovery, semiconductor cyclicals, and a lower-rate backdrop for capital-intensive growth.",
     "mispricing": {
-      "consensus_view": "",
-      "variant_view": "",
-      "pricing_evidence": "",
-      "why_consensus_is_wrong": ""
+      "consensus_view": "The market is likely still treating Micron as a cyclical memory stock whose earnings power can fade quickly after a rebound.",
+      "variant_view": "The AI data-center memory cycle is creating a structurally tighter HBM/DRAM environment, making this upcycle more durable and higher-margin than a normal memory rebound.",
+      "pricing_evidence": "The thesis cites MU at $131.37 against a $230-$300 target range based on normalized through-cycle EPS of $10-$12, implying 75-130% upside if the cycle thesis is right.",
+      "why_consensus_is_wrong": "Consensus is underweighting HBM scarcity, supply discipline in the three-player DRAM oligopoly, and management's conservative beat-and-raise setup into September 2025 earnings."
     },
     "catalyst_or_reason_now": {
-      "event_or_condition": "",
-      "expected_timeframe": "",
-      "why_now": "",
-      "source_evidence": []
+      "event_or_condition": "September 23, 2025 earnings and guidance update.",
+      "expected_timeframe": "Within 3 weeks of thesis initiation.",
+      "why_now": "The position was initiated ahead of earnings because the thesis expected further upside from HBM/data-center strength, and price action had already confirmed improving market sponsorship.",
+      "source_evidence": [
+        "investment_theses/MU.md key catalyst: beat-and-raise earnings cadence on September 23, 2025",
+        "docs/decision_quality_evals/inputs/mu_price_action_2025-09-05.json: close above all selected moving averages with positive 1m/3m/12m ROC",
+        "docs/decision_quality_evals/inputs/mu_initiation_notes_2025-09-06.json: initiated based on thesis plus price confirmation into upcoming earnings"
+      ]
     },
     "invalidation": {
-      "observable": "",
-      "metric_or_event": "",
-      "threshold": "",
-      "timeframe": "",
-      "implication": ""
+      "observable": "The earnings catalyst fails to confirm HBM/data-center memory strength or the stock rejects good news.",
+      "metric_or_event": "September 23, 2025 earnings, forward revenue/EPS guidance, HBM supply commentary, gross margin direction, and post-earnings price reaction.",
+      "threshold": "Invalidate or force review if guidance fails to show continued sequential revenue/EPS growth, management backs away from supply-tightness/HBM strength, gross margin outlook deteriorates, or MU breaks back below the 100D/150D/200D SMA cluster after earnings on thesis-relevant news.",
+      "timeframe": "Earnings event and the following 1-2 trading weeks.",
+      "implication": "The AI memory upcycle may be already priced, less durable than expected, or too early for actionable capital."
     },
-    "evidence_for": [],
-    "evidence_against": [],
+    "evidence_for": [
+      {
+        "claim": "Micron had clear AI memory-cycle support.",
+        "support": "The thesis says AI-driven data-center buildout was generating supply-constrained HBM and NAND demand, with management indicating supply growth would trail industry demand growth through at least calendar 2025.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      },
+      {
+        "claim": "The memory industry structure supported better pricing discipline.",
+        "support": "The thesis frames DRAM as a consolidated three-player oligopoly with Micron, SK Hynix, and Samsung, reducing the likelihood of a disorderly supply response versus a fragmented industry.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      },
+      {
+        "claim": "Valuation upside was large enough to clear the actionability bar.",
+        "support": "The thesis cites a $230-$300 target range from $131.37, implying 75-130% upside if normalized earnings power of $10-$12/share is realized.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      },
+      {
+        "claim": "Price action confirmed the thesis before the catalyst.",
+        "support": "On 2025-09-05, MU closed above all selected moving averages with positive 1-month, 3-month, and 12-month rate of change.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/mu_price_action_2025-09-05.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Memory remains acutely cyclical.",
+        "support": "The thesis notes the prior FY22-FY23 downturn erased about 50% of TTM revenue, so a demand correction could compress margins quickly.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      },
+      {
+        "claim": "AI capex digestion is the main left-tail risk.",
+        "support": "Any hyperscaler capex pause would reduce HBM and data-center NAND demand faster than supply can adjust.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      },
+      {
+        "claim": "The target valuation assumes elevated earnings and a healthy multiple.",
+        "support": "The thesis target of $230-$300 assumes 23-25x on $10-$12 EPS; multiple compression or an earnings miss would materially reduce upside.",
+        "source_refs": [
+          "investment_theses/MU.md"
+        ]
+      }
+    ],
     "price_action_read": {
-      "observed_behavior": "",
-      "interpretation": "",
-      "confirms_thesis": null,
+      "observed_behavior": "MU closed at $131.37 on 2025-09-05, above the provided 100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages, with 1-month ROC of 10.16%, 3-month ROC of 16.11%, and 12-month ROC of 24.22%.",
+      "interpretation": "Price action confirmed the thesis at initiation: the stock was in a positive trend across multiple timeframes heading into a near-term earnings catalyst.",
+      "confirms_thesis": true,
       "data_needed": []
     },
     "actionability": {
-      "status": "research",
-      "reason": "",
-      "missing_inputs": []
+      "status": "actionable",
+      "reason": "The setup had a clear thesis, valuation upside, near-term earnings catalyst, explicit cyclical risks, and confirming price action into the event.",
+      "missing_inputs": [
+        "Exact initial size",
+        "Portfolio concentration and existing semiconductor/AI exposure",
+        "Average daily volume/liquidity constraint"
+      ]
     },
-    "recommended_action": "research",
-    "confidence": null,
-    "confidence_reason": "",
+    "recommended_action": "buy",
+    "confidence": 0.72,
+    "confidence_reason": "Moderately high because thesis, catalyst, and price confirmation aligned; capped because memory cyclicality, AI capex risk, and missing portfolio/liquidity context create real downside risk.",
     "sizing_context": {
-      "starting_size": "",
-      "add_conditions": "",
-      "liquidity_constraints": "",
-      "portfolio_constraints": ""
+      "starting_size": "Start with a partial position because this is a new position initiated before an earnings catalyst.",
+      "add_conditions": "Add only if earnings/guidance confirm HBM and data-center strength and the stock handles the news constructively.",
+      "liquidity_constraints": "No ADV or exit-cost input selected; do not infer maximum size from this case.",
+      "portfolio_constraints": "No portfolio exposure input selected; final size should account for existing semiconductor, AI infrastructure, and cyclical exposure."
     },
     "trade_after_trade": {
-      "if_right": "",
-      "if_wrong": "",
-      "next_review_trigger": ""
+      "if_right": "If earnings confirm the thesis and price action remains constructive, add toward intended size rather than treating the first move as fully played out.",
+      "if_wrong": "If earnings or price response contradict the thesis, cut or keep to a small probe rather than averaging down into a failed catalyst.",
+      "next_review_trigger": "Review immediately after September 23, 2025 earnings and again if MU breaks the 100D/150D/200D SMA cluster."
     }
   },
   "rubric_scores": {
@@ -85,4 +168,3 @@
   },
   "human_notes": "First draft case. Fill the gold output manually or ask Codex to draft a proposed gold output for review."
 }
-
