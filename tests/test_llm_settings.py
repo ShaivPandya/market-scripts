@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,6 +51,12 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider"] == "anthropic"
+    assert payload["provider_mode"] == "single"
+    assert payload["provider_by_tier"] == {
+        "low": "anthropic",
+        "mid": "anthropic",
+        "high": "anthropic",
+    }
     assert payload["models"]["low"] == "claude-haiku-4-5"
     assert payload["models_by_provider"]["openai"]["mid"] == "gpt-5.4"
     assert payload["models_by_provider"]["gemini"]["mid"] == "gemini-3.1-pro-preview-customtools"
@@ -135,6 +142,8 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
     assert len(calls) == 1
     assert calls[0] == [
         "llm.provider",
+        "llm.provider_mode",
+        "llm.provider_by_tier",
         "llm.gateway_policy",
         "llm.reasoning_effort.anthropic.low",
         "llm.reasoning_effort.anthropic.mid",
@@ -229,6 +238,110 @@ def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_clien
     }
     assert temp_llm_settings.get_llm_provider_setting() == "gemini"
     assert temp_llm_settings.get_llm_reasoning_effort_setting("gemini", "low") == "minimal"
+
+
+def test_put_llm_settings_persists_custom_provider_by_tier(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    response = auth_client.put(
+        "/api/settings/llm",
+        json={
+            "provider": "gemini",
+            "provider_mode": "custom",
+            "provider_by_tier": {
+                "low": "gemini",
+                "mid": "gemini",
+                "high": "openai",
+            },
+            "reasoning_efforts_by_provider": {
+                "gemini": {
+                    "low": "minimal",
+                    "mid": "medium",
+                    "high": "high",
+                },
+                "openai": {
+                    "low": "none",
+                    "mid": "medium",
+                    "high": "xhigh",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "gemini"
+    assert payload["provider_mode"] == "custom"
+    assert payload["provider_by_tier"] == {
+        "low": "gemini",
+        "mid": "gemini",
+        "high": "openai",
+    }
+    assert payload["models"] == {
+        "low": "gemini-3.1-flash-lite",
+        "mid": "gemini-3.1-pro-preview-customtools",
+        "high": "gpt-5.5",
+    }
+    assert payload["reasoning_efforts"]["gemini"]["mid"] == "medium"
+    assert payload["reasoning_efforts"]["openai"]["high"] == "xhigh"
+    assert temp_llm_settings.get_llm_provider_mode_setting() == "custom"
+    assert temp_llm_settings.get_llm_provider_by_tier_setting(fallback_provider="gemini") == {
+        "low": "gemini",
+        "mid": "gemini",
+        "high": "openai",
+    }
+
+
+def test_custom_provider_by_tier_routes_model_helpers(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    temp_llm_settings.set_llm_provider_setting("gemini")
+    temp_llm_settings.set_llm_provider_mode_setting("custom")
+    temp_llm_settings.set_llm_provider_by_tier_setting(
+        {"low": "gemini", "mid": "gemini", "high": "openai"},
+        fallback_provider="gemini",
+    )
+
+    assert llm_utils.selected_provider() == "gemini"
+    assert llm_utils.selected_provider_for_tier(llm_utils.MODEL_MID) == "gemini"
+    assert llm_utils.selected_provider_for_tier(llm_utils.MODEL_HIGH) == "openai"
+    assert llm_utils.model_for_tier(llm_utils.MODEL_MID) == "gemini-3.1-pro-preview-customtools"
+    assert llm_utils.model_for_tier(llm_utils.MODEL_HIGH) == "gpt-5.5"
+    assert not llm_utils.has_llm_api_key()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert llm_utils.has_llm_api_key()
+
+
+def test_custom_provider_by_tier_routes_call_llm_text(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    temp_llm_settings.set_llm_provider_setting("gemini")
+    temp_llm_settings.set_llm_provider_mode_setting("custom")
+    temp_llm_settings.set_llm_provider_by_tier_setting(
+        {"low": "gemini", "mid": "gemini", "high": "openai"},
+        fallback_provider="gemini",
+    )
+    monkeypatch.setattr(
+        llm_utils,
+        "_prepare_text_egress",
+        lambda **kwargs: (kwargs["prompt"], kwargs["system"]),
+    )
+    captured = {}
+
+    def fake_openai_response(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_text="answer")
+
+    monkeypatch.setattr(llm_utils, "_call_openai_response", fake_openai_response)
+
+    text, _citations, _response = llm_utils.call_llm_text(prompt="hello", model=llm_utils.MODEL_HIGH)
+
+    assert text == "answer"
+    assert captured["provider"] == "openai"
+    assert captured["model"] == "gpt-5.5"
 
 
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):

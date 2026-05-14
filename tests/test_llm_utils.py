@@ -279,9 +279,7 @@ def test_gemini_json_schema_removes_unsupported_additional_properties(monkeypatc
                 "title": "Meta",
                 "type": "object",
                 "additionalProperties": True,
-                "properties": {
-                    "score": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": None}
-                },
+                "properties": {"score": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": None}},
             }
         },
         "properties": {

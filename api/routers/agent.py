@@ -64,6 +64,7 @@ from llm_utils import (
     require_api_key,
     resolve_model,
     selected_provider,
+    selected_provider_for_tier,
 )
 from ontology.action_registry import get_tool_exposure
 from ontology.policy import Actor, actor_to_dict, agent_actor
@@ -553,7 +554,7 @@ _DATA_SEEKING_RX = re.compile(
 
 def _read_llm_api_key() -> tuple[str, str]:
     try:
-        provider = selected_provider()
+        provider = selected_provider_for_tier(MODEL_MID)
     except ValueError as exc:
         raise ConfigurationError(str(exc)) from exc
     try:
@@ -578,7 +579,7 @@ def _format_stream_error(exc: Exception) -> str:
         or "api_key_invalid" in lowered
     ):
         try:
-            provider = selected_provider()
+            provider = selected_provider_for_tier(MODEL_MID)
             key_env = api_key_env(provider)
         except Exception:
             provider = "configured provider"
@@ -1987,7 +1988,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         tool_defs: list[dict] = []
     else:
         try:
-            provider = selected_provider()
+            provider = selected_provider_for_tier(MODEL_MID)
         except ValueError as exc:
             raise ConfigurationError(str(exc)) from exc
         provider_label = provider
@@ -2032,7 +2033,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             agent_turn_event_id = _start_agent_turn_provenance(
                 session_id=session_id,
                 message=req.message,
-                provider=selected_provider(),
+                provider=selected_provider_for_tier(MODEL_MID),
                 actor=tool_actor,
             )
             text = _casual_response(req.message, req.response_preferences)

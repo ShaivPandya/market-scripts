@@ -12,7 +12,9 @@ import {
   type GatewayPolicySettings,
   type LLMModelTier,
   type LLMProvider,
+  type LLMProviderMode,
   type LLMProviderStatus,
+  type LLMProviderTierMap,
   type LLMReasoningEffort,
   type LLMReasoningEffortMap,
   type LLMSettings,
@@ -107,6 +109,18 @@ function providerDisplayName(provider: LLMProvider | "*") {
   return provider === "*" ? "Any provider" : PROVIDER_FALLBACK_LABELS[provider]
 }
 
+function providerByTierForProvider(provider: LLMProvider): LLMProviderTierMap {
+  return {
+    low: provider,
+    mid: provider,
+    high: provider,
+  }
+}
+
+function mapsEqual(a: unknown, b: unknown) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
 function titleCaseModelToken(token: string) {
   if (!token) return ""
   const known = MODEL_DISPLAY_TOKEN_NAMES[token.toLowerCase()]
@@ -163,6 +177,8 @@ export function AISettings() {
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useApiQuery<LLMSettings>(QUERY_KEY, fetchLLMSettings, 30_000)
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null)
+  const [selectedProviderMode, setSelectedProviderMode] = useState<LLMProviderMode | null>(null)
+  const [draftProviderByTier, setDraftProviderByTier] = useState<LLMProviderTierMap | null>(null)
   const [draftReasoningEfforts, setDraftReasoningEfforts] =
     useState<Record<LLMProvider, LLMReasoningEffortMap> | null>(null)
   const [draftGatewayPolicy, setDraftGatewayPolicy] = useState<GatewayPolicySettings | null>(null)
@@ -172,25 +188,57 @@ export function AISettings() {
     model: "*",
     data_sensitivity: "portfolio_private",
   })
-  const effectiveProvider = selectedProvider ?? data?.provider ?? "anthropic"
+  const fallbackProvider = data?.provider ?? "anthropic"
+  const effectiveProvider = selectedProvider ?? fallbackProvider
+  const savedProviderMode = data?.provider_mode ?? "single"
+  const effectiveProviderMode = selectedProviderMode ?? savedProviderMode
+  const savedProviderByTier = data?.provider_by_tier ?? providerByTierForProvider(fallbackProvider)
+  const effectiveProviderByTier =
+    effectiveProviderMode === "custom"
+      ? draftProviderByTier ?? savedProviderByTier
+      : providerByTierForProvider(effectiveProvider)
 
   const selectedStatus = useMemo(
     () => data?.available_providers.find(provider => provider.provider === effectiveProvider),
     [data?.available_providers, effectiveProvider],
   )
-  const effectiveProviderLabel = selectedStatus?.label ?? PROVIDER_FALLBACK_LABELS[effectiveProvider]
+  const effectiveProviderLabel =
+    effectiveProviderMode === "custom"
+      ? "Custom"
+      : selectedStatus?.label ?? PROVIDER_FALLBACK_LABELS[effectiveProvider]
 
-  const effectiveModels = data?.models_by_provider?.[effectiveProvider] ?? data?.models
-  const providerDefaultReasoningEfforts = DEFAULT_REASONING_EFFORTS_BY_PROVIDER[effectiveProvider]
-  const savedReasoningEfforts = data?.reasoning_efforts?.[effectiveProvider] ?? providerDefaultReasoningEfforts
-  const effectiveReasoningEfforts = draftReasoningEfforts?.[effectiveProvider] ?? savedReasoningEfforts
+  const effectiveModels = MODEL_TIERS.reduce((models, tier) => {
+    const tierProvider = effectiveProviderByTier[tier.key]
+    models[tier.key] = data?.models_by_provider?.[tierProvider]?.[tier.key] ?? data?.models?.[tier.key] ?? ""
+    return models
+  }, {} as Record<LLMModelTier, string>)
+  const effectiveReasoningEffortsByProvider =
+    draftReasoningEfforts ?? data?.reasoning_efforts ?? DEFAULT_REASONING_EFFORTS_BY_PROVIDER
   const effectiveGatewayPolicy = draftGatewayPolicy ?? data?.gateway_policy
+  const customSetupProviderByTier = draftProviderByTier ?? savedProviderByTier
+  const customSetupStatuses = MODEL_TIERS.map(tier => (
+    data?.available_providers.find(provider => provider.provider === customSetupProviderByTier[tier.key])
+  ))
+  const customSetupConfigured = customSetupStatuses.every(provider => provider?.configured)
+  const customProviderStatuses = MODEL_TIERS.map(tier => (
+    data?.available_providers.find(provider => provider.provider === effectiveProviderByTier[tier.key])
+  ))
+  const missingCustomProviderLabels = customProviderStatuses
+    .filter(provider => provider && !provider.configured)
+    .map(provider => provider?.api_key_env)
+    .filter(Boolean)
+  const providerSelectionConfigured =
+    effectiveProviderMode === "custom"
+      ? customProviderStatuses.every(provider => provider?.configured)
+      : Boolean(selectedStatus?.configured)
 
   const mutation = useMutation({
     mutationFn: updateLLMSettings,
     onSuccess: settings => {
       queryClient.setQueryData(QUERY_KEY, settings)
       setSelectedProvider(null)
+      setSelectedProviderMode(null)
+      setDraftProviderByTier(null)
       setDraftReasoningEfforts(null)
       setDraftGatewayPolicy(null)
       setGatewayNote("")
@@ -198,25 +246,38 @@ export function AISettings() {
   })
 
   const hasReasoningChanges = data
-    ? MODEL_TIERS.some(tier => effectiveReasoningEfforts[tier.key] !== savedReasoningEfforts[tier.key])
+    ? !mapsEqual(effectiveReasoningEffortsByProvider, data.reasoning_efforts)
+    : false
+  const hasProviderChanges = data
+    ? effectiveProviderMode !== savedProviderMode ||
+      (effectiveProviderMode === "custom"
+        ? !mapsEqual(effectiveProviderByTier, savedProviderByTier)
+        : effectiveProvider !== data.provider)
     : false
   const hasGatewayChanges = data ? !policiesEqual(effectiveGatewayPolicy, data.gateway_policy) : false
-  const hasChanges = data ? effectiveProvider !== data.provider || hasReasoningChanges || hasGatewayChanges : false
+  const hasChanges = data ? hasProviderChanges || hasReasoningChanges || hasGatewayChanges : false
   const canSave = Boolean(
     hasChanges &&
-    selectedStatus?.configured &&
+    providerSelectionConfigured &&
     !mutation.isPending &&
     (!hasGatewayChanges || gatewayNote.trim()),
   )
 
-  const updateReasoningEffort = (tier: LLMModelTier, effort: LLMReasoningEffort) => {
+  const updateProviderByTier = (tier: LLMModelTier, provider: LLMProvider) => {
+    setDraftProviderByTier(prev => ({
+      ...(prev ?? effectiveProviderByTier),
+      [tier]: provider,
+    }))
+  }
+
+  const updateReasoningEffort = (tier: LLMModelTier, provider: LLMProvider, effort: LLMReasoningEffort) => {
     if (!data) return
     setDraftReasoningEfforts(prev => {
       const base = prev ?? data.reasoning_efforts
       return {
         ...base,
-        [effectiveProvider]: {
-          ...(base[effectiveProvider] ?? providerDefaultReasoningEfforts),
+        [provider]: {
+          ...(base[provider] ?? DEFAULT_REASONING_EFFORTS_BY_PROVIDER[provider]),
           [tier]: effort,
         },
       }
@@ -271,14 +332,18 @@ export function AISettings() {
           <div>
             <h2 className="section-title">Provider</h2>
             <p className="mt-1 text-xs text-muted">
-              Active provider: {data.available_providers.find(provider => provider.provider === data.provider)?.label ?? PROVIDER_FALLBACK_LABELS[data.provider]}
+              Active setup: {data.provider_mode === "custom"
+                ? "Custom"
+                : (data.available_providers.find(provider => provider.provider === data.provider)?.label ?? PROVIDER_FALLBACK_LABELS[data.provider])}
             </p>
           </div>
           <button
             type="button"
             onClick={() => mutation.mutate({
               provider: effectiveProvider,
-              reasoning_efforts: effectiveReasoningEfforts,
+              provider_mode: effectiveProviderMode,
+              provider_by_tier: effectiveProviderByTier,
+              reasoning_efforts_by_provider: effectiveReasoningEffortsByProvider,
               ...(hasGatewayChanges && effectiveGatewayPolicy
                 ? { gateway_policy: effectiveGatewayPolicy, gateway_note: gatewayNote.trim() }
                 : {}),
@@ -291,16 +356,19 @@ export function AISettings() {
           </button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           {data.available_providers.map(provider => {
             return (
               <button
                 key={provider.provider}
                 type="button"
-                onClick={() => setSelectedProvider(provider.provider)}
+                onClick={() => {
+                  setSelectedProvider(provider.provider)
+                  setSelectedProviderMode("single")
+                }}
                 className={cn(
                   "theme-surface rounded-[1rem] px-4 py-4 text-left transition-colors",
-                  effectiveProvider === provider.provider
+                  effectiveProviderMode === "single" && effectiveProvider === provider.provider
                     ? "border-[hsl(var(--accent))] bg-selected"
                     : "hover:bg-hover",
                 )}
@@ -311,7 +379,7 @@ export function AISettings() {
                       <span
                         className={cn(
                           "inline-block h-3 w-3 rounded-full border",
-                          effectiveProvider === provider.provider
+                          effectiveProviderMode === "single" && effectiveProvider === provider.provider
                             ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
                             : "border-strong",
                         )}
@@ -325,16 +393,84 @@ export function AISettings() {
               </button>
             )
           })}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedProviderMode("custom")
+              setSelectedProvider(null)
+              setDraftProviderByTier(prev => prev ?? savedProviderByTier)
+            }}
+            className={cn(
+              "theme-surface rounded-[1rem] px-4 py-4 text-left transition-colors",
+              effectiveProviderMode === "custom"
+                ? "border-[hsl(var(--accent))] bg-selected"
+                : "hover:bg-hover",
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "inline-block h-3 w-3 rounded-full border",
+                      effectiveProviderMode === "custom"
+                        ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
+                        : "border-strong",
+                    )}
+                  />
+                  <span className="text-sm font-semibold text-app">Custom</span>
+                </div>
+                <p className="mt-2 text-xs text-muted">Per-tier runtime routing</p>
+              </div>
+              {customSetupConfigured
+                ? <StatusBadge tone="success">Configured</StatusBadge>
+                : <StatusBadge tone="warning">Missing key</StatusBadge>}
+            </div>
+          </button>
         </div>
+
+        {effectiveProviderMode === "custom" && (
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {MODEL_TIERS.map(tier => {
+              const tierProvider = effectiveProviderByTier[tier.key]
+              const tierStatus = data.available_providers.find(provider => provider.provider === tierProvider)
+              const tierModel = data.models_by_provider?.[tierProvider]?.[tier.key] ?? effectiveModels[tier.key]
+              return (
+                <div key={tier.key} className="theme-surface-muted px-3 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="label-text">{tier.label}</p>
+                      <p className="mt-2 break-words text-sm text-app" title={tierModel}>
+                        {modelDisplayName(tierModel)}
+                      </p>
+                    </div>
+                    {tierStatus ? statusBadge(tierStatus) : null}
+                  </div>
+                  <select
+                    value={tierProvider}
+                    onChange={event => updateProviderByTier(tier.key, event.target.value as LLMProvider)}
+                    className="theme-input mt-3 w-full px-3 py-2 text-sm"
+                  >
+                    {data.available_providers.map(provider => (
+                      <option key={provider.provider} value={provider.provider}>{provider.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {mutation.isError && (
           <div className="mt-4">
             <ErrorMessage message={String(mutation.error)} />
           </div>
         )}
-        {hasChanges && !selectedStatus?.configured && (
+        {hasChanges && !providerSelectionConfigured && (
           <p className="mt-4 text-sm text-[hsl(var(--warning))]">
-            {selectedStatus?.api_key_env ?? "Provider API key"} is not configured on the API server.
+            {effectiveProviderMode === "custom"
+              ? `${Array.from(new Set(missingCustomProviderLabels)).join(", ") || "A custom provider API key"} is not configured on the API server.`
+              : `${selectedStatus?.api_key_env ?? "Provider API key"} is not configured on the API server.`}
           </p>
         )}
       </SurfaceCard>
@@ -348,18 +484,26 @@ export function AISettings() {
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           {MODEL_TIERS.map(tier => {
-            const options = data.reasoning_options?.[effectiveProvider]?.[tier.key] ?? []
+            const tierProvider = effectiveProviderByTier[tier.key]
+            const options = data.reasoning_options?.[tierProvider]?.[tier.key] ?? []
+            const tierReasoningEfforts =
+              effectiveReasoningEffortsByProvider[tierProvider] ?? DEFAULT_REASONING_EFFORTS_BY_PROVIDER[tierProvider]
             return (
               <div key={tier.key} className="theme-surface-muted px-3 py-3">
                 <div className="min-h-[4.5rem]">
                   <p className="label-text">{tier.label}</p>
+                  {effectiveProviderMode === "custom" && (
+                    <p className="mt-2 text-xs font-semibold text-muted">
+                      {PROVIDER_FALLBACK_LABELS[tierProvider]}
+                    </p>
+                  )}
                   <p className="mt-2 break-words text-sm text-app">
                     {modelDisplayName(effectiveModels?.[tier.key] ?? data.models[tier.key])}
                   </p>
                 </div>
                 <select
-                  value={effectiveReasoningEfforts[tier.key]}
-                  onChange={event => updateReasoningEffort(tier.key, event.target.value as LLMReasoningEffort)}
+                  value={tierReasoningEfforts[tier.key]}
+                  onChange={event => updateReasoningEffort(tier.key, tierProvider, event.target.value as LLMReasoningEffort)}
                   className="theme-input mt-3 w-full px-3 py-2 text-sm"
                 >
                   {options.map(option => (
@@ -407,9 +551,15 @@ export function AISettings() {
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               {MODEL_TIERS.map(tier => {
                 const model = effectiveModels?.[tier.key] ?? data.models[tier.key]
+                const tierProvider = effectiveProviderByTier[tier.key]
                 return (
                   <div key={tier.key} className="theme-surface-muted px-3 py-3">
                     <p className="label-text">{tier.label}</p>
+                    {effectiveProviderMode === "custom" && (
+                      <p className="mt-2 text-xs font-semibold text-muted">
+                        {PROVIDER_FALLBACK_LABELS[tierProvider]}
+                      </p>
+                    )}
                     <p className="mt-2 break-words text-sm text-app" title={model}>
                       {modelDisplayName(model)}
                     </p>

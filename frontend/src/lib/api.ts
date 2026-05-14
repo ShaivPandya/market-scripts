@@ -499,9 +499,11 @@ export const authApi = {
 }
 
 export type LLMProvider = "anthropic" | "openai" | "gemini"
+export type LLMProviderMode = "single" | "custom"
 export type LLMModelTier = "low" | "mid" | "high"
 export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 export type LLMModelTierMap = Record<LLMModelTier, string>
+export type LLMProviderTierMap = Record<LLMModelTier, LLMProvider>
 export type LLMReasoningEffortMap = Record<LLMModelTier, LLMReasoningEffort>
 export type ToolLifecycleState = "draft" | "enabled" | "deprecated" | "disabled"
 export type GatewayDecision = "allowed" | "allowed_with_warning" | "blocked"
@@ -541,6 +543,8 @@ export interface GatewayPolicySettings {
 
 export interface LLMSettings {
   provider: LLMProvider
+  provider_mode: LLMProviderMode
+  provider_by_tier: LLMProviderTierMap
   available_providers: LLMProviderStatus[]
   models: LLMModelTierMap
   models_by_provider: Record<LLMProvider, LLMModelTierMap>
@@ -554,7 +558,10 @@ export const fetchLLMSettings = () =>
 
 export const updateLLMSettings = (settings: {
   provider: LLMProvider
+  provider_mode?: LLMProviderMode
+  provider_by_tier?: LLMProviderTierMap
   reasoning_efforts?: LLMReasoningEffortMap
+  reasoning_efforts_by_provider?: Record<LLMProvider, LLMReasoningEffortMap>
   gateway_policy?: GatewayPolicySettings
   gateway_note?: string
 }) =>

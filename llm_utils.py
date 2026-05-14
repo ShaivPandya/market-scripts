@@ -146,6 +146,24 @@ def _stored_provider() -> str | None:
         return None
 
 
+def _stored_provider_mode() -> str:
+    try:
+        from api.llm_settings import get_llm_provider_mode_setting
+
+        return get_llm_provider_mode_setting()
+    except Exception:
+        return "single"
+
+
+def _stored_provider_by_tier(fallback_provider: str) -> dict[str, str] | None:
+    try:
+        from api.llm_settings import get_llm_provider_by_tier_setting
+
+        return get_llm_provider_by_tier_setting(fallback_provider=fallback_provider)
+    except Exception:
+        return None
+
+
 def selected_provider() -> str:
     provider = (_stored_provider() or os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in PROVIDERS:
@@ -153,35 +171,82 @@ def selected_provider() -> str:
     return provider
 
 
+def selected_provider_for_tier(tier: str) -> str:
+    normalized_tier = _normalize_tier(tier)
+    fallback_provider = selected_provider()
+    if _stored_provider_mode() != "custom":
+        return fallback_provider
+
+    provider_by_tier = _stored_provider_by_tier(fallback_provider) or {}
+    provider = str(provider_by_tier.get(normalized_tier) or fallback_provider).strip().lower()
+    if provider not in PROVIDERS:
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+    return provider
+
+
+def selected_providers() -> set[str]:
+    fallback_provider = selected_provider()
+    if _stored_provider_mode() != "custom":
+        return {fallback_provider}
+
+    provider_by_tier = _stored_provider_by_tier(fallback_provider) or {}
+    providers = {str(provider).strip().lower() for provider in provider_by_tier.values()}
+    providers = {provider for provider in providers if provider in PROVIDERS}
+    return providers or {fallback_provider}
+
+
 def api_key_env(provider: str | None = None) -> str:
+    if provider is None:
+        providers = sorted(selected_providers())
+        return ", ".join(_API_KEY_ENV_BY_PROVIDER[item] for item in providers)
     return _API_KEY_ENV_BY_PROVIDER[_normalize_provider(provider)]
 
 
 def get_api_key(provider: str | None = None) -> str | None:
-    value = (os.environ.get(api_key_env(provider)) or "").strip().strip("\"'")
+    resolved_provider = selected_provider() if provider is None else _normalize_provider(provider)
+    value = (os.environ.get(_API_KEY_ENV_BY_PROVIDER[resolved_provider]) or "").strip().strip("\"'")
     return value or None
 
 
 def has_llm_api_key(provider: str | None = None) -> bool:
+    if provider is None:
+        return all(get_api_key(selected_provider) is not None for selected_provider in selected_providers())
     resolved_provider = _normalize_provider(provider)
     return get_api_key(resolved_provider) is not None
 
 
 def require_api_key(provider: str | None = None) -> str:
+    if provider is None:
+        selected = sorted(selected_providers())
+        missing = [selected_provider for selected_provider in selected if get_api_key(selected_provider) is None]
+        if missing:
+            envs = ", ".join(api_key_env(selected_provider) for selected_provider in missing)
+            raise RuntimeError(f"{envs} is required for the configured LLM providers")
+        for selected_provider in selected:
+            _validate_api_key_shape(selected_provider, get_api_key(selected_provider) or "")
+        resolved_provider = selected_provider()
+        return get_api_key(resolved_provider) or get_api_key(selected[0]) or ""
+
     resolved_provider = _normalize_provider(provider)
     api_key = get_api_key(resolved_provider)
     if not api_key:
         raise RuntimeError(f"{api_key_env(resolved_provider)} is required for LLM_PROVIDER={resolved_provider}")
-    if resolved_provider == PROVIDER_ANTHROPIC and (
-        api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-"))
-    ):
-        raise RuntimeError("ANTHROPIC_API_KEY must be an Anthropic key beginning with sk-ant-")
+    _validate_api_key_shape(resolved_provider, api_key)
     return api_key
 
 
+def _validate_api_key_shape(provider: str, api_key: str) -> None:
+    if provider == PROVIDER_ANTHROPIC and (
+        api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-"))
+    ):
+        raise RuntimeError("ANTHROPIC_API_KEY must be an Anthropic key beginning with sk-ant-")
+
+
 def model_for_tier(tier: str, provider: str | None = None) -> str:
-    resolved_provider = _normalize_provider(provider)
     normalized_tier = _normalize_tier(tier)
+    resolved_provider = (
+        selected_provider_for_tier(normalized_tier) if provider is None else _normalize_provider(provider)
+    )
     env_name = _MODEL_ENV_BY_PROVIDER[resolved_provider][normalized_tier]
     override = (os.environ.get(env_name) or "").strip()
     if override:
@@ -190,8 +255,10 @@ def model_for_tier(tier: str, provider: str | None = None) -> str:
 
 
 def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
-    resolved_provider = _normalize_provider(provider)
     normalized_tier = _normalize_tier(tier)
+    resolved_provider = (
+        selected_provider_for_tier(normalized_tier) if provider is None else _normalize_provider(provider)
+    )
     resolved_model = model_for_tier(normalized_tier, resolved_provider)
     fallback = default_reasoning_effort(resolved_provider, normalized_tier)
     try:
@@ -223,11 +290,10 @@ def default_reasoning_effort(provider: str, tier: str) -> str:
 
 
 def resolve_model(model: str, provider: str | None = None) -> str:
-    resolved_provider = _normalize_provider(provider)
     tier = _model_to_tier(model)
     if tier is None:
         return model
-    return model_for_tier(tier, resolved_provider)
+    return model_for_tier(tier, provider)
 
 
 def get_llm_client(provider: str | None = None, api_key: str | None = None) -> Any:
@@ -436,7 +502,8 @@ def call_llm_text(
     json_schema: dict[str, Any] | None = None,
     json_schema_name: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
-    resolved_provider = _normalize_provider(provider)
+    resolved_provider = _provider_for_model_argument(model, provider)
+    resolved_model = resolve_model(model, resolved_provider)
     web_search_enabled = _web_search_enabled(
         enable_web_search=enable_web_search,
         allowed_domains=allowed_domains,
@@ -444,7 +511,7 @@ def call_llm_text(
     prompt, system = _prepare_text_egress(
         provider=resolved_provider,
         purpose="llm_utils.call_llm_text",
-        model=model,
+        model=resolved_model,
         prompt=prompt,
         system=system,
         max_tokens=max_tokens,
@@ -452,7 +519,7 @@ def call_llm_text(
     if resolved_provider == PROVIDER_ANTHROPIC:
         response = _call_anthropic_messages(
             messages=[{"role": "user", "content": prompt}],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -463,7 +530,7 @@ def call_llm_text(
     elif resolved_provider == PROVIDER_OPENAI:
         response = _call_openai_response(
             input_items=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -476,7 +543,7 @@ def call_llm_text(
     else:
         response = _call_gemini_generate_content(
             contents=[_gemini_content("user", [{"text": prompt}])],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -499,7 +566,8 @@ def call_llm_pdf_text(
     provider: str | None = None,
     reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
-    resolved_provider = _normalize_provider(provider)
+    resolved_provider = _provider_for_model_argument(model, provider)
+    resolved_model = resolve_model(model, resolved_provider)
     pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
     if resolved_provider == PROVIDER_ANTHROPIC:
         response = _call_anthropic_messages(
@@ -519,7 +587,7 @@ def call_llm_pdf_text(
                     ],
                 }
             ],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -540,7 +608,7 @@ def call_llm_pdf_text(
                     ],
                 }
             ],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -558,7 +626,7 @@ def call_llm_pdf_text(
                     ],
                 )
             ],
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
@@ -643,7 +711,11 @@ def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
             if key in {"$defs", "$schema", "additionalProperties", "default", "examples", "title"}:
                 continue
             if key in {"anyOf", "oneOf"} and isinstance(item, list):
-                non_null = [candidate for candidate in item if not (isinstance(candidate, dict) and candidate.get("type") == "null")]
+                non_null = [
+                    candidate
+                    for candidate in item
+                    if not (isinstance(candidate, dict) and candidate.get("type") == "null")
+                ]
                 if len(non_null) == 1 and len(non_null) != len(item):
                     nested = convert(non_null[0])
                     if isinstance(nested, dict):
@@ -853,6 +925,13 @@ def _normalize_provider(provider: str | None) -> str:
     if resolved not in PROVIDERS:
         raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
     return resolved
+
+
+def _provider_for_model_argument(model: str, provider: str | None) -> str:
+    if provider is not None:
+        return _normalize_provider(provider)
+    tier = _model_to_tier(model)
+    return selected_provider_for_tier(tier) if tier is not None else selected_provider()
 
 
 def _normalize_tier(tier: str) -> str:

@@ -15,14 +15,22 @@ from api.exceptions import ValidationError
 from api.llm_settings import (
     ALLOWED_LLM_PROVIDERS,
     LLM_GATEWAY_POLICY_KEY,
+    LLM_PROVIDER_BY_TIER_KEY,
     LLM_PROVIDER_KEY,
+    LLM_PROVIDER_MODE_KEY,
     REASONING_EFFORTS,
     _reasoning_key,
+    default_llm_provider_by_tier,
     get_gateway_policy_setting,
+    get_llm_provider_by_tier_setting,
+    get_llm_provider_mode_setting,
     get_setting,
     get_settings,
     normalize_gateway_policy,
+    normalize_llm_provider_by_tier,
     set_gateway_policy_setting,
+    set_llm_provider_by_tier_setting,
+    set_llm_provider_mode_setting,
     set_llm_provider_setting,
     set_llm_reasoning_effort_settings,
     set_setting,
@@ -48,6 +56,7 @@ router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
 Provider = Literal["anthropic", "openai", "gemini"]
+ProviderMode = Literal["single", "custom"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 PreferenceLevel = Literal["less", "balanced", "more"]
 Personality = Literal["friendly", "pragmatic"]
@@ -68,6 +77,12 @@ class ReasoningEffortSettings(BaseModel):
     low: ReasoningEffort
     mid: ReasoningEffort
     high: ReasoningEffort
+
+
+class ProviderByTierSettings(BaseModel):
+    low: Provider
+    mid: Provider
+    high: Provider
 
 
 class GatewayDeniedRule(BaseModel):
@@ -112,7 +127,10 @@ class GatewayPolicySettings(BaseModel):
 
 class LLMSettingsUpdate(BaseModel):
     provider: Provider
+    provider_mode: ProviderMode | None = None
+    provider_by_tier: ProviderByTierSettings | None = None
     reasoning_efforts: ReasoningEffortSettings | None = None
+    reasoning_efforts_by_provider: dict[Provider, ReasoningEffortSettings] | None = None
     gateway_policy: GatewayPolicySettings | None = None
     gateway_note: str | None = Field(default=None, max_length=2000)
 
@@ -196,6 +214,8 @@ def _llm_settings_keys() -> list[str]:
     tiers = (MODEL_LOW, MODEL_MID, MODEL_HIGH)
     return [
         LLM_PROVIDER_KEY,
+        LLM_PROVIDER_MODE_KEY,
+        LLM_PROVIDER_BY_TIER_KEY,
         LLM_GATEWAY_POLICY_KEY,
         *(_reasoning_key(provider, tier) for provider in SETTINGS_PROVIDERS for tier in tiers),
     ]
@@ -210,6 +230,16 @@ def _provider_from_settings(rows: dict[str, dict]) -> str:
     if provider not in ALLOWED_LLM_PROVIDERS:
         raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
     return provider
+
+
+def _provider_mode_from_settings(rows: dict[str, dict]) -> str:
+    return get_llm_provider_mode_setting(rows)
+
+
+def _provider_by_tier_from_settings(rows: dict[str, dict], provider: str, provider_mode: str) -> dict[str, str]:
+    if provider_mode != "custom":
+        return default_llm_provider_by_tier(provider)
+    return get_llm_provider_by_tier_setting(rows, fallback_provider=provider)
 
 
 def _reasoning_effort_from_settings(rows: dict[str, dict], provider: str, tier: str, model: str) -> str:
@@ -227,16 +257,21 @@ def _reasoning_effort_from_settings(rows: dict[str, dict], provider: str, tier: 
 def _settings_response() -> dict:
     rows = get_settings(_llm_settings_keys())
     provider = _provider_from_settings(rows)
+    provider_mode = _provider_mode_from_settings(rows)
+    provider_by_tier = _provider_by_tier_from_settings(rows, provider, provider_mode)
     models_by_provider = {
         PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
         PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
         PROVIDER_GEMINI: _models_for_provider(PROVIDER_GEMINI),
     }
+    models = {tier: models_by_provider[provider_by_tier[tier]][tier] for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)}
     gateway_policy = get_gateway_policy_setting(rows)
     return {
         "provider": provider,
+        "provider_mode": provider_mode,
+        "provider_by_tier": provider_by_tier,
         "available_providers": [_provider_status(provider) for provider in SETTINGS_PROVIDERS],
-        "models": models_by_provider[provider],
+        "models": models,
         "models_by_provider": models_by_provider,
         "reasoning_efforts": {
             PROVIDER_ANTHROPIC: {
@@ -301,14 +336,29 @@ def get_llm_settings():
 
 @router.put("/settings/llm")
 def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
+    provider_mode = body.provider_mode or "single"
     try:
-        require_api_key(body.provider)
+        provider_by_tier = normalize_llm_provider_by_tier(
+            body.provider_by_tier.model_dump() if body.provider_by_tier is not None else None,
+            fallback_provider=body.provider,
+        )
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    if provider_mode == "single":
+        provider_by_tier = default_llm_provider_by_tier(body.provider)
+
+    try:
+        for provider in sorted(set(provider_by_tier.values()) if provider_mode == "custom" else {body.provider}):
+            require_api_key(provider)
     except RuntimeError as exc:
         raise ValidationError(str(exc)) from exc
 
     before = _settings_response()
     if body.reasoning_efforts is not None:
         _validate_reasoning_efforts(body.provider, body.reasoning_efforts.model_dump())
+    if body.reasoning_efforts_by_provider is not None:
+        for provider, efforts in body.reasoning_efforts_by_provider.items():
+            _validate_reasoning_efforts(provider, efforts.model_dump())
     gateway_policy_changed = False
     normalized_gateway_policy: dict | None = None
     if body.gateway_policy is not None:
@@ -320,7 +370,12 @@ def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
         if gateway_policy_changed and not str(body.gateway_note or "").strip():
             raise ValidationError("gateway_note is required when changing gateway policy.")
     set_llm_provider_setting(body.provider)
-    if body.reasoning_efforts is not None:
+    set_llm_provider_mode_setting(provider_mode)
+    set_llm_provider_by_tier_setting(provider_by_tier, fallback_provider=body.provider)
+    if body.reasoning_efforts_by_provider is not None:
+        for provider, efforts in body.reasoning_efforts_by_provider.items():
+            set_llm_reasoning_effort_settings(provider, efforts.model_dump())
+    elif body.reasoning_efforts is not None:
         set_llm_reasoning_effort_settings(body.provider, body.reasoning_efforts.model_dump())
     if normalized_gateway_policy is not None:
         set_gateway_policy_setting(normalized_gateway_policy)
@@ -332,10 +387,14 @@ def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
         actor=actor,
         before_summary={
             "provider": before.get("provider"),
+            "provider_mode": before.get("provider_mode"),
+            "provider_by_tier": before.get("provider_by_tier"),
             "reasoning_efforts": before.get("reasoning_efforts", {}).get(body.provider),
         },
         after_summary={
             "provider": after.get("provider"),
+            "provider_mode": after.get("provider_mode"),
+            "provider_by_tier": after.get("provider_by_tier"),
             "reasoning_efforts": after.get("reasoning_efforts", {}).get(body.provider),
         },
     )

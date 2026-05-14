@@ -15,9 +15,12 @@ from api.postgres_state import PostgresStateConnection
 DB_PATH = Path(__file__).parent / "app_settings.db"
 
 LLM_PROVIDER_KEY = "llm.provider"
+LLM_PROVIDER_MODE_KEY = "llm.provider_mode"
+LLM_PROVIDER_BY_TIER_KEY = "llm.provider_by_tier"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
 LLM_GATEWAY_POLICY_KEY = "llm.gateway_policy"
 ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+ALLOWED_LLM_PROVIDER_MODES = {"single", "custom"}
 LEGACY_LLM_PROVIDERS = {"local"}
 MODEL_TIERS = {"low", "mid", "high"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -44,6 +47,7 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
     "model_lifecycle": {},
     "denied_rules": [],
 }
+DEFAULT_PROVIDER_MODE = "single"
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | PostgresStateConnection | None = None
@@ -229,6 +233,13 @@ def set_gateway_policy_setting(policy: dict[str, Any]) -> dict[str, Any]:
     return set_setting(LLM_GATEWAY_POLICY_KEY, json.dumps(normalized, sort_keys=True))
 
 
+def _normalize_llm_provider(provider: str) -> str:
+    normalized = (provider or "").strip().lower()
+    if normalized not in ALLOWED_LLM_PROVIDERS:
+        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+    return normalized
+
+
 def get_llm_provider_setting() -> str | None:
     row = get_setting(LLM_PROVIDER_KEY)
     if not row:
@@ -238,10 +249,61 @@ def get_llm_provider_setting() -> str | None:
 
 
 def set_llm_provider_setting(provider: str) -> dict[str, Any]:
-    normalized = (provider or "").strip().lower()
-    if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
-    return set_setting(LLM_PROVIDER_KEY, normalized)
+    return set_setting(LLM_PROVIDER_KEY, _normalize_llm_provider(provider))
+
+
+def get_llm_provider_mode_setting(rows: dict[str, dict[str, Any]] | None = None) -> str:
+    row = (rows or {}).get(LLM_PROVIDER_MODE_KEY) if rows is not None else get_setting(LLM_PROVIDER_MODE_KEY)
+    if not row:
+        return DEFAULT_PROVIDER_MODE
+    mode = str(row.get("value") or "").strip().lower()
+    return mode if mode in ALLOWED_LLM_PROVIDER_MODES else DEFAULT_PROVIDER_MODE
+
+
+def set_llm_provider_mode_setting(mode: str) -> dict[str, Any]:
+    normalized = (mode or "").strip().lower()
+    if normalized not in ALLOWED_LLM_PROVIDER_MODES:
+        raise ValueError("LLM provider mode must be 'single' or 'custom'")
+    return set_setting(LLM_PROVIDER_MODE_KEY, normalized)
+
+
+def default_llm_provider_by_tier(provider: str) -> dict[str, str]:
+    normalized = _normalize_llm_provider(provider)
+    return {tier: normalized for tier in ("low", "mid", "high")}
+
+
+def normalize_llm_provider_by_tier(value: dict[str, Any] | None, *, fallback_provider: str) -> dict[str, str]:
+    fallback = _normalize_llm_provider(fallback_provider)
+    raw = dict(value or {})
+    out = default_llm_provider_by_tier(fallback)
+    for tier in ("low", "mid", "high"):
+        provider = str(raw.get(tier) or fallback).strip().lower()
+        if provider in LEGACY_LLM_PROVIDERS:
+            provider = fallback
+        out[tier] = _normalize_llm_provider(provider)
+    return out
+
+
+def get_llm_provider_by_tier_setting(
+    rows: dict[str, dict[str, Any]] | None = None,
+    *,
+    fallback_provider: str,
+) -> dict[str, str]:
+    row = (rows or {}).get(LLM_PROVIDER_BY_TIER_KEY) if rows is not None else get_setting(LLM_PROVIDER_BY_TIER_KEY)
+    if not row:
+        return default_llm_provider_by_tier(fallback_provider)
+    try:
+        raw = json.loads(str(row.get("value") or "{}"))
+        if not isinstance(raw, dict):
+            return default_llm_provider_by_tier(fallback_provider)
+        return normalize_llm_provider_by_tier(raw, fallback_provider=fallback_provider)
+    except (TypeError, json.JSONDecodeError, ValueError):
+        return default_llm_provider_by_tier(fallback_provider)
+
+
+def set_llm_provider_by_tier_setting(provider_by_tier: dict[str, Any], *, fallback_provider: str) -> dict[str, Any]:
+    normalized = normalize_llm_provider_by_tier(provider_by_tier, fallback_provider=fallback_provider)
+    return set_setting(LLM_PROVIDER_BY_TIER_KEY, json.dumps(normalized, sort_keys=True))
 
 
 def _reasoning_key(provider: str, tier: str) -> str:
