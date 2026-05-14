@@ -339,7 +339,7 @@ def test_sp500_price_cache_refreshes_when_close_changed_under_ttl(monkeypatch, t
 
     cache_dir = tmp_path / "signal_aggregator"
     monkeypatch.setattr(sa, "_SP500_CACHE_DIR", cache_dir)
-    monkeypatch.setattr(sa, "_SP500_CACHE_DATA", cache_dir / "sp500_prices.pkl")
+    monkeypatch.setattr(sa, "_SP500_CACHE_DATA", cache_dir / "sp500_prices.parquet")
     monkeypatch.setattr(sa, "_SP500_CACHE_META", cache_dir / "sp500_prices_meta.json")
 
     stale_df = pd.DataFrame({"AAPL": [1.0]}, index=pd.to_datetime(["2000-01-01"]))
