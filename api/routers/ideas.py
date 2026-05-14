@@ -267,9 +267,16 @@ def _comparison_uid(value: Any) -> str:
     return text if text.startswith("idea_comparison_run:") else f"idea_comparison_run:{text}"
 
 
+def _writeable_object_props(props: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(props)
+    for key in ("_meta", "object_uid", "legacy_id"):
+        payload.pop(key, None)
+    return payload
+
+
 def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
     now = _now()
-    payload = {**props, "ontology_run_id": "operational"}
+    payload = {**_writeable_object_props(props), "ontology_run_id": "operational"}
     service = OntologyObjectService()
     row = service.write_object(
         object_type,

@@ -50,12 +50,6 @@ const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEff
   },
 }
 
-const PROVIDER_DESCRIPTIONS: Record<LLMProvider, string> = {
-  anthropic: "Claude runtime requests",
-  openai: "OpenAI runtime requests",
-  gemini: "Gemini runtime requests",
-}
-
 const PROVIDER_FALLBACK_LABELS: Record<LLMProvider, string> = {
   anthropic: "Claude",
   openai: "OpenAI",
@@ -100,10 +94,6 @@ const DATA_SENSITIVITIES: GatewayDataSensitivity[] = [
   "account_private",
   "operational_private",
 ]
-
-function providerDescription(provider: LLMProvider) {
-  return PROVIDER_DESCRIPTIONS[provider]
-}
 
 function providerDisplayName(provider: LLMProvider | "*") {
   return provider === "*" ? "Any provider" : PROVIDER_FALLBACK_LABELS[provider]
@@ -157,12 +147,12 @@ function gatewayRuleModelDisplayName(model: string) {
   return model === "*" ? "Any model" : modelDisplayName(model)
 }
 
-function statusBadge(provider: LLMProviderStatus) {
+function statusBadge(provider: LLMProviderStatus, className?: string) {
   if (provider.configured) {
-    return <StatusBadge tone="success">Configured</StatusBadge>
+    return <StatusBadge tone="success" className={className}>Configured</StatusBadge>
   }
 
-  return <StatusBadge tone="warning">Missing {provider.api_key_env}</StatusBadge>
+  return <StatusBadge tone="warning" className={className}>Missing {provider.api_key_env}</StatusBadge>
 }
 
 function policiesEqual(a: GatewayPolicySettings | undefined, b: GatewayPolicySettings | undefined) {
@@ -373,22 +363,19 @@ export function AISettings() {
                     : "hover:bg-hover",
                 )}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "inline-block h-3 w-3 rounded-full border",
-                          effectiveProviderMode === "single" && effectiveProvider === provider.provider
-                            ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
-                            : "border-strong",
-                        )}
-                      />
-                      <span className="text-sm font-semibold text-app">{provider.label}</span>
-                    </div>
-                    <p className="mt-2 text-xs text-muted">{providerDescription(provider.provider)}</p>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={cn(
+                        "h-3 w-3 flex-none rounded-full border",
+                        effectiveProviderMode === "single" && effectiveProvider === provider.provider
+                          ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
+                          : "border-strong",
+                      )}
+                    />
+                    <span className="truncate text-sm font-semibold text-app">{provider.label}</span>
                   </div>
-                  {statusBadge(provider)}
+                  {statusBadge(provider, "shrink-0")}
                 </div>
               </button>
             )
@@ -407,24 +394,21 @@ export function AISettings() {
                 : "hover:bg-hover",
             )}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "inline-block h-3 w-3 rounded-full border",
-                      effectiveProviderMode === "custom"
-                        ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
-                        : "border-strong",
-                    )}
-                  />
-                  <span className="text-sm font-semibold text-app">Custom</span>
-                </div>
-                <p className="mt-2 text-xs text-muted">Per-tier runtime routing</p>
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className={cn(
+                    "h-3 w-3 flex-none rounded-full border",
+                    effectiveProviderMode === "custom"
+                      ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
+                      : "border-strong",
+                  )}
+                />
+                <span className="truncate text-sm font-semibold text-app">Custom</span>
               </div>
               {customSetupConfigured
-                ? <StatusBadge tone="success">Configured</StatusBadge>
-                : <StatusBadge tone="warning">Missing key</StatusBadge>}
+                ? <StatusBadge tone="success" className="shrink-0">Configured</StatusBadge>
+                : <StatusBadge tone="warning" className="shrink-0">Missing key</StatusBadge>}
             </div>
           </button>
         </div>
