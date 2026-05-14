@@ -409,3 +409,13 @@ def test_stale_approval_controls_are_wired_on_review_surfaces():
             "approvalReview.approval.can_approve === false" in source
             or "approvalReview.can_approve === false" in source
         )
+
+
+def test_workspace_source_health_panel_is_wired():
+    workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
+
+    assert "SourceHealthPanel" in workspace
+    assert "Source Health" in workspace
+    assert "stale required" in workspace
+    assert "optional degraded" in workspace
+    assert "theme-badge-error" in workspace

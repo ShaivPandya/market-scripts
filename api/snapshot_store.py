@@ -31,6 +31,8 @@ class SnapshotRecord:
     error: str | None
     version: int
     artifact_uri: str | None
+    quality: str = "ok"
+    payload_hash: str | None = None
 
 
 def snapshots_required() -> bool:
@@ -90,6 +92,8 @@ def _row_to_record(row: Any) -> SnapshotRecord | None:
         error=_row_get(row, "error"),
         version=int(_row_get(row, "version", 1) or 1),
         artifact_uri=_row_get(row, "artifact_uri"),
+        quality=str(_row_get(row, "quality", "ok") or "ok"),
+        payload_hash=_row_get(row, "payload_hash"),
     )
 
 
@@ -196,6 +200,40 @@ def read_snapshot(snapshot_key: str) -> SnapshotRecord | None:
     with _sqlite_connect() as conn:
         row = conn.execute("SELECT * FROM computed_snapshots WHERE snapshot_key = ?", (snapshot_key,)).fetchone()
         return _row_to_record(row)
+
+
+def list_snapshot_records() -> list[SnapshotRecord]:
+    """Return current computed snapshot records across the active state backend."""
+    if use_postgres_state():
+        repo = TemporalOntologyRepository()
+        with repo._connect() as conn:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM ontology_current_computed_snapshot_read_model
+                    ORDER BY snapshot_key
+                    """
+                ).fetchall()
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM computed_snapshot_versions
+                    WHERE tx_to IS NULL
+                      AND valid_from <= clock_timestamp()
+                      AND (valid_to IS NULL OR valid_to > clock_timestamp())
+                    ORDER BY snapshot_key, load_time DESC
+                    """
+                ).fetchall()
+        return [record for record in (_row_to_record(row) for row in rows) if record is not None]
+
+    with _sqlite_connect() as conn:
+        rows = conn.execute("SELECT * FROM computed_snapshots ORDER BY snapshot_key").fetchall()
+    return [record for record in (_row_to_record(row) for row in rows) if record is not None]
 
 
 def delete_snapshot(snapshot_key: str) -> None:

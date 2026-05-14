@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch } from "lucide-react"
+import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
@@ -78,6 +78,7 @@ interface WorkspaceData {
       top_contributors?: Array<Record<string, unknown>>
     } | null
   } | null
+  source_health?: SourceHealth | null
   thesis_pressure: {
     ticker: string
     status: string
@@ -102,6 +103,37 @@ interface WorkspaceData {
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   recent_workflow_runs: WorkflowRun[]
+}
+
+interface SourceHealth {
+  generated_at: string
+  overall_quality: string
+  counts: Record<string, number>
+  domains: SourceHealthDomain[]
+}
+
+interface SourceHealthDomain {
+  domain: string
+  label: string
+  overall_quality: string
+  counts: Record<string, number>
+  sources: SourceHealthSource[]
+}
+
+interface SourceHealthSource {
+  id: string
+  domain: string
+  source_name: string
+  snapshot_key?: string | null
+  status: string
+  quality_state: string
+  required: boolean
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness_timestamp?: string | null
+  stale?: boolean
+  error?: string | null
+  detail?: string | null
 }
 
 interface ActionItem {
@@ -228,6 +260,103 @@ function workflowStatusClass(status: string | null | undefined): string {
 
 function workflowRunTime(run: WorkflowRun): string {
   return formatTime(run.started_at ?? run.completed_at)
+}
+
+function sourceHealthLabel(value: string | null | undefined): string {
+  const normalized = String(value || "missing").replace(/_/g, " ")
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+function sourceHealthBadgeClass(source: Pick<SourceHealthSource, "status" | "required">): string {
+  const status = String(source.status || "missing")
+  if (source.required && ["stale", "failed", "missing"].includes(status)) return "theme-badge-error"
+  if (status === "ok") return "theme-badge-success"
+  if (status === "failed") return "theme-badge-error"
+  if (status === "stale" || status === "degraded") return "theme-badge-warning"
+  return "theme-badge-neutral"
+}
+
+function sourceHealthOverallClass(quality: string | null | undefined): string {
+  const value = String(quality || "missing")
+  if (value === "ok") return "theme-badge-success"
+  if (value === "failed" || value === "missing") return "theme-badge-error"
+  if (value === "stale" || value === "degraded") return "theme-badge-warning"
+  return "theme-badge-neutral"
+}
+
+function sourceHealthTimestamp(source: SourceHealthSource): string {
+  return formatTime(source.freshness_timestamp ?? source.as_of ?? source.fetched_at)
+}
+
+function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
+  const counts = sourceHealth.counts ?? {}
+  const domains = sourceHealth.domains ?? []
+  return (
+    <section className="theme-surface mb-6 rounded-xl p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-app">
+          <Database size={14} className="text-blue-500" />
+          Source Health
+        </h2>
+        <span className={cn("theme-badge ml-auto", sourceHealthOverallClass(sourceHealth.overall_quality))}>
+          {sourceHealthLabel(sourceHealth.overall_quality)}
+        </span>
+        <span className="text-xs text-subtle">Updated {formatTime(sourceHealth.generated_at)}</span>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted">
+        <span>{counts.total ?? 0} sources</span>
+        <span>{counts.ok ?? 0} ok</span>
+        <span>{counts.required_stale ?? 0} stale required</span>
+        <span>{counts.required_failed ?? 0} required failed</span>
+        <span>{counts.optional_degraded ?? 0} optional degraded</span>
+      </div>
+      {domains.length === 0 ? (
+        <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
+          No source freshness records are available yet.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          {domains.map(domain => (
+            <div key={domain.domain} className="rounded-lg border border-app px-3 py-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-sm font-semibold text-app">{domain.label}</span>
+                <span className={cn("theme-badge ml-auto", sourceHealthOverallClass(domain.overall_quality))}>
+                  {sourceHealthLabel(domain.overall_quality)}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {domain.sources.map(source => (
+                  <div
+                    key={source.id}
+                    className={cn(
+                      "grid gap-2 rounded-md px-2 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                      source.required && ["stale", "failed", "missing"].includes(source.status)
+                        ? "border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
+                        : "bg-[hsl(var(--muted-2))]",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-app">{source.source_name.replace(/_/g, " ")}</span>
+                        <span className="text-subtle">{source.required ? "required" : "optional"}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-subtle">
+                        <span>{sourceHealthTimestamp(source)}</span>
+                        {source.detail && <span className="max-w-full truncate">{source.detail}</span>}
+                      </div>
+                    </div>
+                    <span className={cn("theme-badge w-fit", sourceHealthBadgeClass(source))}>
+                      {sourceHealthLabel(source.status)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
 }
 
 function policyGateFromRecommendation(rec: RecommendationRecord): PolicyGateResult | null {
@@ -590,6 +719,7 @@ export function Workspace() {
   const regimeSubtitle = [
     regime?.composite_score != null ? `Score: ${regime.composite_score}` : null,
     regime?.snapshot?.as_of ? `As of ${regime.snapshot.as_of}` : null,
+    regime?.snapshot?.refresh_status && regime.snapshot.refresh_status !== "ok" ? `Refresh ${regime.snapshot.refresh_status}` : null,
     regime?.snapshot?.stale ? "Stale" : null,
   ].filter(Boolean).join(" · ")
 
@@ -643,6 +773,8 @@ export function Workspace() {
           signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
         />
       </div>
+
+      {data.source_health && <SourceHealthPanel sourceHealth={data.source_health} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (
