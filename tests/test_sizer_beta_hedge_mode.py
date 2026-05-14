@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from api.routers import sizer
 
 
@@ -101,3 +103,29 @@ def test_compute_sizer_result_forwards_group_fields(monkeypatch):
         {"ticker": "SKH", "conviction": 4, "group_name": "Memory", "group_conviction": 5},
         {"ticker": "MU", "conviction": 3, "group_name": "Memory", "group_conviction": 5},
     ]
+
+
+def test_sizer_prefill_only_returns_equity_positions(monkeypatch):
+    class FakeRuntimeReadService:
+        def positions_df(self):
+            return pd.DataFrame(
+                [
+                    {"ticker": "NVDA", "direction": "long", "conviction": 5, "asset": "equity"},
+                    {
+                        "ticker": "BZ=F",
+                        "direction": "long",
+                        "conviction": 4,
+                        "asset": "commodity",
+                        "instrument_type": "future",
+                    },
+                    {"ticker": "EURUSD=X", "direction": "short", "conviction": 3, "asset": "fx"},
+                ]
+            )
+
+    monkeypatch.setattr(sizer, "OntologyRuntimeReadService", lambda: FakeRuntimeReadService())
+    monkeypatch.setattr(sizer, "get_portfolio_book_size", lambda: 100000.0)
+
+    result = sizer.get_sizer_prefill()
+
+    assert [row["ticker"] for row in result["positions"]] == ["NVDA"]
+    assert result["count"] == 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import importlib
 import os
 import threading
@@ -609,6 +610,61 @@ def parse_json_text(text: str) -> Any:
             return None
 
 
+def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Convert JSON Schema into the smaller schema subset accepted by Gemini."""
+
+    root_defs = schema.get("$defs") if isinstance(schema.get("$defs"), dict) else {}
+
+    def resolve_ref(ref: str) -> dict[str, Any] | None:
+        prefix = "#/$defs/"
+        if not ref.startswith(prefix):
+            return None
+        value = root_defs.get(ref.removeprefix(prefix))
+        return copy.deepcopy(value) if isinstance(value, dict) else None
+
+    def convert(value: Any) -> Any:
+        if isinstance(value, list):
+            return [convert(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        current: dict[str, Any] = value
+        ref = current.get("$ref")
+        if isinstance(ref, str):
+            resolved = resolve_ref(ref)
+            if resolved is not None:
+                siblings = {key: val for key, val in current.items() if key != "$ref"}
+                resolved.update(siblings)
+                current = resolved
+
+        converted: dict[str, Any] = {}
+        nullable = False
+        for key, item in current.items():
+            if key in {"$defs", "$schema", "additionalProperties", "default", "examples", "title"}:
+                continue
+            if key in {"anyOf", "oneOf"} and isinstance(item, list):
+                non_null = [candidate for candidate in item if not (isinstance(candidate, dict) and candidate.get("type") == "null")]
+                if len(non_null) == 1 and len(non_null) != len(item):
+                    nested = convert(non_null[0])
+                    if isinstance(nested, dict):
+                        converted.update(nested)
+                        nullable = True
+                    continue
+            if key == "type" and isinstance(item, list):
+                non_null_types = [type_name for type_name in item if type_name != "null"]
+                if len(non_null_types) == 1:
+                    converted[key] = non_null_types[0]
+                    nullable = True
+                    continue
+            converted[key] = convert(item)
+        if nullable:
+            converted["nullable"] = True
+        return converted
+
+    converted = convert(schema)
+    return converted if isinstance(converted, dict) else {}
+
+
 def _call_anthropic_messages(
     *,
     messages: list[dict[str, Any]],
@@ -724,7 +780,7 @@ def _call_gemini_generate_content(
         config["system_instruction"] = system
     if json_schema:
         config["response_mime_type"] = "application/json"
-        config["response_schema"] = json_schema
+        config["response_schema"] = _gemini_response_schema(json_schema)
     if enable_web_search:
         config["tools"] = [{"google_search": {}}]
     kwargs: dict[str, Any] = {

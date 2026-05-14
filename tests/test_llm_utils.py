@@ -256,6 +256,57 @@ def test_gemini_allowed_domains_enable_unrestricted_search(monkeypatch):
     assert fake_models.kwargs["config"]["tools"] == [{"google_search": {}}]
 
 
+def test_gemini_json_schema_removes_unsupported_additional_properties(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+
+    class FakeModels:
+        def __init__(self):
+            self.kwargs = None
+
+        def generate_content(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(text='{"name":"ANET","meta":{"score":1}}')
+
+    fake_models = FakeModels()
+    _install_fake_gemini(monkeypatch, SimpleNamespace(models=fake_models))
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "$defs": {
+            "Meta": {
+                "title": "Meta",
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "score": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": None}
+                },
+            }
+        },
+        "properties": {
+            "name": {"type": ["string", "null"]},
+            "meta": {"$ref": "#/$defs/Meta"},
+        },
+        "required": ["name", "meta"],
+    }
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="json",
+        model=llm_utils.MODEL_LOW,
+        max_tokens=128,
+        json_schema=schema,
+    )
+
+    assert text == '{"name":"ANET","meta":{"score":1}}'
+    response_schema = fake_models.kwargs["config"]["response_schema"]
+    assert fake_models.kwargs["config"]["response_mime_type"] == "application/json"
+    assert "additionalProperties" not in str(response_schema)
+    assert "$defs" not in response_schema
+    assert response_schema["properties"]["name"] == {"type": "string", "nullable": True}
+    assert response_schema["properties"]["meta"]["properties"]["score"] == {"type": "number", "nullable": True}
+
+
 def test_openai_reasoning_effort_request_shape(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
