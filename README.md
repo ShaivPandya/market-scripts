@@ -268,6 +268,7 @@ FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
 
 ## Useful Module Docs
 
+- `docs/adr/` — Architecture Decision Records for gating platform decisions.
 - `frontend/README.md`
 - `infra/gcp/README.md`
 - `ontology/README.md`

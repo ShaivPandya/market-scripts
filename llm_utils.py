@@ -737,6 +737,33 @@ def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return converted if isinstance(converted, dict) else {}
 
 
+def _openai_strict_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Normalize JSON Schema for OpenAI strict structured outputs."""
+
+    def convert(value: Any) -> Any:
+        if isinstance(value, list):
+            return [convert(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        converted: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "default":
+                continue
+            converted[key] = convert(item)
+
+        properties = converted.get("properties")
+        is_object = converted.get("type") == "object" or isinstance(properties, dict)
+        if is_object:
+            converted["additionalProperties"] = False
+            if isinstance(properties, dict):
+                converted["required"] = list(properties.keys())
+        return converted
+
+    converted = convert(schema)
+    return converted if isinstance(converted, dict) else {}
+
+
 def _call_anthropic_messages(
     *,
     messages: list[dict[str, Any]],
@@ -817,7 +844,7 @@ def _call_openai_response(
             "format": {
                 "type": "json_schema",
                 "name": json_schema_name or "structured_output",
-                "schema": json_schema,
+                "schema": _openai_strict_json_schema(json_schema),
                 "strict": True,
             }
         }

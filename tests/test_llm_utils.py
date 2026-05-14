@@ -184,6 +184,60 @@ def test_openai_text_request_shape_and_citations(monkeypatch):
     assert "reasoning" not in fake_responses.kwargs
 
 
+def test_openai_json_schema_is_strictified(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class FakeResponses:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(output_text='{"name":"ANET","meta":{"score":1}}')
+
+    fake_responses = FakeResponses()
+
+    class FakeOpenAI:
+        def __init__(self, *args, **kwargs):
+            self.responses = fake_responses
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "default": ""},
+            "meta": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "score": {"type": "number", "default": 0},
+                    "note": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "required": ["name"],
+    }
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="json",
+        model=llm_utils.MODEL_LOW,
+        max_tokens=128,
+        json_schema=schema,
+        json_schema_name="test_schema",
+    )
+
+    assert text == '{"name":"ANET","meta":{"score":1}}'
+    response_schema = fake_responses.kwargs["text"]["format"]["schema"]
+    assert fake_responses.kwargs["text"]["format"]["strict"] is True
+    assert "default" not in str(response_schema)
+    assert response_schema["additionalProperties"] is False
+    assert response_schema["required"] == ["name", "meta"]
+    assert response_schema["properties"]["meta"]["additionalProperties"] is False
+    assert response_schema["properties"]["meta"]["required"] == ["score", "note"]
+
+
 def test_gemini_text_request_shape_reasoning_and_citations(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")

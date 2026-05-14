@@ -739,9 +739,41 @@ def _as_json_dict(value: Any) -> dict[str, Any] | None:
 
 
 def _idea_evaluator_json_schema() -> dict[str, Any]:
-    object_schema = {"type": "object", "additionalProperties": True}
-    array_object_schema = {"type": "array", "items": object_schema}
     nullable_string = {"type": ["string", "null"]}
+    string_array = {"type": "array", "items": {"type": "string"}}
+    factor_score_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["score", "status", "rationale", "source"],
+        "properties": {
+            "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+            "status": {"type": "string"},
+            "rationale": {"type": "string"},
+            "source": {"type": "string"},
+        },
+    }
+    missing_information_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["field", "severity", "reason"],
+        "properties": {
+            "field": {"type": "string"},
+            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical", "block"]},
+            "reason": {"type": "string"},
+        },
+    }
+    evidence_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["source", "url", "summary", "claim", "support"],
+        "properties": {
+            "source": {"type": "string"},
+            "url": nullable_string,
+            "summary": {"type": "string"},
+            "claim": {"type": "string"},
+            "support": {"type": "string"},
+        },
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -769,14 +801,48 @@ def _idea_evaluator_json_schema() -> dict[str, Any]:
             "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
             "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
             "rationale": {"type": "string"},
-            "factor_scores": object_schema,
-            "missing_information": array_object_schema,
-            "data_quality": object_schema,
-            "evidence": array_object_schema,
-            "disconfirming_evidence": array_object_schema,
+            "factor_scores": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(CANONICAL_IDEA_FACTORS),
+                "properties": {name: factor_score_schema for name in CANONICAL_IDEA_FACTORS},
+            },
+            "missing_information": {"type": "array", "items": missing_information_schema},
+            "data_quality": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "critical_data_quality",
+                    "source_quality",
+                    "quality",
+                    "tool_errors",
+                    "missing_count",
+                    "critical_missing_count",
+                    "portfolio_context_used",
+                ],
+                "properties": {
+                    "critical_data_quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "source_quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "tool_errors": string_array,
+                    "missing_count": {"type": "integer", "minimum": 0},
+                    "critical_missing_count": {"type": "integer", "minimum": 0},
+                    "portfolio_context_used": {"type": "boolean"},
+                },
+            },
+            "evidence": {"type": "array", "items": evidence_schema},
+            "disconfirming_evidence": {"type": "array", "items": evidence_schema},
             "catalyst": nullable_string,
             "invalidation": nullable_string,
-            "portfolio_fit": object_schema,
+            "portfolio_fit": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status", "note"],
+                "properties": {
+                    "status": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+            },
             "decision_quality": decision_quality_schema(),
         },
     }

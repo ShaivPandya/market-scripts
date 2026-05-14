@@ -420,6 +420,42 @@ def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth
     assert response.status_code == 422
 
 
+def test_normalize_gateway_policy_accepts_deny_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "deny"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "deny"
+
+
+def test_normalize_gateway_policy_accepts_allow_with_warning_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "allow_with_warning"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "allow_with_warning"
+
+
+def test_normalize_gateway_policy_rejects_invalid_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "block_everything"
+
+    with pytest.raises(ValueError, match="private_egress_mode"):
+        temp_llm_settings.normalize_gateway_policy(policy)
+
+
+def test_normalize_gateway_policy_env_override_takes_precedence(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("PRIVATE_EGRESS_MODE", "deny")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "allow_with_warning"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "deny"
+
+
 def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")

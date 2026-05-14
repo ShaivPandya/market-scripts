@@ -448,6 +448,16 @@ def _model_gateway_decision(
                 local_only_required=local_only_required,
             )
 
+    private_egress_mode = str(policy.get("private_egress_mode") or "allow_with_warning").lower()
+    if private_egress_mode == "deny" and resolved_sensitivity in _PRIVATE_SENSITIVITIES:
+        return ModelGatewayDecision(
+            decision="blocked",
+            reason="private_egress_denied",
+            provider_egress="external_blocked",
+            lifecycle_state=lifecycle_state,
+            local_only_required=local_only_required,
+        )
+
     if resolved_sensitivity in _PRIVATE_SENSITIVITIES:
         provider_egress = "external_allowed_raw_private"
     else:

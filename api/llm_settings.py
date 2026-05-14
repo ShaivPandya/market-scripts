@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -37,6 +38,7 @@ DATA_SENSITIVITIES = {
     "account_private",
     "operational_private",
 }
+ALLOWED_PRIVATE_EGRESS_MODES = {"allow_with_warning", "deny"}
 DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
     "private_egress_mode": "allow_with_warning",
     "provider_lifecycle": {
@@ -167,8 +169,11 @@ def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
     raw = dict(value or {})
     policy = default_gateway_policy()
     private_mode = str(raw.get("private_egress_mode") or policy["private_egress_mode"]).strip().lower()
-    if private_mode != "allow_with_warning":
-        raise ValueError("private_egress_mode must be 'allow_with_warning'")
+    if private_mode not in ALLOWED_PRIVATE_EGRESS_MODES:
+        raise ValueError(f"private_egress_mode must be one of {sorted(ALLOWED_PRIVATE_EGRESS_MODES)}")
+    env_override = os.environ.get("PRIVATE_EGRESS_MODE", "").strip().lower()
+    if env_override and env_override in ALLOWED_PRIVATE_EGRESS_MODES:
+        private_mode = env_override
     policy["private_egress_mode"] = private_mode
 
     provider_lifecycle = dict(policy["provider_lifecycle"])
