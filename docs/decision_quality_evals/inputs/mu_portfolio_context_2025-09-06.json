@@ -1,0 +1,21 @@
+{
+  "ticker": "MU",
+  "as_of_date": "2025-09-06",
+  "position_status": "new_position",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "",
+  "intended_role_notes": "New position initiated from the MU thesis.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": 0.16,
+  "post_confirmation_conviction": 5,
+  "post_confirmation_raw_target_weight": 0.2,
+  "conviction_mapping_source": "portfolio/portfolio_optimizer/portfolio_sizer.py maps long raw target weight as LONG_MAX * conviction / 5, with LONG_MAX = 0.20.",
+  "target_size": "16% raw target weight before earnings at conviction 4; 20% raw target weight after positive earnings confirmation at conviction 5.",
+  "initial_size": null,
+  "current_semiconductor_exposure": null,
+  "current_ai_infrastructure_exposure": null,
+  "current_cyclical_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "User stated this was a new position as of the thesis initiation date and would have been conviction 4 before earnings, then conviction 5 after good earnings."
+}

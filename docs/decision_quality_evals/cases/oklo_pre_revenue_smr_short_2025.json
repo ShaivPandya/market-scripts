@@ -1,0 +1,191 @@
+{
+  "id": "oklo_pre_revenue_smr_short_2025",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2025-11-01",
+  "user_question": "Using the OKLO short thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json",
+      "sha256": "05fbcfc0ab2ceb72dc51a0e7fb163eef5c2e0586e00ace6b22f5cbf0475ef0b3",
+      "description": "Summary of the Oklo Inc short-thesis presentation dated 2025-11-01.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/oklo_price_action_2025-10-31.json",
+      "sha256": "b1912e2c3a4ecf78f5a112408124692fdfaa63d56adb24a406332fbfcf680194",
+      "description": "Historical OKLO price-action snapshot through the 2025-10-31 close: close, moving averages, ROC, relative underperformance, and drawdown from all-time high.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/oklo_portfolio_context_2025-11-01.json",
+      "sha256": "1d906ef6f12f445a3408ea15180554ad7b80aab22eecd682623f1ee30e685377",
+      "description": "Portfolio context: OKLO was a new short position as of thesis initiation.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/oklo_initiation_notes_2025-11-01.json",
+      "sha256": "53350523b1220ec82fa67dc18de0dcdb5746aa5531fd2758d766eddc07974902",
+      "description": "Initiation rationale: short thesis plus stock starting to decline from all-time high.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This draft case uses the OKLO source-document summary, human-provided price action, portfolio context, and initiation notes.",
+    "The short thesis was initiated on 2025-11-01. Because that date was a Saturday, price action uses the most recent market close, 2025-10-31.",
+    "Context says OKLO was a new short initiated because of the thesis and because the stock had started to decline from its all-time high.",
+    "Portfolio conviction input says OKLO would have been conviction 3 at initiation, implying -6% raw target weight under portfolio_sizer.py; confirmation would raise conviction to 5, implying -10% raw target weight.",
+    "No exact executed initial size, borrow availability/cost, short interest, option skew, or full portfolio exposure input has been selected yet."
+  ],
+  "gold_output": {
+    "simple_thesis": "Short OKLO because the stock priced in an AI/nuclear SMR dream despite no revenue, no reactor license, no binding power contracts, no secured HALEU supply, and early signs that the market was starting to reject the story.",
+    "opportunity_type": "unsustainable_process",
+    "embedded_macro_exposure": "Short speculative AI infrastructure enthusiasm, high-beta unprofitable growth, nuclear/SMR policy optimism, and easy-money risk appetite.",
+    "mispricing": {
+      "consensus_view": "The market was valuing OKLO as a major future supplier of nuclear power for AI/data-center demand.",
+      "variant_view": "OKLO's commercial path was far less certain than the valuation implied because the company lacked revenue, a reactor operating license, binding customer contracts, secured HALEU fuel, and a proven prototype.",
+      "pricing_evidence": "The source presentation cites a nearly $19.6B market capitalization, roughly $20B valuation, P/B above 25x, and a $132.77 stock price despite being pre-revenue.",
+      "why_consensus_is_wrong": "Consensus appeared to capitalize a distant nuclear/AI story as if execution, regulation, fuel supply, financing, and customer conversion were already solved."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "The stock had started to break from peak enthusiasm while public scrutiny of the story increased.",
+      "expected_timeframe": "Weeks to months after initiation.",
+      "why_now": "The short was initiated after the thesis identified severe commercial/regulatory gaps and price action showed initial confirmation: OKLO was down about 23.76% from its all-time high and underperforming the Russell 2000.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json: no revenue, no operating license, no binding power contracts, and roughly $20B valuation",
+        "docs/decision_quality_evals/inputs/oklo_price_action_2025-10-31.json: down about 23.76% from all-time high and underperforming Russell 2000",
+        "docs/decision_quality_evals/inputs/oklo_initiation_notes_2025-11-01.json: initiated because of thesis plus stock starting to decline"
+      ]
+    },
+    "invalidation": {
+      "observable": "OKLO demonstrates real commercial/regulatory progress or the short fails its near-term price-action test.",
+      "metric_or_event": "Binding power contracts, NRC licensing progress, secured HALEU supply, credible financing for deployment, prototype/deployment milestones, price rising from initiation, and whether price breaks below the highest selected moving average.",
+      "threshold": "Force review or cover if OKLO rises 10% from the $132.77 initiation reference price, fails to break below the highest selected moving average within one month, or announces material legally binding customer contracts, credible NRC/license milestones, secured HALEU supply, and credible financing. In this setup the highest selected moving average was the 100D SMA at $90.64.",
+      "timeframe": "One month for the price-action invalidation; ongoing for licensing, fuel, financing, and contract milestones.",
+      "implication": "The market may continue funding the story, the commercialization path may be improving faster than expected, or short timing may be too early."
+    },
+    "evidence_for": [
+      {
+        "claim": "The valuation was extreme relative to operating reality.",
+        "support": "The source document says OKLO had no revenue but traded at almost $19.6B-$20B market capitalization and P/B above 25x.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json"
+        ]
+      },
+      {
+        "claim": "The company lacked key commercialization requirements.",
+        "support": "The source document says OKLO had no license to operate reactors, no legally binding contracts to supply power, no secured long-term HALEU supply, and no smaller-scale or non-nuclear prototype.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json"
+        ]
+      },
+      {
+        "claim": "Regulatory history was a real obstacle.",
+        "support": "The source document says the NRC previously rejected a combined operating and construction license application.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json"
+        ]
+      },
+      {
+        "claim": "Price action gave initial short confirmation.",
+        "support": "The price-action input says OKLO was down about 23.76% from its all-time high and underperformed the Russell 2000.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_price_action_2025-10-31.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The stock was still in a powerful longer-term uptrend.",
+        "support": "OKLO remained above all selected moving averages and still had 3-month ROC of 73.76% and 12-month ROC of 434.50%, increasing squeeze and timing risk for a short.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_price_action_2025-10-31.json"
+        ]
+      },
+      {
+        "claim": "AI/nuclear enthusiasm could reaccelerate.",
+        "support": "The source document itself notes the short could fail if investor appetite for AI turned into irrational exuberance or if easy money returned.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_source_document_2025-11-01.json"
+        ]
+      },
+      {
+        "claim": "Shorts have asymmetric loss and borrow/squeeze risk.",
+        "support": "The selected inputs do not include borrow cost, short interest, option skew, or exact liquidity constraints, so sizing cannot be inferred aggressively.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/oklo_portfolio_context_2025-11-01.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "OKLO closed at $132.77 on 2025-10-31, above all provided moving averages, with 1-month ROC of 3.08%, 3-month ROC of 73.76%, and 12-month ROC of 434.50%; however, it had underperformed the Russell 2000 and was down about 23.76% from its all-time high.",
+      "interpretation": "For a short, this is early reversal confirmation after a speculative blowoff, not a completed downtrend. The stock remained technically extended, but the first break from peak enthusiasm supported initiating a controlled short.",
+      "confirms_thesis": true,
+      "data_needed": []
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear short thesis, extreme valuation, concrete commercial/regulatory gaps, and initial price confirmation from a large drawdown and relative underperformance.",
+      "missing_inputs": [
+        "Exact executed initial size",
+        "Borrow availability and borrow cost",
+        "Short interest and squeeze risk",
+        "Average daily volume/liquidity constraint",
+        "Full portfolio exposure to high-beta AI/speculative growth"
+      ]
+    },
+    "recommended_action": "short",
+    "expression": {
+      "primary": "Short OKLO common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Press only after further price confirmation and no offsetting commercial/regulatory progress."
+    },
+    "conviction": {
+      "level": 3,
+      "max_level": 5,
+      "raw_target_weight": -0.06,
+      "upgrade_condition": "Short confirmation raises conviction to 5, which maps to a -10% raw target weight."
+    },
+    "confidence": 0.69,
+    "confidence_reason": "Moderately high because thesis quality and first price confirmation aligned; capped because the stock remained above major moving averages after a huge 12-month advance and because borrow/squeeze/liquidity inputs are missing.",
+    "sizing_context": {
+      "starting_size": "Conviction 3 at initiation maps to a -6% raw target weight under portfolio_sizer.py.",
+      "add_conditions": "If the short confirms, raise to conviction 5, which maps to a -10% raw target weight, subject to borrow, liquidity, and squeeze constraints.",
+      "liquidity_constraints": "No ADV, borrow, or exit-cost input selected; do not infer maximum short size from this case.",
+      "portfolio_constraints": "No full portfolio exposure input selected; final size should account for existing high-beta AI, speculative growth, nuclear/energy, and short-book exposures.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": -0.06,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initial conviction 3 short; press toward -10% only after price confirmation and borrow/liquidity review."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If the stock continues to decline and the company fails to produce binding commercial/regulatory progress, press only after confirming borrow/liquidity and price trend continuation.",
+      "if_wrong": "If OKLO rises 10%, fails to break below the 100D SMA within one month, or announces credible licensing/contracts/fuel/financing progress, cover or reduce rather than treating the move as only a squeeze.",
+      "next_review_trigger": "Review on any NRC/licensing update, binding customer contract, HALEU/funding announcement, borrow deterioration, a 10% adverse move, or failure to break below the 100D SMA within one month."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Gold output reflects an actionable short at conviction 3, rising to conviction 5 if confirmed."
+}

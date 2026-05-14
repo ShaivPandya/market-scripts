@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { ClipboardList, Loader2 } from "lucide-react"
 
-import { uploadOverviewDocument } from "@/lib/api"
+import { useDocumentGenerationUpload } from "@/hooks/useDocumentGenerationUpload"
 
 type OverviewUploadProps = {
   ticker: string
@@ -12,9 +12,17 @@ type OverviewUploadProps = {
 export function OverviewUpload({ ticker, hasContent }: OverviewUploadProps) {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [isUploading, setIsUploading] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { isUploading, startUpload } = useDocumentGenerationUpload<{ status: "ok"; ticker: string; content: string }>({
+    kind: "overview",
+    ticker,
+    onSuccess: async () => {
+      setNotice("Saved")
+      await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
+    },
+    onError: message => setError(message),
+  })
 
   useEffect(() => {
     if (!notice && !error) return
@@ -47,19 +55,9 @@ export function OverviewUpload({ ticker, hasContent }: OverviewUploadProps) {
       return
     }
 
-    setIsUploading(true)
     setNotice(null)
     setError(null)
-    try {
-      await uploadOverviewDocument(ticker, selectedFile)
-      setNotice("Saved")
-      await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Upload failed"
-      setError(message)
-    } finally {
-      setIsUploading(false)
-    }
+    await startUpload(selectedFile)
   }
 
   const title = isUploading

@@ -1,0 +1,103 @@
+{
+  "id": "replace_with_case_id",
+  "status": "draft",
+  "decision_type": "new_idea",
+  "as_of_date": "YYYY-MM-DD",
+  "user_question": "",
+  "input_refs": [
+    {
+      "type": "thesis",
+      "path": null,
+      "sha256": null,
+      "description": "",
+      "required": true
+    }
+  ],
+  "assumptions": [],
+  "gold_output": {
+    "simple_thesis": "",
+    "opportunity_type": "unclear",
+    "embedded_macro_exposure": "",
+    "mispricing": {
+      "consensus_view": "",
+      "variant_view": "",
+      "pricing_evidence": "",
+      "why_consensus_is_wrong": ""
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "",
+      "expected_timeframe": "",
+      "why_now": "",
+      "source_evidence": []
+    },
+    "invalidation": {
+      "observable": "",
+      "metric_or_event": "",
+      "threshold": "",
+      "timeframe": "",
+      "implication": ""
+    },
+    "evidence_for": [],
+    "evidence_against": [],
+    "price_action_read": {
+      "observed_behavior": "",
+      "interpretation": "",
+      "confirms_thesis": null,
+      "data_needed": []
+    },
+    "actionability": {
+      "status": "missing_inputs",
+      "reason": "",
+      "missing_inputs": []
+    },
+    "recommended_action": "research",
+    "expression": {
+      "primary": "",
+      "instrument_type": "",
+      "directness": "not_applicable",
+      "alternatives": [],
+      "follow_on": ""
+    },
+    "conviction": {
+      "level": null,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": ""
+    },
+    "confidence": null,
+    "confidence_reason": "",
+    "sizing_context": {
+      "starting_size": "",
+      "add_conditions": "",
+      "liquidity_constraints": "",
+      "portfolio_constraints": "",
+      "sizing_delta": {
+        "direction": "not_applicable",
+        "amount": null,
+        "unit": "not_applicable",
+        "basis": "not_applicable",
+        "condition": ""
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "",
+      "if_wrong": "",
+      "next_review_trigger": ""
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": ""
+}

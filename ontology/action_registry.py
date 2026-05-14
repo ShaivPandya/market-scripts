@@ -608,25 +608,66 @@ class CreateWatchTriggerInput(OptionalTickerMixin):
         return text
 
 
+WatchTriggerIdentifier = int | str
+
+
+def _strip_watch_trigger_id(value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+    if isinstance(value, int):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Watch trigger id cannot be empty.")
+    return text
+
+
 class FireWatchTriggerInput(BaseModel):
-    trigger_id: int
+    trigger_id: WatchTriggerIdentifier
     result: dict[str, Any] | None = None
     evidence: str | None = None
+
+    @field_validator("trigger_id")
+    @classmethod
+    def _strip_trigger_id(cls, value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+        return _strip_watch_trigger_id(value)
 
 
 class CancelWatchTriggerInput(BaseModel):
-    trigger_id: int
+    trigger_id: WatchTriggerIdentifier
+
+    @field_validator("trigger_id")
+    @classmethod
+    def _strip_trigger_id(cls, value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+        return _strip_watch_trigger_id(value)
 
 
 class UpdateWatchTriggerCheckInput(BaseModel):
-    trigger_id: int
+    trigger_id: WatchTriggerIdentifier
     result: dict[str, Any] | None = None
     evidence: str | None = None
 
+    @field_validator("trigger_id")
+    @classmethod
+    def _strip_trigger_id(cls, value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+        return _strip_watch_trigger_id(value)
+
 
 class UpdateWatchTriggerDefinitionInput(BaseModel):
-    trigger_id: int
+    trigger_id: WatchTriggerIdentifier
     definition: dict[str, Any]
+
+    @field_validator("trigger_id")
+    @classmethod
+    def _strip_trigger_id(cls, value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+        return _strip_watch_trigger_id(value)
+
+
+class ReplaceWatchTriggerInput(CreateWatchTriggerInput):
+    trigger_id: WatchTriggerIdentifier
+
+    @field_validator("trigger_id")
+    @classmethod
+    def _strip_trigger_id(cls, value: WatchTriggerIdentifier) -> WatchTriggerIdentifier:
+        return _strip_watch_trigger_id(value)
 
 
 class SaveThesisContentInput(TickerMixin):
@@ -1052,6 +1093,13 @@ def _normalize_action_item_uid(value: Any) -> str:
     return f"action_item:{text}"
 
 
+def _normalize_watch_trigger_uid(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("watch_trigger:"):
+        return text
+    return f"watch_trigger:{text}"
+
+
 def _numeric_action_item_id(value: ActionItemIdentifier) -> int | None:
     if isinstance(value, bool):
         return None
@@ -1069,6 +1117,12 @@ def _action_item_context(value: Any) -> dict[str, Any]:
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
     return OntologyRuntimeReadService().get(_normalize_action_item_uid(value)) or {}
+
+
+def _watch_trigger_context(value: Any) -> dict[str, Any]:
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    return OntologyRuntimeReadService().get(_normalize_watch_trigger_uid(value)) or {}
 
 
 def _hash_action_item_status(model: BaseModel) -> dict[str, Any]:
@@ -1089,10 +1143,7 @@ def _action_item_status_payload(model: BaseModel) -> dict[str, Any]:
 
 def _hash_watch_trigger_status(model: BaseModel) -> dict[str, Any]:
     trigger_id = str(getattr(model, "trigger_id", "") or "").strip()
-    from ontology.runtime_read_service import OntologyRuntimeReadService
-
-    trigger_uid = trigger_id if trigger_id.startswith("watch_trigger:") else f"watch_trigger:{trigger_id}"
-    trigger = OntologyRuntimeReadService().get(trigger_uid)
+    trigger = _watch_trigger_context(trigger_id)
     return {"trigger_id": trigger_id, "status": trigger.get("status") if trigger else None}
 
 
@@ -1470,6 +1521,7 @@ def _action_result_refs(
         "create_watch_trigger",
         "fire_watch_trigger",
         "cancel_watch_trigger",
+        "replace_watch_trigger",
         "update_watch_trigger_check",
         "update_watch_trigger_definition",
     }:
@@ -1667,6 +1719,7 @@ _dismiss_action_item = _disabled_action_handler
 _create_watch_trigger = _disabled_action_handler
 _fire_watch_trigger = _disabled_action_handler
 _cancel_watch_trigger = _disabled_action_handler
+_replace_watch_trigger = _disabled_action_handler
 _update_watch_trigger_check = _disabled_action_handler
 _update_watch_trigger_definition = _disabled_action_handler
 _save_thesis_content = _disabled_action_handler
@@ -1817,6 +1870,16 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         handler=_cancel_watch_trigger,
         approval_entity_type="watch_trigger_status",
         approval_payload=_model_payload,
+        precondition_builder=_hash_watch_trigger_status,
+        base_state_hash_fields=("trigger_id", "status"),
+    ),
+    "replace_watch_trigger": DomainAction(
+        action_id="replace_watch_trigger",
+        input_model=ReplaceWatchTriggerInput,
+        handler=_replace_watch_trigger,
+        approval_entity_type="watch_trigger",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
         precondition_builder=_hash_watch_trigger_status,
         base_state_hash_fields=("trigger_id", "status"),
     ),

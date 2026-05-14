@@ -11,6 +11,7 @@ import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
+import { useDocumentGenerationUpload } from "@/hooks/useDocumentGenerationUpload"
 import {
   acceptIdeaEvaluation,
   deleteIdea,
@@ -19,13 +20,12 @@ import {
   rejectIdea,
   startIdeaEvaluationJob,
   updateIdea,
-  uploadManagementQualityDocument,
-  uploadOverviewDocument,
   type IdeaAction,
   type IdeaAnalyzerDirection,
   type IdeaEvaluationJobResponse,
   type IdeaStatus,
   type InvestmentIdea,
+  type StagedMutationResponse,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 import {
@@ -92,7 +92,9 @@ export function IdeaDetail() {
   const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
   const [editAnalyzerDirection, setEditAnalyzerDirection] = useState<IdeaAnalyzerDirection>("inactive")
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
+  const [uploadMessageIsError, setUploadMessageIsError] = useState(false)
   const [managementUploadMessage, setManagementUploadMessage] = useState<string | null>(null)
+  const [managementUploadMessageIsError, setManagementUploadMessageIsError] = useState(false)
   const [acceptMessage, setAcceptMessage] = useState<string | null>(null)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [jobSnapshot, setJobSnapshot] = useState<IdeaEvaluationJobResponse | null>(null)
@@ -252,30 +254,36 @@ export function IdeaDetail() {
     },
   })
 
-  const uploadMutation = useMutation({
-    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) => uploadOverviewDocument(idea.ticker, file),
-    onMutate: () => {
-      setUploadMessage(null)
-    },
-    onSuccess: data => {
+  const overviewUpload = useDocumentGenerationUpload<{ status: "ok"; ticker: string; content: string }>({
+    kind: "overview",
+    ticker: selectedIdea?.ticker ?? "",
+    onSuccess: async data => {
+      setUploadMessageIsError(false)
       setUploadMessage(`Overview saved for ${data.ticker}.`)
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
+      if (selectedIdea) await qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
     },
-    onError: err => setUploadMessage(err instanceof Error ? err.message : "Upload failed."),
+    onError: message => {
+      setUploadMessageIsError(true)
+      setUploadMessage(message)
+    },
   })
 
-  const managementUploadMutation = useMutation({
-    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) =>
-      uploadManagementQualityDocument(idea.ticker, file),
-    onSuccess: result => {
+  const managementUpload = useDocumentGenerationUpload<StagedMutationResponse>({
+    kind: "management_quality",
+    ticker: selectedIdea?.ticker ?? "",
+    onSuccess: async result => {
       const proposalLabel = formatApprovalDisplayLabel(result.approval_id).toLowerCase()
+      setManagementUploadMessageIsError(false)
       setManagementUploadMessage(
         `Management quality ${proposalLabel} staged.`,
       )
-      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
-      void invalidateApprovalSummaries(qc)
+      if (selectedIdea) await qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
+      await invalidateApprovalSummaries(qc)
     },
-    onError: err => setManagementUploadMessage(err instanceof Error ? err.message : "Upload failed."),
+    onError: message => {
+      setManagementUploadMessageIsError(true)
+      setManagementUploadMessage(message)
+    },
   })
 
   const acceptMutation = useMutation({
@@ -423,29 +431,33 @@ export function IdeaDetail() {
                   </div>
                   <label className={cn(
                     "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
-                    uploadMutation.isPending && "pointer-events-none opacity-60",
+                    overviewUpload.isUploading && "pointer-events-none opacity-60",
                   )}>
-                    {uploadMutation.isPending ? (
+                    {overviewUpload.isUploading ? (
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                     ) : (
                       <FileUp size={16} aria-hidden="true" />
                     )}
-                    {uploadMutation.isPending ? "Uploading" : "Upload"}
+                    {overviewUpload.isUploading ? "Uploading" : "Upload"}
                     <input
                       type="file"
                       accept=".md,.markdown,.pdf,text/markdown,application/pdf"
                       className="hidden"
-                      disabled={uploadMutation.isPending}
+                      disabled={overviewUpload.isUploading}
                       onChange={event => {
                         const file = event.target.files?.[0]
                         event.currentTarget.value = ""
-                        if (file) uploadMutation.mutate({ idea: selectedIdea, file })
+                        if (file) {
+                          setUploadMessage(null)
+                          setUploadMessageIsError(false)
+                          void overviewUpload.startUpload(file)
+                        }
                       }}
                     />
                   </label>
                 </div>
                 {uploadMessage && (
-                  uploadMutation.isError ? (
+                  uploadMessageIsError ? (
                     <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
                       {uploadMessage}
                     </p>
@@ -481,24 +493,40 @@ export function IdeaDetail() {
                   </div>
                   <label className={cn(
                     "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
-                    managementUploadMutation.isPending && "pointer-events-none opacity-60",
+                    managementUpload.isUploading && "pointer-events-none opacity-60",
                   )}>
-                    <FileUp size={16} aria-hidden="true" />
-                    {managementUploadMutation.isPending ? "Uploading" : "Upload"}
+                    {managementUpload.isUploading ? (
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <FileUp size={16} aria-hidden="true" />
+                    )}
+                    {managementUpload.isUploading ? "Uploading" : "Upload"}
                     <input
                       type="file"
                       accept=".md,.markdown,.pdf,text/markdown,application/pdf"
                       className="hidden"
-                      disabled={managementUploadMutation.isPending}
+                      disabled={managementUpload.isUploading}
                       onChange={event => {
                         const file = event.target.files?.[0]
                         event.currentTarget.value = ""
-                        if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
+                        if (file) {
+                          setManagementUploadMessage(null)
+                          setManagementUploadMessageIsError(false)
+                          void managementUpload.startUpload(file)
+                        }
                       }}
                     />
                   </label>
                 </div>
-                {managementUploadMessage && <p className="mb-2 text-xs text-subtle">{managementUploadMessage}</p>}
+                {managementUploadMessage && (
+                  managementUploadMessageIsError ? (
+                    <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      {managementUploadMessage}
+                    </p>
+                  ) : (
+                    <p className="mb-2 text-xs text-subtle">{managementUploadMessage}</p>
+                  )
+                )}
                 {detail?.documents?.management_quality_error && (
                   <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
                     {detail.documents.management_quality_error}

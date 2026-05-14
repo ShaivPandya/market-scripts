@@ -1,0 +1,19 @@
+{
+  "ticker": "OKLO",
+  "as_of_date": "2025-11-01",
+  "decision_context": "Short position initiation",
+  "human_initiation_rationale": "The short was initiated because of the thesis and because the stock had started to decline, down about 23.76% from its all-time high.",
+  "selected_inputs": [
+    "OKLO short-thesis presentation",
+    "price deterioration from all-time high",
+    "relative underperformance versus the Russell 2000"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Market starts to reassess OKLO's commercial/regulatory viability and pre-revenue valuation.",
+    "expected_date": null,
+    "why_it_mattered": "The thesis depended on the market recognizing that OKLO's valuation reflected AI/nuclear enthusiasm rather than binding contracts, revenue, licensing, fuel supply, or near-term reactor deployment."
+  },
+  "price_confirmation_notes": "OKLO was down about 23.76% from its all-time high and underperforming the Russell 2000 as of the setup date.",
+  "human_notes": ""
+}
+

@@ -7,7 +7,17 @@ import json
 import logging
 import re
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+from decision_quality import (
+    ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_ACTIONS,
+)
+from decision_quality import (
+    CANONICAL_ACTIONS,
+    apply_decision_quality_gates,
+    parse_decision_quality,
+)
 
 log = logging.getLogger("auto_report.recommendations")
 
@@ -21,21 +31,10 @@ STANCE_OPTIONS = (
     "Aggressively Defensive",
 )
 
-ACTION_OPTIONS = (
-    "buy",
-    "sell",
-    "hold",
-    "watch",
-    "avoid",
-    "reduce",
-    "exit",
-    "rebalance",
-    "hedge",
-    "do_nothing",
-)
+ACTION_OPTIONS = CANONICAL_ACTIONS
 
-ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
-NON_APPROVAL_ACTIONS = {"hold", "watch", "avoid", "do_nothing"}
+ACTIONABLE_ACTIONS = set(DECISION_ACTIONABLE_ACTIONS)
+NON_APPROVAL_ACTIONS = {"hold", "watch", "research", "avoid", "do_nothing"}
 QUALITY_OPTIONS = ("ok", "degraded", "stale", "failed")
 RECOMMENDATION_STATUSES = ("clear", "review_required", "blocked", "error")
 
@@ -43,6 +42,7 @@ MAX_RECOMMENDATIONS_EVIDENCE_CHARS = 180_000
 MAX_RECOMMENDATIONS_COMMENTARY_CHARS = 24_000
 MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS = 32_000
 _COMPACT_MARKER_KEY = "_prompt_compaction"
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 CRITICAL_SOURCES = {
     "daily": {
@@ -86,6 +86,10 @@ MAX_SOURCE_AGE_DAYS = {
 
 class RecommendationValidationError(ValueError):
     """Raised when an LLM recommendation payload violates the contract."""
+
+
+def _read_prompt(filename: str) -> str:
+    return (PROMPTS_DIR / filename).read_text(encoding="utf-8")
 
 
 def stable_hash(value: Any) -> str:
@@ -772,14 +776,33 @@ def validate_recommendations_payload(
         if action not in ACTION_OPTIONS:
             errors.append(f"recommended_actions[{idx}].action is invalid: {action!r}")
             continue
+        decision_quality, dq_errors = parse_decision_quality(raw_action.get("decision_quality"))
+        dq_gate = apply_decision_quality_gates(
+            decision_quality,
+            current_action=action,
+            recommendation_status=str(normalized["recommendation_status"]),
+            data_quality={
+                **data_quality,
+                "critical_data_quality": normalized.get("critical_data_quality"),
+                "source_quality": raw_action.get("source_quality"),
+            },
+            parse_errors=dq_errors,
+        )
+        action = dq_gate.final_action
+        if dq_gate.final_recommendation_status == "review_required" and normalized["recommendation_status"] == "clear":
+            normalized["recommendation_status"] = "review_required"
+        elif dq_gate.final_recommendation_status in {"blocked", "error"}:
+            normalized["recommendation_status"] = dq_gate.final_recommendation_status
         if normalized["recommendation_status"] in {"blocked", "error"} and action not in {"watch", "do_nothing"}:
-            errors.append("blocked/error recommendations may only use watch or do_nothing actions")
-            continue
+            action = "watch"
         ticker = raw_action.get("ticker")
         if isinstance(ticker, str):
             ticker = ticker.strip().upper() or None
         else:
             ticker = None
+        confidence = _as_float(raw_action.get("confidence"), 0.0)
+        if dq_gate.confidence_cap is not None:
+            confidence = min(confidence, dq_gate.confidence_cap)
         approval_required = bool(raw_action.get("approval_required"))
         if normalized["recommendation_status"] in {"clear", "review_required"} and action in ACTIONABLE_ACTIONS:
             approval_required = True
@@ -800,11 +823,13 @@ def validate_recommendations_payload(
                 "catalyst": str(raw_action.get("catalyst") or ""),
                 "invalidation": str(raw_action.get("invalidation") or ""),
                 "expected_onset_window": str(raw_action.get("expected_onset_window") or ""),
-                "confidence": _as_float(raw_action.get("confidence"), 0.0),
+                "confidence": confidence,
                 "source_quality": raw_action.get("source_quality")
                 if raw_action.get("source_quality") in QUALITY_OPTIONS
                 else normalized["critical_data_quality"],
                 "approval_required": approval_required,
+                "decision_quality": decision_quality.model_dump(mode="json") if decision_quality else None,
+                "decision_quality_gate": dq_gate.model_dump(mode="json"),
             }
         )
 
@@ -863,6 +888,7 @@ def build_recommendations_user_message(
     extra_context = _compact_extra_context(extra_context_md)
     stance_options = " | ".join(STANCE_OPTIONS)
     action_options = " | ".join(ACTION_OPTIONS)
+    decision_quality_contract = _read_prompt("decision_quality.md")
     log.info(
         "Recommendation prompt context prepared (report_type=%s evidence_chars=%d commentary_chars=%d extra_chars=%d)",
         report_type,
@@ -894,6 +920,10 @@ Decision horizon: {horizon}
 {extra_context}
 
 Write a short recommendations memo first. The memo must be decision-oriented and may not repeat the commentary.
+
+## Shared Decision Quality Contract
+
+{decision_quality_contract}
 
 Hard rules:
 - If critical data quality is stale or failed, set recommendation_status to blocked and use only watch or do_nothing.
@@ -934,7 +964,8 @@ After the memo, output the separator `{RECOMMENDATIONS_SEPARATOR}` on its own li
       "expected_onset_window": "",
       "confidence": 0.0,
       "source_quality": "<ok|degraded|stale|failed>",
-      "approval_required": false
+      "approval_required": false,
+      "decision_quality": {{}}
     }}
   ],
   "alternatives": [],
@@ -1033,6 +1064,13 @@ def format_recommendations_markdown(payload: dict) -> str:
             f"- Internal approval required before state change: {'yes' if action.get('approval_required') else 'no'}"
         )
         lines.append(f"- Rationale: {action.get('rationale', '')}")
+        dq_gate = action.get("decision_quality_gate")
+        if isinstance(dq_gate, dict) and dq_gate.get("reasons"):
+            reasons = dq_gate.get("reasons") if isinstance(dq_gate.get("reasons"), list) else []
+            lines.append(
+                "- Decision quality gate: "
+                + "; ".join(str(item.get("code") if isinstance(item, dict) else item) for item in reasons if item)
+            )
         if action.get("invalidation"):
             lines.append(f"- Invalidation: {action['invalidation']}")
         if action.get("evidence"):
@@ -1043,13 +1081,13 @@ def format_recommendations_markdown(payload: dict) -> str:
 
 
 def _approval_action_type(action: str) -> str:
-    if action == "buy":
+    if action in {"buy", "add", "short", "sell"}:
         return "enter"
     if action == "exit":
         return "exit"
     if action == "hedge":
         return "hedge"
-    if action in {"sell", "reduce", "rebalance"}:
+    if action in {"trim", "reduce", "rebalance"}:
         return "resize"
     return "review"
 
@@ -1194,9 +1232,9 @@ def _horizon_days(horizon: str | None) -> int:
 
 
 def _expected_direction(action: str) -> str | None:
-    if action == "buy":
+    if action in {"buy", "add"}:
         return "up"
-    if action in {"sell", "reduce", "exit", "avoid"}:
+    if action in {"short", "sell", "trim", "reduce", "exit", "avoid"}:
         return "down"
     return None
 

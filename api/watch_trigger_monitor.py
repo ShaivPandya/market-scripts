@@ -25,6 +25,14 @@ DEFAULT_NEWS_MATERIALITY = 0.6
 MAX_STORY_MATCHES = 5
 MAX_WEB_VERIFICATIONS = 2
 
+
+def _monitor_trigger_source_id(trigger_id: Any) -> str:
+    text = str(trigger_id or "").strip()
+    if text.startswith("watch_trigger:"):
+        return text
+    return f"watch_trigger:{text}"
+
+
 MACRO_FIELD_ALIASES = {
     "regime score": "regime.score",
     "liquidity score": "factors.liquidity.score",
@@ -702,13 +710,14 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
         if not trigger_id:
             errors += 1
             continue
+        trigger_source_id = _monitor_trigger_source_id(trigger_id)
         try:
             result = evaluate_trigger(trigger)
             if result.get("inferred_definition") and not trigger.get("definition_json"):
                 propose_action(
                     "update_watch_trigger_definition",
                     {"trigger_id": trigger_id, "definition": result["inferred_definition"]},
-                    source_id=f"watch_trigger:{trigger_id}",
+                    source_id=trigger_source_id,
                     reason=f"Infer watch trigger definition for {trigger_id}",
                 )
             evidence = str(result.get("evidence") or "")
@@ -717,14 +726,14 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 propose_action(
                     "update_watch_trigger_check",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
-                    source_id=f"watch_trigger:{trigger_id}",
+                    source_id=trigger_source_id,
                     reason=f"Record skipped watch trigger check for {trigger_id}",
                 )
                 continue
             if result.get("fired"):
                 fired += 1
                 fingerprint = _result_fingerprint(result)
-                source_id = f"watch_trigger:{trigger_id}:{fingerprint}"
+                source_id = f"{trigger_source_id}:{fingerprint}"
                 propose_action(
                     "fire_watch_trigger",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
@@ -746,7 +755,7 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 propose_action(
                     "update_watch_trigger_check",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
-                    source_id=f"watch_trigger:{trigger_id}",
+                    source_id=trigger_source_id,
                     reason=f"Record watch trigger check for {trigger_id}",
                 )
         except Exception as exc:
@@ -754,7 +763,7 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
             propose_action(
                 "update_watch_trigger_check",
                 {"trigger_id": trigger_id, "result": {"error": str(exc), "fired": False}, "evidence": str(exc)},
-                source_id=f"watch_trigger:{trigger_id}",
+                source_id=trigger_source_id,
                 reason=f"Record watch trigger monitor error for {trigger_id}",
             )
     return {"checked": checked, "fired": fired, "skipped": skipped, "errors": errors}

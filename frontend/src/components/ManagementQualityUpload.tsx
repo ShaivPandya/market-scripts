@@ -3,8 +3,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Loader2, UserRoundCheck } from "lucide-react"
 
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
+import { useDocumentGenerationUpload } from "@/hooks/useDocumentGenerationUpload"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
-import { uploadManagementQualityDocument } from "@/lib/api"
+import type { StagedMutationResponse } from "@/lib/api"
 
 type ManagementQualityUploadProps = {
   ticker: string
@@ -14,9 +15,18 @@ type ManagementQualityUploadProps = {
 export function ManagementQualityUpload({ ticker, hasContent }: ManagementQualityUploadProps) {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [isUploading, setIsUploading] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { isUploading, startUpload } = useDocumentGenerationUpload<StagedMutationResponse>({
+    kind: "management_quality",
+    ticker,
+    onSuccess: async result => {
+      setNotice(`${formatApprovalDisplayLabel(result.approval_id)} staged`)
+      await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
+      await invalidateApprovalSummaries(queryClient)
+    },
+    onError: message => setError(message),
+  })
 
   useEffect(() => {
     if (!notice && !error) return
@@ -49,20 +59,9 @@ export function ManagementQualityUpload({ ticker, hasContent }: ManagementQualit
       return
     }
 
-    setIsUploading(true)
     setNotice(null)
     setError(null)
-    try {
-      const result = await uploadManagementQualityDocument(ticker, selectedFile)
-      setNotice(`${formatApprovalDisplayLabel(result.approval_id)} staged`)
-      await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
-      await invalidateApprovalSummaries(queryClient)
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Upload failed"
-      setError(message)
-    } finally {
-      setIsUploading(false)
-    }
+    await startUpload(selectedFile)
   }
 
   const title = isUploading

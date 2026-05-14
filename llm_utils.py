@@ -432,6 +432,8 @@ def call_llm_text(
     max_web_search_uses: int = 5,
     provider: str | None = None,
     reasoning_effort: str | None = None,
+    json_schema: dict[str, Any] | None = None,
+    json_schema_name: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     resolved_provider = _normalize_provider(provider)
     web_search_enabled = _web_search_enabled(
@@ -467,6 +469,8 @@ def call_llm_text(
             enable_web_search=web_search_enabled,
             provider=resolved_provider,
             reasoning_effort=reasoning_effort,
+            json_schema=json_schema,
+            json_schema_name=json_schema_name,
         )
     else:
         response = _call_gemini_generate_content(
@@ -477,6 +481,7 @@ def call_llm_text(
             system=system,
             enable_web_search=web_search_enabled,
             reasoning_effort=reasoning_effort,
+            json_schema=json_schema,
         )
     return extract_text(response), extract_citations(response), response
 
@@ -659,6 +664,8 @@ def _call_openai_response(
     enable_web_search: bool = False,
     provider: str = PROVIDER_OPENAI,
     reasoning_effort: str | None = None,
+    json_schema: dict[str, Any] | None = None,
+    json_schema_name: str | None = None,
 ) -> Any:
     resolved_provider = _normalize_provider(provider)
     client = get_llm_client(resolved_provider, api_key=api_key)
@@ -677,6 +684,15 @@ def _call_openai_response(
     )
     if system:
         kwargs["instructions"] = system
+    if json_schema:
+        kwargs["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": json_schema_name or "structured_output",
+                "schema": json_schema,
+                "strict": True,
+            }
+        }
     if enable_web_search and resolved_provider == PROVIDER_OPENAI:
         kwargs["tools"] = [
             {
@@ -699,12 +715,16 @@ def _call_gemini_generate_content(
     system: str | None = None,
     enable_web_search: bool = False,
     reasoning_effort: str | None = None,
+    json_schema: dict[str, Any] | None = None,
 ) -> Any:
     client = get_llm_client(PROVIDER_GEMINI, api_key=api_key)
     resolved_model = resolve_model(model, PROVIDER_GEMINI)
     config: dict[str, Any] = {"max_output_tokens": max_tokens}
     if system:
         config["system_instruction"] = system
+    if json_schema:
+        config["response_mime_type"] = "application/json"
+        config["response_schema"] = json_schema
     if enable_web_search:
         config["tools"] = [{"google_search": {}}]
     kwargs: dict[str, Any] = {

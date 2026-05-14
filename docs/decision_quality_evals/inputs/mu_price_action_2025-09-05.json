@@ -1,0 +1,31 @@
+{
+  "ticker": "MU",
+  "as_of_date": "2025-09-05",
+  "close": 131.37,
+  "moving_averages": {
+    "100d_sma": 106.52,
+    "10m_sma": 97.67,
+    "150d_sma": 101.42,
+    "200d_sma": 100.56,
+    "200w_sma": 83.53,
+    "20m_sma": 102.49,
+    "40w_sma": 100.65
+  },
+  "rate_of_change": {
+    "1m_pct": 10.16,
+    "3m_pct": 16.11,
+    "12m_pct": 24.22
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_10m_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": true
+  },
+  "interpretation": "MU closed above all selected daily, weekly, and monthly moving averages with positive 1-month, 3-month, and 12-month rate of change. This is price confirmation into the upcoming earnings catalyst.",
+  "human_notes": "User provided the close, moving averages, and ROC values for September 5, 2025."
+}
+

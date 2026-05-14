@@ -1096,6 +1096,7 @@ class ActionItem(OntologySchemaBase):
 
 
 class WatchTrigger(OntologySchemaBase):
+    trigger_id: str | None = None
     condition: NonBlankStr
     trigger_type: NonBlankStr = "custom"
     ticker: str | None = None
@@ -1122,6 +1123,7 @@ class WatchTrigger(OntologySchemaBase):
         return clean_text(value)
 
     @field_validator(
+        "trigger_id",
         "source_type",
         "source_id",
         "created_at",
@@ -1371,6 +1373,8 @@ class Recommendation(OntologySchemaBase):
     rationale_summary: str | None = None
     rationale_hash: str | None = None
     source_quality: str | None = None
+    decision_quality: dict[str, Any] | None = None
+    decision_quality_gate: dict[str, Any] | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     ontology_run_id: NonBlankStr = "operational"
 
@@ -2397,6 +2401,8 @@ class IdeaEvaluation(OntologySchemaBase):
     invalidation: str | None = None
     portfolio_fit: dict[str, Any] = Field(default_factory=dict)
     analyzer_context: dict[str, Any] = Field(default_factory=dict)
+    decision_quality: dict[str, Any] | None = None
+    decision_quality_gate: dict[str, Any] | None = None
     evaluation_schema_version: str | None = None
     recommendation_record: dict[str, Any] | None = None
     recommendation_id: str | int | None = None

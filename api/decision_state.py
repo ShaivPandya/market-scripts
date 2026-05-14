@@ -7,7 +7,17 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
-ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+ACTIONABLE_RECOMMENDATION_ACTIONS = {
+    "buy",
+    "add",
+    "short",
+    "sell",
+    "trim",
+    "reduce",
+    "exit",
+    "hedge",
+    "rebalance",
+}
 STALE_APPROVAL_MESSAGE = (
     "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
 )

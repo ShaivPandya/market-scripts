@@ -550,7 +550,7 @@ def action_mutations(
                 )
             )
         return mutations
-    if action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
+    if action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger", "replace_watch_trigger"}:
         row = {**dict(input_payload), **dict(output)}
         return [
             OntologyMutation(
@@ -692,7 +692,7 @@ def _action_item_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def _recommendation_properties(row: Mapping[str, Any]) -> dict[str, Any]:
     action = str(row.get("action") or "watch")
-    is_actionable = action in {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+    is_actionable = action in {"buy", "add", "short", "sell", "trim", "reduce", "exit", "hedge", "rebalance"}
     return {
         "recommendation_id": row.get("recommendation_id") or row.get("id") or row.get("idempotency_key"),
         "idempotency_key": row.get("idempotency_key"),
@@ -720,6 +720,8 @@ def _recommendation_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "rationale_summary": str(row.get("rationale") or "")[:500] if row.get("rationale") else None,
         "rationale_hash": _hash_text(str(row.get("rationale") or "")) if row.get("rationale") else None,
         "source_quality": row.get("source_quality"),
+        "decision_quality": _as_dict(row.get("decision_quality")) or None,
+        "decision_quality_gate": _as_dict(row.get("decision_quality_gate")) or None,
         "payload": {key: _jsonable(value) for key, value in row.items() if key not in {"policy_gate_result"}},
     }
 
@@ -819,6 +821,10 @@ def _dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes, Mapping)):
         return []
     return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _as_list(value: Any) -> list[Any]:

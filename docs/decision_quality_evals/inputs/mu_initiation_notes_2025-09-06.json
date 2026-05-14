@@ -1,0 +1,19 @@
+{
+  "ticker": "MU",
+  "as_of_date": "2025-09-06",
+  "decision_context": "Position initiation",
+  "human_initiation_rationale": "The position was initiated based on the thesis plus price confirmation into upcoming earnings.",
+  "selected_inputs": [
+    "MU thesis",
+    "price confirmation",
+    "upcoming earnings catalyst"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Upcoming MU earnings",
+    "expected_date": "2025-09-23",
+    "why_it_mattered": "The thesis expected a beat-and-raise earnings cadence and further evidence of HBM/data-center memory strength."
+  },
+  "price_confirmation_notes": "Detailed historical price-action metrics have not been selected yet.",
+  "human_notes": ""
+}
+

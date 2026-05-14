@@ -44,11 +44,22 @@ from ontology.schemas.identity import (
     thesis_id,
     thesis_section_id,
     trade_proposal_id,
+    watch_trigger_id,
 )
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
 logger = logging.getLogger(__name__)
-ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+ACTIONABLE_ACTIONS = {
+    "buy",
+    "add",
+    "short",
+    "sell",
+    "trim",
+    "reduce",
+    "exit",
+    "hedge",
+    "rebalance",
+}
 FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
 RESEARCH_ACTION_IDS = {
     "change_thesis_status",
@@ -72,6 +83,14 @@ RESEARCH_ACTION_IDS = {
     "create_watch_trigger",
     "fire_watch_trigger",
     "cancel_watch_trigger",
+    "replace_watch_trigger",
+    "update_watch_trigger_check",
+    "update_watch_trigger_definition",
+}
+WATCH_TRIGGER_TARGET_ACTION_IDS = {
+    "fire_watch_trigger",
+    "cancel_watch_trigger",
+    "replace_watch_trigger",
     "update_watch_trigger_check",
     "update_watch_trigger_definition",
 }
@@ -171,6 +190,7 @@ class OntologyCommandService:
 
         with runtime_object_service(self.objects):
             payload_dict = _approval_payload_for_action(action_id, payload_dict)
+            self._prepare_action_payload(action_id, payload_dict)
             base_state_hash = _base_state_hash(action_id, payload_dict)
         policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
         now = _now()
@@ -243,6 +263,28 @@ class OntologyCommandService:
         approval = _flatten_object(row)
         _refresh_temporal_read_models_after_command()
         return approval
+
+    def _prepare_action_payload(self, action_id: str, payload: dict[str, Any]) -> None:
+        if action_id not in WATCH_TRIGGER_TARGET_ACTION_IDS:
+            return
+        trigger_id = payload.get("trigger_id") or payload.get("id")
+        trigger = _watch_trigger_context(self.objects, trigger_id)
+        if not trigger:
+            raise OntologyCommandNotFound("WatchTrigger", str(trigger_id or ""))
+        payload["trigger_id"] = _normalize_watch_trigger_uid(trigger_id)
+        if action_id == "replace_watch_trigger":
+            for source_field, payload_field in (
+                ("condition", "old_condition"),
+                ("trigger_type", "old_trigger_type"),
+                ("ticker", "old_ticker"),
+                ("expires_at", "old_expires_at"),
+                ("definition", "old_definition"),
+            ):
+                value = trigger.get(source_field)
+                if value not in (None, ""):
+                    payload[payload_field] = value
+            return
+        _merge_watch_trigger_context(payload, trigger)
 
     def _evaluate_policy_gate(
         self,
@@ -1249,28 +1291,43 @@ class OntologyCommandService:
             "update_watch_trigger_definition",
         }:
             trigger_id = payload.get("trigger_id") or payload.get("id")
-            trigger_key = _canonical_object_key(trigger_id, prefix="watch_trigger")
+            trigger_uid = _normalize_watch_trigger_uid(trigger_id)
+            trigger = _watch_trigger_context(self.objects, trigger_uid)
+            if not trigger:
+                raise OntologyCommandNotFound("WatchTrigger", str(trigger_id))
             status = "cancelled"
             if action_id == "fire_watch_trigger":
                 status = "fired"
             elif action_id in {"update_watch_trigger_check", "update_watch_trigger_definition"}:
-                status = str(payload.get("status") or "active")
-            condition = str(payload.get("condition") or f"Watch trigger {trigger_key}").strip()
+                status = str(payload.get("status") or trigger.get("status") or "active")
+            condition = str(
+                trigger.get("condition") or payload.get("condition") or f"Watch trigger {trigger_uid}"
+            ).strip()
+            definition = (
+                _dict(payload.get("definition"))
+                if action_id == "update_watch_trigger_definition"
+                else _dict(trigger.get("definition"))
+            )
+            evidence = payload.get("evidence") if "evidence" in payload else trigger.get("last_evidence")
             row = self.objects.write_object(
                 "WatchTrigger",
-                trigger_key or condition,
+                trigger_uid,
                 {
                     "condition": condition,
-                    "trigger_type": str(payload.get("trigger_type") or "custom"),
-                    "ticker": _optional_ticker(payload),
+                    "trigger_type": str(trigger.get("trigger_type") or payload.get("trigger_type") or "custom"),
+                    "ticker": trigger.get("ticker") or _optional_ticker(payload),
                     "status": status,
                     "source_type": context.source_type,
                     "source_id": context.source_id,
-                    "last_result": _dict(payload.get("result")),
-                    "last_evidence": payload.get("evidence"),
-                    "definition": _dict(payload.get("definition")),
-                    "last_checked_at": now if action_id == "update_watch_trigger_check" else None,
-                    "fired_at": now if action_id == "fire_watch_trigger" else None,
+                    "expires_at": trigger.get("expires_at"),
+                    "created_at": trigger.get("created_at"),
+                    "last_result": _dict(payload.get("result")) or _dict(trigger.get("last_result")),
+                    "last_evidence": evidence,
+                    "definition": definition,
+                    "last_checked_at": now
+                    if action_id == "update_watch_trigger_check"
+                    else trigger.get("last_checked_at"),
+                    "fired_at": now if action_id == "fire_watch_trigger" else trigger.get("fired_at"),
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -1279,6 +1336,70 @@ class OntologyCommandService:
                 input_hash=input_hash,
             )
             refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "replace_watch_trigger":
+            trigger_id = payload.get("trigger_id") or payload.get("id")
+            trigger_uid = _normalize_watch_trigger_uid(trigger_id)
+            trigger = _watch_trigger_context(self.objects, trigger_uid)
+            if not trigger:
+                raise OntologyCommandNotFound("WatchTrigger", str(trigger_id))
+            cancelled = self.objects.write_object(
+                "WatchTrigger",
+                trigger_uid,
+                {
+                    "condition": str(trigger.get("condition") or f"Watch trigger {trigger_uid}").strip(),
+                    "trigger_type": str(trigger.get("trigger_type") or "custom"),
+                    "ticker": trigger.get("ticker"),
+                    "status": "cancelled",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "expires_at": trigger.get("expires_at"),
+                    "definition": _dict(trigger.get("definition")),
+                    "created_at": trigger.get("created_at"),
+                    "last_checked_at": trigger.get("last_checked_at"),
+                    "last_result": _dict(trigger.get("last_result")),
+                    "last_evidence": trigger.get("last_evidence"),
+                    "fired_at": trigger.get("fired_at"),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(cancelled))
+            condition = _non_blank(payload.get("condition"), "condition")
+            replacement_seed = {
+                "old_trigger_id": trigger_uid,
+                "condition": condition,
+                "trigger_type": str(payload.get("trigger_type") or "custom"),
+                "ticker": _optional_ticker(payload),
+                "expires_at": payload.get("expires_at"),
+                "definition": _dict(payload.get("definition")),
+            }
+            replacement_key = f"replacement:{trigger_uid}:{_stable_hash(replacement_seed)[:12]}"
+            replacement = self.objects.write_object(
+                "WatchTrigger",
+                replacement_key,
+                {
+                    "trigger_id": replacement_key,
+                    "condition": condition,
+                    "trigger_type": str(payload.get("trigger_type") or "custom"),
+                    "ticker": _optional_ticker(payload),
+                    "status": "active",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "expires_at": payload.get("expires_at"),
+                    "definition": _dict(payload.get("definition")),
+                    "created_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(replacement))
             return refs
         if action_id == "create_recommendation":
             record = _dict(payload.get("record") or payload)
@@ -1302,6 +1423,8 @@ class OntologyCommandService:
                     "horizon": record.get("horizon"),
                     "rationale_summary": record.get("rationale") or record.get("rationale_summary"),
                     "source_quality": record.get("critical_data_quality") or record.get("source_quality"),
+                    "decision_quality": record.get("decision_quality"),
+                    "decision_quality_gate": record.get("decision_quality_gate"),
                     "payload": record,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
@@ -2670,6 +2793,11 @@ def _normalize_action_item_uid(value: Any) -> str:
     return text if text.startswith("action_item:") else action_item_id(text)
 
 
+def _normalize_watch_trigger_uid(value: Any) -> str:
+    text = _non_blank(value, "trigger_id")
+    return text if text.startswith("watch_trigger:") else watch_trigger_id(text)
+
+
 def _entity_type_for_action(action_id: str) -> str:
     if action_id == "update_portfolio_positions":
         return "portfolio_positions"
@@ -2679,6 +2807,16 @@ def _entity_type_for_action(action_id: str) -> str:
         return "action_item"
     if action_id in {"complete_action_item", "dismiss_action_item"}:
         return "action_item_status"
+    if action_id == "create_watch_trigger":
+        return "watch_trigger"
+    if action_id in {"cancel_watch_trigger", "fire_watch_trigger"}:
+        return "watch_trigger_status"
+    if action_id == "replace_watch_trigger":
+        return "watch_trigger"
+    if action_id == "update_watch_trigger_check":
+        return "watch_trigger_check"
+    if action_id == "update_watch_trigger_definition":
+        return "watch_trigger_definition"
     if action_id == "create_recommendation":
         return "recommendation"
     if action_id == "create_portfolio_news_digest":
@@ -2698,6 +2836,10 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         item_id = payload.get("item_id") or payload.get("id")
         if item_id:
             return _normalize_action_item_uid(item_id), "ActionItem"
+    if action_id in WATCH_TRIGGER_TARGET_ACTION_IDS:
+        trigger_id = payload.get("trigger_id") or payload.get("id")
+        if trigger_id:
+            return _normalize_watch_trigger_uid(trigger_id), "WatchTrigger"
     if action_id == "create_recommendation":
         record = _dict(payload.get("record") or payload)
         ticker = _ticker_from_payload(record)
@@ -2861,6 +3003,32 @@ def _object_context_by_uid(objects: Any, object_uid: Any) -> dict[str, Any]:
     except Exception:
         return {}
     return _flatten_object(row) if row else {}
+
+
+def _watch_trigger_context(objects: Any, trigger_id: Any) -> dict[str, Any]:
+    try:
+        return _object_context_by_uid(objects, _normalize_watch_trigger_uid(trigger_id))
+    except OntologyCommandValidationError:
+        return {}
+
+
+def _merge_watch_trigger_context(payload: dict[str, Any], trigger: Mapping[str, Any]) -> None:
+    for field in ("condition", "trigger_type", "ticker", "expires_at", "created_at"):
+        value = trigger.get(field)
+        if value not in (None, ""):
+            payload[field] = value
+    if "definition" not in payload or payload.get("definition") is None:
+        payload["definition"] = _dict(trigger.get("definition"))
+    if "last_result" not in payload:
+        payload["last_result"] = _dict(trigger.get("last_result"))
+    if "last_evidence" not in payload and trigger.get("last_evidence") not in (None, ""):
+        payload["last_evidence"] = trigger.get("last_evidence")
+    if "last_checked_at" not in payload and trigger.get("last_checked_at") not in (None, ""):
+        payload["last_checked_at"] = trigger.get("last_checked_at")
+    if "fired_at" not in payload and trigger.get("fired_at") not in (None, ""):
+        payload["fired_at"] = trigger.get("fired_at")
+    if "status" not in payload and trigger.get("status") not in (None, ""):
+        payload["status"] = trigger.get("status")
 
 
 def _list(value: Any) -> list[Any]:

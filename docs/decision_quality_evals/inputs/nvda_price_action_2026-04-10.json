@@ -1,0 +1,41 @@
+{
+  "ticker": "NVDA",
+  "as_of_date": "2026-04-10",
+  "close": 188.63,
+  "moving_averages": {
+    "100d_sma": 182.88,
+    "10m_sma": 180.53,
+    "150d_sma": 183.63,
+    "200d_sma": 180.74,
+    "200w_sma": 93.36,
+    "20m_sma": 152.44,
+    "40w_sma": 181.09
+  },
+  "rate_of_change": {
+    "1m_pct": 1.4,
+    "3m_pct": 1.94,
+    "12m_pct": 95.88
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_10m_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": "S&P 500",
+    "outperformed_benchmark": true,
+    "notes": "User stated NVDA had relative outperformance over the S&P 500."
+  },
+  "bear_case_validation_level": {
+    "level": 198.0,
+    "validated": false,
+    "notes": "Price-action validation required a close above the bear-case level of $198. The April 10 close of $188.63 had not yet validated this level."
+  },
+  "interpretation": "NVDA closed above all selected moving averages with positive 1-month, 3-month, and 12-month rate of change and relative outperformance versus the S&P 500, supporting technical confirmation at initiation. It had not yet closed above the $198 bear-case validation level.",
+  "human_notes": "User provided April 10, 2026 close, moving averages, ROC values, S&P 500 relative outperformance, and $198 bear-case validation level."
+}
+

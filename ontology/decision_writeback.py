@@ -41,7 +41,17 @@ from ontology.schemas.identity import (
     recommendation_id as recommendation_uid,
 )
 
-ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+ACTIONABLE_RECOMMENDATION_ACTIONS = {
+    "buy",
+    "add",
+    "short",
+    "sell",
+    "trim",
+    "reduce",
+    "exit",
+    "hedge",
+    "rebalance",
+}
 
 
 class DecisionOntologyWriteback:
@@ -981,6 +991,8 @@ def _recommendation_properties(record: Mapping[str, Any], *, approval_id: int | 
         "rationale_summary": _truncate(record.get("rationale"), 500),
         "rationale_hash": _hash_text(str(record.get("rationale") or "")) if record.get("rationale") else None,
         "source_quality": record.get("source_quality"),
+        "decision_quality": _as_dict(record.get("decision_quality")) or None,
+        "decision_quality_gate": _as_dict(record.get("decision_quality_gate")) or None,
         "payload": _jsonable(dict(record)),
         "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
     }

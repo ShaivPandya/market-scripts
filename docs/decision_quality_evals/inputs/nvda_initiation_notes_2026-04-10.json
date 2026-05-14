@@ -1,0 +1,32 @@
+{
+  "ticker": "NVDA",
+  "as_of_date": "2026-04-10",
+  "decision_context": "Long position initiation",
+  "human_initiation_rationale": "The position was initiated based on the thesis plus technical confirmation: positive 1-month, 3-month, and 12-month ROC, closing above all selected moving averages, and relative outperformance over the S&P 500.",
+  "selected_inputs": [
+    "NVDA thesis",
+    "NVDA overview",
+    "technical confirmation",
+    "relative outperformance versus S&P 500"
+  ],
+  "confirmation_state": {
+    "total_confirmation_items": 3,
+    "confirmed_items": 2,
+    "confirmed": [
+      "technical confirmation at initiation",
+      "further investigation confirmed conviction"
+    ],
+    "pending_or_future": [
+      "close above $198 bear-case validation level",
+      "strong May 20, 2026 earnings"
+    ],
+    "notes": "User described the setup as currently having 2 of 3 confirmations."
+  },
+  "known_catalyst": {
+    "event_or_condition": "May 20, 2026 earnings",
+    "expected_date": "2026-05-20",
+    "why_it_mattered": "Strong earnings would validate demand, margins, guidance, and the AI accelerator thesis after initiation."
+  },
+  "human_notes": ""
+}
+

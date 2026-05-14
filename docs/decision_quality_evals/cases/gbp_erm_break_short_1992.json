@@ -1,0 +1,201 @@
+{
+  "id": "gbp_erm_break_short_1992",
+  "status": "review",
+  "decision_type": "macro_stance",
+  "as_of_date": "1992-09-15",
+  "user_question": "Using the 1992 ERM setup after Schlesinger's comments, should short GBP versus DEM have been actionable, watch, research, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json",
+      "sha256": "47df1dde77cd5f86ee6ccc437d967c02c2066cedf22928a95c556c092d7d02ff",
+      "description": "Historical case-study source summary for Soros/Druckenmiller shorting GBP versus DEM.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json",
+      "sha256": "393c9dc453dc7ca544f3f89caaa107d8e27ff95cc93f63380b141fb146993c48",
+      "description": "Macro, market-structure, catalyst, risk/reward, and trade-after-the-trade setup for the 1992 ERM break.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/gbp_erm_portfolio_context_1992-09-15.json",
+      "sha256": "93cfc7938b4fdaf7f66781c56050bdfdb1f6c3db121a767d10fe9b8dede0ac5c",
+      "description": "Historical portfolio context: existing GBP short to press after trigger, conviction 5.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/gbp_erm_initiation_notes_1992-09-15.json",
+      "sha256": "89a33a87ffb72dd4df09e6fc41c309567a643fefecd4acb350abbe25af3a5f32",
+      "description": "User-requested framing and initiation rationale for the historical macro/FX case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical macro/FX eval case, not a live trading recommendation.",
+    "The decision date is 1992-09-15, when Schlesinger's comments created the trigger to press the trade.",
+    "The case should teach rare policy-break asymmetry and trade-after-the-trade reasoning, not routine leverage.",
+    "No exact live price, reserve balance, or execution log is selected beyond the historical source summary."
+  ],
+  "gold_output": {
+    "simple_thesis": "Short GBP versus DEM because the ERM peg forced Britain to defend an overvalued currency with recessionary rate hikes it could not politically or economically sustain, while Germany would not cut rates enough to relieve the pressure.",
+    "opportunity_type": "policy_inflection",
+    "embedded_macro_exposure": "Short UK policy credibility and ERM fixed-band sustainability; long Bundesbank anti-inflation credibility and Deutsche mark strength; follow-on long UK duration after devaluation.",
+    "mispricing": {
+      "consensus_view": "European policymakers could preserve the ERM bands through intervention, rate defense, and political commitment to monetary union.",
+      "variant_view": "The ERM constraint had become dynamically unstable because UK recession and floating-rate mortgages made higher UK rates intolerable while Germany's anti-inflation mandate made lower German rates unlikely.",
+      "pricing_evidence": "Sterling traded near the weak edge of its permitted ERM band, while the source case describes limited adverse movement if the peg held and large gains if devaluation occurred.",
+      "why_consensus_is_wrong": "Consensus overweighted political commitment to the peg and underweighted the collision between UK domestic economics, German monetary incentives, finite Bank of England reserves, and Schlesinger's willingness to tolerate realignment."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Schlesinger's September 15, 1992 comments implied that broader ERM realignment was acceptable after the lira adjustment.",
+      "expected_timeframe": "Immediate to the next several weeks.",
+      "why_now": "The comments converted a structural setup into an actionable trigger: the Bundesbank was signaling that it would not protect sterling at any price, while the UK could not raise rates indefinitely without deepening recession.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json: Schlesinger comments and Bundesbank incentive analysis",
+        "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json: UK recession, floating-rate mortgages, ERM band asymmetry, and finite reserves",
+        "docs/decision_quality_evals/inputs/gbp_erm_initiation_notes_1992-09-15.json: trade-after-the-trade framing"
+      ]
+    },
+    "invalidation": {
+      "observable": "Germany relieves the pressure or Britain credibly defends the band without worsening the domestic recession.",
+      "metric_or_event": "Bundesbank rate cuts/liquidity support, durable sterling rebound away from the weak ERM band, credible UK rate defense that the housing economy can absorb, and sustained central-bank reserve capacity.",
+      "threshold": "Reduce or exit if the Bundesbank cuts enough to remove pressure on sterling, sterling trades durably away from the weak edge of the band without large intervention, or UK rate defense becomes politically and economically credible.",
+      "timeframe": "Days to weeks after Schlesinger's comments because the catalyst should force a quick policy test.",
+      "implication": "The devaluation timing is wrong, the policy constraint has been relieved, or the asymmetric setup no longer exists."
+    },
+    "evidence_for": [
+      {
+        "claim": "The macro policy mix was unstable.",
+        "support": "Germany needed high rates after reunification while the UK was in recession and needed lower rates.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "UK rate defense had unusually painful domestic transmission.",
+        "support": "The case emphasizes UK floating-rate mortgages, meaning Bank of England rate hikes passed quickly into household payments and consumption.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json",
+          "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "The ERM band created unusually favorable payoff geometry.",
+        "support": "If sterling stayed inside the band, the loss was bounded; if the peg failed, devaluation offered large upside to the short.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "The trigger clarified German incentives.",
+        "support": "Schlesinger's comments suggested the Bundesbank would tolerate broader realignment, reducing confidence that Germany would support sterling with easier policy.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "The trade-after-the-trade was identifiable in advance.",
+        "support": "If Britain exited the ERM, it would be free to cut rates, making UK government bonds/gilts the clean follow-on expression.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Political commitment to the ERM could delay the break.",
+        "support": "European leaders had strong incentives to preserve monetary order and avoid visible failure after committing to the path toward monetary union.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "Central-bank intervention and rate hikes could create mark-to-market pain.",
+        "support": "The Bank of England and other central banks could buy pounds and raise rates temporarily, creating adverse movement before the peg failed.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json"
+        ]
+      },
+      {
+        "claim": "Scale was constrained by reserve capacity and execution liquidity.",
+        "support": "The source case notes finite Bank of England reserves and practical limits on how much sterling could be sold into official buying.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "Sterling was pinned near the weak side of the ERM band; the source case notes that small rises against the short confirmed the premise because the peg limited adverse movement while the break offered large upside.",
+      "interpretation": "Market behavior confirmed the asymmetric setup: the currency was not freely strengthening on fundamentals, it was being defended by policy mechanics that were becoming less credible.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Exact GBP/DEM spot level and ERM band position on 1992-09-15",
+        "Bank of England intervention/reserve data as of the trigger date"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear macro inconsistency, direct instrument expression, bounded adverse move from the band, a fresh political/central-bank trigger, and an identifiable follow-on trade in UK bonds.",
+      "missing_inputs": [
+        "Exact GBP/DEM spot and band distance",
+        "Exact Bank of England reserve/intervention capacity on the day",
+        "Execution and liquidity constraints for the intended position size"
+      ]
+    },
+    "recommended_action": "short",
+    "expression": {
+      "primary": "Short GBP versus DEM",
+      "instrument_type": "fx",
+      "directness": "direct",
+      "alternatives": [
+        "Short Italian lira versus DEM as a related ERM pressure expression"
+      ],
+      "follow_on": "Buy UK government bonds/gilts after ERM exit because the UK would be free to cut rates."
+    },
+    "conviction": {
+      "level": 5,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Already maximum conviction after Schlesinger trigger; sizing is governed by special-situation liquidity, reserve-capacity, and band-risk constraints rather than standard single-name target weights."
+    },
+    "confidence": 0.92,
+    "confidence_reason": "Very high for a rare policy-break trade because the macro, political, micro housing, market-structure, and catalyst layers aligned; not 1.0 because policymakers could still delay, intervene, or temporarily squeeze the position.",
+    "sizing_context": {
+      "starting_size": "Conviction 5 special-situation macro trade; press existing short GBP/long DEM aggressively after the Schlesinger trigger, constrained by liquidity and reserve capacity.",
+      "add_conditions": "Add when sterling remains pinned near the weak band, German policy support remains absent, and official intervention fails to move the currency durably away from pressure.",
+      "liquidity_constraints": "Sterling was liquid, but ultimate capacity was constrained by official buyers and finite Bank of England reserves.",
+      "portfolio_constraints": "This historical case permits exceptional concentration only because downside was structurally bounded by the ERM band and the trigger raised the probability of a fast break.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Increase short GBP/long DEM exposure after the Schlesinger trigger while the downside remains bounded by the ERM band."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Buy UK government bonds/gilts after sterling breaks because ERM exit frees the UK to cut rates; UK equities are a secondary beneficiary, but bonds are the cleanest follow-on expression.",
+      "if_wrong": "If Germany cuts rates enough to relieve pressure or sterling trades durably away from the weak band, reduce the GBP short and do not add the gilt follow-on.",
+      "next_review_trigger": "Review immediately on Bundesbank policy shift, Bank of England reserve/intervention effectiveness, UK rate-defense credibility, or sterling moving durably away from the weak ERM band."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical macro/FX example designed to teach policy-break asymmetry and trade-after-the-trade reasoning."
+}
