@@ -550,7 +550,7 @@ def action_mutations(
                 )
             )
         return mutations
-    if action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
+    if action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger", "replace_watch_trigger"}:
         row = {**dict(input_payload), **dict(output)}
         return [
             OntologyMutation(

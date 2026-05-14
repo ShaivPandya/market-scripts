@@ -109,6 +109,8 @@ function actionTitle(actionId: string | null | undefined, entityType: string): s
       return "Mark watch trigger as fired"
     case "cancel_watch_trigger":
       return "Cancel watch trigger"
+    case "replace_watch_trigger":
+      return "Replace watch trigger"
     case "update_watch_trigger_definition":
       return "Update watch trigger definition"
     case "create_watch_trigger":
@@ -279,6 +281,35 @@ function createWatchTriggerSummary(change: Record<string, unknown>): { summary: 
   return { summary: "This creates a new watch trigger after approval.", rows }
 }
 
+function cancelWatchTriggerSummary(change: Record<string, unknown>): { summary: string; rows: DetailRow[] } {
+  const rows: DetailRow[] = [
+    { label: "Target", value: formatValue(change.trigger_id) },
+  ]
+  if (change.condition) rows.push({ label: "Condition", value: formatValue(change.condition) })
+  if (change.ticker) rows.push({ label: "Ticker", value: formatValue(change.ticker) })
+  if (change.trigger_type) rows.push({ label: "Trigger type", value: formatValue(change.trigger_type) })
+  return { summary: "This cancels an active watch trigger after approval.", rows }
+}
+
+function replaceWatchTriggerSummary(change: Record<string, unknown>): { summary: string; rows: DetailRow[] } {
+  const rows: DetailRow[] = [
+    { label: "Target", value: formatValue(change.trigger_id) },
+    { label: "New condition", value: formatValue(change.condition) },
+    { label: "New trigger type", value: formatValue(change.trigger_type) },
+  ]
+  if (change.old_condition) rows.unshift({ label: "Current condition", value: formatValue(change.old_condition) })
+  if (change.ticker) rows.push({ label: "New ticker", value: formatValue(change.ticker) })
+  if (change.expires_at) rows.push({ label: "New expiry", value: formatDateTime(change.expires_at) })
+  rows.push({
+    label: "Executable definition",
+    value: Object.keys(asRecord(change.definition)).length ? "Included" : "Not included",
+  })
+  return {
+    summary: "This cancels the current watch trigger and creates a replacement after approval.",
+    rows,
+  }
+}
+
 function actionItemSummary(change: Record<string, unknown>, actionId?: string | null): { summary: string; rows: DetailRow[] } {
   if (actionId === "complete_action_item") {
     const rows = [
@@ -336,6 +367,10 @@ function proposedChangeSummary(approval: ApprovalRecord): { title: string; summa
       return { title, ...watchTriggerCheckSummary(change) }
     case "create_watch_trigger":
       return { title, ...createWatchTriggerSummary(change) }
+    case "cancel_watch_trigger":
+      return { title, ...cancelWatchTriggerSummary(change) }
+    case "replace_watch_trigger":
+      return { title, ...replaceWatchTriggerSummary(change) }
     case "create_action_item":
     case "complete_action_item":
     case "dismiss_action_item":

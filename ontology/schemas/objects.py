@@ -1096,6 +1096,7 @@ class ActionItem(OntologySchemaBase):
 
 
 class WatchTrigger(OntologySchemaBase):
+    trigger_id: str | None = None
     condition: NonBlankStr
     trigger_type: NonBlankStr = "custom"
     ticker: str | None = None
@@ -1122,6 +1123,7 @@ class WatchTrigger(OntologySchemaBase):
         return clean_text(value)
 
     @field_validator(
+        "trigger_id",
         "source_type",
         "source_id",
         "created_at",

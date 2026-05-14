@@ -8,6 +8,7 @@ import pytest
 from ontology.command_service import (
     OntologyCommandConflict,
     OntologyCommandContext,
+    OntologyCommandNotFound,
     OntologyCommandService,
     OntologyCommandValidationError,
 )
@@ -602,6 +603,101 @@ def test_research_object_approvals_apply_with_schema_canonical_ids(action_id, pa
 
     assert applied["application_status"] == "applied"
     assert expected_uid in repo.objects
+
+
+def test_cancel_watch_trigger_accepts_uid_and_preserves_context():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_watch_trigger",
+        {
+            "condition": "Watch OKLO breadth reversal",
+            "trigger_type": "technical",
+            "ticker": "OKLO",
+            "expires_at": "2026-06-01T00:00:00Z",
+            "definition": {"type": "technical", "field": "breadth"},
+        },
+        context,
+        reason="Create trigger",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    trigger_uid = "watch_trigger:watch_oklo_breadth_reversal"
+
+    cancel = service.propose_action(
+        "cancel_watch_trigger",
+        {"trigger_id": trigger_uid},
+        context,
+        reason="Cancel trigger",
+    )
+    applied = service.resolve_approval(cancel["id"], "approved", "approved", context)
+
+    props = repo.objects[trigger_uid]["properties_json"]
+    assert applied["application_status"] == "applied"
+    assert props["status"] == "cancelled"
+    assert props["condition"] == "Watch OKLO breadth reversal"
+    assert props["trigger_type"] == "technical"
+    assert props["ticker"] == "OKLO"
+    assert props["expires_at"] == "2026-06-01T00:00:00Z"
+    assert props["definition"] == {"type": "technical", "field": "breadth"}
+
+
+def test_replace_watch_trigger_cancels_old_and_creates_replacement_with_same_condition():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_watch_trigger",
+        {"condition": "Watch OKLO breadth reversal", "trigger_type": "custom", "ticker": "OKLO"},
+        context,
+        reason="Create trigger",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    trigger_uid = "watch_trigger:watch_oklo_breadth_reversal"
+
+    replacement = service.propose_action(
+        "replace_watch_trigger",
+        {
+            "trigger_id": trigger_uid,
+            "condition": "Watch OKLO breadth reversal",
+            "trigger_type": "technical",
+            "ticker": "OKLO",
+            "definition": {"type": "technical", "field": "breadth"},
+        },
+        context,
+        reason="Replace trigger",
+    )
+    applied = service.resolve_approval(replacement["id"], "approved", "approved", context)
+
+    active_replacements = [
+        row
+        for uid, row in repo.objects.items()
+        if uid != trigger_uid
+        and row["object_type"] == "WatchTrigger"
+        and row["properties_json"].get("status") == "active"
+    ]
+    assert applied["application_status"] == "applied"
+    assert repo.objects[trigger_uid]["properties_json"]["status"] == "cancelled"
+    assert len(active_replacements) == 1
+    assert active_replacements[0]["properties_json"]["condition"] == "Watch OKLO breadth reversal"
+    assert active_replacements[0]["properties_json"]["trigger_type"] == "technical"
+    assert active_replacements[0]["properties_json"]["definition"] == {"type": "technical", "field": "breadth"}
+
+
+def test_watch_trigger_status_mutation_rejects_unknown_uid():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    with pytest.raises(OntologyCommandNotFound):
+        service.propose_action(
+            "cancel_watch_trigger",
+            {"trigger_id": "watch_trigger:missing"},
+            context,
+            reason="Cancel missing trigger",
+        )
 
 
 def test_unsupported_action_is_rejected_before_any_write():

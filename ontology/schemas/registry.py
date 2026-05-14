@@ -642,7 +642,7 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
     if isinstance(model, ActionItem):
         return action_item_id(model.description)
     if isinstance(model, WatchTrigger):
-        return watch_trigger_id(model.condition)
+        return watch_trigger_id(model.trigger_id or model.condition)
     if isinstance(model, Approval):
         return approval_id(f"{model.entity_type}:{model.action_input_hash or model.created_at}")
     if isinstance(model, ActionRun):

@@ -22,6 +22,10 @@ class CreateTriggerRequest(BaseModel):
     approval_note: str | None = None
 
 
+class ReplaceTriggerRequest(CreateTriggerRequest):
+    pass
+
+
 class TriggerMutationRequest(BaseModel):
     reason: str | None = None
     apply: bool = False
@@ -71,5 +75,18 @@ def cancel_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
         reason=(body.reason if body else None) or f"Cancel watch trigger {trigger_id}",
         apply=body.apply if body else False,
         approval_note=body.approval_note if body else None,
+        entity_id=trigger_id,
+    )
+
+
+@router.put("/triggers/{trigger_id}/replace")
+def replace_trigger(trigger_id: str, body: ReplaceTriggerRequest):
+    return stage_api_action(
+        "replace_watch_trigger",
+        {"trigger_id": trigger_id, **body.model_dump(exclude={"reason", "apply", "approval_note"})},
+        source_id="triggers.replace_trigger",
+        reason=body.reason or f"Replace watch trigger {trigger_id}",
+        apply=body.apply,
+        approval_note=body.approval_note,
         entity_id=trigger_id,
     )

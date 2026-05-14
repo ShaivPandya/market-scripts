@@ -8,14 +8,18 @@ import {
   approveItem,
   rejectItem,
   rejectAndRestageApproval,
+  replaceApprovalProposal,
   completeAction,
+  cancelTrigger,
   dismissAction,
+  replaceTrigger,
   refreshMarketSnapshots,
   type ApprovalRecord,
   type PolicyGateReason,
   type PolicyGateResult,
   type ProvenanceSelector,
   type RecommendationRecord,
+  type TriggerMutationBody,
 } from "@/lib/api"
 import {
   approvalSummaryQueryKey,
@@ -33,6 +37,7 @@ import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
+import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import {
   DecisionStateBadge,
   EffectScopeBadge,
@@ -109,12 +114,14 @@ interface ActionItem {
 }
 
 interface Trigger {
-  id: number
+  id: number | string
   ticker: string | null
   condition: string
   trigger_type: string
   status: string
   created_at: string
+  expires_at?: string | null
+  definition?: Record<string, unknown> | null
   last_checked_at: string | null
   last_evidence: string | null
 }
@@ -150,6 +157,9 @@ const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exi
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
 const WORKSPACE_APPROVAL_LIMIT = 50
 type ApprovalDialogAction = "approve" | "reject" | "restage"
+type TriggerEditState =
+  | { kind: "active"; trigger: Trigger }
+  | { kind: "approval"; approval: ApprovalRecord; trigger: EditableWatchTrigger }
 
 function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
@@ -347,6 +357,19 @@ function approvalReasonLabel(approval: ApprovalRecord): string | null {
   return `${reportType ? `${titleCase(reportType)} ` : ""}recommendation for ${target}`
 }
 
+function watchTriggerProposalFromApproval(approval: ApprovalRecord): EditableWatchTrigger | null {
+  if (approval.action_id !== "create_watch_trigger") return null
+  const change = approval.proposed_change
+  return {
+    id: approval.id,
+    condition: String(change.condition ?? ""),
+    trigger_type: String(change.trigger_type || "custom"),
+    ticker: cleanTicker(change.ticker),
+    expires_at: typeof change.expires_at === "string" ? change.expires_at : null,
+    definition: asPlainRecord(change.definition),
+  }
+}
+
 function reasonText(reason: PolicyGateReason): string {
   return reason.message || reason.code || reason.check || "Policy gate issue"
 }
@@ -415,6 +438,9 @@ export function Workspace() {
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [approvalDialogAction, setApprovalDialogAction] = useState<ApprovalDialogAction | null>(null)
+  const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
+  const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
+  const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -496,6 +522,48 @@ export function Workspace() {
       void qc.invalidateQueries({ queryKey: ["workspace"] })
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
+  }
+
+  async function handleCancelTrigger(id: number | string) {
+    setProcessingIds(prev => new Set(prev).add(id))
+    try {
+      await cancelTrigger(id)
+      void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+    } finally {
+      setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
+  }
+
+  async function handleSubmitTriggerEdit(body: TriggerMutationBody) {
+    if (!triggerEdit) return
+    setTriggerEditSubmitting(true)
+    setTriggerEditError(null)
+    try {
+      if (triggerEdit.kind === "active") {
+        await replaceTrigger(triggerEdit.trigger.id, {
+          ...body,
+          reason: `Replace watch trigger ${triggerEdit.trigger.id}`,
+        })
+        void invalidateApprovalSummaries(qc)
+        void qc.invalidateQueries({ queryKey: ["workspace"] })
+      } else {
+        const result = await replaceApprovalProposal(triggerEdit.approval.id, {
+          ...body,
+          reason: triggerEdit.approval.reason || "Edit watch trigger proposal",
+        })
+        patchResolvedApprovalSummaries(qc, result.original, triggerEdit.approval)
+        invalidateAfterApprovalResolution(qc, triggerEdit.approval)
+        setApprovalReview(null)
+        setApprovalNote("")
+      }
+      setTriggerEdit(null)
+    } catch (err) {
+      setTriggerEditError(formatApprovalResolutionError(err))
+      if (shouldRefetchApprovalSummariesAfterError(err)) void invalidateApprovalSummaries(qc)
+    } finally {
+      setTriggerEditSubmitting(false)
     }
   }
 
@@ -878,19 +946,44 @@ export function Workspace() {
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.active_triggers.items.map(t => (
                 <div key={t.id} className="rounded-lg px-3 py-2 text-sm">
-                  <div className="flex items-center gap-3">
-                    {t.ticker && (
-                      <Link to={`/dossier/${encodeURIComponent(t.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
-                        {t.ticker}
-                      </Link>
-                    )}
-                    <span className="text-muted truncate">{t.condition}</span>
-                    <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
-                    <span>{t.status}</span>
-                    {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
-                    {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
+                  <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        {t.ticker && (
+                          <Link to={`/dossier/${encodeURIComponent(t.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
+                            {t.ticker}
+                          </Link>
+                        )}
+                        <span className="text-muted truncate">{t.condition}</span>
+                        <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
+                        <span>{t.status}</span>
+                        {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
+                        {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTriggerEdit({ kind: "active", trigger: t })
+                          setTriggerEditError(null)
+                        }}
+                        disabled={processingIds.has(t.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 disabled:opacity-50"
+                      >
+                        Propose Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCancelTrigger(t.id)}
+                        disabled={processingIds.has(t.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
+                      >
+                        Propose Cancel
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1058,6 +1151,20 @@ export function Workspace() {
                   Reject & Restage
                 </ActionButton>
               )}
+              {watchTriggerProposalFromApproval(approvalReview) && (
+                <ActionButton
+                  onClick={() => {
+                    const trigger = watchTriggerProposalFromApproval(approvalReview)
+                    if (!trigger) return
+                    setTriggerEdit({ kind: "approval", approval: approvalReview, trigger })
+                    setTriggerEditError(null)
+                  }}
+                  disabled={processingIds.has(approvalReview.id)}
+                  className="w-auto px-4"
+                >
+                  Edit Proposal
+                </ActionButton>
+              )}
               <ActionButton
                 onClick={() => handleApproval(approvalReview, "approve", approvalNote)}
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
@@ -1071,6 +1178,26 @@ export function Workspace() {
           </div>
         )}
       </Dialog>
+      <WatchTriggerEditDialog
+        open={triggerEdit !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setTriggerEdit(null)
+            setTriggerEditError(null)
+          }
+        }}
+        trigger={triggerEdit?.trigger ?? null}
+        title={triggerEdit?.kind === "approval" ? "Edit Trigger Proposal" : "Replace Watch Trigger"}
+        description={
+          triggerEdit?.kind === "approval"
+            ? "Create an edited replacement proposal and reject the original pending trigger proposal."
+            : "Stage a replacement that cancels the current trigger and creates a new active trigger after approval."
+        }
+        submitLabel={triggerEdit?.kind === "approval" ? "Stage Edited Proposal" : "Stage Replacement"}
+        loading={triggerEditSubmitting}
+        error={triggerEditError}
+        onSubmit={handleSubmitTriggerEdit}
+      />
       <ProvenanceTraceDialog
         open={provenanceSelector !== null}
         onOpenChange={open => {

@@ -156,6 +156,14 @@ export interface RejectAndRestageResponse {
   replacement: ApprovalRecord
 }
 
+export interface TriggerMutationBody extends StagedMutationOptions {
+  condition: string
+  trigger_type?: string
+  ticker?: string | null
+  expires_at?: string | null
+  definition?: Record<string, unknown> | null
+}
+
 export interface ApprovalSummaryResponse {
   count: number
   items: ApprovalRecord[]
@@ -670,8 +678,10 @@ export const saveThesisContent = (ticker: string, content: string, options?: Sta
     .put(`/thesis/${encodeURIComponent(ticker)}`, { content, ...options })
     .then(r => r.data as StagedMutationResponse)
 
+export type DocumentGenerationKind = "thesis" | "overview" | "management_quality"
+
 type DocumentGenerationJobBase = { job_id: string; timeout_s?: number }
-type DocumentGenerationJobResponse<T> =
+export type DocumentGenerationJobResponse<T = unknown> =
   | (DocumentGenerationJobBase & { status: "queued" | "running" })
   | (DocumentGenerationJobBase & { status: "error" | "cancelled"; error?: string })
   | (DocumentGenerationJobBase & { status: "done"; result?: T })
@@ -682,7 +692,7 @@ function isRetryableDocumentGenerationError(err: unknown) {
   return [408, 429, 500, 502, 503, 504].includes(err.response.status)
 }
 
-const fetchDocumentGenerationJob = <T>(job_id: string) =>
+export const fetchDocumentGenerationJob = <T = unknown>(job_id: string) =>
   client
     .get(`/document-generation/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 })
     .then(r => r.data as DocumentGenerationJobResponse<T>)
@@ -724,17 +734,28 @@ async function pollDocumentGenerationResult<T>(started: DocumentGenerationJobRes
   }
 }
 
-const uploadDocumentForGeneration = <T>(path: string, ticker: string, file: File) => {
+const DOCUMENT_GENERATION_PATHS: Record<DocumentGenerationKind, string> = {
+  thesis: "/thesis/generate",
+  overview: "/overview/generate",
+  management_quality: "/management-quality/generate",
+}
+
+export const startDocumentGenerationUpload = <T = unknown>(kind: DocumentGenerationKind, ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)
   formData.append("file", file)
   return client
-    .post(path, formData, { timeout: 30_000 })
-    .then(r => pollDocumentGenerationResult<T>(r.data as DocumentGenerationJobResponse<T>))
+    .post(DOCUMENT_GENERATION_PATHS[kind], formData, { timeout: 30_000 })
+    .then(r => r.data as DocumentGenerationJobResponse<T>)
+}
+
+const uploadDocumentForGeneration = <T>(kind: DocumentGenerationKind, ticker: string, file: File) => {
+  return startDocumentGenerationUpload<T>(kind, ticker, file)
+    .then(r => pollDocumentGenerationResult<T>(r))
 }
 
 export const uploadThesisDocument = (ticker: string, file: File) =>
-  uploadDocumentForGeneration<StagedMutationResponse>("/thesis/generate", ticker, file)
+  uploadDocumentForGeneration<StagedMutationResponse>("thesis", ticker, file)
 
 // --- Overview ---
 
@@ -744,7 +765,7 @@ export const saveOverviewContent = (ticker: string, content: string) =>
     .then(r => r.data as StagedMutationResponse)
 
 export const uploadOverviewDocument = (ticker: string, file: File) =>
-  uploadDocumentForGeneration<{ status: "ok"; ticker: string; content: string }>("/overview/generate", ticker, file)
+  uploadDocumentForGeneration<{ status: "ok"; ticker: string; content: string }>("overview", ticker, file)
 
 // --- Management Quality ---
 
@@ -754,7 +775,7 @@ export const saveManagementQualityContent = (ticker: string, content: string, op
     .then(r => r.data as StagedMutationResponse)
 
 export const uploadManagementQualityDocument = (ticker: string, file: File) =>
-  uploadDocumentForGeneration<StagedMutationResponse>("/management-quality/generate", ticker, file)
+  uploadDocumentForGeneration<StagedMutationResponse>("management_quality", ticker, file)
 
 export const fetchManagementQuality = (ticker: string) =>
   client
@@ -2453,6 +2474,10 @@ export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
     .post(`/approvals/${encodeURIComponent(id)}/reject-and-restage`, note ? { note } : {})
     .then(r => r.data as RejectAndRestageResponse)
+export const replaceApprovalProposal = (id: string, body: TriggerMutationBody & { note?: string }) =>
+  client
+    .post(`/approvals/${encodeURIComponent(id)}/replace`, body)
+    .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: string[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: string[], note?: string) =>
@@ -2471,12 +2496,14 @@ export const dismissAction = (id: number | string, options?: StagedMutationOptio
 // Watch Triggers
 export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>
   client.get("/triggers", { params }).then(r => r.data)
-export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string; definition?: Record<string, unknown> } & StagedMutationOptions) =>
+export const createTrigger = (body: TriggerMutationBody) =>
   client.post("/triggers", body).then(r => r.data as StagedMutationResponse)
-export const fireTrigger = (id: number, options?: StagedMutationOptions) =>
-  client.put(`/triggers/${id}/fire`, options ?? {}).then(r => r.data as StagedMutationResponse)
-export const cancelTrigger = (id: number, options?: StagedMutationOptions) =>
-  client.put(`/triggers/${id}/cancel`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const fireTrigger = (id: number | string, options?: StagedMutationOptions) =>
+  client.put(`/triggers/${encodeURIComponent(String(id))}/fire`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const cancelTrigger = (id: number | string, options?: StagedMutationOptions) =>
+  client.put(`/triggers/${encodeURIComponent(String(id))}/cancel`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const replaceTrigger = (id: number | string, body: TriggerMutationBody) =>
+  client.put(`/triggers/${encodeURIComponent(String(id))}/replace`, body).then(r => r.data as StagedMutationResponse)
 
 // Catalysts
 export const fetchCatalysts = (ticker: string) =>
