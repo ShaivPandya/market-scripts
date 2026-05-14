@@ -211,10 +211,32 @@ else
 fi
 
 ###############################################################################
+# 5. AUTH_SMOKE_PASSWORD + AUTH_SMOKE_PASSWORD_HASH (SHA-34)
+###############################################################################
+log "Smoke auth secrets"
+if secret_exists AUTH_SMOKE_PASSWORD && secret_exists AUTH_SMOKE_PASSWORD_HASH; then
+  echo "  AUTH_SMOKE_PASSWORD: exists, leaving alone"
+  echo "  AUTH_SMOKE_PASSWORD_HASH: exists, leaving alone"
+else
+  if ! python3 -c 'import bcrypt' 2>/dev/null; then
+    echo "  Python 'bcrypt' not installed locally. Run: pip install bcrypt" >&2
+    echo "  Skipping smoke auth secrets; re-run after installing." >&2
+  else
+    smoke_pw="$(random_url_safe)"
+    SMOKE_HASH="$(python3 -c \
+      'import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(),bcrypt.gensalt(12)).decode())' \
+      "${smoke_pw}")"
+    printf '%s' "${smoke_pw}" | create_if_missing AUTH_SMOKE_PASSWORD
+    printf '%s' "${SMOKE_HASH}" | create_if_missing AUTH_SMOKE_PASSWORD_HASH
+    unset smoke_pw SMOKE_HASH
+  fi
+fi
+
+###############################################################################
 # 6. IAM bindings — least-privilege per service account
 ###############################################################################
 API_ALLOWED=(
-  DATABASE_URL_API AUTH_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
+  DATABASE_URL_API AUTH_PASSWORD_HASH AUTH_SMOKE_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
   SCHEDULER_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
 )

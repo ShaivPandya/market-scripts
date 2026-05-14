@@ -88,6 +88,12 @@ def _get_password_hash() -> bytes:
     return value.encode()
 
 
+def _get_smoke_password_hash() -> bytes | None:
+    """Return the optional smoke password bcrypt hash, or None if not configured."""
+    value = (os.environ.get("AUTH_SMOKE_PASSWORD_HASH") or "").strip()
+    return value.encode() if value else None
+
+
 def _get_jwt_secret() -> str:
     value = os.environ.get("JWT_SECRET")
     if not value:
@@ -109,13 +115,13 @@ router = APIRouter(tags=["auth"])
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _create_token() -> str:
+def _create_token(subject: str = "admin") -> str:
     ttl_hours = _get_jwt_ttl_hours()
     expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
     return cast(
         str,
         jwt.encode(
-            {"sub": "admin", "exp": expire},
+            {"sub": subject, "exp": expire},
             _get_jwt_secret(),
             algorithm=_get_jwt_algorithm(),
         ),
@@ -262,7 +268,12 @@ def login(request: Request, body: LoginRequest, response: Response):
             headers={"Retry-After": str(retry_after)},
         )
 
-    if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
+    # Check smoke password first (if configured), then admin password
+    smoke_hash = _get_smoke_password_hash()
+    is_smoke = False
+    if smoke_hash and bcrypt.checkpw(body.password.encode(), smoke_hash):
+        is_smoke = True
+    elif not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
         retry_after = _record_failed_login(request)
         emit_audit_event(
             "auth.login",
@@ -289,7 +300,8 @@ def login(request: Request, body: LoginRequest, response: Response):
             detail="Incorrect password",
         )
     _clear_failed_logins(request)
-    token = _create_token()
+    subject = "smoke" if is_smoke else "admin"
+    token = _create_token(subject)
     response.set_cookie(
         key="__session",
         value=token,
@@ -302,8 +314,8 @@ def login(request: Request, body: LoginRequest, response: Response):
         "auth.login",
         "permission",
         "succeeded",
-        actor=admin_actor("admin", source="api"),
-        after_summary={"auth_mode": _auth_mode()},
+        actor=admin_actor(subject, source="api"),
+        after_summary={"auth_mode": _auth_mode(), "subject": subject},
         metadata={"path": str(request.url.path)},
     )
     return {"detail": "ok"}

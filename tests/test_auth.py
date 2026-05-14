@@ -192,3 +192,87 @@ def test_cloudflare_mode_enforces_proxy_secret_header(client, monkeypatch):
 
     allowed = client.get("/api/agent/workflows", headers={"X-Api-Proxy-Secret": "proxy-secret"})
     assert allowed.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# SHA-34: Smoke password auth
+# ---------------------------------------------------------------------------
+
+
+def test_smoke_password_login_succeeds_when_hash_configured(client, monkeypatch):
+    """Smoke password should authenticate successfully when AUTH_SMOKE_PASSWORD_HASH is set."""
+    import bcrypt
+
+    smoke_pw = "smoke-test-password"
+    smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
+    monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+
+    resp = client.post("/api/auth/login", json={"password": smoke_pw})
+    assert resp.status_code == 200
+    assert resp.json() == {"detail": "ok"}
+    assert "__session" in resp.cookies
+
+
+def test_smoke_password_creates_smoke_subject(client, monkeypatch):
+    """Smoke login should issue a token with subject 'smoke', not 'admin'."""
+    import bcrypt
+    from jose import jwt as jose_jwt
+
+    smoke_pw = "smoke-test-password"
+    smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
+    monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+
+    resp = client.post("/api/auth/login", json={"password": smoke_pw})
+    assert resp.status_code == 200
+
+    token = resp.cookies.get("__session")
+    assert token
+    payload = jose_jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
+    assert payload["sub"] == "smoke"
+
+
+def test_admin_login_still_works_with_smoke_hash_configured(client, monkeypatch):
+    """Normal admin login must still work when smoke hash is configured."""
+    import bcrypt
+
+    smoke_pw = "different-smoke-password"
+    smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
+    monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+
+    resp = client.post("/api/auth/login", json={"password": "testpass"})
+    assert resp.status_code == 200
+    assert resp.json() == {"detail": "ok"}
+
+
+def test_admin_login_subject_is_admin(client, monkeypatch):
+    """When logging in with admin password, subject should still be 'admin'."""
+    from jose import jwt as jose_jwt
+
+    monkeypatch.delenv("AUTH_SMOKE_PASSWORD_HASH", raising=False)
+
+    resp = client.post("/api/auth/login", json={"password": "testpass"})
+    assert resp.status_code == 200
+
+    token = resp.cookies.get("__session")
+    payload = jose_jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
+    assert payload["sub"] == "admin"
+
+
+def test_no_smoke_login_when_hash_absent(client, monkeypatch):
+    """Without AUTH_SMOKE_PASSWORD_HASH, any non-admin password should be rejected."""
+    monkeypatch.delenv("AUTH_SMOKE_PASSWORD_HASH", raising=False)
+
+    resp = client.post("/api/auth/login", json={"password": "some-random-password"})
+    assert resp.status_code == 401
+
+
+def test_wrong_smoke_password_rejected(client, monkeypatch):
+    """Wrong password should still be rejected even when smoke hash is configured."""
+    import bcrypt
+
+    smoke_pw = "smoke-test-password"
+    smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
+    monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+
+    resp = client.post("/api/auth/login", json={"password": "totally-wrong"})
+    assert resp.status_code == 401

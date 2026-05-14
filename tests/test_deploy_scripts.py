@@ -195,3 +195,65 @@ def test_api_deploy_does_not_expose_secrets_as_release_vars() -> None:
             assert "SECRET" not in line.upper(), f"Release var references a secret: {line.strip()}"
             assert "PASSWORD" not in line.upper(), f"Release var references a password: {line.strip()}"
             assert "API_KEY" not in line.upper(), f"Release var references an API key: {line.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# SHA-34: deploy smoke hook
+# ---------------------------------------------------------------------------
+
+
+def test_backend_deploy_invokes_smoke_after_api_deploy() -> None:
+    """deploy-backend.sh must run smoke tests after deploying the API."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    # Smoke must appear after deploy-api.sh
+    api_pos = script.index("deploy-api.sh")
+    smoke_pos = script.index("run-backend-smoke.sh")
+    assert smoke_pos > api_pos, "smoke must run after API deploy"
+
+    # Smoke must appear before "Backend deploy complete"
+    complete_pos = script.index("Backend deploy complete")
+    assert smoke_pos < complete_pos, "smoke must run before declaring deploy complete"
+
+
+def test_backend_deploy_supports_smoke_escape_hatch() -> None:
+    """deploy-backend.sh must support RUN_DEPLOY_SMOKE=0."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "RUN_DEPLOY_SMOKE" in script
+    assert "RUN_DEPLOY_SMOKE:-1" in script or "RUN_DEPLOY_SMOKE:-0" in script or "RUN_DEPLOY_SMOKE=0" in script
+
+
+def test_backend_deploy_passes_image_tag_to_smoke() -> None:
+    """deploy-backend.sh should pass EXPECTED_IMAGE_TAG to smoke."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "EXPECTED_IMAGE_TAG" in script
+
+
+def test_smoke_runner_does_not_pass_secrets_as_cli_args() -> None:
+    """run-backend-smoke.sh must not pass secrets as positional/flag CLI args."""
+    smoke_script = (ROOT / "infra/gcp/run-backend-smoke.sh").read_text()
+
+    for line in smoke_script.splitlines():
+        stripped = line.strip()
+        # Skip comments and blank lines
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Check we never pass secret values as CLI arguments directly
+        if "--smoke-password" in stripped or "--proxy-secret" in stripped:
+            raise AssertionError(f"Secret passed as CLI arg: {stripped}")
+
+
+def test_api_deploy_includes_migration_head_env_var() -> None:
+    """deploy-api.sh must set TALISMAN_RELEASE_MIGRATION_HEAD."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    assert "TALISMAN_RELEASE_MIGRATION_HEAD" in script
+
+
+def test_config_example_includes_smoke_hash_secret() -> None:
+    """config.example.sh must bind AUTH_SMOKE_PASSWORD_HASH for the API."""
+    config = (ROOT / "infra/gcp/config.example.sh").read_text()
+
+    assert "AUTH_SMOKE_PASSWORD_HASH" in config
