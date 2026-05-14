@@ -238,6 +238,24 @@ def test_openai_json_schema_is_strictified(monkeypatch):
     assert response_schema["properties"]["meta"]["required"] == ["score", "note"]
 
 
+def test_extract_text_reads_parsed_structured_output():
+    response = SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[
+                    SimpleNamespace(
+                        type="output_text",
+                        parsed={"name": "ANET", "score": 55},
+                    )
+                ],
+            )
+        ]
+    )
+
+    assert llm_utils.extract_text(response) == '{"name": "ANET", "score": 55}'
+
+
 def test_gemini_text_request_shape_reasoning_and_citations(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")

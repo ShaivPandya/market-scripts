@@ -1613,7 +1613,6 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         "portfolio_fit": parsed.get("portfolio_fit") if isinstance(parsed.get("portfolio_fit"), dict) else {},
         "decision_quality": decision_quality.model_dump(mode="json") if decision_quality else None,
         "decision_quality_gate": gate.model_dump(mode="json"),
-        "decision_quality_errors": decision_quality_errors,
     }
     result = _merge_analyzer_context_into_result(context, result)
     if not result["rationale"]:
@@ -1665,7 +1664,7 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         text, citations, _response = call_llm_text(
             prompt=prompt,
             model=MODEL_HIGH,
-            max_tokens=3000,
+            max_tokens=6000,
             system=system,
             max_web_search_uses=4,
             json_schema=_idea_evaluator_json_schema(),

@@ -316,6 +316,12 @@ def get_llm_client(provider: str | None = None, api_key: str | None = None) -> A
 
 
 def extract_text(response: Any) -> str:
+    parsed_response = _obj_get(response, "output_parsed", _obj_get(response, "parsed"))
+    if isinstance(parsed_response, (dict, list)):
+        import json
+
+        return json.dumps(parsed_response)
+
     output_text = _obj_get(response, "output_text")
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
@@ -336,6 +342,12 @@ def extract_text(response: Any) -> str:
         if _obj_get(item, "type") != "message":
             continue
         for block in _obj_get(item, "content", []) or []:
+            parsed_block = _obj_get(block, "parsed")
+            if isinstance(parsed_block, (dict, list)):
+                import json
+
+                parts.append(json.dumps(parsed_block))
+                continue
             text = _obj_get(block, "text")
             if isinstance(text, str) and text:
                 parts.append(text)
