@@ -634,6 +634,8 @@ def test_cancel_watch_trigger_accepts_uid_and_preserves_context():
     applied = service.resolve_approval(cancel["id"], "approved", "approved", context)
 
     props = repo.objects[trigger_uid]["properties_json"]
+    assert cancel["target_object_uid"] == trigger_uid
+    assert cancel["target_object_type"] == "WatchTrigger"
     assert applied["application_status"] == "applied"
     assert props["status"] == "cancelled"
     assert props["condition"] == "Watch OKLO breadth reversal"
@@ -641,6 +643,140 @@ def test_cancel_watch_trigger_accepts_uid_and_preserves_context():
     assert props["ticker"] == "OKLO"
     assert props["expires_at"] == "2026-06-01T00:00:00Z"
     assert props["definition"] == {"type": "technical", "field": "breadth"}
+
+
+def test_update_watch_trigger_check_accepts_uid_and_preserves_context():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_watch_trigger",
+        {
+            "condition": "Watch OKLO breadth reversal",
+            "trigger_type": "technical",
+            "ticker": "OKLO",
+            "expires_at": "2026-06-01T00:00:00Z",
+            "definition": {"type": "technical", "field": "breadth"},
+        },
+        context,
+        reason="Create trigger",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    trigger_uid = "watch_trigger:watch_oklo_breadth_reversal"
+    original = dict(repo.objects[trigger_uid]["properties_json"])
+
+    result = {"fired": False, "actual": 42, "expected": 50}
+    approval = service.propose_action(
+        "update_watch_trigger_check",
+        {"trigger_id": trigger_uid, "result": result, "evidence": "Breadth was 42"},
+        context,
+        reason="Record trigger check",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    props = repo.objects[trigger_uid]["properties_json"]
+    assert approval["target_object_uid"] == trigger_uid
+    assert approval["target_object_type"] == "WatchTrigger"
+    assert applied["application_status"] == "applied"
+    assert props["status"] == "active"
+    assert props["condition"] == original["condition"]
+    assert props["trigger_type"] == original["trigger_type"]
+    assert props["ticker"] == original["ticker"]
+    assert props["expires_at"] == original["expires_at"]
+    assert props["created_at"] == original["created_at"]
+    assert props["definition"] == original["definition"]
+    assert props["last_result"] == result
+    assert props["last_evidence"] == "Breadth was 42"
+    assert props["last_checked_at"]
+
+
+def test_update_watch_trigger_definition_accepts_uid_and_preserves_context():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_watch_trigger",
+        {
+            "condition": "Watch OKLO breadth reversal",
+            "trigger_type": "technical",
+            "ticker": "OKLO",
+            "expires_at": "2026-06-01T00:00:00Z",
+            "definition": {"type": "technical", "field": "breadth"},
+        },
+        context,
+        reason="Create trigger",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    trigger_uid = "watch_trigger:watch_oklo_breadth_reversal"
+    original = dict(repo.objects[trigger_uid]["properties_json"])
+    replacement_definition = {"type": "technical", "field": "breadth", "operator": ">", "threshold": 50}
+
+    approval = service.propose_action(
+        "update_watch_trigger_definition",
+        {"trigger_id": trigger_uid, "definition": replacement_definition},
+        context,
+        reason="Update trigger definition",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    props = repo.objects[trigger_uid]["properties_json"]
+    assert approval["target_object_uid"] == trigger_uid
+    assert approval["target_object_type"] == "WatchTrigger"
+    assert applied["application_status"] == "applied"
+    assert props["status"] == "active"
+    assert props["condition"] == original["condition"]
+    assert props["trigger_type"] == original["trigger_type"]
+    assert props["ticker"] == original["ticker"]
+    assert props["expires_at"] == original["expires_at"]
+    assert props["created_at"] == original["created_at"]
+    assert props["definition"] == replacement_definition
+
+
+def test_fire_watch_trigger_accepts_uid_targets_trigger_and_preserves_context():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_watch_trigger",
+        {
+            "condition": "Watch OKLO breadth reversal",
+            "trigger_type": "technical",
+            "ticker": "OKLO",
+            "expires_at": "2026-06-01T00:00:00Z",
+            "definition": {"type": "technical", "field": "breadth"},
+        },
+        context,
+        reason="Create trigger",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    trigger_uid = "watch_trigger:watch_oklo_breadth_reversal"
+    original = dict(repo.objects[trigger_uid]["properties_json"])
+
+    approval = service.propose_action(
+        "fire_watch_trigger",
+        {"trigger_id": trigger_uid, "result": {"fired": True}, "evidence": "Breadth crossed"},
+        context,
+        reason="Fire trigger",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    props = repo.objects[trigger_uid]["properties_json"]
+    assert approval["target_object_uid"] == trigger_uid
+    assert approval["target_object_type"] == "WatchTrigger"
+    assert applied["application_status"] == "applied"
+    assert props["status"] == "fired"
+    assert props["condition"] == original["condition"]
+    assert props["trigger_type"] == original["trigger_type"]
+    assert props["ticker"] == original["ticker"]
+    assert props["expires_at"] == original["expires_at"]
+    assert props["created_at"] == original["created_at"]
+    assert props["definition"] == original["definition"]
+    assert props["last_result"] == {"fired": True}
+    assert props["last_evidence"] == "Breadth crossed"
+    assert props["fired_at"]
 
 
 def test_replace_watch_trigger_cancels_old_and_creates_replacement_with_same_condition():
@@ -686,17 +822,26 @@ def test_replace_watch_trigger_cancels_old_and_creates_replacement_with_same_con
     assert active_replacements[0]["properties_json"]["definition"] == {"type": "technical", "field": "breadth"}
 
 
-def test_watch_trigger_status_mutation_rejects_unknown_uid():
+@pytest.mark.parametrize(
+    ("action_id", "payload"),
+    [
+        ("cancel_watch_trigger", {"trigger_id": "watch_trigger:missing"}),
+        ("fire_watch_trigger", {"trigger_id": "watch_trigger:missing"}),
+        ("update_watch_trigger_check", {"trigger_id": "watch_trigger:missing"}),
+        ("update_watch_trigger_definition", {"trigger_id": "watch_trigger:missing", "definition": {"type": "macro"}}),
+    ],
+)
+def test_watch_trigger_target_mutation_rejects_unknown_uid(action_id: str, payload: dict[str, Any]):
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
     context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
 
     with pytest.raises(OntologyCommandNotFound):
         service.propose_action(
-            "cancel_watch_trigger",
-            {"trigger_id": "watch_trigger:missing"},
+            action_id,
+            payload,
             context,
-            reason="Cancel missing trigger",
+            reason="Mutate missing trigger",
         )
 
 

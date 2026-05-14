@@ -1,0 +1,88 @@
+{
+  "id": "mu_ai_memory_cycle_2025",
+  "status": "draft",
+  "decision_type": "new_idea",
+  "as_of_date": "2026-05-14",
+  "user_question": "Using the MU thesis, should this be actionable now, watch, research, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "thesis",
+      "path": "investment_theses/MU.md",
+      "sha256": "25f52d08d28fdbc96efc2483842faa43fe23161d122f9a46cbf299e5af30c3a7",
+      "description": "Micron AI memory cycle thesis with HBM ramp catalysts, valuation target range, and cyclical risk factors.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This draft case only includes the local MU thesis as input.",
+    "No live price action, portfolio sizing, liquidity, or current news input has been selected yet.",
+    "Gold output fields are intentionally blank until the human author defines the ideal decision object."
+  ],
+  "gold_output": {
+    "simple_thesis": "",
+    "opportunity_type": "unclear",
+    "embedded_macro_exposure": "",
+    "mispricing": {
+      "consensus_view": "",
+      "variant_view": "",
+      "pricing_evidence": "",
+      "why_consensus_is_wrong": ""
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "",
+      "expected_timeframe": "",
+      "why_now": "",
+      "source_evidence": []
+    },
+    "invalidation": {
+      "observable": "",
+      "metric_or_event": "",
+      "threshold": "",
+      "timeframe": "",
+      "implication": ""
+    },
+    "evidence_for": [],
+    "evidence_against": [],
+    "price_action_read": {
+      "observed_behavior": "",
+      "interpretation": "",
+      "confirms_thesis": null,
+      "data_needed": []
+    },
+    "actionability": {
+      "status": "research",
+      "reason": "",
+      "missing_inputs": []
+    },
+    "recommended_action": "research",
+    "confidence": null,
+    "confidence_reason": "",
+    "sizing_context": {
+      "starting_size": "",
+      "add_conditions": "",
+      "liquidity_constraints": "",
+      "portfolio_constraints": ""
+    },
+    "trade_after_trade": {
+      "if_right": "",
+      "if_wrong": "",
+      "next_review_trigger": ""
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "First draft case. Fill the gold output manually or ask Codex to draft a proposed gold output for review."
+}
+

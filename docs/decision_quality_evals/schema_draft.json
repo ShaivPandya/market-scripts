@@ -1,0 +1,443 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Decision Quality Eval Case",
+  "type": "object",
+  "required": [
+    "id",
+    "status",
+    "decision_type",
+    "as_of_date",
+    "user_question",
+    "input_refs",
+    "gold_output",
+    "rubric_scores"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_\\-]*$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "review", "approved", "archived"]
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "new_idea",
+        "existing_position_review",
+        "macro_stance",
+        "sizing",
+        "risk_control",
+        "comparison"
+      ]
+    },
+    "as_of_date": {
+      "type": "string",
+      "description": "YYYY-MM-DD date the case should be evaluated as of."
+    },
+    "user_question": {
+      "type": "string"
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input_ref"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "gold_output": {
+      "$ref": "#/$defs/decision_quality_output"
+    },
+    "rubric_scores": {
+      "$ref": "#/$defs/rubric_scores"
+    },
+    "human_notes": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "$defs": {
+    "input_ref": {
+      "type": "object",
+      "required": ["type", "path", "description", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "thesis",
+            "overview",
+            "portfolio_context",
+            "market_data",
+            "news",
+            "report",
+            "user_notes",
+            "other"
+          ]
+        },
+        "path": {
+          "type": ["string", "null"]
+        },
+        "sha256": {
+          "type": ["string", "null"]
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "evidence_item": {
+      "type": "object",
+      "required": ["claim", "support", "source_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "type": "string"
+        },
+        "support": {
+          "type": "string"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decision_quality_output": {
+      "type": "object",
+      "required": [
+        "simple_thesis",
+        "opportunity_type",
+        "mispricing",
+        "catalyst_or_reason_now",
+        "invalidation",
+        "evidence_for",
+        "evidence_against",
+        "price_action_read",
+        "actionability",
+        "recommended_action",
+        "confidence",
+        "confidence_reason",
+        "sizing_context",
+        "trade_after_trade"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "simple_thesis": {
+          "type": "string"
+        },
+        "opportunity_type": {
+          "type": "string",
+          "enum": [
+            "undervalued_asset",
+            "regime_shift",
+            "reflexive_process",
+            "unsustainable_process",
+            "forced_liquidation",
+            "policy_inflection",
+            "quality_compounder",
+            "cyclical_upturn",
+            "unclear"
+          ]
+        },
+        "embedded_macro_exposure": {
+          "type": "string",
+          "default": ""
+        },
+        "mispricing": {
+          "type": "object",
+          "required": [
+            "consensus_view",
+            "variant_view",
+            "pricing_evidence",
+            "why_consensus_is_wrong"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "consensus_view": {
+              "type": "string"
+            },
+            "variant_view": {
+              "type": "string"
+            },
+            "pricing_evidence": {
+              "type": "string"
+            },
+            "why_consensus_is_wrong": {
+              "type": "string"
+            }
+          }
+        },
+        "catalyst_or_reason_now": {
+          "type": "object",
+          "required": [
+            "event_or_condition",
+            "expected_timeframe",
+            "why_now",
+            "source_evidence"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "event_or_condition": {
+              "type": "string"
+            },
+            "expected_timeframe": {
+              "type": "string"
+            },
+            "why_now": {
+              "type": "string"
+            },
+            "source_evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "invalidation": {
+          "type": "object",
+          "required": [
+            "observable",
+            "metric_or_event",
+            "threshold",
+            "timeframe",
+            "implication"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "observable": {
+              "type": "string"
+            },
+            "metric_or_event": {
+              "type": "string"
+            },
+            "threshold": {
+              "type": "string"
+            },
+            "timeframe": {
+              "type": "string"
+            },
+            "implication": {
+              "type": "string"
+            }
+          }
+        },
+        "evidence_for": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_item"
+          }
+        },
+        "evidence_against": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_item"
+          }
+        },
+        "price_action_read": {
+          "type": "object",
+          "required": [
+            "observed_behavior",
+            "interpretation",
+            "confirms_thesis",
+            "data_needed"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "observed_behavior": {
+              "type": "string"
+            },
+            "interpretation": {
+              "type": "string"
+            },
+            "confirms_thesis": {
+              "type": ["boolean", "null"]
+            },
+            "data_needed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "actionability": {
+          "type": "object",
+          "required": ["status", "reason", "missing_inputs"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["actionable", "watch", "research", "do_nothing"]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "missing_inputs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "recommended_action": {
+          "type": "string",
+          "enum": [
+            "buy",
+            "add",
+            "short",
+            "trim",
+            "reduce",
+            "exit",
+            "hedge",
+            "watch",
+            "research",
+            "do_nothing"
+          ]
+        },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence_reason": {
+          "type": "string"
+        },
+        "sizing_context": {
+          "type": "object",
+          "required": [
+            "starting_size",
+            "add_conditions",
+            "liquidity_constraints",
+            "portfolio_constraints"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "starting_size": {
+              "type": "string"
+            },
+            "add_conditions": {
+              "type": "string"
+            },
+            "liquidity_constraints": {
+              "type": "string"
+            },
+            "portfolio_constraints": {
+              "type": "string"
+            }
+          }
+        },
+        "trade_after_trade": {
+          "type": "object",
+          "required": ["if_right", "if_wrong", "next_review_trigger"],
+          "additionalProperties": false,
+          "properties": {
+            "if_right": {
+              "type": "string"
+            },
+            "if_wrong": {
+              "type": "string"
+            },
+            "next_review_trigger": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "rubric_scores": {
+      "type": "object",
+      "required": [
+        "thesis_clarity",
+        "mispricing",
+        "catalyst_reason_now",
+        "evidence_quality",
+        "disconfirming_evidence",
+        "invalidation",
+        "price_action_market_behavior",
+        "actionability_discipline",
+        "confidence_calibration",
+        "sizing_risk_context",
+        "total",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "thesis_clarity": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "mispricing": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "catalyst_reason_now": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "evidence_quality": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "disconfirming_evidence": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "invalidation": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "price_action_market_behavior": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "actionability_discipline": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "confidence_calibration": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "sizing_risk_context": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "total": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 20
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
+
