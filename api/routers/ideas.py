@@ -682,20 +682,43 @@ def _normalize_missing_rows(value: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
         if isinstance(row, str) and row.strip():
-            out.append({"field": row.strip(), "severity": "medium", "reason": row.strip()})
+            field = row.strip()
+            out.append({"field": field, "severity": "medium", "reason": _missing_reason_from_field(field)})
         elif isinstance(row, dict):
             field = str(row.get("field") or row.get("name") or "unspecified").strip()
             if not field:
                 field = "unspecified"
             severity = str(row.get("severity") or "medium").strip().lower()
+            reason = str(
+                row.get("reason") or row.get("description") or row.get("why_needed") or row.get("impact") or ""
+            ).strip()
+            if not reason or reason.lower() == field.lower():
+                reason = _missing_reason_from_field(field)
             out.append(
                 {
                     "field": field,
                     "severity": severity,
-                    "reason": str(row.get("reason") or row.get("message") or "").strip(),
+                    "reason": reason,
                 }
             )
     return out
+
+
+def _missing_reason_from_field(field: str) -> str:
+    normalized = field.lower()
+    if any(token in normalized for token in ("valuation", "multiple", "price", "p/e", "market cap")):
+        return "Needed to judge valuation asymmetry, entry price, and downside if the thesis is crowded."
+    if "capex" in normalized or "hyperscaler" in normalized:
+        return "Needed to verify whether the demand driver is accelerating, stable, or starting to decelerate."
+    if "portfolio" in normalized or "risk budget" in normalized or "concentration" in normalized:
+        return "Needed to decide whether the idea fits current exposure and can be sized responsibly."
+    if "customer" in normalized:
+        return "Needed to test whether customer concentration is improving or becoming a larger thesis risk."
+    if "short interest" in normalized or "insider" in normalized or "ownership" in normalized:
+        return "Needed to assess positioning, squeeze risk, and whether consensus already owns the thesis."
+    if "win/loss" in normalized or "spectrum-x" in normalized or "competitive" in normalized:
+        return "Needed to validate the competitive threat and whether share is actually shifting."
+    return "Needed before treating the idea as actionable."
 
 
 def _has_critical_missing(rows: list[dict[str, Any]]) -> bool:
@@ -743,23 +766,39 @@ def _idea_evaluator_json_schema() -> dict[str, Any]:
     string_array = {"type": "array", "items": {"type": "string"}}
     factor_score_schema = {
         "type": "object",
+        "description": "One factor score row. Always return an object, never a bare number.",
         "additionalProperties": False,
-        "required": ["score", "status", "rationale", "source"],
+        "required": ["score", "status", "rationale", "source", "missing"],
         "properties": {
             "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
-            "status": {"type": "string"},
-            "rationale": {"type": "string"},
-            "source": {"type": "string"},
+            "status": {
+                "type": "string",
+                "description": "Short state such as supportive, mixed, challenged, incomplete, or reviewable.",
+            },
+            "rationale": {
+                "type": "string",
+                "description": "One concrete sentence explaining why this factor got this score; do not repeat the factor name.",
+            },
+            "source": {"type": "string", "description": "Evidence source or context used for the score."},
+            "missing": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific missing inputs for this factor, or an empty list.",
+            },
         },
     }
     missing_information_schema = {
         "type": "object",
+        "description": "A missing input that would change actionability, confidence, or sizing.",
         "additionalProperties": False,
         "required": ["field", "severity", "reason"],
         "properties": {
-            "field": {"type": "string"},
+            "field": {"type": "string", "description": "Short name of the missing input."},
             "severity": {"type": "string", "enum": ["low", "medium", "high", "critical", "block"]},
-            "reason": {"type": "string"},
+            "reason": {
+                "type": "string",
+                "description": "Why this input matters. Must not duplicate field.",
+            },
         },
     }
     evidence_schema = {
@@ -1220,13 +1259,34 @@ def _build_context_for_evaluation(
     return context
 
 
-def _factor(score: float, status: str, rationale: str, missing: list[str] | None = None) -> dict[str, Any]:
+def _factor(
+    score: float,
+    status: str,
+    rationale: str,
+    missing: list[str] | None = None,
+    *,
+    source: str = "evaluator",
+) -> dict[str, Any]:
     return {
         "score": max(0, min(100, round(float(score), 1))),
         "status": status,
         "rationale": rationale,
         "missing": missing or [],
+        "source": source,
     }
+
+
+def _factor_rationale_from_score(key: str, score: float) -> str:
+    label = key.replace("_", " ")
+    if score >= 75:
+        posture = "strong support"
+    elif score >= 60:
+        posture = "moderate support"
+    elif score >= 45:
+        posture = "mixed support"
+    else:
+        posture = "weak support"
+    return f"{label} scored as {posture}; evaluator did not provide a separate rationale."
 
 
 def _ensure_canonical_factor_rows(factor_scores: dict[str, Any]) -> dict[str, Any]:
@@ -1235,10 +1295,17 @@ def _ensure_canonical_factor_rows(factor_scores: dict[str, Any]) -> dict[str, An
         row = factor_scores.get(key)
         if isinstance(row, dict):
             score = _numeric_or_none(row.get("score"), minimum=0, maximum=100)
+            final_score = 50.0 if score is None else round(score, 1)
+            rationale = str(row.get("rationale") or row.get("summary") or row.get("reason") or "").strip()
+            if not rationale:
+                rationale = _factor_rationale_from_score(key, final_score)
             normalized[key] = {
                 **row,
-                "score": 50.0 if score is None else round(score, 1),
+                "score": final_score,
                 "status": str(row.get("status") or "reviewable"),
+                "rationale": rationale,
+                "source": str(row.get("source") or "evaluator"),
+                "missing": row.get("missing") if isinstance(row.get("missing"), list) else [],
             }
         else:
             normalized[key] = _factor(50, "missing", f"{key} was not returned by the evaluator.")
@@ -1285,11 +1352,12 @@ def _normalize_factor_scores(value: Any) -> dict[str, Any]:
                     or ""
                 ),
                 _as_list(raw_row.get("missing")),
+                source=str(raw_row.get("source") or "evaluator"),
             )
         else:
             score = _numeric_or_none(raw_row, minimum=0, maximum=100)
             if score is not None:
-                rows[key] = _factor(score, "reviewable", "Evaluator returned a numeric factor score.")
+                rows[key] = _factor(score, "reviewable", _factor_rationale_from_score(key, score))
     return _ensure_canonical_factor_rows(rows)
 
 
@@ -1759,7 +1827,10 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
                 "You are evaluating independent watchlist ideas. Return only valid JSON. "
                 "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing. "
                 "The canonical score denominator is exactly six factors. Do not add fundamental_momentum or "
-                "price_momentum as top-level factors; they are analyzer diagnostics only."
+                "price_momentum as top-level factors; they are analyzer diagnostics only. "
+                "Each factor_scores entry must be an object with score, status, rationale, source, and missing. "
+                "Never return a bare numeric factor score. Each missing_information reason must explain why the "
+                "input matters and must not simply repeat the field."
             ),
         ]
     )
@@ -1770,7 +1841,11 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         "factor_scores, missing_information, data_quality, evidence, disconfirming_evidence, catalyst, invalidation, "
         "portfolio_fit, decision_quality. "
         "factor_scores must include macro_support, industry_attractiveness, business_quality, management_quality, "
-        "valuation_asymmetry, and portfolio_fit. Analyzer raw qualitative scores, when present, will override "
+        "valuation_asymmetry, and portfolio_fit. Each factor must be an object: "
+        "{score, status, rationale, source, missing}. Do not return numeric-only factor rows. "
+        "missing_information rows must be {field, severity, reason}; reason must be a concrete explanation of "
+        "how the missing input affects actionability, confidence, or sizing. "
+        "Analyzer raw qualitative scores, when present, will override "
         "business/industry/management quality factors on the native 0-100 scale. Analyzer valuation_signal, when "
         "present, will be clipped to +/-3 and mapped to 0-100 with 50 neutral. action must use the shared "
         "canonical decision action vocabulary.\n\n"
