@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any
@@ -119,6 +120,8 @@ def finalize_turn(
         logger.exception("Failed to append messages to session %s", session_id)
         return
 
+    _ensure_session_title(session_id, user_message, assistant_message, total)
+
     if total >= SUMMARIZE_THRESHOLD:
         _maybe_summarize(session_id)
 
@@ -165,6 +168,107 @@ def _retrieve_relevant(query: str) -> str | None:
     except Exception:
         logger.debug("Retrieval failed, skipping", exc_info=True)
         return None
+
+
+def _ensure_session_title(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+    total_messages: int,
+) -> None:
+    """Set a quick deterministic title, then schedule first-turn LLM refinement."""
+    user_text = str(user_message.get("content") or "")
+    memory_db.set_deterministic_title_if_missing(session_id, user_text)
+
+    if total_messages > 2:
+        return
+    meta = memory_db.get_session_title_metadata(session_id)
+    if not meta or meta.get("title_source") != "deterministic":
+        return
+    _refine_session_title_async(session_id, user_message, assistant_message)
+
+
+def _refine_session_title_async(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+) -> None:
+    t = threading.Thread(
+        target=_refine_session_title,
+        args=(session_id, user_message, assistant_message),
+        daemon=True,
+    )
+    t.start()
+
+
+def _refine_session_title(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+) -> None:
+    try:
+        meta = memory_db.get_session_title_metadata(session_id)
+        if not meta or meta.get("title_source") != "deterministic":
+            return
+
+        from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key
+
+        if not has_llm_api_key():
+            return
+
+        user_text = str(user_message.get("content") or "").strip()
+        assistant_text = str(assistant_message.get("content") or "").strip()
+        if not user_text:
+            return
+
+        prompt = f"""\
+Generate a concise title for this investment research chat.
+
+Rules:
+- 2 to 6 words.
+- 80 characters maximum.
+- Preserve important tickers.
+- Return only the title, with no quotes, labels, markdown, or punctuation wrapper.
+
+User:
+{user_text[:1500]}
+
+Assistant:
+{assistant_text[:1500]}
+"""
+        response_text, _citations, _resp = call_llm_text(
+            prompt=prompt,
+            model=MODEL_LOW,
+            api_key=None,
+            max_tokens=64,
+        )
+        title = _clean_generated_title(response_text)
+        if not title:
+            return
+        memory_db.update_generated_title(session_id, title)
+    except Exception:
+        logger.debug("Failed to refine conversation title for session %s", session_id, exc_info=True)
+
+
+def _clean_generated_title(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = text.splitlines()[0].strip()
+    text = re.sub(r"^title\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    text = text.strip(" \"'`*_-.")
+    if not text:
+        return None
+    try:
+        return memory_db.normalize_session_title(text)
+    except ValueError:
+        fallback = memory_db.deterministic_title_from_text(text)
+        if not fallback:
+            return None
+        try:
+            return memory_db.normalize_session_title(fallback)
+        except ValueError:
+            return None
 
 
 def _maybe_summarize(session_id: str) -> None:

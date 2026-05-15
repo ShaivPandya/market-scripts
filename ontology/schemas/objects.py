@@ -2647,6 +2647,15 @@ class InvestmentIdea(OntologySchemaBase):
     id: str | int | None = None
     ticker: NonBlankStr
     company_name: str | None = None
+    asset: NonBlankStr = "equity"
+    instrument_type: NonBlankStr = "security"
+    price_symbol: str | None = None
+    contract_multiplier: float = 1.0
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
     status: NonBlankStr = "watching"
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -2667,13 +2676,24 @@ class InvestmentIdea(OntologySchemaBase):
     def _ticker(cls, value: object) -> str:
         return canonical_ticker(value)
 
-    @field_validator("idea_id", "status", mode="before")
+    @field_validator("idea_id", "status", "instrument_type", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
+    @field_validator("asset", mode="before")
+    @classmethod
+    def _asset(cls, value: object) -> str:
+        return clean_lower_text(value or "equity")
+
     @field_validator(
         "company_name",
+        "price_symbol",
+        "fx_base_currency",
+        "fx_quote_currency",
+        "currency",
+        "country",
+        "exchange",
         "user_notes",
         "created_at",
         "updated_at",

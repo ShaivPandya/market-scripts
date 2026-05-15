@@ -95,4 +95,13 @@ test("opens the agent chat shell with workflow and preference fixtures", async (
   await expect(page.getByPlaceholder("Ask about markets, portfolio, macro...")).toBeVisible()
   await expect(page.getByRole("heading", { name: "Workflows" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Weekly Portfolio Review" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Open conversation history" }).click()
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+  await expect(page.getByText("NVDA Earnings Prep").first()).toBeVisible()
+
+  await page.getByRole("button", { name: "Rename NVDA Earnings Prep" }).click()
+  await page.getByRole("textbox", { name: "Conversation title" }).fill("Renamed NVDA Chat")
+  await page.keyboard.press("Enter")
+  await expect(page.getByText("Renamed NVDA Chat").first()).toBeVisible()
 })

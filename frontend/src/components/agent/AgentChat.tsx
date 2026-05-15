@@ -9,7 +9,7 @@ import {
   type AgentResponsePreferences,
   type AgentWorkflow,
 } from "@/lib/api"
-import { deleteSession, fetchSessionHistory, useAgentChat, type SessionSummary } from "@/hooks/useAgentChat"
+import { deleteSession, fetchSessionHistory, renameSessionTitle, useAgentChat, type SessionSummary } from "@/hooks/useAgentChat"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import { AgentChatComposer } from "./AgentChatComposer"
 import { AgentChatHeader } from "./AgentChatHeader"
@@ -90,7 +90,18 @@ function invalidateWorkflowRunQueries(
 }
 
 export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
-  const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat, loadSession } = useAgentChat()
+  const {
+    messages,
+    isStreaming,
+    error,
+    sessionId,
+    sessionTitle,
+    sendMessage,
+    stopStreaming,
+    clearChat,
+    loadSession,
+    applySessionTitle,
+  } = useAgentChat()
   const queryClient = useQueryClient()
   const isDesktop = useMediaQuery("(min-width: 1024px)")
   const [viewModeOverride, setViewModeOverride] = useState<AgentViewMode | null>(null)
@@ -281,6 +292,41 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     }
   }
 
+  async function handleRenameSession(targetSessionId: string, title: string) {
+    const previous = history.find(session => session.session_id === targetSessionId)
+    const previousActiveTitle = sessionId === targetSessionId ? sessionTitle : null
+    const now = new Date().toISOString()
+
+    setHistory(prev => prev.map(session =>
+      session.session_id === targetSessionId
+        ? { ...session, title, title_source: "manual", title_updated_at: now }
+        : session,
+    ))
+    if (sessionId === targetSessionId) {
+      applySessionTitle(targetSessionId, title, "manual")
+    }
+
+    try {
+      const updated = await renameSessionTitle(targetSessionId, title)
+      setHistory(prev => prev.map(session =>
+        session.session_id === targetSessionId ? { ...session, ...updated } : session,
+      ))
+      if (sessionId === targetSessionId) {
+        applySessionTitle(targetSessionId, updated.title ?? title, updated.title_source ?? "manual")
+      }
+    } catch (err) {
+      if (previous) {
+        setHistory(prev => prev.map(session =>
+          session.session_id === targetSessionId ? previous : session,
+        ))
+      }
+      if (sessionId === targetSessionId) {
+        applySessionTitle(targetSessionId, previousActiveTitle, previous?.title_source ?? null)
+      }
+      throw err
+    }
+  }
+
   function handleClearChat() {
     clearChat()
     setActivePanel("chat")
@@ -340,6 +386,12 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             viewMode={viewMode}
             isDesktop={isDesktop}
             canClear={messages.length > 0}
+            sessionId={sessionId}
+            sessionTitle={sessionTitle}
+            onRenameTitle={title => {
+              if (!sessionId) return Promise.resolve()
+              return handleRenameSession(sessionId, title)
+            }}
             onBack={() => setActivePanel("chat")}
             onShowHistory={handleShowHistory}
             onShowPreferences={handleShowPreferences}
@@ -356,6 +408,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   loading={historyLoading}
                   onLoadSession={handleLoadSession}
                   onDeleteSession={handleDeleteSession}
+                  onRenameSession={handleRenameSession}
                 />
               ) : activePanel === "preferences" ? (
                 <AgentPreferencesPanel

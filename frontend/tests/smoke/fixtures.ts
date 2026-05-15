@@ -10,6 +10,7 @@ type JsonValue =
 
 interface ApiMockState {
   unknownRequests: string[]
+  agentHistoryTitle: string
 }
 
 const smokeApproval = {
@@ -395,6 +396,24 @@ const responsePreferences = {
   custom_instructions: "",
 } satisfies JsonValue
 
+function agentHistorySessions(state: ApiMockState) {
+  const now = new Date().toISOString()
+  return [
+    {
+      session_id: "history-session-nvda",
+      started_at: now,
+      ended_at: now,
+      message_count: 4,
+      key_tickers: ["NVDA"],
+      key_topics: ["earnings prep", "AI capex"],
+      summary: "Prepared an NVDA earnings discussion focused on AI infrastructure demand and margin risk.",
+      title: state.agentHistoryTitle,
+      title_source: "generated",
+      title_updated_at: now,
+    },
+  ] satisfies JsonValue
+}
+
 function json(route: Route, body: JsonValue, status = 200) {
   return route.fulfill({
     status,
@@ -479,7 +498,33 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
   if (method === "PUT" && path === "/api/settings/agent-response-preferences") {
     return json(route, responsePreferences)
   }
-  if (method === "GET" && path === "/api/memory/sessions") return json(route, [])
+  if (method === "GET" && path === "/api/memory/sessions") return json(route, agentHistorySessions(state))
+  if (method === "GET" && path === "/api/memory/sessions/history-session-nvda") {
+    const session = (agentHistorySessions(state) as JsonValue[])[0] as Record<string, JsonValue>
+    return json(route, {
+      ...session,
+      transcript: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "Prep NVDA earnings",
+          timestamp: Date.now() - 1000,
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "NVDA earnings prep should focus on AI infrastructure demand.",
+          timestamp: Date.now(),
+        },
+      ],
+    })
+  }
+  if (method === "PATCH" && path === "/api/memory/sessions/history-session-nvda") {
+    const body = JSON.parse(request.postData() || "{}") as { title?: string }
+    state.agentHistoryTitle = String(body.title || state.agentHistoryTitle).trim()
+    const session = (agentHistorySessions(state) as JsonValue[])[0] as Record<string, JsonValue>
+    return json(route, { ...session, title_source: "manual" })
+  }
 
   const signature = `${method} ${path}${url.search}`
   state.unknownRequests.push(signature)
@@ -495,7 +540,10 @@ export async function authenticate(page: Page) {
 export const test = base.extend<{ apiMocks: ApiMockState }>({
   apiMocks: [
     async ({ page }, use) => {
-      const state: ApiMockState = { unknownRequests: [] }
+      const state: ApiMockState = {
+        unknownRequests: [],
+        agentHistoryTitle: "NVDA Earnings Prep",
+      }
       await page.route("**/api/**", route => handleApiRoute(route, state))
       await use(state)
       expect(state.unknownRequests, "Unexpected /api requests").toEqual([])

@@ -318,6 +318,15 @@ export interface InvestmentIdea {
   id: string
   ticker: string
   company_name: string | null
+  asset?: PortfolioAsset | string | null
+  instrument_type?: InstrumentType | string | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
+  fx_base_currency?: string | null
+  fx_quote_currency?: string | null
+  currency?: string | null
+  country?: string | null
+  exchange?: string | null
   status: IdeaStatus | string
   user_notes: string
   tags: string[]
@@ -400,6 +409,18 @@ export interface IdeaAnalyzerContext {
 
 export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
   portfolio_context_used?: boolean
+  instrument?: {
+    ticker?: string | null
+    asset?: PortfolioAsset | string | null
+    instrument_type?: InstrumentType | string | null
+    price_symbol?: string | null
+    contract_multiplier?: number | null
+    fx_base_currency?: string | null
+    fx_quote_currency?: string | null
+    currency?: string | null
+    country?: string | null
+    exchange?: string | null
+  }
 }
 
 export interface IdeaEvaluation {
@@ -2577,6 +2598,15 @@ export const fetchIdea = (id: string) =>
 
 export const createIdea = (body: {
   ticker: string
+  asset?: PortfolioAsset | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
+  fx_base_currency?: string | null
+  fx_quote_currency?: string | null
+  currency?: string | null
+  country?: string | null
+  exchange?: string | null
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus
@@ -2587,6 +2617,15 @@ export const createIdea = (body: {
 export const updateIdea = (id: string, body: {
   ticker?: string
   company_name?: string | null
+  asset?: PortfolioAsset | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
+  fx_base_currency?: string | null
+  fx_quote_currency?: string | null
+  currency?: string | null
+  country?: string | null
+  exchange?: string | null
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus

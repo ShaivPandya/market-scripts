@@ -45,6 +45,9 @@ export interface SessionSummary {
   key_tickers: string[] | null
   key_topics: string[] | null
   summary: string | null
+  title: string | null
+  title_source: string | null
+  title_updated_at: string | null
 }
 
 interface AgentChatState {
@@ -52,6 +55,8 @@ interface AgentChatState {
   isStreaming: boolean
   error: string | null
   sessionId: string | null
+  sessionTitle: string | null
+  sessionTitleSource: string | null
   activeJob: ActiveAgentJob | null
 }
 
@@ -119,6 +124,32 @@ function schemaHeaders(method: string, url: string): Record<string, string> {
 
 function truncateText(value: string, maxLen: number): string {
   return value.length <= maxLen ? value : `${value.slice(0, maxLen - 1)}…`
+}
+
+function truncateTitle(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value
+  const candidate = value.slice(0, maxLen).trimEnd()
+  const wordBoundary = candidate.lastIndexOf(" ")
+  return (wordBoundary >= 40 ? candidate.slice(0, wordBoundary) : candidate).replace(/[-:,.!?\s]+$/, "")
+}
+
+export function deriveSessionTitleFromText(value: string): string | null {
+  let text = value.replace(/\s+/g, " ").trim()
+  if (!text) return null
+  const workflowMatch = text.match(/^\/workflow:([A-Za-z0-9_]+)(?::([A-Za-z0-9._=-]+))?(?:\s+(.*))?$/)
+  if (workflowMatch) {
+    const workflow = workflowMatch[1].replace(/_/g, " ").replace(/\b\w/g, char => char.toUpperCase())
+    const ticker = workflowMatch[2]?.toUpperCase() ?? ""
+    const trailing = workflowMatch[3]?.trim() ?? ""
+    text = trailing || (ticker ? `${ticker} ${workflow}` : workflow)
+  }
+  text = text.replace(/\s+/g, " ").replace(/^[-:,.!?\s]+|[-:,.!?\s]+$/g, "")
+  return text ? truncateTitle(text, 80) : null
+}
+
+function deriveSessionTitleFromMessages(messages: AgentMessage[]): string | null {
+  const firstUser = messages.find(message => message.role === "user" && message.content.trim())
+  return firstUser ? deriveSessionTitleFromText(firstUser.content) : null
 }
 
 function decodeHtmlEntities(value: string): string {
@@ -296,7 +327,13 @@ function loadState(): AgentChatState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as { messages?: AgentMessage[]; sessionId?: string; activeJob?: ActiveAgentJob | null }
+      const parsed = JSON.parse(raw) as {
+        messages?: AgentMessage[]
+        sessionId?: string
+        sessionTitle?: string | null
+        sessionTitleSource?: string | null
+        activeJob?: ActiveAgentJob | null
+      }
       if (Array.isArray(parsed.messages)) {
         const activeJob = parsed.activeJob ?? null
         return {
@@ -308,6 +345,8 @@ function loadState(): AgentChatState {
           isStreaming: Boolean(activeJob),
           error: null,
           sessionId: parsed.sessionId ?? null,
+          sessionTitle: parsed.sessionTitle ?? deriveSessionTitleFromMessages(parsed.messages),
+          sessionTitleSource: parsed.sessionTitleSource ?? null,
           activeJob,
         }
       }
@@ -315,7 +354,7 @@ function loadState(): AgentChatState {
   } catch {
     /* ignore */
   }
-  return { messages: [], isStreaming: false, error: null, sessionId: null, activeJob: null }
+  return { messages: [], isStreaming: false, error: null, sessionId: null, sessionTitle: null, sessionTitleSource: null, activeJob: null }
 }
 
 async function summarizeSession(sessionId: string): Promise<void> {
@@ -342,7 +381,12 @@ export async function fetchSessionHistory(limit = 20): Promise<SessionSummary[]>
   }
 }
 
-export async function fetchSession(sessionId: string): Promise<{ transcript: AgentMessage[] } | null> {
+export async function fetchSession(sessionId: string): Promise<{
+  transcript: AgentMessage[]
+  title: string | null
+  title_source: string | null
+  title_updated_at: string | null
+} | null> {
   try {
     const resp = await fetch(`${BASE_URL}/memory/sessions/${sessionId}`, {
       credentials: "include",
@@ -362,10 +406,26 @@ export async function fetchSession(sessionId: string): Promise<{ transcript: Age
       toolCalls: normalizeToolCalls(m.toolCalls ?? m.tool_calls),
       isStreaming: false,
     }))
-    return { transcript }
+    return {
+      transcript,
+      title: typeof data.title === "string" ? data.title : null,
+      title_source: typeof data.title_source === "string" ? data.title_source : null,
+      title_updated_at: typeof data.title_updated_at === "string" ? data.title_updated_at : null,
+    }
   } catch {
     return null
   }
+}
+
+export async function renameSessionTitle(sessionId: string, title: string): Promise<SessionSummary> {
+  const url = `${BASE_URL}/memory/sessions/${encodeURIComponent(sessionId)}`
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...schemaHeaders("PATCH", url) },
+    credentials: "include",
+    body: JSON.stringify({ title }),
+  })
+  return readJsonResponse<SessionSummary>(resp)
 }
 
 export async function deleteSession(sessionId: string): Promise<boolean> {
@@ -527,11 +587,17 @@ export function useAgentChat() {
       )
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ messages: toSave, sessionId: state.sessionId, activeJob: state.activeJob }),
+        JSON.stringify({
+          messages: toSave,
+          sessionId: state.sessionId,
+          sessionTitle: state.sessionTitle,
+          sessionTitleSource: state.sessionTitleSource,
+          activeJob: state.activeJob,
+        }),
       )
     }, state.isStreaming ? 1000 : 0)
     return () => window.clearTimeout(timer)
-  }, [state.messages, state.sessionId, state.activeJob, state.isStreaming])
+  }, [state.messages, state.sessionId, state.sessionTitle, state.sessionTitleSource, state.activeJob, state.isStreaming])
 
   const applyJobEvents = useCallback((assistantId: string, events: AgentJobEvent[], fallbackSessionId?: string | null) => {
     if (!events.length && !fallbackSessionId) return
@@ -669,6 +735,8 @@ export function useAgentChat() {
               ...next,
               isStreaming: false,
               sessionId,
+              sessionTitle: next.sessionTitle ?? deriveSessionTitleFromMessages(next.messages),
+              sessionTitleSource: next.sessionTitleSource ?? "deterministic",
               activeJob: null,
               messages: next.messages.map(m =>
                 m.id === assistantId
@@ -846,6 +914,8 @@ export function useAgentChat() {
       messages: [...prev.messages, userMsg, assistantMsg],
       isStreaming: true,
       error: null,
+      sessionTitle: prev.sessionTitle ?? deriveSessionTitleFromText(content),
+      sessionTitleSource: prev.sessionTitleSource ?? (prev.sessionTitle ? null : "deterministic"),
       activeJob: null,
     }))
 
@@ -979,7 +1049,15 @@ export function useAgentChat() {
     }
     inFlightRef.current = false
     activeJobRef.current = null
-    setState({ messages: [], isStreaming: false, error: null, sessionId: null, activeJob: null })
+    setState({
+      messages: [],
+      isStreaming: false,
+      error: null,
+      sessionId: null,
+      sessionTitle: null,
+      sessionTitleSource: null,
+      activeJob: null,
+    })
   }, [state.sessionId])
 
   // ------ loadSession ------
@@ -994,9 +1072,22 @@ export function useAgentChat() {
         isStreaming: false,
         error: null,
         sessionId,
+        sessionTitle: data.title ?? deriveSessionTitleFromMessages(data.transcript),
+        sessionTitleSource: data.title_source,
         activeJob: null,
       })
     }
+  }, [])
+
+  const applySessionTitle = useCallback((sessionId: string, title: string | null, source?: string | null) => {
+    setState(prev => {
+      if (prev.sessionId !== sessionId) return prev
+      return {
+        ...prev,
+        sessionTitle: title,
+        sessionTitleSource: source ?? prev.sessionTitleSource,
+      }
+    })
   }, [])
 
   return {
@@ -1004,9 +1095,12 @@ export function useAgentChat() {
     isStreaming: state.isStreaming,
     error: state.error,
     sessionId: state.sessionId,
+    sessionTitle: state.sessionTitle,
+    sessionTitleSource: state.sessionTitleSource,
     sendMessage,
     stopStreaming,
     clearChat,
     loadSession,
+    applySessionTitle,
   }
 }
