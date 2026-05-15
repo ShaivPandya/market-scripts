@@ -172,7 +172,7 @@ class SourceIngestionService:
         artifact_uri = _artifact_uri(storage_key)
 
         event_id = provenance.deterministic_id("pv:source_upload", upload.manifest_id, content_hash)
-        payload = {
+        payload: dict[str, Any] = {
             "manifest_id": upload.manifest_id,
             "filename": filename,
             "title": upload.title,

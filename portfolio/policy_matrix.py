@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-POLICY_MATRIX_VERSION = 1
+POLICY_MATRIX_VERSION: Literal[1] = 1
 POLICY_MATRIX_OUTCOMES = ("use_checks", "pass", "warn", "review_required", "blocked")
 POLICY_MATRIX_APPROVAL_MODES = ("approval_required", "self_apply", "break_glass", "none")
 POLICY_MATRIX_REQUEST_MODES = ("proposal", "self_apply", "break_glass")

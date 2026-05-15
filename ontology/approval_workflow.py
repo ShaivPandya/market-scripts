@@ -131,11 +131,11 @@ def approval_requirement_denial_reason(
     normalized_actor_id = actor_id.strip().lower()
     normalized_roles = {str(role).strip().lower() for role in actor_roles if str(role).strip()}
     actor_ids = set(_normalized_list(requirement.get("actor_ids"), lower=True))
-    actor_roles = set(_normalized_list(requirement.get("actor_roles"), lower=True))
+    allowed_actor_roles = set(_normalized_list(requirement.get("actor_roles"), lower=True))
 
     if actor_ids and normalized_actor_id not in actor_ids:
         return "Actor is not listed as an allowed approver for this requirement."
-    if actor_roles and not normalized_roles.intersection(actor_roles):
+    if allowed_actor_roles and not normalized_roles.intersection(allowed_actor_roles):
         return "Actor does not have an allowed role for this approval requirement."
     if (
         requested_by_actor_id

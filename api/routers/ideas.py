@@ -1390,9 +1390,9 @@ def _normalize_evidence_rows(value: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for row in rows:
         if isinstance(row, str):
-            summary = row.strip()
-            if summary:
-                normalized.append({"source": "evaluator", "summary": summary})
+            row_summary = row.strip()
+            if row_summary:
+                normalized.append({"source": "evaluator", "summary": row_summary})
             continue
         if not isinstance(row, dict):
             continue
@@ -1404,7 +1404,7 @@ def _normalize_evidence_rows(value: Any) -> list[dict[str, Any]]:
             or (", ".join(str(ref) for ref in source_refs if ref) if source_refs else None)
             or "evaluator"
         )
-        summary = (
+        summary: Any = (
             row.get("summary")
             or row.get("claim")
             or row.get("support")

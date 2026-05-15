@@ -1068,8 +1068,9 @@ def format_recommendations_markdown(payload: dict) -> str:
         )
         lines.append(f"- Rationale: {action.get('rationale', '')}")
         dq_gate = action.get("decision_quality_gate")
-        if isinstance(dq_gate, dict) and dq_gate.get("reasons"):
-            reasons = dq_gate.get("reasons") if isinstance(dq_gate.get("reasons"), list) else []
+        raw_reasons = dq_gate.get("reasons") if isinstance(dq_gate, dict) else None
+        if isinstance(raw_reasons, list) and raw_reasons:
+            reasons = raw_reasons
             lines.append(
                 "- Decision quality gate: "
                 + "; ".join(str(item.get("code") if isinstance(item, dict) else item) for item in reasons if item)

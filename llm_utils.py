@@ -222,8 +222,8 @@ def require_api_key(provider: str | None = None) -> str:
         if missing:
             envs = ", ".join(api_key_env(selected_provider) for selected_provider in missing)
             raise RuntimeError(f"{envs} is required for the configured LLM providers")
-        for selected_provider in selected:
-            _validate_api_key_shape(selected_provider, get_api_key(selected_provider) or "")
+        for provider_name in selected:
+            _validate_api_key_shape(provider_name, get_api_key(provider_name) or "")
         resolved_provider = selected_provider()
         return get_api_key(resolved_provider) or get_api_key(selected[0]) or ""
 
@@ -693,7 +693,8 @@ def parse_json_text(text: str) -> Any:
 def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Convert JSON Schema into the smaller schema subset accepted by Gemini."""
 
-    root_defs = schema.get("$defs") if isinstance(schema.get("$defs"), dict) else {}
+    raw_defs = schema.get("$defs")
+    root_defs: dict[str, Any] = raw_defs if isinstance(raw_defs, dict) else {}
 
     def resolve_ref(ref: str) -> dict[str, Any] | None:
         prefix = "#/$defs/"

@@ -334,12 +334,13 @@ def _agent_response_preferences_response() -> dict:
 
 
 def _financial_policy_matrix_summary(policy: dict[str, Any]) -> dict[str, Any]:
-    rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
+    raw_rules = policy.get("rules")
+    rules: list[Any] = raw_rules if isinstance(raw_rules, list) else []
     return {
         "policy_id": policy.get("policy_id"),
         "schema_version": policy.get("schema_version"),
         "rule_count": len(rules),
-        "enabled_rule_count": sum(1 for rule in rules if isinstance(rule, dict) and rule.get("enabled", True)),
+        "enabled_rule_count": sum(1 for rule in rules if isinstance(rule, dict) and bool(rule.get("enabled", True))),
     }
 
 

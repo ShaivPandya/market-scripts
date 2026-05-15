@@ -360,11 +360,7 @@ def _dq_sizing_delta(value: Any) -> dict[str, Any]:
     direction = direction_aliases.get(_dq_text(data.get("direction")).lower().replace(" ", "_"), "not_applicable")
     unit = unit_aliases.get(_dq_text(data.get("unit")).lower().replace(" ", "_"), "not_applicable")
     basis = basis_aliases.get(_dq_text(data.get("basis")).lower().replace(" ", "_"), "not_applicable")
-    amount = data.get("amount")
-    try:
-        amount = None if amount in (None, "") else float(amount)
-    except (TypeError, ValueError):
-        amount = None
+    amount = _dq_float_or_none(data.get("amount"))
     return {
         "direction": direction,
         "amount": amount,

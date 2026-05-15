@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from auto_report import fetch_state
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeResponse:
@@ -70,6 +78,78 @@ def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch, tmp
     assert "TALISMAN_BOOK_SIZE=125000.00\n" in github_env_text
     assert f"AUTO_REPORT_PORTFOLIO_STATE_PATH={state_path}\n" in github_env_text
     assert state_path.exists()
+    assert '"ticker": "MU"' in state_path.read_text(encoding="utf-8")
+
+
+def test_fetch_state_module_runs_without_database_url(tmp_path):
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(self, payload: dict) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self) -> None:  # noqa: N802 - stdlib callback name.
+            if self.path == "/api/auth/login":
+                self._send_json({"detail": "ok"})
+                return
+            self.send_error(404)
+
+        def do_GET(self) -> None:  # noqa: N802 - stdlib callback name.
+            path = self.path.split("?", 1)[0]
+            if path == "/api/portfolio-positions":
+                self._send_json(
+                    {
+                        "positions": [
+                            {"ticker": "MU", "role": "position"},
+                            {"ticker": "SH", "role": "hedge"},
+                        ]
+                    }
+                )
+                return
+            if path == "/api/portfolio-settings":
+                self._send_json({"book_size": 125000})
+                return
+            self.send_error(404)
+
+        def log_message(self, _format: str, *_args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        github_env = tmp_path / "github.env"
+        state_path = tmp_path / "portfolio_state.json"
+        env = {
+            **os.environ,
+            "TALISMAN_API_URL": f"http://127.0.0.1:{server.server_port}",
+            "API_PROXY_SECRET": "proxy-secret",
+            "TALISMAN_API_PASSWORD": "report-password",
+            "GITHUB_ENV": str(github_env),
+            "AUTO_REPORT_PORTFOLIO_STATE_PATH": str(state_path),
+            "STATE_DB_BACKEND": "postgres",
+        }
+        env.pop("DATABASE_URL", None)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "auto_report.fetch_state"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert result.returncode == 0, result.stderr
+    assert "Fetched 1 position(s) and 1 hedge(s)" in result.stdout
+    assert "DATABASE_URL is required" not in result.stderr
+    assert "TALISMAN_BOOK_SIZE=125000.00\n" in github_env.read_text(encoding="utf-8")
     assert '"ticker": "MU"' in state_path.read_text(encoding="utf-8")
 
 

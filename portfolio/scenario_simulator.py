@@ -196,9 +196,9 @@ def _normalize_scenarios(scenarios: Sequence[Mapping[str, Any]]) -> tuple[list[d
     normalized: list[dict[str, Any]] = []
     for index, scenario in enumerate(scenarios):
         raw_probability = _probability_value(scenario)
-        probability = (
-            equal_probability if missing_probability or total_probability <= 0 else raw_probability / total_probability
-        )
+        probability = equal_probability
+        if not missing_probability and total_probability > 0:
+            probability = (raw_probability or 0.0) / total_probability
         price_move = _ratio_value(
             scenario.get("price_move_pct")
             or scenario.get("price_change_pct")
