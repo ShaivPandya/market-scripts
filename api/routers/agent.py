@@ -488,7 +488,8 @@ MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
 SSE_KEEPALIVE_INTERVAL_S = 15.0
 LLM_MAX_TOKENS = 8_192
-LLM_CHAT_MAX_TOKENS = 2_048
+LLM_CHAT_MAX_TOKENS = 8_192
+MAX_OUTPUT_CONTINUATION_ROUNDS = 3
 
 
 class _LazyProviderToolDefinitions:
@@ -1691,6 +1692,51 @@ def _usage_dict(message: object) -> dict:
     return out
 
 
+def _response_stop_reason(provider: str, message: object | None) -> str:
+    if message is None:
+        return ""
+    if provider == PROVIDER_ANTHROPIC:
+        return str(_obj_value(message, "stop_reason") or "")
+    if provider == PROVIDER_GEMINI:
+        reasons = []
+        for candidate in _obj_list(message, "candidates"):
+            reason = _obj_value(candidate, "finish_reason", _obj_value(candidate, "finishReason"))
+            if reason:
+                reasons.append(str(reason))
+        return ",".join(reasons)
+
+    incomplete = _obj_value(message, "incomplete_details") or {}
+    reason = _obj_value(incomplete, "reason")
+    if reason:
+        return str(reason)
+    return str(_obj_value(message, "status") or "")
+
+
+def _hit_output_token_limit(provider: str, message: object | None) -> bool:
+    reason = _response_stop_reason(provider, message).strip().lower()
+    return reason in {"max_tokens", "max_output_tokens"} or "max_token" in reason
+
+
+def _append_output_continuation_request(
+    provider: str,
+    conversation: list[dict],
+    assistant_content: list[dict],
+) -> None:
+    prompt = (
+        "Continue exactly from where the previous assistant response stopped. "
+        "Do not repeat earlier text, do not call tools, and finish the answer."
+    )
+    if provider == PROVIDER_ANTHROPIC:
+        conversation.append({"role": "assistant", "content": assistant_content})
+        conversation.append({"role": "user", "content": prompt})
+    elif provider == PROVIDER_GEMINI:
+        conversation.append({"role": "model", "parts": assistant_content})
+        conversation.append(_gemini_text_content("user", prompt))
+    else:
+        conversation.extend(assistant_content)
+        conversation.extend(_openai_user_prompt(prompt))
+
+
 def _start_agent_turn_provenance(
     *,
     session_id: str | None,
@@ -2501,13 +2547,16 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         force_tool_use = bool(tool_defs) and _is_data_seeking(req.message) and not has_rich_screen_data
         tool_result_cache: dict[str, str] = {}
         continuation_round = 0
+        output_continuation_rounds = 0
+        text_only_continuation = False
         text_parts: list[str] = []
 
         try:
             while True:
                 final_synthesis_round = continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS
-                round_tool_defs = [] if final_synthesis_round else tool_defs
-                round_force_tool_use = False if final_synthesis_round else force_tool_use
+                round_tool_defs = [] if final_synthesis_round or text_only_continuation else tool_defs
+                round_force_tool_use = False if final_synthesis_round or text_only_continuation else force_tool_use
+                text_only_continuation = False
 
                 stream_kwargs = _model_stream_kwargs(
                     provider=provider,
@@ -2623,6 +2672,25 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
                 if final_synthesis_round:
                     deferred_calls = []
+
+                if not deferred_calls and _hit_output_token_limit(provider, final_message):
+                    if output_continuation_rounds >= MAX_OUTPUT_CONTINUATION_ROUNDS:
+                        raise RuntimeError(
+                            "Agent response hit the model output limit before completion. "
+                            "Try a narrower prompt or increase the chat output token budget."
+                        )
+                    logger.info(
+                        "agent_chat_output_continuation provider=%s round=%d stop_reason=%s",
+                        provider,
+                        output_continuation_rounds + 1,
+                        _response_stop_reason(provider, final_message),
+                    )
+                    _append_output_continuation_request(provider, conversation, assistant_content)
+                    output_continuation_rounds += 1
+                    text_only_continuation = True
+                    force_tool_use = False
+                    continuation_round += 1
+                    continue
 
                 if deferred_calls:
                     tool_counts = Counter(c["name"] for c in deferred_calls)

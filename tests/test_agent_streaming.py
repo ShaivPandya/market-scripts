@@ -1542,3 +1542,70 @@ def test_agent_chat_openai_replays_assistant_history_as_output_text(auth_client,
         ("assistant", "output_text"),
         ("user", "input_text"),
     ]
+
+
+def test_agent_chat_openai_continues_after_output_token_limit(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(agent_router, "_select_tool_names", lambda _message: [])
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-output-limit",
+        ),
+    )
+    finalized: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _session_id, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    streams = [
+        (
+            [_openai_event_text_delta("The BOJ should hike because ")],
+            SimpleNamespace(
+                status="incomplete",
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                output=[
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "The BOJ should hike because "}],
+                    }
+                ],
+                usage=SimpleNamespace(input_tokens=20, output_tokens=2048),
+            ),
+        ),
+        (
+            [_openai_event_text_delta("imported inflation is accelerating.")],
+            SimpleNamespace(
+                status="completed",
+                output=[
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "imported inflation is accelerating."}],
+                    }
+                ],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=12),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={"message": "What does higher Japanese inflation mean for BOJ rates?"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert "".join(p["text"] for e, p in parsed if e == "delta") == (
+        "The BOJ should hike because imported inflation is accelerating."
+    )
+    assert any(e == "done" for e, _p in parsed)
+    assert fake_client.responses.calls == 2
+    continuation_input = fake_client.responses.kwargs_history[1]["input"]
+    assert continuation_input[-1]["role"] == "user"
+    assert "Continue exactly from where" in continuation_input[-1]["content"][0]["text"]
+    assert finalized[-1]["content"] == "The BOJ should hike because imported inflation is accelerating."
