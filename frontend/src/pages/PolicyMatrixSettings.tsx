@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2, Plus, RotateCcw, Save, Trash2 } from "lucide-react"
 
@@ -150,12 +150,10 @@ export function PolicyMatrixSettings() {
     fetchFinancialPolicyMatrixSettings,
     30_000,
   )
-  const [draft, setDraft] = useState<FinancialPolicyMatrix | null>(null)
+  const [draftPolicy, setDraftPolicy] = useState<FinancialPolicyMatrix | null>(null)
   const [note, setNote] = useState("")
 
-  useEffect(() => {
-    if (data && !draft) setDraft(clonePolicy(data.policy))
-  }, [data, draft])
+  const draft = useMemo(() => draftPolicy ?? (data ? clonePolicy(data.policy) : null), [data, draftPolicy])
 
   const hasChanges = useMemo(
     () => Boolean(data && draft && JSON.stringify(data.policy) !== JSON.stringify(draft)),
@@ -167,7 +165,7 @@ export function PolicyMatrixSettings() {
       updateFinancialPolicyMatrix({ policy, note: changeNote }),
     onSuccess: settings => {
       queryClient.setQueryData(QUERY_KEY, settings)
-      setDraft(clonePolicy(settings.policy))
+      setDraftPolicy(clonePolicy(settings.policy))
       setNote("")
     },
   })
@@ -179,7 +177,7 @@ export function PolicyMatrixSettings() {
   if (error || !data || !draft) return <ErrorMessage message={String(error) || "Failed to load policy matrix"} />
 
   const setPolicy = (updater: (policy: FinancialPolicyMatrix) => FinancialPolicyMatrix) => {
-    setDraft(prev => updater(clonePolicy(prev ?? data.policy)))
+    setDraftPolicy(prev => updater(clonePolicy(prev ?? data.policy)))
     validateMutation.reset()
   }
 

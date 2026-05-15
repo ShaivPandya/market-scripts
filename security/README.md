@@ -51,11 +51,11 @@ No active exceptions.
 
 ### gitleaks Allowlist
 
-No active exceptions. Suppressions go in `.gitleaks.toml` at the repo root.
+Suppressions go in `.gitleaks.toml` at the repo root.
 
 | Rule ID / Pattern | File / Scope | Reason | Owner | Added | Expiry |
 |-------------------|-------------|--------|-------|-------|--------|
-| *(none)* | | | | | |
+| `generic-api-key` / public metric identifiers | `frontend/src/pages/{PortfolioAnalyzer,YieldCurve,MarketTechnicals,SectorMetrics}.tsx`, `macro/country_dashboard/country_dashboard.py` | False positives for frontend field names and public macro data-series identifiers, not credentials. Exact-token allowlist only. | @ShaivPandya | 2026-05-15 | 2026-08-13 |
 
 ### bandit Allowlist
 

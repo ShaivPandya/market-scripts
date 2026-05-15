@@ -1,0 +1,13 @@
+title = "Talisman gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+    [[rules.allowlists]]
+    description = "Public data-series and frontend metric identifiers misclassified as generic API keys"
+    regexes = [
+        '''^(historical_1y|stabilized_10d|pct_above_200dma|pct_above_20dma|pct_below_50dma|tickers_below_50dma|tickers_3plus_dist|pct_broke_20low|tickers_broke_20low|Pct_Above_200DMA|JPN\.B1_GE\.GYSA\.Q)$''',
+    ]

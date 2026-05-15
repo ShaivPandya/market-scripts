@@ -1,26 +1,10 @@
 import type { ApprovalRecord, ApprovalRequirement } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { approvalRecordedCount, approvalRemainingCount, approvalRequiredCount } from "./approvalProgress"
 
 function requirementLabel(requirement: ApprovalRequirement): string {
   const scope = [requirement.scope_type, requirement.scope_id].filter(Boolean).join(":")
   return scope ? `${requirement.label} (${scope})` : requirement.label
-}
-
-export function approvalRemainingCount(approval: ApprovalRecord): number {
-  return Number(approval.approval_progress?.remaining_count ?? approval.remaining_approval_requirements?.length ?? 1)
-}
-
-export function approvalRecordedCount(approval: ApprovalRecord): number {
-  return Number(approval.approval_progress?.recorded_count ?? 0)
-}
-
-export function approvalRequiredCount(approval: ApprovalRecord): number {
-  return Number(approval.approval_progress?.total_required ?? Math.max(1, approval.approval_requirements?.length ?? 1))
-}
-
-export function approvalActionLabel(approval: ApprovalRecord): string {
-  if (approval.can_retry_apply) return "Retry Apply"
-  return approvalRemainingCount(approval) > 1 ? "Record Approval" : "Approve & Apply"
 }
 
 export function ApprovalProgressSummary({
