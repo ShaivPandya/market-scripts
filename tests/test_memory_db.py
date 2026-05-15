@@ -4,8 +4,7 @@ import json
 
 import pytest
 
-from api import memory_db
-from api import memory_manager
+from api import memory_db, memory_manager
 
 
 @pytest.fixture

@@ -236,8 +236,10 @@ def _normalized_idea_instrument(payload: dict[str, Any], *, base: dict[str, Any]
         fx_base = str(merged.get("fx_base_currency") or "").strip().upper() or None
         fx_quote = str(merged.get("fx_quote_currency") or "").strip().upper() or None
         spec = futures_spec(price_symbol) if instrument_type == "future" else None
-        asset = spec.asset if spec is not None else normalize_asset(
-            merged.get("asset"), instrument_type=instrument_type, symbol=price_symbol
+        asset = (
+            spec.asset
+            if spec is not None
+            else normalize_asset(merged.get("asset"), instrument_type=instrument_type, symbol=price_symbol)
         )
         currency = str(merged.get("currency") or "").strip().upper() or None
         exchange = str(merged.get("exchange") or "").strip().upper() or None
@@ -1843,9 +1845,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
 
     info_score = 50 + (12 if overview else 0) + (8 if notes else 0) + (6 if thesis else 0)
     factor_scores = {
-        "macro_support": _factor(
-            macro_score, macro_status, _asset_factor_rationale(context, "macro_support")
-        ),
+        "macro_support": _factor(macro_score, macro_status, _asset_factor_rationale(context, "macro_support")),
         "industry_attractiveness": _factor(
             52 if context.get("industry_monitor", {}).get("ok") else 45,
             "mixed",
@@ -1865,7 +1865,9 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
             45,
             "incomplete",
             _asset_factor_rationale(context, "valuation_asymmetry"),
-            ["valuation", "expected upside/downside"] if equity_security else ["current level", "carry/roll", "downside scenario"],
+            ["valuation", "expected upside/downside"]
+            if equity_security
+            else ["current level", "carry/roll", "downside scenario"],
         ),
         "portfolio_fit": _factor(
             55,
