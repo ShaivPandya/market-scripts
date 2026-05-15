@@ -1,0 +1,12 @@
+{
+  "as_of_date": "2020-02-28",
+  "position_status": "new_macro_hedge_against_existing_long_book",
+  "position_direction": "long_credit_protection",
+  "portfolio_role": "Convex macro hedge for a concentrated long equity portfolio",
+  "conviction_at_initiation": 5,
+  "sizing_context": "Historical case: Pershing kept its long equity book and bought large-notional CDS index protection during the last week of February because it believed the companies would recover while credit spreads were underpricing the near-term shutdown shock.",
+  "sizing_principle": "Use a liquid, index-based hedge whose payoff references the expected shock directly, keep loss bounded relative to capital, and exit once the hedge consumes too much capital or spread risk/reward deteriorates.",
+  "risk_capacity_notes": "This is not a generic rule to use large notional CDS. The position depends on tight starting spreads, liquid indices, a direct macro shock to corporate credit, and the ability to monetize and redeploy when spreads widen.",
+  "trade_after_trade": "Recycle hedge proceeds into equities/risk assets once the hedge has paid and the relative value shifts from cheap protection to cheap long assets.",
+  "human_notes": "Conviction 5 means full conviction on the 1-5 scale. Raw target weight is not mapped to the user's single-name equity sizing model because this was a portfolio hedge using credit derivatives."
+}

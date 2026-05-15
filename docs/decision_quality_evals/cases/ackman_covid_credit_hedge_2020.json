@@ -1,0 +1,230 @@
+{
+  "id": "ackman_covid_credit_hedge_2020",
+  "status": "review",
+  "decision_type": "macro_stance",
+  "as_of_date": "2020-02-28",
+  "user_question": "Using the late-February 2020 COVID credit setup, should buying credit-index CDS protection have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json",
+      "sha256": "c5c1182d5cbb46522928fc68a0d460c61a3ddd22c3fdd72443f737c320ec4ba1",
+      "description": "Historical case-study summary for Pershing Square's COVID credit-index CDS hedge.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json",
+      "sha256": "bda496fad4b2cd6d25420aea3ca07dc4f764b36a3058f67292b3b8a191b7630c",
+      "description": "COVID shock setup, tight credit-spread pricing, and CDS risk/reward.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/ackman_covid_portfolio_context_2020-02-28.json",
+      "sha256": "997b7c4d1f780dbf10306132812d3a8cbda7e7708425b7d21dd748a5aa13c038",
+      "description": "Historical portfolio context: convex macro hedge against an existing long equity book, conviction 5.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json",
+      "sha256": "42c328d106fba2af42e4fe8f96817d571a8803ef30b498084e4668a1825f6258",
+      "description": "User-requested framing, rate-of-change thesis, and trade-after-the-trade notes.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical macro hedge eval case, not a live trading recommendation.",
+    "The eval trade date is set to 2020-02-28, representing the end of the last week of February execution window.",
+    "The March 3 disclosure says Pershing had taken protective steps during the prior ten days; it supports the execution window but is not treated as the trade date.",
+    "The March 3 disclosure, March 9, March 12, and March 23 P&L/exit values are documentation/outcome/exit context only and should not be used as initiation-date evidence.",
+    "The case should not teach a rule to buy CDS on every pandemic or macro scare; it should teach the combination of stale pricing, direct instrument linkage, convex payoff, bounded loss, liquid index expression, and exit/redeployment discipline.",
+    "Conviction 5 means full conviction on the 1-5 scale, but raw target weight is not mapped to the user's single-name equity sizing model because this was a portfolio hedge using credit derivatives.",
+    "Exact spread levels, execution dates, notional sizes, and liquidity constraints are not selected beyond the source summary."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy credit-index CDS protection because COVID shutdown risk was likely to force a rapid widening in corporate credit spreads, while IG and HY spreads were still priced near benign, non-crisis levels.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Short corporate credit complacency, long credit-spread volatility, hedged against equity drawdown, shutdown risk, liquidity stress, refinancing risk, and recession risk.",
+    "mispricing": {
+      "consensus_view": "The market was still pricing corporate credit as if COVID would cause moderate disruption, with investment-grade and high-yield spreads near low or tight levels.",
+      "variant_view": "COVID containment would create an economic stop in Europe and the U.S., causing corporate credit spreads to gap wider well before realized defaults were needed.",
+      "pricing_evidence": "Pershing described IG credit-index spreads near all-time tight levels around 50 bps per year, with high-yield spreads also near lows, while shutdown evidence was accelerating.",
+      "why_consensus_is_wrong": "Consensus was underweighting the rate of change from public-health containment to economic shutdown, and it was offering crisis insurance at non-crisis prices."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "COVID containment measures were spreading from China and Italy toward Europe and the U.S., while credit spreads still reflected a benign environment.",
+      "expected_timeframe": "Days to weeks from February 28, 2020.",
+      "why_now": "The trade was actionable because the shock was likely to hit the exact referenced variable, corporate credit spreads, before policy support could fully stabilize markets. CDS index protection gave direct, liquid, convex exposure to that repricing without selling the long equity book.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json: China/Italy containment precedent, CDC disruption warnings, and tight credit spreads",
+        "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json: CDX IG, CDX HY, iTraxx Europe CDS protection and late-February execution-window context",
+        "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json: rate-of-change hedge, not a default prediction"
+      ]
+    },
+    "invalidation": {
+      "observable": "Shutdown risk fails to translate into credit-spread stress, or policy support arrives quickly enough to prevent the repricing the hedge needs.",
+      "metric_or_event": "CDX IG, CDX HY, and iTraxx Europe spreads; U.S./Europe containment policy; corporate funding markets; central-bank credit facilities; hedge carry and mark-to-market loss; equity-book drawdown offset.",
+      "threshold": "Reduce or exit if containment remains localized, credit spreads fail to widen materially over the next several weeks, policy support compresses spreads before the hedge pays, or the cost/mark-to-market loss exceeds the predefined hedge budget.",
+      "timeframe": "Daily to weekly review through March 2020 because this is a rate-of-change trade.",
+      "implication": "The market was right to treat the shock as temporary or policy-contained, or the CDS hedge was the wrong expression for the portfolio risk."
+    },
+    "evidence_for": [
+      {
+        "claim": "The expected shock hit the variable referenced by the instrument.",
+        "support": "A shutdown attacks revenues, liquidity, refinancing access, and risk appetite at the same time, which should widen corporate credit spreads even before defaults occur.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "Credit spreads were stale relative to the shock.",
+        "support": "Pershing described investment-grade credit-index spreads near all-time tight levels around 50 bps per year and high-yield spreads near lows.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "The instrument was convex and did not require realized defaults.",
+        "support": "Buying CDS protection at low spreads gives mark-to-market upside if new protection trades at much wider spreads; the trade references spread repricing rather than waiting for mass bankruptcies.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "The hedge fit the portfolio problem better than liquidating longs.",
+        "support": "Pershing wanted to preserve ownership of long-term portfolio companies while protecting against a simultaneous equity and credit shock.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_portfolio_context_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "There was a clear trade-after-the-trade.",
+        "support": "If the hedge paid, proceeds could be recycled into equities and risk assets after spreads widened and high-quality long assets became cheaper.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_portfolio_context_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Reported U.S. case counts were still low and could understate systemic risk or create false comfort.",
+        "support": "The source notes that low detected cases could support a manageable-shock view, but testing bottlenecks made official counts an incomplete signal.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "Government and central-bank support could stop or reverse the spread move.",
+        "support": "Policy support was a real counterargument and later became an exit reason once credit spreads had widened.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "CDS protection was not a free option.",
+        "support": "If spreads narrowed, the buyer could lose more than the first premium paid when unwinding because the adverse spread move has present value.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_initiation_notes_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "The hedge had basis risk versus the equity portfolio.",
+        "support": "Credit-index CDS could fail to offset a concentrated equity book if equities fell while credit spreads did not widen enough.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_portfolio_context_2020-02-28.json"
+        ]
+      },
+      {
+        "claim": "Large size created exit risk.",
+        "support": "The position's large notional made liquidity and exit discipline important; once the hedge became very large relative to capital, holding widened-spread protection became less attractive.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/ackman_covid_cds_source_case_2020-02-28.json",
+          "docs/decision_quality_evals/inputs/ackman_covid_market_setup_2020-02-28.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "Corporate credit spreads were still near tight or low levels relative to the shutdown risk that was becoming visible.",
+      "interpretation": "This was stale pricing, not trend confirmation. The market was offering protection at non-crisis prices despite a plausible near-term shock to corporate revenues, liquidity, and refinancing access.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Exact CDX IG spread at execution",
+        "Exact CDX HY spread at execution",
+        "Exact iTraxx Europe spread at execution",
+        "Notional and premium/carry budget by index",
+        "Liquidity and bid/ask depth for exiting the hedge"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a direct shock-to-instrument link, stale credit-spread pricing, convex payoff, bounded hedge budget, liquid index expression, explicit invalidation, and a defined plan to recycle proceeds into risk assets if the hedge paid.",
+      "missing_inputs": [
+        "Exact execution spread by index",
+        "Exact notional by index",
+        "Premium/carry budget and stop-loss threshold",
+        "Portfolio beta and expected drawdown under shutdown scenarios",
+        "CDS liquidity and unwind capacity"
+      ]
+    },
+    "recommended_action": "hedge",
+    "expression": {
+      "primary": "Buy credit-index CDS protection on CDX IG, CDX HY, and iTraxx Europe",
+      "instrument_type": "credit_index_cds",
+      "directness": "direct",
+      "alternatives": [
+        "Reduce gross equity exposure if CDS liquidity or pricing is unavailable",
+        "Use index equity puts as a less direct hedge",
+        "Use more senior/liquid credit hedges if high-yield protection becomes too expensive"
+      ],
+      "follow_on": "Exit or reduce the CDS hedge after spreads gap wider and redeploy proceeds into equities/risk assets when expected returns shift back toward long risk."
+    },
+    "conviction": {
+      "level": 5,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Already maximum conviction; additions depend on spread level, carry budget, liquidity, and whether shutdown evidence continues to accelerate before policy support compresses spreads."
+    },
+    "confidence": 0.87,
+    "confidence_reason": "High because the shock evidence, stale spread pricing, direct index expression, convex payoff, and portfolio-hedge need aligned; capped because policy response, basis risk, liquidity, and exact execution details were material.",
+    "sizing_context": {
+      "starting_size": "Conviction 5 portfolio hedge using large-notional credit-index CDS; size from hedge budget and portfolio drawdown risk, not from single-name equity target weights.",
+      "add_conditions": "Add or maintain while credit spreads remain too tight versus shutdown risk, carry remains acceptable, and liquidity allows eventual unwind.",
+      "liquidity_constraints": "CDX and iTraxx are liquid index products, but large notional creates exit and bid/ask risk during stress.",
+      "portfolio_constraints": "The hedge should offset existing long equity and credit-sensitive exposure while preserving ownership of companies expected to recover.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Increase protection while spreads remain near benign levels and shutdown risk is rising; reduce once the hedge becomes large relative to capital or spreads make risk/reward less attractive."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Monetize the hedge as spreads gap wider, then plough the proceeds into equities and risk assets where expected returns have improved after the selloff.",
+      "if_wrong": "If shutdown risk fades, spreads fail to widen, or policy support stabilizes credit before the hedge pays, cut or shrink the hedge and preserve the long book.",
+      "next_review_trigger": "Review daily on CDX/iTraxx spread levels, containment policy, U.S./Europe shutdown evidence, Fed/ECB credit support, hedge market value as a share of capital, and relative value versus equities."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical conviction 5 macro hedge designed to teach underpriced rate-of-change risk, direct instrument linkage, convex payoff, basis/liquidity risks, exit discipline, and trade-after-the-trade redeployment into equities/risk assets."
+}

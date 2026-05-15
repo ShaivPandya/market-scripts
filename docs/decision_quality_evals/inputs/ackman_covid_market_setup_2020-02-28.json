@@ -1,0 +1,93 @@
+{
+  "theme": "covid_credit_spread_convex_hedge",
+  "as_of_date": "2020-02-28",
+  "shock_setup": {
+    "epidemiology_and_policy": [
+      "By late January 2020, Chinese officials had confirmed human-to-human transmission and Wuhan had been locked down.",
+      "The CDC had confirmed person-to-person spread in the U.S.",
+      "By late February, Italy had become a major hotspot and imposed emergency containment measures.",
+      "The CDC warned that U.S. mitigation could include school closings, workplace shutdowns, large-event cancellations, and severe disruption to daily life.",
+      "International travel restrictions, quarantines, and self-isolation measures were becoming visible before the U.S. market had fully priced shutdown risk."
+    ],
+    "economic_channel": [
+      "The expected economic damage came from containment and forced shutdowns, not only from mortality.",
+      "A broad shutdown would hit corporate revenues, liquidity, refinancing access, and risk appetite at the same time.",
+      "Credit-index CDS was tied directly to the variable expected to reprice: corporate credit spreads."
+    ],
+    "market_pricing": [
+      "Investment-grade credit spreads were near all-time tight levels around 50 bps per year.",
+      "High-yield spreads were also near lows.",
+      "The market was still pricing corporate credit as if disruption would be moderate."
+    ]
+  },
+  "risk_reward": {
+    "upside_if_right": "Large mark-to-market gains if CDX IG, CDX HY, and iTraxx Europe spreads widened quickly as shutdown risk was priced.",
+    "downside_if_wrong": "Premium/carry cost and potential mark-to-market loss if spreads narrowed or if the shutdown scenario failed to materialize.",
+    "asymmetry": "Starting spreads were low, notional was large, and the trade referenced spread widening rather than realized defaults, creating convex payoff to a rate-of-change shock."
+  },
+  "catalysts": [
+    {
+      "event": "COVID containment measures spread from China and Italy toward Europe and the U.S.",
+      "date": "2020-02 to early 2020-03",
+      "interpretation": "The market would need to price a sudden stop in activity, not just a public-health headline."
+    },
+    {
+      "event": "Credit spreads reprice from tight levels",
+      "date": "Days to weeks after initiation",
+      "interpretation": "The trade pays if investors demand much more spread for corporate credit before policy support fully stabilizes markets."
+    },
+    {
+      "event": "Policy support arrives after dislocation",
+      "date": "March 2020",
+      "interpretation": "Policy support can become an exit reason after spreads widen, but it does not eliminate the initial rate-of-change opportunity."
+    }
+  ],
+  "price_action_context": {
+    "observed_behavior": "Corporate credit spreads were still very tight relative to the expected shutdown shock.",
+    "interpretation": "The price action showed stale pricing rather than confirmation. The actionable point was that crisis insurance was still available at non-crisis prices.",
+    "data_needed": [
+      "Exact CDX IG, CDX HY, and iTraxx Europe spread levels at execution",
+      "Notional exposure and premium/carry budget by index",
+      "Equity portfolio beta and expected drawdown under shutdown scenarios",
+      "Liquidity and bid/ask depth for exiting large CDS index positions"
+    ]
+  },
+  "counterarguments": [
+    {
+      "risk": "Reported U.S. case counts were still low.",
+      "why_it_mattered": "This could support the view that COVID was still manageable, regional, or unlikely to force a nationwide shutdown.",
+      "response": "Low reported case counts were partly an information-quality problem because testing capacity was constrained; the better signal was community spread, testing bottlenecks, containment abroad, and accelerating policy reaction."
+    },
+    {
+      "risk": "Central banks and governments could stabilize markets.",
+      "why_it_mattered": "Policy support could compress spreads and reduce or reverse CDS gains.",
+      "response": "This was a real exit risk, but policy support usually follows market stress; the initial trade was to monetize the repricing before full stabilization."
+    },
+    {
+      "risk": "CDS protection was not a free option.",
+      "why_it_mattered": "If spreads narrowed, the buyer could lose more than the first premium paid when unwinding because the adverse spread move has present value.",
+      "response": "The trade required a defined hedge budget and daily review of carry, mark-to-market loss, and spread levels."
+    },
+    {
+      "risk": "Credit-index CDS had basis risk versus a concentrated equity portfolio.",
+      "why_it_mattered": "Equities could fall while credit spreads did not widen enough to offset losses.",
+      "response": "The hedge was still reasonable if the expected shock was broad and macro rather than company-specific."
+    },
+    {
+      "risk": "Large notional created exit risk.",
+      "why_it_mattered": "A successful hedge could become too large relative to capital and difficult to unwind quickly.",
+      "response": "The exit rule needed to compare widened-spread CDS expected return against cheaper equities/risk assets."
+    }
+  ],
+  "anti_overfit_notes": [
+    "Do not generalize this into buying CDS on every scary headline.",
+    "The case requires a direct link between the shock and the referenced market variable.",
+    "The case requires stale pricing, convex payoff, liquid index expression, and a defined exit when risk/reward changes.",
+    "The hedge should be evaluated relative to preserving a long book, not as a standalone default prediction."
+  ],
+  "trade_after_trade": {
+    "if_right": "Monetize the hedge when spreads gap wider and redeploy into equities or other risk assets if expected returns there become better than the widened-spread CDS hedge.",
+    "if_wrong": "Cut or shrink the hedge if shutdown risk fades, spreads stay tight, policy support arrives before dislocation, or the carry/mark-to-market loss exceeds the defined hedge budget."
+  },
+  "human_notes": ""
+}

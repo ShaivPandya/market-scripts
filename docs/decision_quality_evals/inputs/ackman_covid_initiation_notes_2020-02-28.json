@@ -1,0 +1,22 @@
+{
+  "as_of_date": "2020-02-28",
+  "decision_context": "Historical COVID credit-index CDS hedge",
+  "date_convention": "Use 2020-02-28 as the eval trade date, representing the end of the last week of February execution window. March 3 is documentation that Pershing had taken protective steps during the prior ten days, not the trade date.",
+  "human_initiation_rationale": "Buy CDS protection on CDX IG, CDX HY, and iTraxx Europe because COVID shutdown risk was likely to reprice corporate credit spreads sharply wider, while spreads were still near tight levels.",
+  "selected_inputs": [
+    "COVID human-to-human transmission and containment evidence",
+    "China and Italy shutdown/containment precedent",
+    "CDC warnings about severe disruption to daily life",
+    "tight investment-grade and high-yield credit spreads",
+    "CDS index protection with convex spread-widening payoff",
+    "existing long equity book Pershing did not want to liquidate",
+    "exit discipline once spreads widened and relative value shifted to equities"
+  ],
+  "known_timing_issue": "The trade is a rate-of-change hedge. It does not require permanent impairment or mass defaults; it requires credit spreads to reprice quickly before policy support fully stabilizes markets.",
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "The March 3 disclosure, March 9 and March 12 P&L values, and March 23 exit values were not known on 2020-02-28 and should be used only for documentation/outcome/exit grading."
+  },
+  "anti_overfit_guidance": "The model should not learn that every pandemic or macro scare deserves a large CDS hedge. It should learn to require stale pricing, direct instrument linkage, convex payoff, bounded loss, liquidity, and explicit exit/redeployment logic.",
+  "human_notes": "Trade after the trade: plough hedge proceeds into equities/risk assets when the hedge has paid and expected returns in long assets dominate holding widened-spread protection."
+}

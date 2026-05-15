@@ -1,0 +1,32 @@
+{
+  "case": "Bill Ackman and Pershing Square buying credit-index CDS protection during the COVID shock",
+  "as_of_date": "2020-02-28",
+  "source_summary": {
+    "setup": "Pershing Square believed COVID would force Europe and the U.S. into shutdowns, hitting equities and corporate credit simultaneously.",
+    "portfolio_choice": "Pershing chose to hedge rather than sell its long book because it still believed its portfolio companies would recover and create long-term value.",
+    "instrument": "Pershing bought CDS protection on broad credit indices: CDX IG, CDX HY, and iTraxx Europe.",
+    "core_thesis": "Corporate credit spreads were far too tight for the impending economic stop. Investment-grade credit indices were around 50 bps per year, near all-time tights, and high-yield spreads were also near lows.",
+    "mechanism": "This was primarily a spread-widening trade, not a default trade. Pershing needed credit spreads to gap wider as markets priced shutdown, liquidity stress, recession risk, and refinancing risk.",
+    "convexity": "Large notional protection at low starting spreads created large mark-to-market upside if spreads widened sharply.",
+    "execution_window": "Use 2020-02-28 as the eval trade date, representing the end of the last week of February when the hedge would have been put on or substantially built.",
+    "documentation_context": "On March 3, 2020, Pershing said it had taken steps during the prior ten days to protect the portfolio from downward market volatility. That supports the late-February execution window but is not the trade date.",
+    "exit_context": "By March 9 and March 12, the hedge had appreciated substantially. Pershing began selling as spreads widened and the risk/reward became less attractive.",
+    "trade_after_trade": "Pershing recycled hedge proceeds into equities and risk assets during the crash, adding to or repurchasing high-quality long positions."
+  },
+  "selected_details": [
+    "Pershing used CDX IG, CDX HY, and iTraxx Europe CDS indices.",
+    "Investment-grade spreads were described as around 50 bps per year, near all-time tight levels.",
+    "The trade did not require mass defaults; it required credit spreads to widen sharply.",
+    "A move from 50 bps to 150 bps on five-year IG CDS can create a large mark-to-market gain equal to roughly the present value of the spread difference.",
+    "The eval uses a late-February execution window, represented by 2020-02-28.",
+    "By March 9, 2020, the CDS position was worth about $1.8 billion.",
+    "By March 12, 2020, the CDS position was worth about $2.75 billion.",
+    "Pershing completed the hedge exit by March 23, 2020, with about $2.6 billion of proceeds against about $27 million of premiums and commissions.",
+    "Pershing recycled proceeds into equities including Agilent, Berkshire Hathaway, Hilton, Lowe's, Howard Hughes, Restaurant Brands, and Starbucks."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "The March 3 disclosure, March 9 and March 12 hedge values, and March 23 exit results are documentation/outcome context, not initiation-date evidence for 2020-02-28."
+  },
+  "human_notes": "Historical source case supplied by the user. The lesson is not 'pandemic means buy CDS'; it is that a direct, convex hedge can be actionable when a near-term systemic shock is underpriced and the instrument references the variable likely to reprice."
+}
