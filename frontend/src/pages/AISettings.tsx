@@ -34,18 +34,18 @@ const MODEL_TIERS = [
 
 const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEffortMap> = {
   anthropic: {
-    low: "high",
+    low: "medium",
     mid: "high",
-    high: "high",
+    high: "max",
   },
   openai: {
-    low: "medium",
+    low: "low",
     mid: "medium",
-    high: "medium",
+    high: "xhigh",
   },
   gemini: {
-    low: "minimal",
-    mid: "high",
+    low: "low",
+    mid: "medium",
     high: "high",
   },
 }

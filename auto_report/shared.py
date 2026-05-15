@@ -134,6 +134,22 @@ def slim_error(value):
 # ---------------------------------------------------------------------------
 
 
+def _top_reasoning_effort_for_tier(tier: str) -> str | None:
+    try:
+        from llm_utils import model_for_tier, reasoning_effort_options, selected_provider_for_tier
+
+        provider = selected_provider_for_tier(tier)
+        model = model_for_tier(tier, provider)
+        options = reasoning_effort_options(provider, model)
+    except Exception:
+        return reasoning_effort_for_tier(tier)
+
+    for effort in ("max", "xhigh", "high", "medium", "low", "minimal"):
+        if effort in options:
+            return effort
+    return None
+
+
 def call_report_llm(
     system_msg: str,
     user_msg: str,
@@ -160,7 +176,7 @@ def call_report_llm(
                     max_tokens=max_tokens,
                     system=system_msg,
                     enable_web_search=web_search_enabled,
-                    reasoning_effort=reasoning_effort_for_tier(MODEL_HIGH),
+                    reasoning_effort=_top_reasoning_effort_for_tier(MODEL_HIGH),
                 )
             except Exception as exc:
                 status_code = getattr(exc, "status_code", None)

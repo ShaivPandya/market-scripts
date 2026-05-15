@@ -50,7 +50,7 @@ def _get_pdf_locator(sector: str, ticker: str) -> tuple[Path, str]:
 
 
 def _md5_b64(path: Path) -> str:
-    h = hashlib.md5()
+    h = hashlib.md5(usedforsecurity=False)
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)

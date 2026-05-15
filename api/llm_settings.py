@@ -26,9 +26,9 @@ LEGACY_LLM_PROVIDERS = {"local"}
 MODEL_TIERS = {"low", "mid", "high"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 DEFAULT_REASONING_EFFORTS = {
-    "anthropic": {"low": "high", "mid": "high", "high": "high"},
-    "openai": {"low": "medium", "mid": "medium", "high": "medium"},
-    "gemini": {"low": "minimal", "mid": "high", "high": "high"},
+    "anthropic": {"low": "medium", "mid": "high", "high": "max"},
+    "openai": {"low": "low", "mid": "medium", "high": "xhigh"},
+    "gemini": {"low": "low", "mid": "medium", "high": "high"},
 }
 LIFECYCLE_STATES = {"draft", "enabled", "deprecated", "disabled"}
 DATA_SENSITIVITIES = {

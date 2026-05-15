@@ -27,12 +27,17 @@ REASONING_XHIGH = "xhigh"
 REASONING_MAX = "max"
 OPENAI_REASONING_EFFORTS = (
     REASONING_NONE,
+    REASONING_LOW,
     REASONING_MEDIUM,
+    REASONING_HIGH,
     REASONING_XHIGH,
 )
 ANTHROPIC_REASONING_EFFORTS = (
     REASONING_NONE,
+    REASONING_LOW,
+    REASONING_MEDIUM,
     REASONING_HIGH,
+    REASONING_XHIGH,
     REASONING_MAX,
 )
 GEMINI_FLASH_REASONING_EFFORTS = (
@@ -51,18 +56,18 @@ REASONING_EFFORTS = (
 )
 DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER = {
     PROVIDER_ANTHROPIC: {
-        MODEL_LOW: REASONING_HIGH,
+        MODEL_LOW: REASONING_MEDIUM,
         MODEL_MID: REASONING_HIGH,
-        MODEL_HIGH: REASONING_HIGH,
+        MODEL_HIGH: REASONING_MAX,
     },
     PROVIDER_OPENAI: {
-        MODEL_LOW: REASONING_MEDIUM,
+        MODEL_LOW: REASONING_LOW,
         MODEL_MID: REASONING_MEDIUM,
-        MODEL_HIGH: REASONING_MEDIUM,
+        MODEL_HIGH: REASONING_XHIGH,
     },
     PROVIDER_GEMINI: {
-        MODEL_LOW: REASONING_MINIMAL,
-        MODEL_MID: REASONING_HIGH,
+        MODEL_LOW: REASONING_LOW,
+        MODEL_MID: REASONING_MEDIUM,
         MODEL_HIGH: REASONING_HIGH,
     },
 }
@@ -276,11 +281,11 @@ def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
 def reasoning_effort_options(provider: str, model: str | None = None) -> list[str]:
     resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_OPENAI:
-        return [REASONING_NONE, REASONING_MEDIUM, REASONING_XHIGH]
+        return list(OPENAI_REASONING_EFFORTS)
     if resolved_provider == PROVIDER_GEMINI:
         return list(_gemini_reasoning_efforts_for_model(model))
 
-    return [REASONING_NONE, REASONING_HIGH, REASONING_MAX]
+    return list(_anthropic_reasoning_efforts_for_model(model))
 
 
 def default_reasoning_effort(provider: str, tier: str) -> str:
@@ -1014,7 +1019,7 @@ def _normalize_reasoning_effort(
             return None
         options = tuple(reasoning_effort_options(resolved_provider, model))
     else:
-        options = ANTHROPIC_REASONING_EFFORTS
+        options = tuple(reasoning_effort_options(resolved_provider, model))
     if normalized not in options:
         allowed = "', '".join(options)
         raise ValueError(f"reasoning_effort must be one of '{allowed}'")
@@ -1026,6 +1031,24 @@ def _gemini_reasoning_efforts_for_model(model: str | None = None) -> tuple[str, 
     if "flash" in normalized:
         return GEMINI_FLASH_REASONING_EFFORTS
     return GEMINI_PRO_REASONING_EFFORTS
+
+
+def _anthropic_reasoning_efforts_for_model(model: str | None = None) -> tuple[str, ...]:
+    normalized = (model or "").strip().lower()
+    efforts = [REASONING_NONE, REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH]
+    if "claude-opus-4-7" in normalized:
+        efforts.append(REASONING_XHIGH)
+    if any(
+        marker in normalized
+        for marker in (
+            "claude-mythos-preview",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+        )
+    ):
+        efforts.append(REASONING_MAX)
+    return tuple(efforts)
 
 
 def _anthropic_supports_adaptive_thinking(model: str) -> bool:
@@ -1045,7 +1068,10 @@ def _anthropic_manual_thinking_budget(*, max_tokens: int, effort: str) -> int:
     if max_tokens < 2048:
         raise ValueError("Anthropic manual thinking requires max_tokens >= 2048")
     cap_by_effort = {
+        REASONING_LOW: 2048,
+        REASONING_MEDIUM: 4096,
         REASONING_HIGH: 8192,
+        REASONING_XHIGH: 16384,
         REASONING_MAX: 32768,
     }
     return min(cap_by_effort[effort], max(max_tokens // 2, 1024))

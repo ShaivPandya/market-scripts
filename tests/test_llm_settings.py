@@ -62,23 +62,28 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert payload["models_by_provider"]["gemini"]["mid"] == "gemini-3.1-pro-preview-customtools"
     assert "local" not in payload["models_by_provider"]
     assert payload["reasoning_efforts"]["anthropic"] == {
-        "low": "high",
+        "low": "medium",
         "mid": "high",
-        "high": "high",
+        "high": "max",
     }
     assert payload["reasoning_efforts"]["gemini"] == {
-        "low": "minimal",
-        "mid": "high",
+        "low": "low",
+        "mid": "medium",
         "high": "high",
     }
     assert [item["effort"] for item in payload["reasoning_options"]["anthropic"]["high"]] == [
         "none",
+        "low",
+        "medium",
         "high",
+        "xhigh",
         "max",
     ]
     assert [item["effort"] for item in payload["reasoning_options"]["openai"]["mid"]] == [
         "none",
+        "low",
         "medium",
+        "high",
         "xhigh",
     ]
     assert [item["effort"] for item in payload["reasoning_options"]["gemini"]["low"]] == [

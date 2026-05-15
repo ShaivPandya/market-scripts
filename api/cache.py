@@ -102,7 +102,7 @@ def _disk_cache_name(cache: TTLCache) -> str:
 
 def _disk_cache_path(cache: TTLCache, key: str) -> Path:
     name = _disk_cache_name(cache)
-    h = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    h = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return _DISK_CACHE_ROOT / name / f"{h}.json"
 
 
@@ -119,7 +119,7 @@ def _gcs_cache_enabled() -> bool:
 
 def _gcs_cache_key(cache: TTLCache, key: str) -> str:
     name = _disk_cache_name(cache)
-    h = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    h = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return f"{_GCS_CACHE_PREFIX}/{name}/{h}.json"
 
 
