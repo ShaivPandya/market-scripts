@@ -40,7 +40,7 @@ from ontology.schema_definitions import (
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+ENVIRONMENT = (os.environ.get("ENVIRONMENT") or "development").strip().lower()
 IS_PRODUCTION = ENVIRONMENT == "production"
 
 configure_logging(json_format=IS_PRODUCTION)

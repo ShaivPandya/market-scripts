@@ -23,6 +23,8 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
+IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
+
 from api.agent_governance import (
     AgentGovernanceError,
     ToolPolicyDenied,
@@ -2446,8 +2448,14 @@ def execute_tool(
         return _stable_json_dumps(payload)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
+        # In production, we mask detailed tool execution errors to prevent
+        # leaking underlying system or provider details.
+        error_msg = f"Failed to fetch {name}"
+        if not IS_PRODUCTION:
+            error_msg = f"{error_msg}: {exc}"
+
         payload = _attach_meta(
-            {"error": f"Failed to fetch {name}: {exc}"},
+            {"error": error_msg},
             {
                 "tool": name,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
