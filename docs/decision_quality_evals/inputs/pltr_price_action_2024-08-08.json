@@ -1,0 +1,25 @@
+{
+  "ticker": "PLTR",
+  "as_of_date": "2024-08-08",
+  "close": 29.28,
+  "moving_averages": {
+    "100D_SMA": 23.98,
+    "10M_SMA": 21.21,
+    "150D_SMA": 22.98,
+    "200D_SMA": 21.75,
+    "200W_SMA": 17.05,
+    "20M_SMA": 16.56,
+    "40W_SMA": 21.86
+  },
+  "rate_of_change": {
+    "1M": 3.03,
+    "3M": 35.81,
+    "12M": 71.83
+  },
+  "price_action_summary": "PLTR closed above all selected moving averages, with positive 1-month, 3-month, and 12-month rate of change. The 3-month and 12-month momentum readings were especially strong.",
+  "relative_performance": {
+    "benchmark": null,
+    "summary": "No explicit relative-performance benchmark value selected by the user for this fixture."
+  },
+  "human_notes": "User-provided price action. User close of 29.28 is treated as authoritative for this eval, even where the source PDF contains a different close."
+}

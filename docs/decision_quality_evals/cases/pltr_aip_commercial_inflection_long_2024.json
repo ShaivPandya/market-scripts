@@ -1,0 +1,211 @@
+{
+  "id": "pltr_aip_commercial_inflection_long_2024",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2024-08-08",
+  "user_question": "Using the PLTR setup as of August 8, 2024, should this new buy have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json",
+      "sha256": "10380d5bdb797aaacfdef6bbf3b4eb39f97e9849345738ebcef079d586b3e56a",
+      "description": "User-provided Palantir August 2024 analysis distilled to as-of decision facts, with later outcome material excluded.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/pltr_price_action_2024-08-08.json",
+      "sha256": "63d6c8d7ac0139159f73a5f8071596d88e247047012d4814ff21df4e6ecf5ed2",
+      "description": "User-provided PLTR price-action snapshot through the 2024-08-08 close: close, moving averages, and ROC.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/pltr_portfolio_context_2024-08-08.json",
+      "sha256": "2dca8887adb6536ac4ebcef00285751663261b0584b3e2723f82af3008611686",
+      "description": "Portfolio context: PLTR was a new long position with assumed conviction 4 for this gold fixture.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/pltr_initiation_notes_2024-08-08.json",
+      "sha256": "5d670a71ac658eea3714b05471959707fd7b0c6face528593022406363d9a23e",
+      "description": "Initiation rationale: Q2 2024 AIP/commercial inflection plus price confirmation.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The decision date is 2024-08-08 and the decision type is a new buy.",
+    "User-provided price action is authoritative, including the $29.28 close.",
+    "Conviction is assumed to be 4 for the gold fixture because the setup is actionable but valuation, insider selling, and portfolio/liquidity inputs remain material constraints.",
+    "The PDF contains later outcome material; this case's source input intentionally excludes post-August 2024 outcomes and index-inclusion confirmation."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy PLTR because Q2 2024 showed AIP-driven U.S. commercial acceleration was becoming measurable, while the market still treated Palantir as an expensive, lumpy government-services story rather than a scalable enterprise AI operating system.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Long enterprise AI adoption, U.S. commercial software acceleration, defense/government AI modernization, high-multiple growth software, and AI infrastructure monetization beyond semiconductors.",
+    "mispricing": {
+      "consensus_view": "Palantir was a very expensive, controversial software stock with lumpy government revenue, heavy SBC/dilution concerns, insider selling, and possible competition from hyperscalers and enterprise software incumbents.",
+      "variant_view": "AIP and bootcamps were creating a non-linear commercial sales-cycle inflection, while GAAP profitability and operating leverage made Palantir more like a scalable enterprise AI operating system than a services-heavy contractor.",
+      "pricing_evidence": "Despite strong price momentum, the PDF-distilled source notes broad analyst skepticism/hold ratings, extreme multiples around 150x trailing P/E and 25x-28x forward EV/sales, and persistent bear focus on valuation and insider selling.",
+      "why_consensus_is_wrong": "Consensus over-focused on static valuation and legacy government lumpiness while underweighting U.S. commercial growth of 55% YoY, 83% customer-count growth, AIP bootcamp velocity, seven quarters of GAAP profitability, and a 64% Rule of 40 score."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Q2 2024 earnings showed AIP and U.S. commercial acceleration, followed by price confirmation into 2024-08-08.",
+      "expected_timeframe": "Immediate initiation on 2024-08-08, with validation over the next one to two quarters of commercial growth, guidance, and price behavior.",
+      "why_now": "The report converted the AI story from narrative to measurable commercial traction, while the stock closed above all selected moving averages with positive 1m, 3m, and 12m ROC.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json: Q2 2024 revenue growth, U.S. commercial acceleration, AIP bootcamp evidence, profitability, and valuation risks",
+        "docs/decision_quality_evals/inputs/pltr_price_action_2024-08-08.json: close above all selected moving averages with positive 1m/3m/12m ROC",
+        "docs/decision_quality_evals/inputs/pltr_initiation_notes_2024-08-08.json: new buy rationale based on Q2 inflection plus price confirmation"
+      ]
+    },
+    "invalidation": {
+      "observable": "AIP commercial acceleration or price confirmation fails after the Q2 2024 inflection.",
+      "metric_or_event": "U.S. commercial revenue growth, customer-count growth, remaining deal value, guidance, GAAP profitability, SBC/dilution, insider selling signal, and price behavior versus the 100D/150D/200D moving-average cluster.",
+      "threshold": "Force review if U.S. commercial growth decelerates materially, customer-count/RDV growth fails to translate into revenue, guidance is not raised or is walked back, GAAP profitability breaks, or PLTR loses the 100D SMA and then the 150D/200D cluster on thesis-relevant news.",
+      "timeframe": "Next one to two quarters after the 2024-08-08 decision date.",
+      "implication": "The AIP bootcamp inflection may be a narrative spike rather than a durable commercial acceleration, and the high valuation would leave little margin for error."
+    },
+    "evidence_for": [
+      {
+        "claim": "Q2 2024 showed accelerating commercial traction.",
+        "support": "Total revenue grew 27% YoY; U.S. commercial revenue grew 55% YoY; U.S. commercial customer count grew 83% YoY to 295 organizations.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "AIP bootcamps created a credible reason to believe sales cycles were changing.",
+        "support": "The source notes bootcamps let customers work with their own data over a few days, with examples of quick deal conversion and multi-year expansions.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "Profitability and Rule of 40 quality made the growth more investable.",
+        "support": "Palantir reported its seventh consecutive quarter of GAAP profitability, 20% GAAP net margin, 37% adjusted operating margin, and a 64% Rule of 40 score.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "The balance sheet reduced financial fragility.",
+        "support": "The source notes approximately $4.0B of cash and short-term Treasuries and no long-term debt.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "Price action confirmed the new-buy setup.",
+        "support": "PLTR closed at $29.28 above all selected moving averages, with 1-month ROC of 3.03%, 3-month ROC of 35.81%, and 12-month ROC of 71.83%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_price_action_2024-08-08.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Valuation was already demanding.",
+        "support": "The source cites roughly 150x-155x trailing P/E, about 95x forward P/E, and roughly 25x-28x forward EV/sales.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "Insider selling weakened the signal quality.",
+        "support": "The source notes over $43.7M of net insider sales over the prior 90 days, even though much was under 10b5-1 plans.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "Government and procurement lumpiness remained a real risk.",
+        "support": "Consensus concerns included lumpy government revenue and government budget/procurement timing risk.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      },
+      {
+        "claim": "AIP could still prove less scalable than the market hoped.",
+        "support": "The source flags the risk that Palantir remains too service-heavy or that hyperscalers and incumbents compete away the AI/data-integration opportunity.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/pltr_source_case_2024-08-08.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "PLTR closed at $29.28 on 2024-08-08, above the 100D SMA of $23.98, 150D SMA of $22.98, 200D SMA of $21.75, 40W SMA of $21.86, 200W SMA of $17.05, 10M SMA of $21.21, and 20M SMA of $16.56; 1m ROC was 3.03%, 3m ROC was 35.81%, and 12m ROC was 71.83%.",
+      "interpretation": "Price action confirmed the inflection: the stock was in a strong uptrend across daily, weekly, and monthly trend measures, with especially strong 3-month momentum after the AIP/commercial thesis began to prove out.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Relative performance versus S&P 500 and software/AI peers",
+        "Volume behavior around the post-earnings breakout",
+        "Exact options implied move and post-earnings volatility crush"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The case had a clear commercial-AI inflection, measurable financial acceleration, profitability quality, strong balance sheet, and broad price confirmation, while the main risks were identifiable and time-bounded.",
+      "missing_inputs": [
+        "Exact relative performance versus S&P 500 and software/AI peers",
+        "Average daily volume and liquidity constraint",
+        "Exact executed initial size",
+        "Full portfolio exposure to AI, high-multiple software, and defense/government technology",
+        "Forward consensus estimates and revision history as of 2024-08-08"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy PLTR common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [
+        "Use a smaller starter position if valuation risk or portfolio AI/software concentration is high",
+        "Use call spreads only if explicit options-risk budget and expiry are selected"
+      ],
+      "follow_on": "Add only if the next one to two quarters confirm U.S. commercial acceleration, AIP conversion, guidance strength, and price remains above the moving-average cluster."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Upgrade toward 5 only if commercial growth and guidance continue to accelerate, valuation risk is absorbed by estimate revisions, and price/relative strength remain intact."
+    },
+    "confidence": 0.72,
+    "confidence_reason": "Moderately high because fundamentals, catalyst, and price action aligned; capped because valuation was extreme, insider selling was real, relative-performance and liquidity inputs were incomplete, and the market still needed proof that AIP was scalable rather than services-heavy.",
+    "sizing_context": {
+      "starting_size": "New conviction 4 buy; no exact executed size selected.",
+      "add_conditions": "Add only if subsequent commercial revenue, customer count, remaining deal value, and guidance confirm that AIP bootcamp conversion is durable and price remains above the 100D/150D/200D moving-average cluster.",
+      "liquidity_constraints": "No ADV or exit-cost input selected; do not infer maximum size from this case.",
+      "portfolio_constraints": "Final size should account for existing AI, high-multiple software, defense/government technology, and high-beta momentum exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initiate a new PLTR long at conviction 4 after Q2 2024 AIP/commercial inflection and price confirmation."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If AIP commercial acceleration and price strength persist, add on confirmation and look for the broader enterprise AI operating-system theme across adjacent software names.",
+      "if_wrong": "If growth decelerates, guidance disappoints, or price loses the moving-average cluster on thesis-relevant news, do not average down; cut or reduce until AIP scalability is re-proven.",
+      "next_review_trigger": "Next quarterly earnings, guidance update, U.S. commercial customer-count/RDV trend, material insider-selling update, or a decisive break below the 100D/150D/200D moving-average cluster."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Gold output assumes conviction 4 because user specified a new buy with strong price confirmation but did not provide exact conviction or sizing."
+}
