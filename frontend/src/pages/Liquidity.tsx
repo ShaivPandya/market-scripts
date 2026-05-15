@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useMutation } from "@tanstack/react-query"
-import { ChevronDown, Sparkles } from "lucide-react"
+import { AlertTriangle, ChevronDown, Sparkles } from "lucide-react"
 import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
@@ -10,6 +10,44 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { colorZscore, colorPolarityChange } from "@/lib/colors"
+
+function regionalScoreValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (!value || typeof value !== "object") return null
+  const score = Number((value as { score?: unknown }).score)
+  return Number.isFinite(score) ? score : null
+}
+
+function liquidityQualityWarnings(data: unknown): string[] {
+  if (!data || typeof data !== "object") return []
+  const record = data as Record<string, unknown>
+  const warnings: string[] = []
+
+  const quality = record["data_quality"]
+  if (quality && typeof quality === "object") {
+    const q = quality as { status?: unknown; warnings?: unknown }
+    if (Array.isArray(q.warnings)) {
+      warnings.push(...q.warnings.filter((v): v is string => typeof v === "string" && v.trim().length > 0))
+    } else if (String(q.status ?? "ok").toLowerCase() === "degraded") {
+      warnings.push("Liquidity data quality is degraded.")
+    }
+  }
+
+  const meta = record["_meta"]
+  const snapshot = meta && typeof meta === "object"
+    ? (meta as { snapshot?: Record<string, unknown> }).snapshot
+    : null
+  if (snapshot) {
+    if (snapshot.stale) warnings.push("Snapshot is stale; the last stored payload is being shown.")
+    const refreshStatus = String(snapshot.refresh_status ?? "ok").toLowerCase()
+    if (refreshStatus !== "ok") {
+      const error = typeof snapshot.error === "string" && snapshot.error.trim() ? `: ${snapshot.error}` : ""
+      warnings.push(`Snapshot refresh status is ${refreshStatus}${error}.`)
+    }
+  }
+
+  return Array.from(new Set(warnings))
+}
 
 export function Liquidity() {
   const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:liquidity")
@@ -27,6 +65,7 @@ export function Liquidity() {
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
+  const qualityWarnings = useMemo(() => liquidityQualityWarnings(data), [data])
 
   // Register screen context for agent chat
   const screenCtx = useMemo(() => {
@@ -39,7 +78,11 @@ export function Liquidity() {
     if (rs) {
       const regionParts = Object.entries(rs)
         .filter(([, v]) => v != null)
-        .map(([k, v]) => `${k}: ${Number(v).toFixed(2)}`)
+        .map(([k, v]) => {
+          const score = regionalScoreValue(v)
+          return score == null ? null : `${k}: ${score >= 0 ? "+" : ""}${score.toFixed(2)}`
+        })
+        .filter((v): v is string => Boolean(v))
       if (regionParts.length > 0) metrics["Regional Scores"] = regionParts.join(", ")
     }
     return {
@@ -157,6 +200,19 @@ export function Liquidity() {
 
       {data && !isLoading && (
         <>
+          {qualityWarnings.length > 0 && (
+            <div className="mb-6 flex gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold">Liquidity data quality degraded</p>
+                <p className="mt-1 text-yellow-800">
+                  {qualityWarnings.slice(0, 2).join(" ")}
+                  {qualityWarnings.length > 2 ? ` +${qualityWarnings.length - 2} more.` : ""}
+                </p>
+              </div>
+            </div>
+          )}
+
           {data.composite_score == null ? (
             <p className="text-yellow-600">Insufficient data to compute liquidity score.</p>
           ) : (

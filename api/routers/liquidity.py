@@ -1,3 +1,4 @@
+import copy
 import os
 
 from fastapi import APIRouter, HTTPException, Query
@@ -27,10 +28,39 @@ def load_liquidity_payload() -> dict:
     return serialize_response(filtered)
 
 
+def with_snapshot_quality_warnings(payload: dict) -> dict:
+    out = copy.deepcopy(payload)
+    raw_quality = out.get("data_quality")
+    data_quality = dict(raw_quality) if isinstance(raw_quality, dict) else {}
+    raw_warnings = data_quality.get("warnings")
+    warnings = [str(item) for item in raw_warnings] if isinstance(raw_warnings, list) else []
+
+    raw_meta = out.get("_meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    raw_snapshot = meta.get("snapshot")
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+
+    if snapshot.get("stale"):
+        warnings.append("Snapshot is stale; serving the last stored liquidity payload.")
+
+    refresh_status = str(snapshot.get("refresh_status") or "ok").lower()
+    if refresh_status not in {"ok", "none"}:
+        error = snapshot.get("error")
+        suffix = f": {error}" if error else ""
+        warnings.append(f"Snapshot refresh status is {refresh_status}{suffix}.")
+
+    # Preserve order while deduplicating repeated warnings from stored payloads.
+    deduped_warnings = list(dict.fromkeys(warnings))
+    data_quality["warnings"] = deduped_warnings
+    data_quality["status"] = "degraded" if deduped_warnings else str(data_quality.get("status") or "ok")
+    out["data_quality"] = data_quality
+    return out
+
+
 @router.get("/liquidity")
 def get_liquidity(force_refresh: bool = Query(False)):
     key = "liquidity"
-    return get_snapshot_backed_response(
+    payload = get_snapshot_backed_response(
         snapshot_key=SNAPSHOT_LIQUIDITY,
         cache=long_cache,
         cache_key=key,
@@ -38,6 +68,7 @@ def get_liquidity(force_refresh: bool = Query(False)):
         load_payload=load_liquidity_payload,
         force_refresh=force_refresh,
     )
+    return with_snapshot_quality_warnings(payload)
 
 
 class LiquidityAnalyzeRequest(BaseModel):

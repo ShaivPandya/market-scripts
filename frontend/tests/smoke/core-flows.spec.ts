@@ -66,6 +66,22 @@ test("runs an ontology workbench query with mocked async results", async ({ page
   await expect(page.getByText("Source Health And Staleness")).toBeVisible()
 })
 
+test("renders liquidity data-quality warning and formatted screen context", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/liquidity")
+
+  await expect(page.getByRole("heading", { name: "Liquidity Dashboard" })).toBeVisible()
+  await expect(page.getByText("Liquidity data quality degraded")).toBeVisible()
+  await expect(page.getByText("Suppressed partial weekly bucket ending 2026-05-20")).toBeVisible()
+  await expect(page.getByText("2026-05-13", { exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "Open Stan" }).click()
+
+  await expect(page.getByRole("dialog", { name: "Stan" })).toBeVisible()
+  await expect(page.getByText("Regional Scores")).toBeVisible()
+  await expect(page.getByText("us: +0.05, europe: -0.37, japan: +0.47")).toBeVisible()
+})
+
 test("opens the agent chat shell with workflow and preference fixtures", async ({ page }) => {
   await authenticate(page)
   await page.goto("/")

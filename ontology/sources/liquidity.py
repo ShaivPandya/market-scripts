@@ -42,6 +42,8 @@ class LiquidityAdapter:
             "regional_scores",
             "components",
             "changes",
+            "component_as_of",
+            "data_quality",
             "df_weekly",
             "composite_series",
         }
@@ -56,6 +58,8 @@ class LiquidityAdapter:
             regional_scores=as_dict(raw.get("regional_scores")),
             components=as_rows(raw.get("components")),
             changes=as_dict(raw.get("changes")),
+            component_as_of=as_dict(raw.get("component_as_of")),
+            data_quality=as_dict(raw.get("data_quality")),
         )
         status, quality = status_for_drift(base_status="ok", base_quality="ok", drift=drift)
         fingerprint_payload = {k: v for k, v in raw.items() if k not in {"df_weekly", "composite_series"}}

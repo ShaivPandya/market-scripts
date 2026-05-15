@@ -1,0 +1,23 @@
+{
+  "ticker": "TEVA",
+  "company_name": "Teva Pharmaceutical Industries",
+  "as_of_date": "2025-08-14",
+  "position_status": "new_position",
+  "position_direction": "long",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "Single-name long in a low-multiple pharmaceutical transition/re-rating setup.",
+  "intended_role_notes": "New long position initiated on a business-model transition from generic-drug value trap perception toward branded/biosimilar growth and margin improvement.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": 0.16,
+  "post_confirmation_conviction": null,
+  "post_confirmation_raw_target_weight": null,
+  "conviction_mapping_source": "portfolio/portfolio_optimizer/portfolio_sizer.py maps long raw target weight as LONG_MAX * conviction / 5, with LONG_MAX = 0.20.",
+  "target_size": "16% raw target weight at conviction 4.",
+  "initial_size": null,
+  "current_healthcare_exposure": null,
+  "current_pharma_exposure": null,
+  "current_turnaround_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "Assumed new long position because the user supplied a thesis date, conviction 4, and long re-rating thesis."
+}

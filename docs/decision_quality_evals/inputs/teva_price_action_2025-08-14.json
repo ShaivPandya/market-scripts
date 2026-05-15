@@ -1,0 +1,36 @@
+{
+  "ticker": "TEVA",
+  "company_name": "Teva Pharmaceutical Industries",
+  "as_of_date": "2025-08-14",
+  "close": 17.54,
+  "moving_averages": {
+    "100d_sma": 16.19,
+    "10m_sma": 17.13,
+    "150d_sma": 16.75,
+    "200d_sma": 17.21,
+    "200w_sma": 12.01,
+    "20m_sma": 16.13,
+    "40w_sma": 17.12
+  },
+  "rate_of_change": {
+    "1m_pct": 9.56,
+    "3m_pct": 3.85,
+    "12m_pct": 2.69
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_10m_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": null,
+    "outperformed_benchmark": null,
+    "notes": "No relative-performance benchmark was selected for this case."
+  },
+  "interpretation": "TEVA closed above all selected moving averages with positive 1-month, 3-month, and 12-month ROC. Price action supported a new long by showing early technical confirmation of a possible re-rating from a low-multiple base.",
+  "human_notes": "User provided August 14 close, moving averages, and ROC values."
+}

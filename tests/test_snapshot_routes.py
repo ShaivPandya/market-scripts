@@ -70,6 +70,39 @@ def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, mon
     assert resp.json()["type"] == "SnapshotUnavailableError"
 
 
+def test_liquidity_route_preserves_payload_and_attaches_quality_warnings(auth_client, monkeypatch):
+    import api.routers.liquidity as router
+
+    def fake_response(**_kwargs):
+        return {
+            "latest_date": "2026-05-13",
+            "composite_score": -0.03,
+            "regime": "normal",
+            "component_as_of": {"net_liquidity": "2026-05-13"},
+            "data_quality": {"status": "ok", "warnings": []},
+            "_meta": {
+                "snapshot": {
+                    "key": router.SNAPSHOT_LIQUIDITY,
+                    "stale": True,
+                    "refresh_status": "error",
+                    "error": "FRED down",
+                }
+            },
+        }
+
+    monkeypatch.setattr(router, "get_snapshot_backed_response", fake_response)
+
+    resp = auth_client.get("/api/liquidity")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["latest_date"] == "2026-05-13"
+    assert body["component_as_of"] == {"net_liquidity": "2026-05-13"}
+    assert body["data_quality"]["status"] == "degraded"
+    assert any("Snapshot is stale" in warning for warning in body["data_quality"]["warnings"])
+    assert any("FRED down" in warning for warning in body["data_quality"]["warnings"])
+
+
 def test_signal_aggregator_route_uses_snapshot(auth_client, monkeypatch):
     import api.routers.signal_aggregator as router
 

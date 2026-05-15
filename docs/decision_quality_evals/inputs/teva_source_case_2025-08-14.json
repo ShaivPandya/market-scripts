@@ -1,0 +1,31 @@
+{
+  "ticker": "TEVA",
+  "company_name": "Teva Pharmaceutical Industries",
+  "as_of_date": "2025-08-14",
+  "source_summary": {
+    "setup": "Teva looked like a boring Israeli generic drug company trading at about 6x earnings, but management was attempting to change the business mix and investor perception.",
+    "management": "Richard Francis had taken over and was viewed as credible because he had run a similar playbook at Sandoz, including operating efficiency and strategic repositioning.",
+    "transition": "The thesis was that Teva was moving from a generic-drug company toward a branded/biosimilar growth company through Austedo, Ajovy, Uzedy, biosimilars, and pipeline optionality.",
+    "investor_base_mismatch": "The shareholder base still looked value-oriented and disliked the shift toward a growth strategy, while growth investors had not yet embraced the company because the transition was incomplete.",
+    "as_of_core_evidence": "By Q2 2025, branded-drug sales were up 26%, Austedo was up 19% to $498 million, Ajovy was up 31% to $155 million, Uzedy was up 120% to $54 million, and Teva had raised 2025 revenue expectations for key products.",
+    "cash_flow_and_self_help": "Q2 2025 free cash flow increased to $476 million from $324 million in Q2 2024, and Teva reaffirmed adjusted EBITDA guidance of $4.7 billion-$5.0 billion and free cash flow guidance of $1.6 billion-$1.9 billion. Transformation programs targeted about $700 million of net savings by 2027.",
+    "bear_case": "Q2 2025 revenue was flat and slightly missed consensus, U.S. generic/biosimilar revenue fell because of lower lenalidomide and liraglutide revenue, and Teva still had generic erosion, debt, litigation, and execution risk.",
+    "future_confirmation": "Later Q3 2025 and full-year 2025 results confirmed Austedo and key innovative brand growth, but those datapoints were not available on the thesis date."
+  },
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "selected_later_confirmations": [
+      "In Q3 2025, Austedo revenue reached $618 million, up 38% in local currency, and Teva raised 2025 Austedo revenue outlook to $2.05 billion-$2.15 billion.",
+      "Q3 2025 showed a 28.9% non-GAAP operating margin and key innovative brands grew 33% year over year in local currency.",
+      "Full-year 2025 revenue reached $17.3 billion, up 4%; key innovative brands exceeded $3 billion, up 35% in local currency.",
+      "Austedo reached $2.26 billion in 2025, up 34%; Ajovy grew 30%; Uzedy grew 63%.",
+      "In February 2026, Sanofi and Teva reported duvakitug maintenance data showing durable efficacy over an additional 44 weeks.",
+      "The stock later re-rated from roughly 6x earnings toward about 11.5x-12x earnings."
+    ],
+    "selected_later_bear_points": [
+      "Teva later guided to lower 2026 revenue because of more than $1 billion of expected lost sales from generic Revlimid.",
+      "The shares slipped after Q4 results even as investors continued to underwrite branded drugs, biosimilars, cost savings, and pipeline assets."
+    ]
+  },
+  "human_notes": "Historical/source case supplied by the user. Keep the gold output anchored to what was knowable on 2025-08-14."
+}

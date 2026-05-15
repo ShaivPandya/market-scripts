@@ -331,6 +331,59 @@ const ontologyResult = {
   },
 } satisfies JsonValue
 
+const liquidityResponse = {
+  composite_score: -0.03,
+  regime: "normal",
+  regime_color: "cyan",
+  latest_date: "2026-05-13",
+  regional_scores: {
+    us: { score: 0.05, regime: "normal", color: "cyan" },
+    europe: { score: -0.37, regime: "normal", color: "cyan" },
+    japan: { score: 0.47, regime: "normal", color: "cyan" },
+  },
+  components: [
+    {
+      region: "US",
+      key: "net_liquidity_change_4w",
+      label: "Net Liquidity (4w change)",
+      value: -67920,
+      value_kind: "billions",
+      z_score: -0.48,
+      weight: 0.25,
+      contribution: -0.12,
+      polarity: 1,
+    },
+  ],
+  changes: {
+    "Net Liquidity": {
+      value_kind: "billions",
+      polarity: 1,
+      "1w": 56088,
+      "1m": -67920,
+      "3m": 120000,
+    },
+  },
+  component_as_of: {
+    net_liquidity_change_4w: "2026-05-13",
+    jpn_m3_yoy: "2025-11-01",
+  },
+  data_quality: {
+    status: "degraded",
+    warnings: [
+      "Suppressed partial weekly bucket ending 2026-05-20; using latest completed week 2026-05-13.",
+      "M3 YoY is lagged: as of 2025-11-01 (193d old, limit 120d).",
+    ],
+  },
+  _meta: {
+    snapshot: {
+      key: "liquidity:current:v1",
+      as_of: "2026-05-13",
+      stale: false,
+      refresh_status: "ok",
+    },
+  },
+} satisfies JsonValue
+
 const responsePreferences = {
   personality: "pragmatic",
   warmth: "less",
@@ -366,6 +419,7 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     return json(route, portfolioResponse(url.searchParams.get("timeframe") ?? "This Week"))
   }
 
+  if (method === "GET" && path === "/api/liquidity") return json(route, liquidityResponse)
   if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse)
   if (method === "GET" && path === "/api/approvals/summary") return json(route, approvalSummary)
   if (method === "POST" && path === "/api/approvals/smoke-approval/approve") {

@@ -102,6 +102,8 @@ class LiquiditySnapshot:
     regional_scores: dict[str, Any] = field(default_factory=dict)
     components: list[dict[str, Any]] = field(default_factory=list)
     changes: dict[str, Any] = field(default_factory=dict)
+    component_as_of: dict[str, Any] = field(default_factory=dict)
+    data_quality: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

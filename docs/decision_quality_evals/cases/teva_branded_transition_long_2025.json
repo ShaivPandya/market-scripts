@@ -1,0 +1,212 @@
+{
+  "id": "teva_branded_transition_long_2025",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2025-08-14",
+  "user_question": "Using the TEVA thesis as of its initiation date, should this have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json",
+      "sha256": "fcfc8f29d88f87ce77906e77683c6194a2d8a9e4d70ee273c6b204b4ea07c4b1",
+      "description": "Human-provided TEVA transition/re-rating source case, separated into as-of evidence and later confirmation context.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/teva_price_action_2025-08-14.json",
+      "sha256": "0b9c19de111d3edd92c340a56b4320226231323f52b8544392e792dd7c3dea57",
+      "description": "Historical TEVA price-action snapshot through the 2025-08-14 close: close, moving averages, and 1m/3m/12m rate of change.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/teva_portfolio_context_2025-08-14.json",
+      "sha256": "638cc8528527e4647b58898827b33453379ab42acc27d6edad729a99ec776f77",
+      "description": "Portfolio context: TEVA was modeled as a new long position at conviction 4.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json",
+      "sha256": "dd28169b3c0700de89d24fa732f08cbfa577238110f357c36ce0894b95f04b99",
+      "description": "Initiation rationale: low-multiple transition from generics toward branded/biosimilar growth, supported by Q2 2025 evidence and technical confirmation.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The thesis date is interpreted as 2025-08-14 because the user wrote 8/14 and the surrounding evidence references Q2/Q3 2025 and 2026 confirmation.",
+    "This case assumes a new long position because the user supplied a long re-rating thesis, conviction 4, and price-action confirmation.",
+    "Conviction 4 maps to a 16% raw target weight under portfolio_sizer.py for a long position.",
+    "Q3 2025, full-year 2025, January 2026, and February 2026 evidence is included only as future outcome/confirmation context, not as evidence available on 2025-08-14.",
+    "No exact executed size, full healthcare/pharma exposure, debt maturity schedule, litigation reserve detail, or relative performance benchmark has been selected yet."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy TEVA because the market still valued it like a declining generic-drug company, while management was shifting the earnings base toward higher-quality branded drugs, biosimilars, operating savings, and pipeline optionality.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Long healthcare/pharma re-rating, branded-drug execution, biosimilar adoption, management self-help, deleveraging, and lower perception of generic-drug erosion risk.",
+    "mispricing": {
+      "consensus_view": "Teva was a low-multiple generic drug company with debt, litigation, and generic erosion risk, so the market assigned it a value-stock multiple around 6x earnings.",
+      "variant_view": "The company was becoming a higher-quality branded/biosimilar growth story under Richard Francis, and the investor base had not yet updated because value investors disliked the growth pivot while growth investors had not adopted the stock.",
+      "pricing_evidence": "The stock was around $17.54 on the thesis date, described as roughly 6x earnings, while Q2 2025 branded sales were up 26% and key products Austedo, Ajovy, and Uzedy were growing rapidly.",
+      "why_consensus_is_wrong": "Consensus was looking at the current generic-drug label and flat headline revenue, while underweighting the mix shift, free-cash-flow/deleveraging, operating savings, and possibility of a multiple re-rating as branded revenue became more visible."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Q2 2025 evidence showed branded-drug growth and cash-flow improvement while the stock still traded at a low generic-drug multiple.",
+      "expected_timeframe": "Next 1-3 quarters after 2025-08-14, with validation through Q3/Q4 earnings, Austedo/Ajovy/Uzedy growth, margin delivery, and guidance.",
+      "why_now": "The setup was actionable because the market had not yet re-rated the stock, but the transition was already visible in branded growth, free cash flow, management self-help, and price action above all selected moving averages.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json: Q2 2025 branded sales growth, Austedo/Ajovy/Uzedy growth, FCF improvement, and transformation savings",
+        "docs/decision_quality_evals/inputs/teva_price_action_2025-08-14.json: close above all selected moving averages with positive 1m/3m/12m ROC",
+        "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json: investor-base mismatch and transition from generic value stock toward branded/biosimilar growth"
+      ]
+    },
+    "invalidation": {
+      "observable": "The branded/biosimilar transition fails to offset generic erosion or the market rejects the re-rating setup.",
+      "metric_or_event": "Austedo, Ajovy, Uzedy, and biosimilar revenue growth; consolidated margin; free cash flow; EBITDA guidance; transformation savings; generic revenue erosion; debt/litigation developments; and price versus the 100D/150D/200D/40W moving-average cluster.",
+      "threshold": "Force review or reduce if key branded products stop growing materially, management cuts EBITDA or free-cash-flow guidance, transformation savings fail to appear, generic erosion overwhelms branded growth, debt/litigation risk resurfaces, or TEVA breaks below the 100D/150D/200D/40W moving-average cluster on thesis-relevant news.",
+      "timeframe": "Q3 2025 through Q4 2025 earnings/guidance, with ongoing review of debt, litigation, and product-growth data.",
+      "implication": "The market may be right to value TEVA as a low-multiple generic drug company rather than a higher-quality branded/biosimilar transition story."
+    },
+    "evidence_for": [
+      {
+        "claim": "The business mix shift was already visible by Q2 2025.",
+        "support": "Branded-drug sales were up 26%, with Austedo up 19% to $498 million, Ajovy up 31% to $155 million, and Uzedy up 120% to $54 million.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json",
+          "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "Cash flow and deleveraging supported the re-rating path.",
+        "support": "Q2 2025 free cash flow increased to $476 million from $324 million in Q2 2024, and Teva reaffirmed 2025 free cash flow guidance of $1.6 billion-$1.9 billion.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "Management self-help gave the thesis an earnings bridge beyond revenue acceleration.",
+        "support": "Teva targeted about $700 million of net savings by 2027 through transformation programs.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "Investor-base mismatch created a plausible mispricing.",
+        "support": "The existing value investor base disliked the growth pivot, while growth investors had not yet adopted the stock because the transition was incomplete.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json",
+          "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "Price action confirmed the setup at initiation.",
+        "support": "TEVA closed above all selected moving averages with positive 1-month, 3-month, and 12-month ROC.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_price_action_2025-08-14.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The legacy generic business was still a real drag.",
+        "support": "Q2 2025 revenue was flat at about $4.18 billion and slightly missed consensus, while U.S. generic/biosimilar revenue fell 6% due to lower lenalidomide and liraglutide revenue.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json",
+          "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "The transition could fail if branded growth was not large enough.",
+        "support": "The thesis required branded/biosimilar growth to become material enough to offset generic erosion and change consolidated margin and investor perception.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_source_case_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "Debt, litigation, and execution risk still mattered.",
+        "support": "The selected notes identify debt, litigation, generic erosion, and execution risk as potential reasons the low multiple could persist.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_initiation_notes_2025-08-14.json"
+        ]
+      },
+      {
+        "claim": "The stock had only early technical confirmation, not a completed re-rating.",
+        "support": "Although TEVA was above all selected moving averages, 3-month ROC was only 3.85% and 12-month ROC was only 2.69%, so the market had not yet fully endorsed the transition.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/teva_price_action_2025-08-14.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "TEVA closed at $17.54 on 2025-08-14, above the provided 100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages, with 1-month ROC of 9.56%, 3-month ROC of 3.85%, and 12-month ROC of 2.69%.",
+      "interpretation": "Price action supported initiation: TEVA had early trend confirmation across multiple timeframes, but the modest 3-month and 12-month ROC suggested the re-rating was still early rather than fully priced.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Relative performance versus healthcare/pharma benchmark",
+        "Volume behavior around the move above the moving-average cluster"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear variant view, low valuation, visible branded-drug acceleration, free-cash-flow support, management self-help, investor-base mismatch, and confirming price action.",
+      "missing_inputs": [
+        "Exact forward P/E and earnings estimate base",
+        "Debt maturity schedule and leverage targets",
+        "Litigation reserve and opioid/legal risk details",
+        "Detailed biosimilar pipeline economics",
+        "Full portfolio healthcare/pharma exposure",
+        "Relative performance benchmark"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy TEVA common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Add or maintain higher conviction if Q3/Q4 results confirm Austedo, branded/biosimilar growth, margins, free cash flow, and transformation savings."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": 0.16,
+      "upgrade_condition": "Upgrade toward conviction 5 only if branded products continue accelerating, guidance is raised or reaffirmed, margins/free cash flow improve, and the stock continues to re-rate without thesis-breaking generic erosion."
+    },
+    "confidence": 0.73,
+    "confidence_reason": "Moderately high because valuation, variant view, branded growth, free cash flow, management self-help, and price confirmation aligned; capped because legacy generics, debt/litigation risk, and transition execution remained material.",
+    "sizing_context": {
+      "starting_size": "Conviction 4 at initiation maps to a 16% raw target weight under portfolio_sizer.py.",
+      "add_conditions": "Add or move toward higher conviction only after branded growth, Austedo/Ajovy/Uzedy trajectory, margins, free cash flow, and savings targets confirm in subsequent earnings.",
+      "liquidity_constraints": "No ADV or exit-cost input selected; do not infer maximum size from this case.",
+      "portfolio_constraints": "Final size should account for existing healthcare, pharma, turnaround, and litigation-risk exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": 0.16,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initial conviction 4 buy on low-multiple transition/re-rating setup with technical confirmation."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If branded growth and margins confirm, keep pressing the re-rating rather than selling only because the stock moves from a depressed multiple to a still-reasonable market multiple.",
+      "if_wrong": "If branded growth stalls, generic erosion overwhelms the transition, guidance is cut, or the stock breaks the moving-average cluster on thesis-relevant news, reduce or exit rather than treating it as a cheap value stock.",
+      "next_review_trigger": "Review on Q3 2025 earnings, Austedo/Ajovy/Uzedy growth, EBITDA/free-cash-flow guidance, transformation savings progress, debt/litigation updates, and any break below the 100D/150D/200D/40W moving-average cluster."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Gold output reflects an actionable conviction 4 buy on 2025-08-14. Later Q3/Q4 2025 and 2026 evidence is future confirmation context only, not initiation-date evidence."
+}

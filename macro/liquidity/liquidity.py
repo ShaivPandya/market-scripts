@@ -15,6 +15,8 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 LOGGER = logging.getLogger(__name__)
 
@@ -143,6 +145,39 @@ CHANGE_WINDOWS = {
 Z_WINDOW_WEEKS = 104
 MOMENTUM_WINDOW_WEEKS = 4
 ECB_SDMX_TIMEOUT_SECONDS = 12.0
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+COMPONENT_SOURCE_COLUMNS = {
+    "net_liquidity_change_4w": ("fed_assets_wed_level", "tga_wavg", "on_rrp"),
+    "net_liquidity": ("fed_assets_wed_level", "tga_wavg", "on_rrp"),
+    "reserves_change_4w": ("reserve_balances_wavg",),
+    "ig_oas": ("ig_oas",),
+    "hy_oas": ("hy_oas",),
+    "nfci": ("nfci",),
+    "m2_gdp": ("m2", "gdp"),
+    "ecb_excess_liquidity": ("ecb:ecb_excess_liquidity",),
+    "ecb_net_liquidity_effect": ("ecb:ecb_net_liquidity_effect",),
+    "boj_assets_yoy": ("boj_assets",),
+    "jpn_m3_yoy": ("jpn_m3_yoy",),
+    "jpn_credit_yoy": ("jpn_credit_private",),
+}
+
+COMPONENT_FRESHNESS_DAYS = {
+    "net_liquidity_change_4w": 10,
+    "net_liquidity": 10,
+    "reserves_change_4w": 10,
+    "ig_oas": 10,
+    "hy_oas": 10,
+    "nfci": 10,
+    "m2_gdp": 240,
+    "ecb_excess_liquidity": 10,
+    "ecb_net_liquidity_effect": 10,
+    "boj_assets_yoy": 120,
+    "jpn_m3_yoy": 120,
+    "jpn_credit_yoy": 240,
+}
+
+COMPONENT_LABELS = {comp["key"]: comp["label"] for _region, components in ALL_REGIONS for comp in components}
 
 
 def get_fred_client():
@@ -259,12 +294,47 @@ def build_weekly_panel(df, week_ending="W-WED"):
     return df_weekly.ffill()
 
 
+def latest_completed_week_end(now=None, week_ending="W-WED"):
+    """Return the latest completed weekly label in New York time."""
+    if week_ending != "W-WED":
+        raise ValueError("latest_completed_week_end currently supports W-WED only")
+    if now is None:
+        local_date = datetime.now(EASTERN_TZ).date()
+    else:
+        ts = pd.Timestamp(now)
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert(EASTERN_TZ)
+        local_date = ts.date()
+    current = pd.Timestamp(local_date)
+    days_since_wednesday = (current.weekday() - 2) % 7
+    return (current - pd.Timedelta(days=days_since_wednesday)).normalize()
+
+
+def cap_weekly_panel_to_completed_week(df_weekly, *, now=None, week_ending="W-WED"):
+    """Drop partial future weekly buckets created by daily observations."""
+    if df_weekly.empty:
+        return df_weekly, None
+    latest_allowed = latest_completed_week_end(now=now, week_ending=week_ending)
+    normalized_index = pd.DatetimeIndex(df_weekly.index).normalize()
+    future_mask = normalized_index > latest_allowed
+    suppressed_latest = df_weekly.index[future_mask].max() if future_mask.any() else None
+    return df_weekly.loc[~future_mask].copy(), suppressed_latest
+
+
 def align_series_to_weekly(series, week_ending="W-WED", target_index=None):
     weekly = series.sort_index().resample(week_ending).last()
     weekly = weekly.ffill()
     if target_index is not None:
         weekly = weekly.reindex(target_index).ffill()
     return weekly
+
+
+def native_frequency_pct_change(series, periods):
+    """Compute pct_change on observed rows only, before weekly alignment."""
+    observed = series.dropna().sort_index()
+    if observed.empty:
+        return observed
+    return observed.pct_change(periods, fill_method=None) * 100
 
 
 def add_derived_series(df_weekly):
@@ -283,16 +353,14 @@ def add_japan_derived_series(df_weekly, df_raw, week_ending="W-WED"):
     df = df_weekly.copy()
 
     # BoJ Assets YoY (12-month pct_change on monthly data)
-    boj_assets = df_raw["boj_assets"].ffill()
-    boj_yoy = boj_assets.pct_change(12, fill_method=None) * 100
+    boj_yoy = native_frequency_pct_change(df_raw["boj_assets"], 12)
     df["boj_assets_yoy"] = align_series_to_weekly(boj_yoy, week_ending=week_ending, target_index=df.index)
 
     # M3 YoY - already provided as YoY from FRED, just align to weekly
     df["jpn_m3_yoy"] = align_series_to_weekly(df_raw["jpn_m3_yoy"], week_ending=week_ending, target_index=df.index)
 
     # Credit to private sector YoY (4-quarter pct_change on quarterly data)
-    credit_private = df_raw["jpn_credit_private"].ffill()
-    credit_yoy = credit_private.pct_change(4, fill_method=None) * 100
+    credit_yoy = native_frequency_pct_change(df_raw["jpn_credit_private"], 4)
     df["jpn_credit_yoy"] = align_series_to_weekly(credit_yoy, week_ending=week_ending, target_index=df.index)
 
     return df
@@ -421,6 +489,79 @@ def change_over_days(series, date, days):
     if past is None:
         return None
     return current - past
+
+
+def last_valid_date_asof(series, date):
+    series = series.dropna()
+    if series.empty:
+        return None
+    index = pd.DatetimeIndex(pd.to_datetime(series.index))
+    if index.tz is not None:
+        index = index.tz_convert(None)
+    series = series.copy()
+    series.index = index
+    latest_date = pd.Timestamp(date)
+    if latest_date.tzinfo is not None:
+        latest_date = latest_date.tz_convert(None)
+    latest_date = latest_date.normalize()
+    eligible = series.loc[series.index <= latest_date]
+    if eligible.empty:
+        return None
+    return pd.Timestamp(eligible.index[-1]).tz_localize(None).normalize()
+
+
+def component_source_date(df_raw, df_ecb, component_key, latest_date):
+    source_columns = COMPONENT_SOURCE_COLUMNS.get(component_key, ())
+    dates = []
+    for source_col in source_columns:
+        source_df = df_ecb if source_col.startswith("ecb:") else df_raw
+        col = source_col.split(":", 1)[1] if source_col.startswith("ecb:") else source_col
+        if source_df is None or col not in source_df.columns:
+            return None
+        source_date = last_valid_date_asof(source_df[col], latest_date)
+        if source_date is None:
+            return None
+        dates.append(source_date)
+    if not dates:
+        return None
+    return min(dates)
+
+
+def build_component_as_of(df_raw, df_ecb, latest_date):
+    component_as_of = {}
+    for _region_name, components in ALL_REGIONS:
+        for comp in components:
+            source_date = component_source_date(df_raw, df_ecb, comp["key"], latest_date)
+            if source_date is not None:
+                component_as_of[comp["key"]] = source_date.date().isoformat()
+    return component_as_of
+
+
+def build_data_quality(latest_date, component_as_of, *, suppressed_future_date=None):
+    warnings = []
+    latest = pd.Timestamp(latest_date).date()
+
+    if suppressed_future_date is not None:
+        suppressed = pd.Timestamp(suppressed_future_date).date().isoformat()
+        warnings.append(
+            f"Suppressed partial weekly bucket ending {suppressed}; using latest completed week {latest.isoformat()}."
+        )
+
+    for key, as_of_text in component_as_of.items():
+        max_age_days = COMPONENT_FRESHNESS_DAYS.get(key, 10)
+        try:
+            as_of = pd.Timestamp(as_of_text).date()
+        except Exception:
+            continue
+        age_days = (latest - as_of).days
+        if age_days > max_age_days:
+            label = COMPONENT_LABELS.get(key, key)
+            warnings.append(f"{label} is lagged: as of {as_of.isoformat()} ({age_days}d old, limit {max_age_days}d).")
+
+    return {
+        "status": "degraded" if warnings else "ok",
+        "warnings": warnings,
+    }
 
 
 def format_value(value, kind, signed=False):
@@ -693,6 +834,7 @@ def main():
     # Build weekly panel and add derived series
     week_ending = "W-WED"
     df_weekly = build_weekly_panel(df, week_ending=week_ending)
+    df_weekly, _suppressed_future_date = cap_weekly_panel_to_completed_week(df_weekly, week_ending=week_ending)
     df_weekly = add_derived_series(df_weekly)
     df_weekly = add_japan_derived_series(df_weekly, df, week_ending=week_ending)
     df_weekly = add_europe_derived_series(df_weekly, df_ecb, week_ending=week_ending)
@@ -705,7 +847,7 @@ def main():
         plot_charts(df_weekly, composite)
 
 
-def get_snapshot() -> dict:
+def get_snapshot(*, now=None) -> dict:
     """
     Fetch liquidity snapshot data for GUI consumption.
 
@@ -728,6 +870,11 @@ def get_snapshot() -> dict:
 
     week_ending = "W-WED"
     df_weekly = build_weekly_panel(df, week_ending=week_ending)
+    df_weekly, suppressed_future_date = cap_weekly_panel_to_completed_week(
+        df_weekly,
+        now=now,
+        week_ending=week_ending,
+    )
     df_weekly = add_derived_series(df_weekly)
     df_weekly = add_japan_derived_series(df_weekly, df, week_ending=week_ending)
     df_weekly = add_europe_derived_series(df_weekly, df_ecb, week_ending=week_ending)
@@ -744,6 +891,8 @@ def get_snapshot() -> dict:
             "regional_scores": {},
             "components": [],
             "changes": {},
+            "component_as_of": {},
+            "data_quality": {"status": "degraded", "warnings": ["Insufficient data to compute liquidity score."]},
             "df_weekly": df_weekly,
             "composite_series": composite,
         }
@@ -751,6 +900,12 @@ def get_snapshot() -> dict:
     latest_date = composite_clean.index[-1]
     latest_score = composite_clean.iloc[-1]
     regime, color = classify_regime(latest_score)
+    component_as_of = build_component_as_of(df, df_ecb, latest_date)
+    data_quality = build_data_quality(
+        latest_date,
+        component_as_of,
+        suppressed_future_date=suppressed_future_date,
+    )
 
     regional_latest = {}
     for region_key in ["us", "europe", "japan"]:
@@ -812,6 +967,8 @@ def get_snapshot() -> dict:
         "regional_scores": regional_latest,
         "components": components,
         "changes": changes,
+        "component_as_of": component_as_of,
+        "data_quality": data_quality,
         "df_weekly": df_weekly,
         "composite_series": composite,
     }

@@ -1,0 +1,30 @@
+{
+  "ticker": "TEVA",
+  "company_name": "Teva Pharmaceutical Industries",
+  "as_of_date": "2025-08-14",
+  "decision_context": "New long idea evaluation",
+  "human_initiation_rationale": "Buy TEVA because the market still viewed it as a boring generic drug company at about 6x earnings while Richard Francis was shifting the business toward branded drugs, biosimilars, operating efficiency, and higher-quality earnings.",
+  "selected_inputs_available_as_of_date": [
+    "Low valuation around 6x earnings",
+    "Management transition under Richard Francis",
+    "Sandoz-style operating efficiency playbook",
+    "Investor-base mismatch: value investors disliked the growth strategy and growth investors had not yet adopted the story",
+    "Q2 2025 branded-drug growth: branded sales up 26%, Austedo up 19%, Ajovy up 31%, Uzedy up 120%",
+    "Q2 2025 free cash flow of $476 million versus $324 million in Q2 2024",
+    "Reaffirmed 2025 adjusted EBITDA guidance of $4.7 billion-$5.0 billion",
+    "Reaffirmed 2025 free cash flow guidance of $1.6 billion-$1.9 billion",
+    "Transformation programs expected to produce about $700 million of net savings by 2027",
+    "Technical confirmation from close above all selected moving averages and positive 1m/3m/12m ROC"
+  ],
+  "known_bear_points_available_as_of_date": [
+    "Q2 2025 revenue was flat at about $4.18 billion and slightly missed consensus.",
+    "U.S. generic/biosimilar revenue fell 6% because of lower lenalidomide and liraglutide revenue.",
+    "Teva still had a large generics base, which was the historical reason investors assigned a low multiple.",
+    "Debt, litigation, generic erosion, and execution risk could still dominate the valuation if the branded transition failed."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "Q3 2025 Austedo acceleration, Q3 margin/beat data, full-year 2025 branded-drug confirmation, the 2026 Revlimid guide, and February 2026 duvakitug maintenance data were not known on 2025-08-14 and should be used only as outcome/confirmation context."
+  },
+  "human_notes": "The correct case framing is a low-multiple transition/re-rating long, not a generic pharmaceutical value trap."
+}
