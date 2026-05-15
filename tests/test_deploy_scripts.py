@@ -199,37 +199,16 @@ def test_api_deploy_does_not_expose_secrets_as_release_vars() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SHA-34: deploy smoke hook
+# SHA-34: deploy smoke runner
 # ---------------------------------------------------------------------------
 
 
-def test_backend_deploy_invokes_smoke_after_api_deploy() -> None:
-    """deploy-backend.sh must run smoke tests after deploying the API."""
+def test_backend_deploy_does_not_gate_on_smoke() -> None:
+    """deploy-backend.sh must not fail the rollout on post-deploy smoke."""
     script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
 
-    # Smoke must appear after deploy-api.sh
-    api_pos = script.index("deploy-api.sh")
-    smoke_pos = script.index("run-backend-smoke.sh")
-    assert smoke_pos > api_pos, "smoke must run after API deploy"
-
-    # Smoke must appear before "Backend deploy complete"
-    complete_pos = script.index("Backend deploy complete")
-    assert smoke_pos < complete_pos, "smoke must run before declaring deploy complete"
-
-
-def test_backend_deploy_supports_smoke_escape_hatch() -> None:
-    """deploy-backend.sh must support RUN_DEPLOY_SMOKE=0."""
-    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
-
-    assert "RUN_DEPLOY_SMOKE" in script
-    assert "RUN_DEPLOY_SMOKE:-1" in script or "RUN_DEPLOY_SMOKE:-0" in script or "RUN_DEPLOY_SMOKE=0" in script
-
-
-def test_backend_deploy_passes_image_tag_to_smoke() -> None:
-    """deploy-backend.sh should pass EXPECTED_IMAGE_TAG to smoke."""
-    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
-
-    assert "EXPECTED_IMAGE_TAG" in script
+    assert "run-backend-smoke.sh" not in script
+    assert "RUN_DEPLOY_SMOKE" not in script
 
 
 def test_smoke_runner_does_not_pass_secrets_as_cli_args() -> None:

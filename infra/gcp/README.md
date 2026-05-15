@@ -266,18 +266,18 @@ gcloud secrets delete AUTH_SMOKE_PASSWORD_HASH --project=${PROJECT_ID}
 
 ### Default Behavior
 
-`deploy-backend.sh` runs smoke tests by default after `deploy-api.sh`:
+`deploy-backend.sh` does not run smoke tests automatically. A backend rollout
+ends after deploying the API service and the requested infrastructure syncs:
 
 ```bash
-# Normal deploy — smoke runs automatically
 ./infra/gcp/deploy-backend.sh
-
-# Emergency deploy — skip smoke
-RUN_DEPLOY_SMOKE=0 ./infra/gcp/deploy-backend.sh
 ```
 
-Smoke failure exits deploy-backend.sh nonzero, preventing a false healthy
-release signal.
+Run smoke manually when you want a live diagnostic:
+
+```bash
+EXPECTED_IMAGE_TAG=<deployed-tag> ./infra/gcp/run-backend-smoke.sh
+```
 
 ### Manual Post-Rollback Smoke
 
@@ -320,4 +320,3 @@ Returns 200 when all pass, 503 with `failed_checks` array on any failure.
 | Migration mismatch | Alembic upgrade didn't complete; check migration job logs |
 | Read-model failure | Ontology DB tables missing or Postgres pool exhausted |
 | Approval safety failure | Command service initialization error; check API logs |
-

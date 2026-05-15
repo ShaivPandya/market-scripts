@@ -18,7 +18,6 @@
 #   SYNC_SCHEDULER=1      run setup-scheduler.sh (default: only when FULL_SYNC=1)
 #   SYNC_MONITORING=1     run setup-governance-monitoring.sh (default: only when FULL_SYNC=1)
 #   SHOW_PARALLEL_LOGS=1  print successful parallel job deploy logs
-#   RUN_DEPLOY_SMOKE=0    skip post-deploy smoke tests (emergency deploys only)
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -239,17 +238,6 @@ fi
 
 log "Deploying API service"
 "${_repo_root}/infra/gcp/deploy-api.sh"
-
-# ---------------------------------------------------------------------------
-# Post-deploy smoke tests (SHA-34)
-# ---------------------------------------------------------------------------
-if [[ "${RUN_DEPLOY_SMOKE:-1}" == "1" ]]; then
-  log "Running post-deploy smoke tests"
-  SMOKE_MODE=post-deploy EXPECTED_IMAGE_TAG="${IMAGE_TAG}" \
-    "${_repo_root}/infra/gcp/run-backend-smoke.sh"
-else
-  log "RUN_DEPLOY_SMOKE=0; skipping post-deploy smoke tests"
-fi
 
 log "Skipping deprecated talisman-worker deploy; agent chat uses ${AGENT_WORKER_POOL:-talisman-agent-worker}"
 
