@@ -46,28 +46,30 @@ EOF
 }
 
 python_bin() {
+  local candidate
+
   if [[ -n "${PYTHON:-}" ]]; then
     if command -v "${PYTHON}" >/dev/null 2>&1; then
-      echo "${PYTHON}"
-      return 0
+      candidate="${PYTHON}"
+    else
+      echo "Configured PYTHON (${PYTHON}) was not found or is not executable." >&2
+      exit 1
     fi
-
-    echo "Configured PYTHON (${PYTHON}) was not found or is not executable." >&2
+  elif command -v python3 >/dev/null 2>&1; then
+    candidate="python3"
+  elif command -v python >/dev/null 2>&1; then
+    candidate="python"
+  else
+    echo "Python 3 is required. Install python3 or set PYTHON=/path/to/python." >&2
     exit 1
   fi
 
-  if command -v python3 >/dev/null 2>&1; then
-    echo "python3"
-    return 0
+  if ! "${candidate}" -c 'import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)' >/dev/null 2>&1; then
+    echo "Python 3 is required; ${candidate} is not a Python 3 interpreter." >&2
+    exit 1
   fi
 
-  if command -v python >/dev/null 2>&1; then
-    echo "python"
-    return 0
-  fi
-
-  echo "Python 3 is required. Install python3 or set PYTHON=/path/to/python." >&2
-  exit 1
+  echo "${candidate}"
 }
 
 image_uri() {
