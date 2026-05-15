@@ -45,6 +45,31 @@ EOF
   fi
 }
 
+python_bin() {
+  if [[ -n "${PYTHON:-}" ]]; then
+    if command -v "${PYTHON}" >/dev/null 2>&1; then
+      echo "${PYTHON}"
+      return 0
+    fi
+
+    echo "Configured PYTHON (${PYTHON}) was not found or is not executable." >&2
+    exit 1
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return 0
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return 0
+  fi
+
+  echo "Python 3 is required. Install python3 or set PYTHON=/path/to/python." >&2
+  exit 1
+}
+
 image_uri() {
   echo "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
 }

@@ -153,7 +153,8 @@ def test_backend_deploy_invokes_manifest_generation() -> None:
     script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
 
     assert "release_manifest" in script or "release-manifest" in script
-    assert "python -m infra.gcp.release_manifest" in script
+    assert "PYTHON_BIN" in script
+    assert "infra.gcp.release_manifest" in script
     assert "--image-uri" in script
     assert "--output" in script
 

@@ -148,6 +148,7 @@ fi
 # ---------------------------------------------------------------------------
 log "Generating release manifest"
 
+PYTHON_BIN="$(python_bin)"
 _manifest_output="${_repo_root}/infra/gcp/release-manifest.json"
 _prior_manifest=""
 if [[ -f "${_manifest_output}" ]]; then
@@ -169,7 +170,7 @@ if command -v alembic >/dev/null 2>&1; then
   fi
 fi
 
-python -m infra.gcp.release_manifest \
+"${PYTHON_BIN}" -m infra.gcp.release_manifest \
   --image-uri="$(image_uri)" \
   ${_image_digest:+"${_image_digest}"} \
   ${_migration_head:+"${_migration_head}"} \

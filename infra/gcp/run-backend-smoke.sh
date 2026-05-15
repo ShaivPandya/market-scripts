@@ -76,4 +76,5 @@ if [[ -n "${EXPECTED_IMAGE_TAG:-}" ]]; then
 fi
 
 log "Running smoke checks (mode=${SMOKE_MODE})"
-python "${SMOKE_ARGS[@]}"
+PYTHON_BIN="$(python_bin)"
+"${PYTHON_BIN}" "${SMOKE_ARGS[@]}"
