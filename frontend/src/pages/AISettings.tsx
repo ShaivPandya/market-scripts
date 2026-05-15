@@ -31,6 +31,11 @@ const MODEL_TIERS = [
   { key: "mid", label: "Mid" },
   { key: "high", label: "High" },
 ] as const
+const REASONING_LEVELS = [
+  { key: "low", label: "Low" },
+  { key: "mid", label: "Medium" },
+  { key: "high", label: "High" },
+] as const
 
 const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEffortMap> = {
   anthropic: {
@@ -163,6 +168,20 @@ function lifecycleLabel(state: ToolLifecycleState) {
   return state.replace("_", " ")
 }
 
+function nativeEffortForReasoningLevel(provider: LLMProvider, level: LLMModelTier): LLMReasoningEffort {
+  return DEFAULT_REASONING_EFFORTS_BY_PROVIDER[provider][level]
+}
+
+function reasoningLevelForNativeEffort(
+  provider: LLMProvider,
+  tier: LLMModelTier,
+  effort: LLMReasoningEffort,
+): LLMModelTier {
+  const mapped = DEFAULT_REASONING_EFFORTS_BY_PROVIDER[provider]
+  const match = REASONING_LEVELS.find(level => mapped[level.key] === effort)
+  return match?.key ?? tier
+}
+
 export function AISettings() {
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useApiQuery<LLMSettings>(QUERY_KEY, fetchLLMSettings, 30_000)
@@ -260,7 +279,7 @@ export function AISettings() {
     }))
   }
 
-  const updateReasoningEffort = (tier: LLMModelTier, provider: LLMProvider, effort: LLMReasoningEffort) => {
+  const updateReasoningEffort = (tier: LLMModelTier, provider: LLMProvider, level: LLMModelTier) => {
     if (!data) return
     setDraftReasoningEfforts(prev => {
       const base = prev ?? data.reasoning_efforts
@@ -268,7 +287,7 @@ export function AISettings() {
         ...base,
         [provider]: {
           ...(base[provider] ?? DEFAULT_REASONING_EFFORTS_BY_PROVIDER[provider]),
-          [tier]: effort,
+          [tier]: nativeEffortForReasoningLevel(provider, level),
         },
       }
     })
@@ -469,9 +488,13 @@ export function AISettings() {
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           {MODEL_TIERS.map(tier => {
             const tierProvider = effectiveProviderByTier[tier.key]
-            const options = data.reasoning_options?.[tierProvider]?.[tier.key] ?? []
             const tierReasoningEfforts =
               effectiveReasoningEffortsByProvider[tierProvider] ?? DEFAULT_REASONING_EFFORTS_BY_PROVIDER[tierProvider]
+            const selectedReasoningLevel = reasoningLevelForNativeEffort(
+              tierProvider,
+              tier.key,
+              tierReasoningEfforts[tier.key],
+            )
             return (
               <div key={tier.key} className="theme-surface-muted px-3 py-3">
                 <div className="min-h-[4.5rem]">
@@ -486,12 +509,12 @@ export function AISettings() {
                   </p>
                 </div>
                 <select
-                  value={tierReasoningEfforts[tier.key]}
-                  onChange={event => updateReasoningEffort(tier.key, tierProvider, event.target.value as LLMReasoningEffort)}
+                  value={selectedReasoningLevel}
+                  onChange={event => updateReasoningEffort(tier.key, tierProvider, event.target.value as LLMModelTier)}
                   className="theme-input mt-3 w-full px-3 py-2 text-sm"
                 >
-                  {options.map(option => (
-                    <option key={option.effort} value={option.effort}>
+                  {REASONING_LEVELS.map(option => (
+                    <option key={option.key} value={option.key}>
                       {option.label}
                     </option>
                   ))}

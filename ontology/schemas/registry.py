@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -382,6 +384,10 @@ class OntologySchemaValidationError(ValueError):
     pass
 
 
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
 @dataclass(slots=True)
 class NormalizedGraph:
     nodes: list[OntologyNode]
@@ -668,6 +674,15 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
     if isinstance(model, WatchTrigger):
         return watch_trigger_id(model.trigger_id or model.condition)
     if isinstance(model, Approval):
+        if model.supersedes_approval_id:
+            replacement_identity = _stable_hash(
+                {
+                    "action_id": model.action_id,
+                    "payload": model.proposed_change,
+                    "supersedes_approval_id": model.supersedes_approval_id,
+                }
+            )
+            return approval_id(f"{model.entity_type}:{replacement_identity}")
         return approval_id(f"{model.entity_type}:{model.action_input_hash or model.created_at}")
     if isinstance(model, ActionRun):
         return action_run_id(f"{model.action_id}:{model.started_at}")

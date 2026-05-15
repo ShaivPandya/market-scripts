@@ -951,6 +951,37 @@ def test_restaged_approval_uses_distinct_uid_and_survives_original_rejection(mon
     assert service.get_approval(replacement["id"], actor=context.actor)["status"] == "pending"
 
 
+def test_superseded_watch_trigger_approval_uses_canonical_temporal_identity():
+    service = OntologyCommandService(OntologyObjectService(repository=NormalizingTemporalRepo()))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    original = service.propose_action(
+        "create_watch_trigger",
+        {"condition": "Old macro trigger", "trigger_type": "macro"},
+        context,
+        reason="Create watch trigger",
+    )
+    replacement = service.propose_action(
+        "create_watch_trigger",
+        {"condition": "Edited macro trigger", "trigger_type": "macro"},
+        context,
+        reason="Edited replacement",
+        supersedes_approval_id=original["id"],
+    )
+    rejected = service.resolve_approval(
+        original["id"],
+        "rejected",
+        f"Superseded by edited approval {replacement['id']}.",
+        context,
+    )
+
+    assert replacement["id"] != original["id"]
+    assert replacement["supersedes_approval_id"] == original["id"]
+    assert replacement["proposed_change"]["condition"] == "Edited macro trigger"
+    assert rejected["status"] == "rejected"
+    assert service.get_approval(replacement["id"], actor=context.actor)["status"] == "pending"
+
+
 def test_dual_control_approval_applies_after_two_distinct_approvers(monkeypatch):
     _patch_dual_control_gate(monkeypatch, allow_requester=False)
     service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
