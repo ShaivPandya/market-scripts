@@ -79,8 +79,11 @@ def load_cached_book_size() -> float | None:
     state = load_portfolio_state()
     if not state:
         return None
+    raw_book_size = state.get("book_size")
+    if raw_book_size is None:
+        return None
     try:
-        parsed = float(state.get("book_size"))
+        parsed = float(raw_book_size)
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
