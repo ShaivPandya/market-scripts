@@ -73,6 +73,8 @@ router = APIRouter()
 logger = logging.getLogger("api.agent")
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
+IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
+
 
 @lru_cache(maxsize=1)
 def _agent_capability_by_name() -> dict[str, Any]:
@@ -591,6 +593,9 @@ def _format_stream_error(exc: Exception) -> str:
 
     if status_code == 429 or "rate_limit" in lowered:
         return "Rate limit reached. Please wait a moment before sending another message."
+
+    if IS_PRODUCTION:
+        return "An internal error occurred during streaming."
 
     return raw
 
