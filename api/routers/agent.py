@@ -595,6 +595,8 @@ def _format_stream_error(exc: Exception) -> str:
         return "Rate limit reached. Please wait a moment before sending another message."
 
     if IS_PRODUCTION:
+        # In production, we mask raw exception strings during streaming
+        # to prevent leaking internal system or provider details.
         return "An internal error occurred during streaming."
 
     return raw
