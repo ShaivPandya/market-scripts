@@ -10,11 +10,29 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORTFOLIO_STATE_PATH = PROJECT_ROOT / "auto_report" / "outputs" / "portfolio_state.json"
 PORTFOLIO_STATE_ENV = "AUTO_REPORT_PORTFOLIO_STATE_PATH"
+API_ONLY_ENV = "AUTO_REPORT_API_ONLY"
+
+_TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}
 
 
 def portfolio_state_path() -> Path:
     configured = (os.getenv(PORTFOLIO_STATE_ENV) or "").strip()
     return Path(configured) if configured else DEFAULT_PORTFOLIO_STATE_PATH
+
+
+def env_flag(name: str, *, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in _TRUE_VALUES
+
+
+def api_only_mode() -> bool:
+    return env_flag(API_ONLY_ENV)
+
+
+def missing_database_url_error(exc: BaseException) -> bool:
+    return "DATABASE_URL is required for Postgres-backed state" in str(exc)
 
 
 def write_portfolio_state(payload: dict[str, Any]) -> Path:
@@ -55,3 +73,14 @@ def load_cached_positions(*, include_hedges: bool = False) -> list[dict[str, Any
     if include_hedges:
         return rows
     return [row for row in rows if str(row.get("role") or "position").lower() == "position"]
+
+
+def load_cached_book_size() -> float | None:
+    state = load_portfolio_state()
+    if not state:
+        return None
+    try:
+        parsed = float(state.get("book_size"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None

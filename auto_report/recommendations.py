@@ -1103,9 +1103,9 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
-    import os
+    from auto_report.report_state import api_only_mode, env_flag
 
-    if (os.getenv("AUTO_REPORT_SKIP_LOCAL_PERSISTENCE") or "").strip().lower() in {"1", "true", "yes", "on"}:
+    if api_only_mode() or env_flag("AUTO_REPORT_SKIP_LOCAL_PERSISTENCE"):
         log.info("Skipping local recommendation persistence; report sync will persist in the app.")
         return []
 

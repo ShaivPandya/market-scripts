@@ -203,12 +203,14 @@ def load_portfolio():
     """Load portfolio positions from the ontology runtime and return a DataFrame."""
     import pandas as pd
 
-    from auto_report.report_state import load_cached_positions
+    from auto_report.report_state import api_only_mode, load_cached_positions
 
     cached_positions = load_cached_positions()
     if cached_positions is not None:
         df = pd.DataFrame(cached_positions)
     else:
+        if api_only_mode():
+            raise RuntimeError("AUTO_REPORT_API_ONLY requires cached portfolio state from auto_report.fetch_state.")
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
         df = OntologyRuntimeReadService().positions_df()
@@ -356,6 +358,8 @@ def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERA
 
 
 def load_configured_book_size() -> float | None:
+    from auto_report.report_state import api_only_mode, load_cached_book_size
+
     env_value = (os.getenv("TALISMAN_BOOK_SIZE") or "").strip()
     if env_value:
         try:
@@ -364,6 +368,13 @@ def load_configured_book_size() -> float | None:
                 return parsed
         except ValueError:
             log.warning("Ignoring invalid TALISMAN_BOOK_SIZE=%r", env_value)
+
+    cached_book_size = load_cached_book_size()
+    if cached_book_size is not None:
+        return cached_book_size
+
+    if api_only_mode():
+        return None
 
     try:
         from api.portfolio_settings import get_configured_portfolio_book_size
@@ -1370,17 +1381,20 @@ def write_daily_outputs(
     log.info("Wrote daily outputs to %s", output_dir)
 
     # Index report for semantic search (best-effort)
-    try:
-        from api.retrieval import index_document
+    from auto_report.report_state import api_only_mode
 
-        index_document(
-            doc_type="daily_report",
-            content=report_md,
-            source_path=str(output_dir / "report.md"),
-            doc_id=f"daily-{today}",
-        )
-    except Exception:
-        log.debug("Failed to index daily report for retrieval", exc_info=True)
+    if not api_only_mode():
+        try:
+            from api.retrieval import index_document
+
+            index_document(
+                doc_type="daily_report",
+                content=report_md,
+                source_path=str(output_dir / "report.md"),
+                doc_id=f"daily-{today}",
+            )
+        except Exception:
+            log.debug("Failed to index daily report for retrieval", exc_info=True)
 
     # Archive
     archive_dir = output_dir / "history" / today
@@ -1730,11 +1744,16 @@ def main():
         archive_dir.mkdir(parents=True, exist_ok=True)
         (archive_dir / "report_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    try:
-        outcome_summary = evaluate_due_recommendations()
-        log.info("Recommendation outcome evaluation: %s", outcome_summary)
-    except Exception:
-        log.warning("Recommendation outcome evaluation failed", exc_info=True)
+    from auto_report.report_state import api_only_mode
+
+    if api_only_mode():
+        log.info("Skipping local recommendation outcome evaluation in API-only report mode")
+    else:
+        try:
+            outcome_summary = evaluate_due_recommendations()
+            log.info("Recommendation outcome evaluation: %s", outcome_summary)
+        except Exception:
+            log.warning("Recommendation outcome evaluation failed", exc_info=True)
 
     log.info("=== Daily risk report run complete ===")
 

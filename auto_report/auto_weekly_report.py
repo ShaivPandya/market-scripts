@@ -1438,17 +1438,20 @@ def write_outputs(
     log.info("Wrote report.md and summary.json to %s", output_dir)
 
     # Index report for semantic search (best-effort)
-    try:
-        from api.retrieval import index_document
+    from auto_report.report_state import api_only_mode
 
-        index_document(
-            doc_type="weekly_report",
-            content=report_md,
-            source_path=str(output_dir / "report.md"),
-            doc_id=f"weekly-{today}",
-        )
-    except Exception:
-        log.debug("Failed to index weekly report for retrieval", exc_info=True)
+    if not api_only_mode():
+        try:
+            from api.retrieval import index_document
+
+            index_document(
+                doc_type="weekly_report",
+                content=report_md,
+                source_path=str(output_dir / "report.md"),
+                doc_id=f"weekly-{today}",
+            )
+        except Exception:
+            log.debug("Failed to index weekly report for retrieval", exc_info=True)
 
     # Archive
     archive_dir = output_dir / "history" / today
@@ -1564,36 +1567,41 @@ def main():
             summary = _merge_thesis_into_summary(summary, thesis_summary)
 
             # Stage evaluations through ontology approvals.
-            try:
-                from ontology.command_service import OntologyCommandContext, OntologyCommandService
-                from ontology.policy import system_actor
+            from auto_report.report_state import api_only_mode
 
-                evals = thesis_summary.get("thesis_evaluations", [])
-                service = OntologyCommandService()
-                context = OntologyCommandContext(
-                    actor=system_actor("weekly_report"),
-                    source_type="workflow",
-                    source_id=f"weekly_report:{today_str}",
-                )
-                if evals:
-                    for evaluation in evals:
-                        if isinstance(evaluation, dict) and evaluation.get("ticker"):
-                            service.propose_action(
-                                "save_evaluation",
-                                {"evaluated_at": today_str, **evaluation},
-                                context,
-                                reason=f"Weekly thesis evaluation for {evaluation.get('ticker')}",
-                            )
-                    log.info("Staged %d thesis evaluation approvals", len(evals))
-                for t in thesis_summary.get("positions_reviewed", []):
-                    service.propose_action(
-                        "change_thesis_status",
-                        {"ticker": t, "status": "under_review", "reason": "Weekly report reviewed position."},
-                        context,
-                        reason=f"Weekly report reviewed {t}",
+            if api_only_mode():
+                log.info("Skipping local thesis evaluation staging in API-only report mode")
+            else:
+                try:
+                    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+                    from ontology.policy import system_actor
+
+                    evals = thesis_summary.get("thesis_evaluations", [])
+                    service = OntologyCommandService()
+                    context = OntologyCommandContext(
+                        actor=system_actor("weekly_report"),
+                        source_type="workflow",
+                        source_id=f"weekly_report:{today_str}",
                     )
-            except Exception:
-                log.warning("Failed to stage thesis evaluation approvals", exc_info=True)
+                    if evals:
+                        for evaluation in evals:
+                            if isinstance(evaluation, dict) and evaluation.get("ticker"):
+                                service.propose_action(
+                                    "save_evaluation",
+                                    {"evaluated_at": today_str, **evaluation},
+                                    context,
+                                    reason=f"Weekly thesis evaluation for {evaluation.get('ticker')}",
+                                )
+                        log.info("Staged %d thesis evaluation approvals", len(evals))
+                    for t in thesis_summary.get("positions_reviewed", []):
+                        service.propose_action(
+                            "change_thesis_status",
+                            {"ticker": t, "status": "under_review", "reason": "Weekly report reviewed position."},
+                            context,
+                            reason=f"Weekly report reviewed {t}",
+                        )
+                except Exception:
+                    log.warning("Failed to stage thesis evaluation approvals", exc_info=True)
 
             log.info(
                 "Thesis pass completed in %.2fs (%d evaluations)",
@@ -1727,11 +1735,16 @@ def main():
         archive_dir.mkdir(parents=True, exist_ok=True)
         (archive_dir / "report_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    try:
-        outcome_summary = evaluate_due_recommendations()
-        log.info("Recommendation outcome evaluation: %s", outcome_summary)
-    except Exception:
-        log.warning("Recommendation outcome evaluation failed", exc_info=True)
+    from auto_report.report_state import api_only_mode
+
+    if api_only_mode():
+        log.info("Skipping local recommendation outcome evaluation in API-only report mode")
+    else:
+        try:
+            outcome_summary = evaluate_due_recommendations()
+            log.info("Recommendation outcome evaluation: %s", outcome_summary)
+        except Exception:
+            log.warning("Recommendation outcome evaluation failed", exc_info=True)
 
     log.info("=== Weekly report run complete ===")
 

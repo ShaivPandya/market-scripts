@@ -14,6 +14,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List  # noqa: UP035
 
 import pandas as pd
@@ -39,6 +40,8 @@ from equities.market_technicals.get_top50 import (
     compute_top50_from_close,
     read_top50_from_db,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def print_header() -> None:
@@ -293,14 +296,23 @@ def _load_top50_tickers() -> list[str]:
     refresh job has run, or a fresh dev DB). The fallback only reads — no writes
     happen on the API request path, so the production write guard is satisfied.
     """
-    conn = _connect_db()
+    tickers: list[str] = []
+    conn = None
     try:
+        conn = _connect_db()
         tickers = read_top50_from_db(conn)
+    except Exception as exc:
+        from auto_report.report_state import api_only_mode, missing_database_url_error
+
+        if not api_only_mode() or not missing_database_url_error(exc):
+            raise
+        LOGGER.info("Top-50 cache unavailable in API-only report mode; computing live top-50 list.")
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     if tickers:
         return tickers
     fallback: list[str] = compute_top50()["ticker"].astype(str).str.upper().tolist()

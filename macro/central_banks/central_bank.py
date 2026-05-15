@@ -384,7 +384,14 @@ def _resolve_db_path(db_path: str | None = None) -> str:
 
 def _connect_db(db_path: str | None = None):
     if db_path is None and use_postgres_state():
-        return PostgresStateConnection(table_map={"items": "central_bank_items"})
+        try:
+            return PostgresStateConnection(table_map={"items": "central_bank_items"})
+        except Exception as exc:
+            from auto_report.report_state import api_only_mode, missing_database_url_error
+
+            if not api_only_mode() or not missing_database_url_error(exc):
+                raise
+            LOGGER.info("Central-bank cache unavailable in API-only report mode; using local transient SQLite.")
     return sqlite3.connect(_resolve_db_path(db_path))
 
 

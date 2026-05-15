@@ -41,8 +41,24 @@ def _default_object_service() -> Any:
     return OntologyObjectService()
 
 
+def _cached_report_positions(*, include_hedges: bool = False) -> list[dict[str, Any]] | None:
+    try:
+        from auto_report.report_state import api_only_mode, load_cached_positions
+    except Exception:
+        return None
+    if not api_only_mode():
+        return None
+    rows = load_cached_positions(include_hedges=include_hedges)
+    if rows is None:
+        raise RuntimeError("AUTO_REPORT_API_ONLY requires cached portfolio state from auto_report.fetch_state.")
+    return rows
+
+
 def get_positions(*, include_hedges: bool = False) -> list[dict[str, Any]]:
     """Return current ontology positions."""
+    cached_positions = _cached_report_positions(include_hedges=include_hedges)
+    if cached_positions is not None:
+        return cached_positions
     return OntologyRuntimeReadService().positions(include_hedges=include_hedges)
 
 
@@ -62,10 +78,18 @@ def object_props(row: dict[str, Any] | None) -> dict[str, Any]:
 
 def get_positions_df(*, include_hedges: bool = False, fallback_to_csv: bool = False):
     """Return current ontology positions as a DataFrame."""
+    cached_positions = _cached_report_positions(include_hedges=include_hedges)
+    if cached_positions is not None:
+        import pandas as pd
+
+        return pd.DataFrame(cached_positions)
     return OntologyRuntimeReadService().positions_df(include_hedges=include_hedges)
 
 
 def get_hedge_positions() -> list[dict[str, Any]]:
+    cached_positions = _cached_report_positions(include_hedges=True)
+    if cached_positions is not None:
+        return [row for row in cached_positions if str(row.get("role") or "").lower() == "hedge"]
     rows = OntologyRuntimeReadService().positions(include_hedges=True)
     return [row for row in rows if str(row.get("role") or "").lower() == "hedge"]
 

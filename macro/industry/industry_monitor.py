@@ -116,7 +116,14 @@ def _resolve_db_path(db_path: str | None = None) -> str:
 
 def _connect_db(db_path: str | None = None):
     if db_path is None and use_postgres_state():
-        return PostgresStateConnection(table_map={"transcripts": "industry_transcripts"})
+        try:
+            return PostgresStateConnection(table_map={"transcripts": "industry_transcripts"})
+        except Exception as exc:
+            from auto_report.report_state import api_only_mode, missing_database_url_error
+
+            if not api_only_mode() or not missing_database_url_error(exc):
+                raise
+            LOGGER.info("Industry transcript cache unavailable in API-only report mode; using local transient SQLite.")
     conn = sqlite3.connect(_resolve_db_path(db_path))
     conn.row_factory = sqlite3.Row
     return conn
