@@ -396,6 +396,7 @@ from api.routers import (
     provenance,
     recommendations,
     report_sync,
+    scenario_simulator,
     triggers,
     workflow_runs,
     workspace,
@@ -413,6 +414,7 @@ app.include_router(provenance.router, prefix=_API_PREFIX, dependencies=_auth_dep
 app.include_router(recommendations.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["recommendations"])
 app.include_router(optimization.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["optimization"])
 app.include_router(policy_gate.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["policy-gate"])
+app.include_router(scenario_simulator.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["scenario-simulator"])
 app.include_router(workflow_runs.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["workflows"])
 app.include_router(admin_jobs.router, prefix=_API_PREFIX, tags=["admin"])
 app.include_router(report_sync.router, prefix=_API_PREFIX, tags=["reports"])
