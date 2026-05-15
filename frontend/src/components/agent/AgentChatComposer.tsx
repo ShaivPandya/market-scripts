@@ -6,6 +6,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react"
 interface AgentChatComposerProps {
   input: string
   onInputChange: (value: string) => void
+  onInputSelectionChange: (start: number, end: number) => void
   onSend: () => void
   onStop: () => void
   isStreaming: boolean
@@ -18,6 +19,7 @@ interface AgentChatComposerProps {
 export function AgentChatComposer({
   input,
   onInputChange,
+  onInputSelectionChange,
   onSend,
   onStop,
   isStreaming,
@@ -31,6 +33,10 @@ export function AgentChatComposer({
       event.preventDefault()
       onSend()
     }
+  }
+
+  function rememberSelection(element: HTMLTextAreaElement) {
+    onInputSelectionChange(element.selectionStart, element.selectionEnd)
   }
 
   return (
@@ -62,8 +68,15 @@ export function AgentChatComposer({
         <textarea
           ref={textareaRef}
           value={input}
-          onChange={event => onInputChange(event.target.value)}
+          onChange={event => {
+            onInputChange(event.currentTarget.value)
+            rememberSelection(event.currentTarget)
+          }}
           onKeyDown={handleKeyDown}
+          onKeyUp={event => rememberSelection(event.currentTarget)}
+          onMouseUp={event => rememberSelection(event.currentTarget)}
+          onSelect={event => rememberSelection(event.currentTarget)}
+          onBlur={event => rememberSelection(event.currentTarget)}
           onInput={event => resizeChatTextarea(event.currentTarget)}
           placeholder="Ask about markets, portfolio, macro..."
           aria-label="Message Stan"

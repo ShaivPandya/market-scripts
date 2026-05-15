@@ -116,7 +116,7 @@ export function SidebarSearchDialog({ open, onOpenChange, onNavigate }: SidebarS
               onChange={event => handleQueryChange(event.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Search pages"
-              className="h-10 min-w-0 flex-1 bg-transparent text-sm text-app outline-none placeholder:text-[hsl(var(--foreground-quaternary))]"
+              className="h-10 min-w-0 flex-1 bg-transparent text-sm text-app outline-none placeholder:text-[hsl(var(--foreground-quaternary))] focus-visible:shadow-none"
             />
             <RadixDialog.Close asChild>
               <button

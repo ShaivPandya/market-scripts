@@ -9,6 +9,7 @@ interface AgentMessageStreamProps {
   isStreaming: boolean
   error: string | null
   onPrompt: (prompt: string) => void
+  scrollContainerRef: RefObject<HTMLDivElement | null>
   messagesEndRef: RefObject<HTMLDivElement | null>
 }
 
@@ -17,12 +18,13 @@ export function AgentMessageStream({
   isStreaming,
   error,
   onPrompt,
+  scrollContainerRef,
   messagesEndRef,
 }: AgentMessageStreamProps) {
   const isEmpty = messages.length === 0 && !isStreaming
 
   return (
-    <div className="flex-1 overflow-y-auto bg-app px-4 py-4">
+    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto bg-app px-4 py-4">
       {isEmpty ? (
         <div className="flex min-h-full flex-col items-center justify-center text-center">
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-app bg-card text-link shadow-sm">
