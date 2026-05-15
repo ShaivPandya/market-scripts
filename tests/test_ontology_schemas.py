@@ -9,9 +9,19 @@ from pydantic import ValidationError
 
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schema_definitions import SCHEMA_KIND_ONTOLOGY_OBJECT, ontology_schema_definitions
-from ontology.schemas.identity import action_item_id, catalyst_id, evaluation_id, hedge_position_id, signal_id
+from ontology.schemas.identity import (
+    action_item_id,
+    catalyst_id,
+    course_of_action_id,
+    evaluation_id,
+    hedge_position_id,
+    scenario_assumption_id,
+    signal_id,
+    simulated_outcome_id,
+)
 from ontology.schemas.objects import (
     ActionItem,
+    CourseOfAction,
     FactorScore,
     HedgePosition,
     IdeaComparisonRanking,
@@ -221,6 +231,79 @@ def test_first_class_research_optimizer_and_management_quality_objects_accept_ui
     assert run.status == "running"
     assert freshness.freshness_category is None
     assert assessment.ticker == "MU"
+
+
+def test_course_of_action_schema_normalizes_action_and_rejects_hedge():
+    coa = CourseOfAction(
+        course_of_action_id="MU reduce after failed catalyst",
+        action="reduce",
+        ticker="mu",
+        actionability="actionable",
+        confidence=0.67,
+    )
+
+    assert coa.action == "trim"
+    assert coa.ticker == "MU"
+
+    with pytest.raises(ValidationError):
+        CourseOfAction(course_of_action_id="MU hedge", action="hedge", ticker="MU")
+
+
+def test_course_of_action_objects_have_stable_identities():
+    coa = normalize_node(
+        OntologyNode(
+            id=course_of_action_id("MU add post earnings"),
+            type="CourseOfAction",
+            label="MU add",
+            properties=CourseOfAction(
+                course_of_action_id="MU add post earnings",
+                action="add",
+                ticker="mu",
+                rationale_summary="HBM guidance confirmed.",
+            ).model_dump(mode="json"),
+            schema_name="CourseOfAction",
+            schema_version=1,
+        ),
+        allow_current=False,
+    )
+    assumption = normalize_node(
+        OntologyNode(
+            id=scenario_assumption_id("MU HBM pricing"),
+            type="ScenarioAssumption",
+            label="HBM pricing",
+            properties={
+                "assumption_id": "MU HBM pricing",
+                "scenario_id": "scenario:mu_bull",
+                "name": "HBM pricing stays tight",
+                "value": "pricing remains firm through FY26",
+            },
+            schema_name="ScenarioAssumption",
+            schema_version=1,
+        ),
+        allow_current=False,
+    )
+    outcome = normalize_node(
+        OntologyNode(
+            id=simulated_outcome_id("MU add bull case"),
+            type="SimulatedOutcome",
+            label="MU add bull case",
+            properties={
+                "outcome_id": "MU add bull case",
+                "course_of_action_id": "course_of_action:mu_add_post_earnings",
+                "scenario_id": "scenario:mu_bull",
+                "expected_return_pct": 0.24,
+                "status": "simulated",
+            },
+            schema_name="SimulatedOutcome",
+            schema_version=1,
+        ),
+        allow_current=False,
+    )
+
+    assert coa.id == "course_of_action:mu_add_post_earnings"
+    assert coa.properties["action"] == "add"
+    assert assumption.id == "scenario_assumption:mu_hbm_pricing"
+    assert outcome.id == "simulated_outcome:mu_add_bull_case"
 
 
 def test_every_entity_type_has_pydantic_schema_and_definition():
@@ -494,6 +577,30 @@ def test_relation_registry_rejects_unregistered_provenance_link_relation():
             ],
             require_core_edges=False,
         )
+
+
+def test_course_of_action_relation_registry_models_decision_edges():
+    expected = {
+        "course_of_action_targets_position": ("CourseOfAction", "Position"),
+        "course_of_action_targets_thesis": ("CourseOfAction", "Thesis"),
+        "course_of_action_uses_scenario": ("CourseOfAction", "Scenario"),
+        "scenario_has_assumption": ("Scenario", "ScenarioAssumption"),
+        "course_of_action_has_simulated_outcome": ("CourseOfAction", "SimulatedOutcome"),
+        "course_of_action_has_rationale": ("CourseOfAction", "CourseOfActionRationale"),
+        "course_of_action_supported_by_evidence": ("CourseOfAction", "Evidence"),
+        "course_of_action_contradicted_by_evidence": ("CourseOfAction", "Evidence"),
+        "course_of_action_has_dissent": ("CourseOfAction", "CourseOfActionDissent"),
+        "course_of_action_requires_approval": ("CourseOfAction", "Approval"),
+        "approval_targets_course_of_action": ("Approval", "CourseOfAction"),
+        "action_run_applies_course_of_action": ("ActionRun", "CourseOfAction"),
+        "comparison_includes_course_of_action": ("CourseOfActionComparison", "CourseOfAction"),
+        "comparison_selects_course_of_action": ("CourseOfActionComparison", "CourseOfAction"),
+    }
+
+    for relation_type, endpoint_types in expected.items():
+        definition = get_relation_definition(relation_type)
+        assert (definition.source_type, definition.target_type) == endpoint_types
+        assert definition.required_properties == frozenset({"ontology_run_id"})
 
 
 def test_relation_registry_rejects_wrong_endpoint_types():
