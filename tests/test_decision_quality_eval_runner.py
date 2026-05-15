@@ -6,6 +6,7 @@ from pathlib import Path
 
 from decision_quality.eval_runner import (
     EvalCase,
+    build_report,
     build_solver_payload,
     deterministic_score,
     load_cases,
@@ -107,6 +108,26 @@ def test_wrong_action_fails_deterministic_scoring():
     assert any(check["name"] == "recommended_action" and not check["passed"] for check in score["checks"])
 
 
+def test_build_report_counts_failed_check_even_when_score_exceeds_threshold():
+    report = build_report(
+        [
+            {
+                "case_id": "wrong_action_high_score",
+                "dry_run": False,
+                "deterministic": {
+                    "score": 91.67,
+                    "passed": False,
+                    "checks": [{"name": "recommended_action", "passed": False, "message": "wrong action"}],
+                },
+            }
+        ],
+        fail_under_deterministic=80.0,
+        fail_under_judge=14.0,
+    )
+
+    assert report["summary"]["deterministic_failures"] == ["wrong_action_high_score"]
+
+
 def test_missing_catalyst_fails_through_gate(monkeypatch):
     case = _case("mu_ai_memory_cycle_2025.json")
     raw = copy.deepcopy(case.gold_output)
@@ -140,6 +161,21 @@ def test_invalid_json_fails_cleanly(monkeypatch):
     assert result["candidate"] is None
     assert result["deterministic"]["passed"] is False
     assert result["decision_quality_gate"]["reasons"][0]["code"] == "MISSING_DECISION_QUALITY"
+
+
+def test_solver_call_error_fails_cleanly(monkeypatch):
+    case = _case("mu_ai_memory_cycle_2025.json")
+
+    def fake_call(*_args, **_kwargs):
+        raise TypeError("missing provider credentials")
+
+    monkeypatch.setattr("decision_quality.eval_runner.call_llm_text", fake_call)
+    result = run_case(case, judge=False)
+
+    assert result["candidate"] is None
+    assert result["solver_error"]["type"] == "TypeError"
+    assert result["deterministic"]["passed"] is False
+    assert result["decision_quality_gate"]["status"] == "invalid"
 
 
 def test_missing_invalidation_fails_through_gate(monkeypatch):
@@ -178,6 +214,23 @@ def test_mocked_judge_result_is_included(monkeypatch):
     assert result["judge"]["passed"] is True
     assert result["judge"]["total"] == 18
     assert responses == []
+
+
+def test_judge_call_error_is_reported(monkeypatch):
+    case = _case("mu_ai_memory_cycle_2025.json")
+    responses = [json.dumps(case.gold_output)]
+
+    def fake_call(*_args, **_kwargs):
+        if responses:
+            return responses.pop(0), [], object()
+        raise TypeError("missing judge credentials")
+
+    monkeypatch.setattr("decision_quality.eval_runner.call_llm_text", fake_call)
+    result = run_case(case, judge=True)
+
+    assert result["deterministic"]["passed"] is True
+    assert result["judge"]["passed"] is False
+    assert result["judge"]["error"]["type"] == "TypeError"
 
 
 def test_build_solver_payload_keeps_null_path_ref_without_content():

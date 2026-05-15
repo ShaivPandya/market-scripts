@@ -124,7 +124,14 @@ def test_parse_decision_quality_normalizes_common_llm_aliases():
         "implication": "The AI memory-cycle thesis is not confirming.",
     }
     raw["evidence_for"] = [{"summary": "HBM demand supports the thesis.", "source": "dossier"}]
-    raw["evidence_against"] = [{"summary": "Memory cycles can reverse quickly.", "source": "dossier"}]
+    raw["evidence_against"] = [{"summary": "Memory cycles can reverse quickly.", "source_ref": "dossier"}]
+    raw["price_action_read"] = {
+        "what_price_did": "Closed above key moving averages.",
+        "what_it_implies": "Price confirms the thesis.",
+        "confirms_thesis": "Yes - price action supports the thesis.",
+        "missing_data": "Volume confirmation.",
+    }
+    raw["conviction"]["raw_target_weight"] = "not specified"
     raw["sizing_context"]["sizing_delta"] = {
         "direction": "add",
         "amount": 200,
@@ -138,8 +145,31 @@ def test_parse_decision_quality_normalizes_common_llm_aliases():
     assert errors == []
     assert dq is not None
     assert dq.invalidation.metric_or_event == "Revenue growth and gross margin"
+    assert dq.evidence_against[0].source_refs == ["dossier"]
+    assert dq.price_action_read.confirms_thesis is True
+    assert dq.price_action_read.data_needed == ["Volume confirmation."]
+    assert dq.conviction.raw_target_weight is None
     assert dq.sizing_context.sizing_delta.direction == "increase"
     assert dq.sizing_context.sizing_delta.unit == "bps"
+
+
+def test_parse_decision_quality_uses_first_invalidation_when_model_returns_list():
+    raw = _valid_dq()
+    raw["invalidation"] = [
+        {
+            "observable": "Observable metric",
+            "metric_or_event": "Metric event",
+            "threshold": "Threshold",
+            "timeframe": "Timeframe",
+            "implication": "Implication",
+        }
+    ]
+
+    dq, errors = parse_decision_quality(raw)
+
+    assert errors == []
+    assert dq is not None
+    assert dq.invalidation.observable == "Observable metric"
 
 
 def test_missing_catalyst_downgrades_actionable_decision():

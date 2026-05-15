@@ -6,6 +6,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +74,15 @@ FUTURE_TEXT_MARKERS = (
     "by late march",
     "completed the hedge exit",
 )
+
+
+def _load_local_env() -> None:
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(ROOT / ".env")
+    os.environ.setdefault("AGENT_GOVERNANCE_AUDIT_ENABLED", "false")
 
 
 @dataclass(frozen=True)
@@ -424,6 +434,10 @@ def _normalize_judge_result(value: Any) -> dict[str, Any]:
     }
 
 
+def _llm_error(exc: Exception) -> dict[str, str]:
+    return {"type": type(exc).__name__, "message": str(exc)}
+
+
 def run_judge(
     *,
     case: EvalCase,
@@ -480,16 +494,50 @@ def run_case(
         result.update({"dry_run": True, "solver_prompt": prompt})
         return result
 
-    text, citations, _response = call_llm_text(
-        prompt=prompt,
-        model=model,
-        max_tokens=6000,
-        system=_decision_quality_contract(),
-        provider=provider,
-        enable_web_search=False,
-        json_schema=decision_quality_schema(),
-        json_schema_name="decision_quality_eval_solver",
-    )
+    try:
+        text, citations, _response = call_llm_text(
+            prompt=prompt,
+            model=model,
+            max_tokens=6000,
+            system=_decision_quality_contract(),
+            provider=provider,
+            enable_web_search=False,
+            json_schema=decision_quality_schema(),
+            json_schema_name="decision_quality_eval_solver",
+        )
+    except Exception as exc:
+        result.update(
+            {
+                "dry_run": False,
+                "raw_solver_output": None,
+                "solver_error": _llm_error(exc),
+                "citations": [],
+                "candidate": None,
+                "parse_errors": [f"solver call failed: {type(exc).__name__}: {exc}"],
+                "decision_quality_gate": {
+                    "status": "invalid",
+                    "original_action": "watch",
+                    "final_action": "watch",
+                    "original_recommendation_status": "clear",
+                    "final_recommendation_status": "review_required",
+                    "confidence_cap": 0.0,
+                    "reasons": [
+                        {
+                            "code": "INVALID_DECISION_QUALITY",
+                            "severity": "blocker",
+                            "message": "Solver LLM call failed before producing decision_quality.",
+                        }
+                    ],
+                },
+                "deterministic": {
+                    "score": 0.0,
+                    "passed": False,
+                    "checks": [_check("solver_call", False, f"{type(exc).__name__}: {exc}")],
+                },
+            }
+        )
+        return result
+
     parsed = parse_json_text(text)
     raw_decision_quality = (
         parsed.get("decision_quality") if isinstance(parsed, dict) and "decision_quality" in parsed else parsed
@@ -505,6 +553,7 @@ def run_case(
     result.update(
         {
             "dry_run": False,
+            "raw_solver_output": text,
             "citations": [{"title": title, "url": url} for title, url in citations],
             "candidate": candidate.model_dump(mode="json") if candidate else None,
             "parse_errors": parse_errors,
@@ -513,14 +562,24 @@ def run_case(
         }
     )
     if judge and candidate is not None:
-        result["judge"] = run_judge(
-            case=case,
-            payload=payload,
-            candidate=candidate,
-            model=model,
-            provider=provider,
-            fail_under=fail_under_judge,
-        )
+        try:
+            result["judge"] = run_judge(
+                case=case,
+                payload=payload,
+                candidate=candidate,
+                model=model,
+                provider=provider,
+                fail_under=fail_under_judge,
+            )
+        except Exception as exc:
+            result["judge"] = {
+                "passed": False,
+                "error": _llm_error(exc),
+                "total": 0.0,
+                "leakage_detected": False,
+                "fatal_issues": [f"judge call failed: {type(exc).__name__}: {exc}"],
+                "notes": "Judge LLM call failed before producing rubric scores.",
+            }
     return result
 
 
@@ -539,7 +598,11 @@ def build_report(
     deterministic_failures = [
         result
         for result in results
-        if not result.get("dry_run") and (result.get("deterministic") or {}).get("score", 0) < fail_under_deterministic
+        if not result.get("dry_run")
+        and (
+            not (result.get("deterministic") or {}).get("passed")
+            or (result.get("deterministic") or {}).get("score", 0) < fail_under_deterministic
+        )
     ]
     judge_failures = [
         result
@@ -575,6 +638,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _load_local_env()
     args = parse_args(argv)
     cases = load_cases(
         case_selectors=args.case or None,

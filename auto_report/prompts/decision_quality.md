@@ -1,19 +1,33 @@
 # Decision Quality Contract
 
 Return a structured `decision_quality` object. Do not narrate a checklist or add conversational filler.
+Use the exact field names below. Do not rename fields.
 
 The object must make the decision testable:
 
 - `simple_thesis`: one plain-English sentence.
-- `mispricing`: what consensus believes, what the variant view is, what is priced, and why consensus is wrong.
-- `catalyst_or_reason_now`: the event or condition, expected timeframe, why now, and source evidence.
-- `invalidation`: observable, metric/event, threshold, timeframe, and implication. Vague statements like "if the thesis is wrong" are invalid.
-- `evidence_for` and `evidence_against`: concrete claims with support and source references.
-- `price_action_read`: what price did, what it implies, whether it confirms the thesis, and what data is missing.
+- `opportunity_type`: one of `undervalued_asset`, `regime_shift`, `reflexive_process`, `unsustainable_process`, `forced_liquidation`, `policy_inflection`, `quality_compounder`, `cyclical_upturn`, `crowded_narrative_avoid`, `unclear`.
+- `mispricing`: use `consensus_view`, `variant_view`, `pricing_evidence`, `why_consensus_is_wrong`.
+- `catalyst_or_reason_now`: use `event_or_condition`, `expected_timeframe`, `why_now`, `source_evidence`.
+- `invalidation`: use `observable`, `metric_or_event`, `threshold`, `timeframe`, `implication`. Vague statements like "if the thesis is wrong" are invalid.
+- `evidence_for` and `evidence_against`: each item must use `claim`, `support`, `source_refs`.
+- `price_action_read`: use `observed_behavior`, `interpretation`, `confirms_thesis`, `data_needed`. `confirms_thesis` must be `true`, `false`, or `null`, not a sentence.
 - `actionability.status`: one of `actionable`, `missing_inputs`, `blocked_by_policy`, `watch_only`, `do_nothing`.
 - `recommended_action`: one of `buy`, `add`, `short`, `sell`, `trim`, `reduce`, `exit`, `hedge`, `rebalance`, `hold`, `watch`, `research`, `avoid`, `do_nothing`.
-- `conviction`: `level` is 1-5, `max_level` is always 5, and conviction is not the same thing as confidence.
-- `sizing_context`: include prose context and structured `sizing_delta` with direction, amount, unit, basis, and condition.
-- `trade_after_trade`: what to do if right, what to do if wrong, and the next review trigger.
+- `recommended_action` is the broad investment decision, not the mechanical trade verb. Do not use `add` just because sizing is increasing an existing position. Use `short` for a bearish thesis or a trade that profits from an asset, currency, credit, or spread complex deteriorating, even if the implementation is buying CDS protection or put options. Use `buy` for a bullish long thesis. Express press/add/trim sizing in `sizing_delta`.
+- `expression`: use `primary`, `instrument_type`, `directness`, `alternatives`, `follow_on`.
+- `conviction`: use `level`, `max_level`, `raw_target_weight`, `upgrade_condition`. `level` is 1-5, `max_level` is always 5, and conviction is not the same thing as confidence.
+- `confidence`: number from 0 to 1, or `null` only if confidence cannot be estimated.
+- `confidence_reason`: plain-English confidence calibration.
+- `sizing_context`: use `starting_size`, `add_conditions`, `liquidity_constraints`, `portfolio_constraints`, and `sizing_delta`.
+- `sizing_delta`: use `direction`, `amount`, `unit`, `basis`, `condition`.
+- `trade_after_trade`: use `if_right`, `if_wrong`, `next_review_trigger`.
+
+`actionability.status` must match the action:
+
+- Use `actionable` only for `buy`, `add`, `short`, `sell`, `trim`, `reduce`, `exit`, `hedge`, or `rebalance`.
+- Use `do_nothing` for `avoid` or `do_nothing`.
+- Use `watch_only` for `hold` or `watch`.
+- Use `missing_inputs` for `research`.
 
 If inputs are missing, put them in `actionability.missing_inputs`. Do not invent facts to make a decision look complete.

@@ -201,12 +201,20 @@ def _is_weekday_morning_et() -> bool:
 
 def load_portfolio():
     """Load portfolio positions from the ontology runtime and return a DataFrame."""
-    from ontology.runtime_read_service import OntologyRuntimeReadService
+    import pandas as pd
 
-    df = OntologyRuntimeReadService().positions_df()
+    from auto_report.report_state import load_cached_positions
+
+    cached_positions = load_cached_positions()
+    if cached_positions is not None:
+        df = pd.DataFrame(cached_positions)
+    else:
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+
+        df = OntologyRuntimeReadService().positions_df()
     df["ticker"] = df["ticker"].str.strip().str.upper()
     df["direction"] = df["direction"].fillna("").str.strip().str.lower()
-    df["conviction"] = df["conviction"].fillna(3).astype(int)
+    df["conviction"] = pd.to_numeric(df["conviction"], errors="coerce").fillna(3).astype(int)
     return df
 
 

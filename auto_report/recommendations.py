@@ -194,9 +194,12 @@ def _latest_first_class_risk_context(ticker: str | None = None) -> dict[str, Any
     except Exception:
         return {}
 
-    ticker_norm = str(ticker or "").strip().upper()
-    position = get_latest_position_risk(ticker_norm) if ticker_norm else None
-    portfolio = get_latest_portfolio_risk()
+    try:
+        ticker_norm = str(ticker or "").strip().upper()
+        position = get_latest_position_risk(ticker_norm) if ticker_norm else None
+        portfolio = get_latest_portfolio_risk()
+    except Exception:
+        return {}
     return {
         "position": position,
         "portfolio": portfolio,
@@ -1099,6 +1102,12 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
+    import os
+
+    if (os.getenv("AUTO_REPORT_SKIP_LOCAL_PERSISTENCE") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        log.info("Skipping local recommendation persistence; report sync will persist in the app.")
+        return []
+
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
     from ontology.object_service import OntologyObjectService
     from ontology.policy import actor_to_dict, system_actor

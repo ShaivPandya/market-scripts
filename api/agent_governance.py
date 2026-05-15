@@ -28,6 +28,7 @@ DEFAULT_PORTFOLIO_SCOPE = "default-portfolio"
 REDACTION_POLICY = "agent_dlp_v1"
 EGRESS_POLICY_VERSION = "agent_provider_egress_v1"
 SUPPORTED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 
 
 class AgentGovernanceError(RuntimeError):
@@ -388,7 +389,7 @@ def _model_gateway_decision(
 ) -> ModelGatewayDecision:
     policy: dict[str, Any]
     try:
-        from api.llm_settings import get_gateway_policy_setting
+        from api.llm_settings import default_gateway_policy, get_gateway_policy_setting
     except Exception:
         policy = {
             "private_egress_mode": "allow_with_warning",
@@ -397,7 +398,10 @@ def _model_gateway_decision(
             "denied_rules": [],
         }
     else:
-        policy = get_gateway_policy_setting()
+        try:
+            policy = get_gateway_policy_setting()
+        except Exception:
+            policy = default_gateway_policy()
 
     provider_lifecycle = dict(policy.get("provider_lifecycle") or {})
     model_lifecycle = dict(policy.get("model_lifecycle") or {})
@@ -758,6 +762,16 @@ def _record_audit(
     error: str | None = None,
     fail_closed: bool = False,
 ) -> None:
+    if not fail_closed and os.getenv("AGENT_GOVERNANCE_AUDIT_ENABLED", "true").strip().lower() in _FALSE_VALUES:
+        return
+    if not fail_closed:
+        try:
+            from api.postgres import database_url, use_postgres_state
+
+            if use_postgres_state() and database_url() is None:
+                return
+        except Exception:
+            pass
     try:
         from api.audit import emit_audit_event
 

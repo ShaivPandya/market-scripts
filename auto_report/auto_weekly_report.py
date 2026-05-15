@@ -258,16 +258,25 @@ def _build_system_message(last_week_summary: str | None) -> str:
 
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
-    from ontology.runtime_read_service import OntologyRuntimeReadService
+    from auto_report.report_state import load_cached_positions
 
     tickers: list[str] = []
-    try:
-        for row in OntologyRuntimeReadService().positions():
+    cached_positions = load_cached_positions()
+    if cached_positions is not None:
+        for row in cached_positions:
             t = str(row.get("ticker", "")).strip()
             if t:
                 tickers.append(t)
-    except Exception as e:
-        log.warning("Failed to read positions from ontology: %s", e)
+    else:
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+
+        try:
+            for row in OntologyRuntimeReadService().positions():
+                t = str(row.get("ticker", "")).strip()
+                if t:
+                    tickers.append(t)
+        except Exception as e:
+            log.warning("Failed to read positions from ontology: %s", e)
 
     theses: dict[str, str | None] = {}
     for ticker in tickers:
@@ -314,10 +323,16 @@ def collect_thesis_data() -> dict:
     results["theses"] = load_theses()
 
     # 2. Load portfolio positions
-    from ontology.runtime_read_service import OntologyRuntimeReadService
+    from auto_report.report_state import load_cached_positions
     from portfolio.position_groups import group_summaries
 
-    results["portfolio"] = [r for r in OntologyRuntimeReadService().positions() if r.get("ticker")]
+    cached_positions = load_cached_positions()
+    if cached_positions is not None:
+        results["portfolio"] = [r for r in cached_positions if r.get("ticker")]
+    else:
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+
+        results["portfolio"] = [r for r in OntologyRuntimeReadService().positions() if r.get("ticker")]
     results["portfolio_groups"] = group_summaries(results["portfolio"])
 
     tickers = [p["ticker"] for p in results["portfolio"]]

@@ -205,6 +205,16 @@ def _dq_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _dq_first_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                return item
+    return {}
+
+
 def _dq_pick(data: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = data.get(key)
@@ -221,6 +231,21 @@ def _dq_strings(value: Any) -> list[str]:
     return [text] if (text := _dq_text(value)) else []
 
 
+def _dq_bool_or_none(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = _dq_text(value).lower()
+    if normalized.startswith(("yes", "true", "confirmed", "supports")):
+        return True
+    if normalized.startswith(("no", "false", "not confirmed", "does not", "against")):
+        return False
+    return None
+
+
 def _dq_evidence_items(value: Any) -> list[dict[str, Any]]:
     items = value if isinstance(value, list) else ([value] if value not in (None, "", {}, []) else [])
     normalized: list[dict[str, Any]] = []
@@ -228,7 +253,7 @@ def _dq_evidence_items(value: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             claim = _dq_text(_dq_pick(item, "claim", "summary", "title", "point", "finding", "evidence"))
             support = _dq_text(_dq_pick(item, "support", "detail", "rationale", "summary", "evidence", "claim"))
-            sources = _dq_strings(_dq_pick(item, "source_refs", "sources", "source", "url", "citation"))
+            sources = _dq_strings(_dq_pick(item, "source_refs", "source_ref", "sources", "source", "url", "citation"))
         else:
             claim = _dq_text(item)
             support = claim
@@ -321,6 +346,7 @@ def _dq_sizing_delta(value: Any) -> dict[str, Any]:
         "target_weight": "target_weight",
         "current": "current_position",
         "current_position": "current_position",
+        "current_weight": "current_position",
         "position": "current_position",
         "risk": "risk_budget",
         "risk_budget": "risk_budget",
@@ -358,6 +384,13 @@ def _dq_confidence(value: Any) -> float | None:
     return max(0, min(1, confidence))
 
 
+def _dq_float_or_none(value: Any) -> float | None:
+    try:
+        return None if value in (None, "") else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def coerce_decision_quality_input(value: Any) -> Any:
     """Normalize common LLM schema variants before strict validation."""
     if not isinstance(value, dict):
@@ -365,7 +398,7 @@ def coerce_decision_quality_input(value: Any) -> Any:
 
     recommended_action = _dq_pick(value, "recommended_action", "action")
     catalyst = _dq_dict(_dq_pick(value, "catalyst_or_reason_now", "catalyst", "reason_now"))
-    invalidation = _dq_dict(_dq_pick(value, "invalidation", "kill_condition", "invalidation_condition"))
+    invalidation = _dq_first_dict(_dq_pick(value, "invalidation", "kill_condition", "invalidation_condition"))
     price_action = _dq_dict(_dq_pick(value, "price_action_read", "price_action", "technical_confirmation"))
     conviction = _dq_pick(value, "conviction", "conviction_context")
     conviction_data = {"level": conviction} if isinstance(conviction, int) else _dq_dict(conviction)
@@ -391,10 +424,23 @@ def coerce_decision_quality_input(value: Any) -> Any:
                 _dq_pick(_dq_dict(value.get("mispricing")), "variant_view", "variant", "differentiated_view")
             ),
             "pricing_evidence": _dq_text(
-                _dq_pick(_dq_dict(value.get("mispricing")), "pricing_evidence", "pricing", "valuation", "evidence")
+                _dq_pick(
+                    _dq_dict(value.get("mispricing")),
+                    "pricing_evidence",
+                    "what_is_priced",
+                    "pricing",
+                    "valuation",
+                    "evidence",
+                )
             ),
             "why_consensus_is_wrong": _dq_text(
-                _dq_pick(_dq_dict(value.get("mispricing")), "why_consensus_is_wrong", "why_wrong", "edge")
+                _dq_pick(
+                    _dq_dict(value.get("mispricing")),
+                    "why_consensus_is_wrong",
+                    "why_consensus_may_be_wrong",
+                    "why_wrong",
+                    "edge",
+                )
             ),
         },
         "catalyst_or_reason_now": {
@@ -420,11 +466,15 @@ def coerce_decision_quality_input(value: Any) -> Any:
         "evidence_against": _dq_evidence_items(_dq_pick(value, "evidence_against", "disconfirming_evidence", "risks")),
         "price_action_read": {
             "observed_behavior": _dq_text(
-                _dq_pick(price_action, "observed_behavior", "observed", "behavior", "price_action")
+                _dq_pick(price_action, "observed_behavior", "what_price_did", "observed", "behavior", "price_action")
             ),
-            "interpretation": _dq_text(_dq_pick(price_action, "interpretation", "read", "meaning")),
-            "confirms_thesis": _dq_pick(price_action, "confirms_thesis", "confirms", "supports_thesis"),
-            "data_needed": _dq_strings(_dq_pick(price_action, "data_needed", "missing", "needed")),
+            "interpretation": _dq_text(
+                _dq_pick(price_action, "interpretation", "what_it_implies", "read", "meaning")
+            ),
+            "confirms_thesis": _dq_bool_or_none(
+                _dq_pick(price_action, "confirms_thesis", "confirms", "supports_thesis")
+            ),
+            "data_needed": _dq_strings(_dq_pick(price_action, "data_needed", "missing_data", "missing", "needed")),
         },
         "actionability": _dq_actionability(
             _dq_pick(value, "actionability", "actionability_status"), recommended_action
@@ -440,7 +490,9 @@ def coerce_decision_quality_input(value: Any) -> Any:
         "conviction": {
             "level": conviction_data.get("level"),
             "max_level": conviction_data.get("max_level") or 5,
-            "raw_target_weight": conviction_data.get("raw_target_weight") or conviction_data.get("target_weight"),
+            "raw_target_weight": _dq_float_or_none(
+                conviction_data.get("raw_target_weight") or conviction_data.get("target_weight")
+            ),
             "upgrade_condition": _dq_text(_dq_pick(conviction_data, "upgrade_condition", "upgrade", "path_to_5")),
         },
         "confidence": _dq_confidence(value.get("confidence")),
@@ -470,4 +522,9 @@ def parse_decision_quality(value: Any) -> tuple[DecisionQuality | None, list[str
     try:
         return DecisionQuality.model_validate(coerce_decision_quality_input(value)), []
     except ValidationError as exc:
-        return None, [error["msg"] for error in exc.errors()]
+        errors: list[str] = []
+        for error in exc.errors():
+            loc = ".".join(str(item) for item in error.get("loc", ()))
+            message = str(error.get("msg") or "validation error")
+            errors.append(f"{loc}: {message}" if loc else message)
+        return None, errors

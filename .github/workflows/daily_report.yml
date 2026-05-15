@@ -110,6 +110,7 @@ jobs:
           SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RUN: "1"
+          AUTO_REPORT_SKIP_LOCAL_PERSISTENCE: "1"
         run: python -m auto_report.auto_daily_report
 
       - name: Upload outputs

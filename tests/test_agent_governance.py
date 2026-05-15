@@ -84,6 +84,56 @@ def test_prepare_model_egress_allows_private_payload_with_manifest_and_budget():
     assert budget.model_calls == 1
 
 
+def test_prepare_model_egress_uses_default_gateway_policy_when_settings_unavailable(monkeypatch):
+    from api import llm_settings
+
+    def raise_settings_unavailable():
+        raise RuntimeError("DATABASE_URL is required for Postgres-backed state.")
+
+    monkeypatch.setattr(llm_settings, "get_gateway_policy_setting", raise_settings_unavailable)
+
+    _kwargs, manifest = prepare_model_egress(
+        provider="anthropic",
+        purpose="agent_chat",
+        stream_kwargs={
+            "model": "claude-test",
+            "max_tokens": 256,
+            "system": "system instructions",
+            "messages": [{"role": "user", "content": "Analyze my portfolio positions."}],
+        },
+        actor=agent_actor(admin_actor()),
+    )
+
+    assert manifest["provider_egress"] == "external_allowed_raw_private"
+    assert manifest["decision"] == "allowed_with_warning"
+    assert manifest["decision_reason"] == "private_external_egress_allowed_with_warning"
+
+
+def test_prepare_model_egress_can_skip_noncritical_audit(monkeypatch):
+    from api import audit
+
+    monkeypatch.setenv("AGENT_GOVERNANCE_AUDIT_ENABLED", "false")
+
+    def fail_audit(*_args, **_kwargs):
+        raise AssertionError("noncritical audit should be skipped")
+
+    monkeypatch.setattr(audit, "emit_audit_event", fail_audit)
+
+    _kwargs, manifest = prepare_model_egress(
+        provider="anthropic",
+        purpose="agent_chat",
+        stream_kwargs={
+            "model": "claude-test",
+            "max_tokens": 256,
+            "system": "system instructions",
+            "messages": [{"role": "user", "content": "Analyze my portfolio positions."}],
+        },
+        actor=agent_actor(admin_actor()),
+    )
+
+    assert manifest["decision"] == "allowed_with_warning"
+
+
 def test_prepare_model_egress_public_payload_is_allowed():
     _kwargs, manifest = prepare_model_egress(
         provider="openai",

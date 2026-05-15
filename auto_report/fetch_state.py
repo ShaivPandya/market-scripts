@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fetch live ontology portfolio positions from the deployed API.
 
-This is now a runtime validation helper. The reports read ontology/Postgres
-state directly, so this command no longer writes a local SQLite seed database.
+This validates API access and writes a local JSON handoff for report generation.
+The report sync step persists finished outputs back into the app.
 
 Usage:
     python -m auto_report.fetch_state
@@ -14,6 +14,8 @@ Required env:
 
 Optional GitHub Actions integration:
     GITHUB_ENV            — when present, TALISMAN_BOOK_SIZE is exported for later steps
+    AUTO_REPORT_PORTFOLIO_STATE_PATH
+                          — when present, portfolio state is written to this path
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ import os
 import sys
 
 import requests
+
+from auto_report.report_state import export_portfolio_state_path_for_github_actions, write_portfolio_state
 
 
 def _build_headers() -> dict[str, str]:
@@ -112,21 +116,19 @@ def fetch_and_seed() -> int:
         book_size = None
         print(f"WARNING: Could not fetch portfolio book size: {exc}", file=sys.stderr)
     if book_size is not None:
-        from api.portfolio_settings import set_portfolio_book_size
-
-        try:
-            set_portfolio_book_size(book_size)
-            _export_book_size_for_github_actions(book_size)
-            print(f"Fetched portfolio book size from app: ${book_size:,.0f}.")
-        except ValueError as exc:
-            print(f"WARNING: Ignoring invalid portfolio book size: {exc}", file=sys.stderr)
+        _export_book_size_for_github_actions(book_size)
+        print(f"Fetched portfolio book size from app: ${book_size:,.0f}.")
 
     all_positions: list[dict] = data["positions"]
+    state_path = write_portfolio_state({"positions": all_positions, "book_size": book_size})
+    export_portfolio_state_path_for_github_actions(state_path)
+
     positions = [p for p in all_positions if p.get("role", "position") == "position"]
     hedges = [p for p in all_positions if p.get("role") == "hedge"]
 
     total = len(positions) + len(hedges)
     print(f"Fetched {len(positions)} position(s) and {len(hedges)} hedge(s) from ontology runtime.")
+    print(f"Wrote report portfolio state to {state_path}.")
 
     if total == 0:
         print("WARNING: No positions returned from API; report generation will still block.", file=sys.stderr)
