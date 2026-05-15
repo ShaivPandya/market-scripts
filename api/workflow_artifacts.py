@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from api.audit import emit_audit_event
+from api.generated_approval_filters import should_suppress_generated_review_approval
 from ontology.command_service import OntologyCommandContext, OntologyCommandService, OntologyCommandValidationError
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
@@ -188,6 +189,8 @@ def persist_artifacts(
                 provenance=provenance_id,
             )
             if not binding.action_id:
+                continue
+            if should_suppress_generated_review_approval(binding.action_id, payload, source_type=context.source_type):
                 continue
             try:
                 command_service.propose_action(

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
 
+from api.generated_approval_filters import should_suppress_generated_review_approval
 from ontology.models import EntityType
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
@@ -475,16 +476,20 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
     description = f"Continuous optimizer: {alert['change_summary']}"
     if rationale:
         description = f"{description}\n\nEvidence: {rationale}"
+    payload = {
+        "ticker": ticker,
+        "action_type": action_type,
+        "description": description,
+        "urgency": urgency,
+    }
+    if should_suppress_generated_review_approval("create_action_item", payload, source_type="workflow"):
+        return None
+
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
     approval = OntologyCommandService().propose_action(
         "create_action_item",
-        {
-            "ticker": ticker,
-            "action_type": action_type,
-            "description": description,
-            "urgency": urgency,
-        },
+        payload,
         OntologyCommandContext(
             actor=system_actor("continuous_optimizer"),
             source_type="workflow",

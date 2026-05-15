@@ -294,7 +294,7 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
   const counts = sourceHealth.counts ?? {}
   const domains = sourceHealth.domains ?? []
   return (
-    <section className="theme-surface mb-6 rounded-xl p-4">
+    <section className="theme-surface mt-6 rounded-xl p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-app">
           <Database size={14} className="text-blue-500" />
@@ -776,8 +776,6 @@ export function Workspace() {
         />
       </div>
 
-      {data.source_health && <SourceHealthPanel sourceHealth={data.source_health} />}
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
@@ -1187,6 +1185,8 @@ export function Workspace() {
           No pending items. Run a workflow or chat with the agent to get started.
         </div>
       )}
+
+      {data.source_health && <SourceHealthPanel sourceHealth={data.source_health} />}
       <Dialog
         open={approvalReview !== null}
         onOpenChange={open => {

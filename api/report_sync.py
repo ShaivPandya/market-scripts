@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from api.generated_approval_filters import should_suppress_generated_review_approval
 from auto_report.recommendations import persist_recommendations, stable_hash, validate_recommendations_payload
 from ontology.policy import actor_to_dict, system_actor
 
@@ -27,7 +28,12 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _propose_report_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
+def _propose_report_action(
+    action_id: str, payload: dict[str, Any], *, source_id: str, reason: str
+) -> dict[str, Any] | None:
+    if should_suppress_generated_review_approval(action_id, payload, source_type="workflow"):
+        return None
+
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
     return OntologyCommandService().propose_action(
@@ -70,7 +76,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
             ticker_s = str(ticker).strip().upper()
             if not ticker_s:
                 continue
-            _propose_report_action(
+            if _propose_report_action(
                 "create_action_item",
                 {
                     "description": f"Review daily report flag for {ticker_s} ({as_of})",
@@ -80,14 +86,14 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
                 },
                 source_id=report_id,
                 reason=f"Daily report flagged {ticker_s} ({as_of})",
-            )
-            count += 1
+            ):
+                count += 1
     thesis = _as_dict(summary.get("thesis_monitoring"))
     for ticker in _as_list(thesis.get("positions_needing_reassessment")):
         ticker_s = str(ticker).strip().upper()
         if not ticker_s:
             continue
-        _propose_report_action(
+        if _propose_report_action(
             "create_action_item",
             {
                 "description": f"Reassess thesis after {report_type} report for {ticker_s} ({as_of})",
@@ -97,8 +103,8 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
             },
             source_id=report_id,
             reason=f"{report_type.title()} report thesis reassessment for {ticker_s} ({as_of})",
-        )
-        count += 1
+        ):
+            count += 1
     return count
 
 

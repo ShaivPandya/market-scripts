@@ -9,6 +9,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from api.generated_approval_filters import should_suppress_generated_review_approval
+
 OPS = {
     ">": operator.gt,
     ">=": operator.ge,
@@ -740,17 +742,23 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                     source_id=source_id,
                     reason=f"Watch trigger {trigger_id} fired",
                 )
-                propose_action(
+                action_item_payload = {
+                    "description": _action_description(trigger, result),
+                    "action_type": "review",
+                    "ticker": trigger.get("ticker"),
+                    "urgency": "high",
+                }
+                if not should_suppress_generated_review_approval(
                     "create_action_item",
-                    {
-                        "description": _action_description(trigger, result),
-                        "action_type": "review",
-                        "ticker": trigger.get("ticker"),
-                        "urgency": "high",
-                    },
-                    source_id=source_id,
-                    reason=f"Create action item for fired watch trigger {trigger_id}",
-                )
+                    action_item_payload,
+                    source_type="workflow",
+                ):
+                    propose_action(
+                        "create_action_item",
+                        action_item_payload,
+                        source_id=source_id,
+                        reason=f"Create action item for fired watch trigger {trigger_id}",
+                    )
             else:
                 propose_action(
                     "update_watch_trigger_check",

@@ -88,8 +88,8 @@ def test_monitor_fired_source_id_has_single_trigger_prefix_and_fingerprint(monke
 
     expected_source_id = f"watch_trigger:abc:{monitor._result_fingerprint(result)}"
     assert summary == {"checked": 1, "fired": 1, "skipped": 0, "errors": 0}
-    assert [call["action_id"] for call in calls] == ["fire_watch_trigger", "create_action_item"]
-    assert [call["source_id"] for call in calls] == [expected_source_id, expected_source_id]
+    assert [call["action_id"] for call in calls] == ["fire_watch_trigger"]
+    assert [call["source_id"] for call in calls] == [expected_source_id]
     assert "watch_trigger:watch_trigger:" not in expected_source_id
 
 
