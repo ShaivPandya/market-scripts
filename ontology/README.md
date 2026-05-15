@@ -184,7 +184,9 @@ Important conventions:
 - Decision schemas include `Recommendation`, `Scenario`, `TradeProposal`,
   `Approval`, `ActionRun`, `ExecutedAction`, `AuditEvent`, `SourceRecord`,
   `ObjectVersionRef`, `RiskMetric`, `InvestmentPolicy`, and
-  `PolicyGateResult`.
+  `PolicyGateResult`. New forward-looking decision workflows should use
+  `CourseOfAction`; `Recommendation` and `TradeProposal` remain registered for
+  compatibility with existing producers.
 
 When adding a node or relation type, update the Pydantic schema, identity
 expectations, relation registry, schema definitions, ingestion/query logic, and
@@ -217,6 +219,29 @@ Report sync, workflow artifacts, and approval application should use
 `decision_writeback.py` or `OntologyObjectService` for ontology-backed decision
 artifacts.
 
+## Course-Of-Action Lifecycle
+
+`CourseOfAction` is the primary ontology object for forward-looking investment
+decision support. It models a proposed or comparable action such as `hold`,
+`watch`, `buy`, `add`, `sell`, `trim`, `exit`, `short`, `cover`, or `rebalance`.
+Inbound `reduce` is normalized to `trim`; `hedge` is intentionally not part of
+the COA action vocabulary.
+
+Course-of-action records may link to accounts, portfolios, positions,
+instruments, theses, catalysts, scenarios, risk snapshots, evidence, rationale,
+dissent, simulated outcomes, approvals, and action runs. The schema supports
+side-by-side comparison through `CourseOfActionComparison` plus include/select
+relations without requiring execution. Scenario assumptions and simulated
+outcomes are explicit ontology objects so assumptions, results, evidence, and
+provenance can be audited independently.
+
+The governed action boundary is unchanged. Creating, comparing, or simulating a
+COA records decision support; it does not execute trades or mutate portfolio
+state. Applying a COA requires the existing approval/action path:
+`CourseOfAction -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef`.
+All COA objects and relations are governed ontology writes and require
+provenance or action/approval/source lineage at the write boundary.
+
 Safe automatic records:
 
 - `ReportRun`, `WorkflowRun`, raw `WorkflowArtifact`, `SourceRecord`,
@@ -232,9 +257,13 @@ Approval-backed records:
 - Workflow/report artifacts that create or alter user-visible research,
   process, portfolio, thesis, watch, action item, or note state.
 
-The target decision lineage is:
+The legacy target decision lineage is:
 
 `ReportRun/WorkflowRun -> SourceRecord/WorkflowArtifact -> Recommendation -> RiskMetric/Scenario/PolicyGateResult/InvestmentPolicy -> TradeProposal -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef -> AuditEvent`.
+
+The COA target lineage is:
+
+`ReportRun/WorkflowRun -> SourceRecord/WorkflowArtifact -> CourseOfAction -> Scenario/ScenarioAssumption/SimulatedOutcome/Rationale/Evidence/Dissent/PolicyGateResult -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef -> AuditEvent`.
 
 Cutover runtime invariants:
 

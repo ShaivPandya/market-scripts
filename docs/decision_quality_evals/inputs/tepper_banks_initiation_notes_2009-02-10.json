@@ -1,0 +1,14 @@
+{
+  "as_of_date": "2009-02-10",
+  "decision_context": "Historical distressed bank buying case",
+  "human_initiation_rationale": "Buy large U.S. bank securities because the market was pricing nationalization or collapse, while the Treasury plan showed the government intended to inject capital and stand behind the banks.",
+  "selected_inputs": [
+    "Treasury Financial Stability Plan",
+    "bank securities trading at panic prices",
+    "fear of nationalization and equity wipeout",
+    "policy commitment to preferred-stock capital injections",
+    "ability to express the trade across common equity, preferred shares, and debt"
+  ],
+  "key_lesson": "A model should recognize when a written policy backstop changes the probability distribution and creates a distressed buying opportunity, while still explicitly respecting nationalization and dilution risk.",
+  "human_notes": "Add as a historical high-conviction buy case. The trade also tests whether the model can distinguish bad price action caused by forced panic from bad price action that invalidates a thesis."
+}

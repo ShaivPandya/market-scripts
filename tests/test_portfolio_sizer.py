@@ -54,6 +54,24 @@ def test_equity_beta_inputs_ignore_non_equity_returns(monkeypatch):
     assert betas_all_by_benchmark["QQQ"].loc["QQQ"] == 1.0
 
 
+def test_sizer_universe_filters_non_equity_positions():
+    meta = pd.DataFrame(
+        {
+            "asset": ["equity", "commodity", "fx", "bond", "equity"],
+            "instrument_type": ["security", "future", "spot_fx", "future", "future"],
+        },
+        index=["NVDA", "BZ=F", "EURUSD=X", "ZN=F", "ES=F"],
+    )
+
+    included, excluded = portfolio_sizer._filter_equity_sizing_universe(
+        meta,
+        ["NVDA", "BZ=F", "EURUSD=X", "ZN=F", "ES=F"],
+    )
+
+    assert included == ["NVDA", "ES=F"]
+    assert excluded == ["BZ=F", "EURUSD=X", "ZN=F"]
+
+
 def test_spot_fx_prices_are_not_double_converted(monkeypatch):
     captured: dict[str, list[str]] = {}
 

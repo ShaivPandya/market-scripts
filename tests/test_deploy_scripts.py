@@ -141,3 +141,119 @@ def test_generic_async_job_defaults_to_smaller_fallback_resources() -> None:
     assert '--cpu="${ASYNC_JOB_CPU:-1}"' in script
     assert '--memory="${ASYNC_JOB_MEMORY:-1Gi}"' in script
     assert '"ASYNC_ANALYZER_COMPLETED_TTL_SECONDS=300"' in script
+
+
+# ---------------------------------------------------------------------------
+# SHA-33: release manifest + release env vars
+# ---------------------------------------------------------------------------
+
+
+def test_backend_deploy_invokes_manifest_generation() -> None:
+    """deploy-backend.sh must call the release manifest generator."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "release_manifest" in script or "release-manifest" in script
+    assert "python -m infra.gcp.release_manifest" in script
+    assert "--image-uri" in script
+    assert "--output" in script
+
+
+def test_backend_deploy_preserves_dirty_tree_guard() -> None:
+    """The dirty-tree deploy guard must remain intact after manifest integration."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "ALLOW_DIRTY" in script
+    assert "Working tree is dirty" in script
+    assert 'git -C "${_repo_root}" diff --quiet' in script
+
+
+def test_backend_deploy_manifest_rollback_refs() -> None:
+    """deploy-backend.sh should attempt to pass prior manifest for rollback refs."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "--prior-manifest" in script
+    assert "release-manifest.json" in script
+
+
+def test_api_deploy_includes_release_env_vars() -> None:
+    """deploy-api.sh must set TALISMAN_RELEASE_* env vars for the health endpoints."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    assert "TALISMAN_RELEASE_GIT_SHA=" in script
+    assert "TALISMAN_RELEASE_GIT_SHA_SHORT=" in script
+    assert "TALISMAN_RELEASE_IMAGE_TAG=" in script
+    assert "TALISMAN_RELEASE_ENVIRONMENT=" in script
+
+
+def test_api_deploy_does_not_expose_secrets_as_release_vars() -> None:
+    """Release env vars must not include any secret references."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    # Find lines with TALISMAN_RELEASE and check none reference secrets
+    for line in script.splitlines():
+        if "TALISMAN_RELEASE" in line:
+            assert "SECRET" not in line.upper(), f"Release var references a secret: {line.strip()}"
+            assert "PASSWORD" not in line.upper(), f"Release var references a password: {line.strip()}"
+            assert "API_KEY" not in line.upper(), f"Release var references an API key: {line.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# SHA-34: deploy smoke hook
+# ---------------------------------------------------------------------------
+
+
+def test_backend_deploy_invokes_smoke_after_api_deploy() -> None:
+    """deploy-backend.sh must run smoke tests after deploying the API."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    # Smoke must appear after deploy-api.sh
+    api_pos = script.index("deploy-api.sh")
+    smoke_pos = script.index("run-backend-smoke.sh")
+    assert smoke_pos > api_pos, "smoke must run after API deploy"
+
+    # Smoke must appear before "Backend deploy complete"
+    complete_pos = script.index("Backend deploy complete")
+    assert smoke_pos < complete_pos, "smoke must run before declaring deploy complete"
+
+
+def test_backend_deploy_supports_smoke_escape_hatch() -> None:
+    """deploy-backend.sh must support RUN_DEPLOY_SMOKE=0."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "RUN_DEPLOY_SMOKE" in script
+    assert "RUN_DEPLOY_SMOKE:-1" in script or "RUN_DEPLOY_SMOKE:-0" in script or "RUN_DEPLOY_SMOKE=0" in script
+
+
+def test_backend_deploy_passes_image_tag_to_smoke() -> None:
+    """deploy-backend.sh should pass EXPECTED_IMAGE_TAG to smoke."""
+    script = (ROOT / "infra/gcp/deploy-backend.sh").read_text()
+
+    assert "EXPECTED_IMAGE_TAG" in script
+
+
+def test_smoke_runner_does_not_pass_secrets_as_cli_args() -> None:
+    """run-backend-smoke.sh must not pass secrets as positional/flag CLI args."""
+    smoke_script = (ROOT / "infra/gcp/run-backend-smoke.sh").read_text()
+
+    for line in smoke_script.splitlines():
+        stripped = line.strip()
+        # Skip comments and blank lines
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Check we never pass secret values as CLI arguments directly
+        if "--smoke-password" in stripped or "--proxy-secret" in stripped:
+            raise AssertionError(f"Secret passed as CLI arg: {stripped}")
+
+
+def test_api_deploy_includes_migration_head_env_var() -> None:
+    """deploy-api.sh must set TALISMAN_RELEASE_MIGRATION_HEAD."""
+    script = (ROOT / "infra/gcp/deploy-api.sh").read_text()
+
+    assert "TALISMAN_RELEASE_MIGRATION_HEAD" in script
+
+
+def test_config_example_includes_smoke_hash_secret() -> None:
+    """config.example.sh must bind AUTH_SMOKE_PASSWORD_HASH for the API."""
+    config = (ROOT / "infra/gcp/config.example.sh").read_text()
+
+    assert "AUTH_SMOKE_PASSWORD_HASH" in config

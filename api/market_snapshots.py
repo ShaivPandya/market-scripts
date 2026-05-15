@@ -18,6 +18,11 @@ from api.snapshot_keys import (
 )
 from api.snapshot_store import write_snapshot_failure, write_snapshot_success
 from equities.sector_metrics.payload import normalize_sector_metrics_payload
+from ontology.sources.source_registry import (
+    attach_source_registry_metadata,
+    source_registry_metadata,
+    source_registry_metadata_for_snapshot,
+)
 
 logger = logging.getLogger("api.market_snapshots")
 
@@ -58,6 +63,23 @@ def _module_status(signal_payload: dict[str, Any], module_name: str) -> tuple[st
     return "error", str(state.get("detail") or "module refresh failed")
 
 
+def _registry_for_module(module_name: str, snapshot_key: str) -> dict[str, Any] | None:
+    return source_registry_metadata_for_snapshot(snapshot_key) or source_registry_metadata(module_name)
+
+
+def _attach_module_status_registry(signal_payload: dict[str, Any]) -> None:
+    status = signal_payload.get("module_status")
+    if not isinstance(status, dict):
+        return
+    for module_name, snapshot_key in _MODULE_SNAPSHOT_KEYS.items():
+        state = status.get(module_name)
+        if not isinstance(state, dict):
+            continue
+        registry = _registry_for_module(module_name, snapshot_key)
+        if registry:
+            state["source_registry"] = registry
+
+
 def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compute and persist daily market/regime snapshots.
 
@@ -80,6 +102,7 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
         raise
 
     signal_payload = serialize_value(signal)
+    _attach_module_status_registry(signal_payload)
     raw_modules = signal_payload.get("raw_modules")
     if not isinstance(raw_modules, dict):
         raw_modules = {}
@@ -90,14 +113,23 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
         payload = raw_modules.get(module_name)
         if module_name == "sector_metrics":
             payload = normalize_sector_metrics_payload(payload)
+        registry = _registry_for_module(module_name, snapshot_key)
         if status == "ok" and isinstance(payload, dict):
+            payload_for_write = attach_source_registry_metadata(payload, snapshot_key=snapshot_key)
             record = write_snapshot_success(
                 snapshot_key,
-                payload,
-                as_of_date=_payload_as_of(payload),
+                payload_for_write,
+                as_of_date=_payload_as_of(payload_for_write),
                 version=SNAPSHOT_SCHEMA_VERSION,
             )
-            results.append({"snapshot_key": snapshot_key, "status": "ok", "as_of": record.as_of_date})
+            results.append(
+                {
+                    "snapshot_key": snapshot_key,
+                    "status": "ok",
+                    "as_of": record.as_of_date,
+                    "source_registry": registry,
+                }
+            )
         else:
             failure_record = write_snapshot_failure(
                 snapshot_key, error or "missing module payload", version=SNAPSHOT_SCHEMA_VERSION
@@ -108,15 +140,24 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
                     "status": "error",
                     "error": error or "missing module payload",
                     "as_of": failure_record.as_of_date if failure_record else None,
+                    "source_registry": registry,
                 }
             )
 
+    signal_payload = attach_source_registry_metadata(signal_payload, snapshot_key=SNAPSHOT_SIGNAL_AGGREGATOR)
     signal_record = write_snapshot_success(
         SNAPSHOT_SIGNAL_AGGREGATOR,
         signal_payload,
         as_of_date=str(signal_payload.get("as_of")) if signal_payload.get("as_of") else None,
         version=SNAPSHOT_SCHEMA_VERSION,
     )
-    results.append({"snapshot_key": SNAPSHOT_SIGNAL_AGGREGATOR, "status": "ok", "as_of": signal_record.as_of_date})
+    results.append(
+        {
+            "snapshot_key": SNAPSHOT_SIGNAL_AGGREGATOR,
+            "status": "ok",
+            "as_of": signal_record.as_of_date,
+            "source_registry": source_registry_metadata_for_snapshot(SNAPSHOT_SIGNAL_AGGREGATOR),
+        }
+    )
 
     return {"snapshots": results}

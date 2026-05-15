@@ -285,6 +285,48 @@ def recommendation_id(identifier: object) -> str:
     return f"recommendation:{slug(identifier)}"
 
 
+def course_of_action_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("course_of_action:"):
+        text = text.split(":", 1)[1]
+    return f"course_of_action:{slug(text)}"
+
+
+def course_of_action_comparison_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("course_of_action_comparison:"):
+        text = text.split(":", 1)[1]
+    return f"course_of_action_comparison:{slug(text)}"
+
+
+def scenario_assumption_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("scenario_assumption:"):
+        text = text.split(":", 1)[1]
+    return f"scenario_assumption:{slug(text)}"
+
+
+def simulated_outcome_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("simulated_outcome:"):
+        text = text.split(":", 1)[1]
+    return f"simulated_outcome:{slug(text)}"
+
+
+def course_of_action_rationale_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("course_of_action_rationale:"):
+        text = text.split(":", 1)[1]
+    return f"course_of_action_rationale:{slug(text)}"
+
+
+def course_of_action_dissent_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("course_of_action_dissent:"):
+        text = text.split(":", 1)[1]
+    return f"course_of_action_dissent:{slug(text)}"
+
+
 def report_run_id(identifier: object) -> str:
     return f"report_run:{slug(identifier)}"
 

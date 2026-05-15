@@ -1,0 +1,36 @@
+{
+  "ticker": "VST",
+  "company_name": "Vistra Corp",
+  "as_of_date": "2025-10-21",
+  "close": 186.52,
+  "moving_averages": {
+    "100d_sma": 194.48,
+    "10m_sma": 163.46,
+    "150d_sma": 173.55,
+    "200d_sma": 168.54,
+    "200w_sma": 72.54,
+    "20m_sma": 129.38,
+    "40w_sma": 168.61
+  },
+  "rate_of_change": {
+    "1m_pct": -14.41,
+    "3m_pct": -6.8,
+    "12m_pct": 46.55
+  },
+  "trend_position": {
+    "above_100d_sma": false,
+    "above_10m_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": null,
+    "outperformed_benchmark": null,
+    "notes": "No relative-performance benchmark was selected for this case."
+  },
+  "interpretation": "VST remained above most long-term moving averages but had broken below the 100D SMA and had negative 1-month and 3-month ROC. For a new long, this is poor short/intermediate price action despite a still-positive 12-month trend.",
+  "human_notes": "User provided October 21, 2025 close, moving averages, and ROC values."
+}

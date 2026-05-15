@@ -235,14 +235,21 @@ export function IdeaDetail() {
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
     },
+    onError: err => {
+      setJobError(err instanceof Error ? err.message : "Could not start evaluation.")
+    },
   })
 
   const portfolioContextMutation = useMutation({
     mutationFn: ({ ideaId, enabled }: { ideaId: string; enabled: boolean }) =>
       updateIdea(ideaId, { use_portfolio_context: enabled }),
     onSuccess: data => {
+      setJobError(null)
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       void qc.invalidateQueries({ queryKey: ["idea", data.idea.id] })
+    },
+    onError: err => {
+      setJobError(err instanceof Error ? err.message : "Could not update portfolio influence.")
     },
   })
 

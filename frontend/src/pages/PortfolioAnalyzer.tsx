@@ -1245,9 +1245,12 @@ export function AnalyzerWorkbench({
   const [workspaceProposal, setWorkspaceProposal] = useState<{ ticker: string; response: StagedMutationResponse } | null>(null)
 
   const llmSettings = useApiQuery<LLMSettings>(LLM_SETTINGS_QUERY_KEY, fetchLLMSettings, 30_000)
-  const llmReady = Boolean(
-    llmSettings.data?.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured,
-  )
+  const llmReady = Boolean(llmSettings.data && (
+    llmSettings.data.provider_mode === "custom"
+      ? Object.values(llmSettings.data.provider_by_tier).every(providerName =>
+        llmSettings.data?.available_providers.find(provider => provider.provider === providerName)?.configured)
+      : llmSettings.data.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured
+  ))
 
   const setActiveJobAndPersist = useCallback(
     (next: ActiveAnalyzerJob | null) => {

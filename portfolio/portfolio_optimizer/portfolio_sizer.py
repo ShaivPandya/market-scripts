@@ -413,6 +413,20 @@ def _compute_equity_beta_inputs(
     return beta_by_benchmark, beta_display_by_benchmark, betas_all_by_benchmark, equity_tickers
 
 
+def _filter_equity_sizing_universe(
+    meta: pd.DataFrame,
+    requested: Sequence[str],
+) -> tuple[list[str], list[str]]:
+    asset = (
+        meta["asset"].fillna("").astype(str).str.strip().str.lower()
+        if "asset" in meta.columns
+        else pd.Series([""] * len(meta), index=meta.index)
+    )
+    equity_tickers = [ticker for ticker in requested if ticker in meta.index and asset.get(ticker) == "equity"]
+    excluded_tickers = [ticker for ticker in requested if ticker in meta.index and asset.get(ticker) != "equity"]
+    return equity_tickers, excluded_tickers
+
+
 def size_portfolio(
     positions: Sequence[Mapping[str, Any]],
     book: float | None = 100_000.0,
@@ -451,11 +465,13 @@ def size_portfolio(
                 f"Only tickers defined in the portfolio are allowed."
             )
 
-        tickers = [t for t in requested if t in meta.index]
+        tickers, excluded_non_equity_tickers = _filter_equity_sizing_universe(meta, requested)
+        if not tickers:
+            raise ValueError("No equity positions available to size. The portfolio sizer only sizes equity assets.")
         meta = meta.loc[tickers]
 
         if len(tickers) < 2:
-            raise ValueError("Need at least 2 tickers to size a portfolio.")
+            raise ValueError("Need at least 2 equity tickers to size a portfolio.")
 
         market_tickers = list(HEDGE_DIAGNOSTIC_TICKERS)
         prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
@@ -510,7 +526,7 @@ def size_portfolio(
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
 
         if len(tickers) < 2:
-            raise ValueError("Need at least 2 instruments with returns to optimize.")
+            raise ValueError("Need at least 2 equity instruments with returns to optimize.")
 
         # Covariance
         rets_portfolio = rets[tickers]
@@ -848,6 +864,9 @@ def size_portfolio(
             "target_leverage": target_leverage,
             "beta_hedge_mode": beta_hedge_mode,
             "selected_hedges": list(selected_hedges),
+            "sizing_scope": "equity_only",
+            "sizing_asset_classes": ["equity"],
+            "excluded_sizing_tickers": excluded_non_equity_tickers,
             # Solution metrics
             "vol_daily": vol_final,
             "gross_leverage": exp["total_gross"],

@@ -61,7 +61,10 @@ def test_refresh_market_snapshots_writes_module_and_signal_payloads(monkeypatch)
     assert ms.SNAPSHOT_SIGNAL_AGGREGATOR in written_keys
     sector_payload = next(payload for key, payload, _as_of in writes if key == ms.SNAPSHOT_SECTOR_METRICS)
     assert sector_payload["weights_df"][0]["Sector"] == "Communication Services"
+    assert sector_payload["_meta"]["source_registry"]["source_id"] == "sector_metrics"
+    assert result["snapshots"][0]["source_registry"]["source_id"] == "market_breadth"
     assert result["snapshots"][-1]["snapshot_key"] == ms.SNAPSHOT_SIGNAL_AGGREGATOR
+    assert result["snapshots"][-1]["source_registry"]["source_id"] == "market_regime"
 
 
 def test_signal_current_modules_share_one_sp500_price_frame(monkeypatch):

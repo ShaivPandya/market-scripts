@@ -10,6 +10,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from ontology.approval_workflow import (
+    approval_requirement_progress,
+    normalize_approval_decisions,
+    normalize_approval_requirements,
+    select_approval_requirement,
+)
 from ontology.object_service import OntologyObjectService
 from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
 from ontology.policy import Actor, actor_to_dict, admin_actor, require_allowed
@@ -127,6 +133,7 @@ class OntologyCommandContext:
     actor: Actor
     source_type: str
     source_id: str
+    request_mode: str = "proposal"
 
     @property
     def actor_type(self) -> str:
@@ -193,6 +200,8 @@ class OntologyCommandService:
             self._prepare_action_payload(action_id, payload_dict)
             base_state_hash = _base_state_hash(action_id, payload_dict)
         policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
+        approval_requirements = normalize_approval_requirements((policy_gate_result or {}).get("approval_requirements"))
+        is_financial = _is_financial_action_for_payload(action_id, payload_dict)
         now = _now()
         input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
         entity_type = _entity_type_for_action(action_id)
@@ -230,7 +239,14 @@ class OntologyCommandService:
             "application_state": "pending",
             "application_status": "pending",
             "application_attempts": 0,
-            "risk_class": "financial" if action_id in FINANCIAL_ACTION_IDS else "research",
+            "risk_class": "financial" if is_financial else "research",
+            "approval_required": bool((policy_gate_result or {}).get("approval_required", True)),
+            "approval_mode": (policy_gate_result or {}).get("approval_mode") or _approval_mode_from_context(context),
+            "approval_requirements": approval_requirements,
+            "approval_decisions": [],
+            "approval_policy_rule_id": (policy_gate_result or {}).get("rule_id"),
+            "approval_policy_reason": (policy_gate_result or {}).get("reason"),
+            "approval_note_required": True,
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
             "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
@@ -258,8 +274,31 @@ class OntologyCommandService:
             actor=context.actor,
             provenance_id=provenance_id,
             object_refs=[{"type": "Approval", "id": approval_uid}],
-            after_summary={"action_id": action_id, "target_object_uid": target_uid},
+            after_summary={
+                "action_id": action_id,
+                "target_object_uid": target_uid,
+                "approval_policy_rule_id": props.get("approval_policy_rule_id"),
+                "approval_policy_reason": props.get("approval_policy_reason"),
+            },
         )
+        if normalized_supersedes_id:
+            self._write_audit(
+                "approval.replacement.created",
+                "approval",
+                "succeeded",
+                actor=context.actor,
+                provenance_id=provenance_id,
+                object_refs=[
+                    {"type": "Approval", "id": approval_uid},
+                    {"type": "Approval", "id": normalized_supersedes_id},
+                ],
+                after_summary={
+                    "action_id": action_id,
+                    "supersedes_approval_id": normalized_supersedes_id,
+                    "approval_policy_rule_id": props.get("approval_policy_rule_id"),
+                    "approval_policy_reason": props.get("approval_policy_reason"),
+                },
+            )
         approval = _flatten_object(row)
         _refresh_temporal_read_models_after_command()
         return approval
@@ -292,9 +331,10 @@ class OntologyCommandService:
         payload: dict[str, Any],
         context: OntologyCommandContext,
     ) -> dict[str, Any] | None:
-        if action_id not in FINANCIAL_ACTION_IDS:
+        from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action, is_financial_action
+
+        if not is_financial_action(action_id, payload):
             return None
-        from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action
 
         try:
             gated_payload, gate = ensure_policy_gate_for_action(
@@ -303,7 +343,10 @@ class OntologyCommandService:
                 context={
                     "source_type": context.source_type,
                     "source_id": context.source_id,
+                    "request_mode": context.request_mode,
                     "actor_id": context.actor.actor_id,
+                    "actor_type": context.actor.actor_type,
+                    "actor_roles": list(context.actor.roles),
                 },
                 object_service=self.objects,
             )
@@ -319,6 +362,7 @@ class OntologyCommandService:
         status: str,
         note: str | None,
         context: OntologyCommandContext,
+        requirement_id: str | None = None,
     ) -> dict[str, Any]:
         require_allowed(POLICY.check_action(context.actor, "approval.resolve"))
         approval = self.get_approval(approval_uid, actor=context.actor)
@@ -330,6 +374,40 @@ class OntologyCommandService:
             raise OntologyCommandValidationError("Approval status must be approved or rejected.")
         if status == "approved" and not str(note or "").strip():
             raise OntologyCommandValidationError("Approval note is required.")
+
+        requirements = normalize_approval_requirements(approval.get("approval_requirements"))
+        decisions = normalize_approval_decisions(approval.get("approval_decisions"))
+        progress = approval_requirement_progress(requirements, decisions)
+        application_status = str(approval.get("application_status") or "pending").strip().lower()
+        retrying_completed_approval = status == "approved" and progress["completed"] and application_status == "failed"
+        selected_requirement: dict[str, Any] | None = None
+        updated_decisions = decisions
+        if not retrying_completed_approval:
+            selected_requirement, denial = select_approval_requirement(
+                requirements,
+                decisions,
+                actor_id=context.actor.actor_id,
+                actor_roles=context.actor.roles,
+                requested_by_actor_id=str(approval.get("requested_by_actor_id") or "") or None,
+                requirement_id=str(requirement_id or "").strip() or None,
+            )
+            if selected_requirement is None:
+                if status == "rejected" and progress["completed"] and requirements:
+                    selected_requirement = requirements[0]
+                else:
+                    raise OntologyCommandValidationError(denial or "No remaining approval requirements.")
+            updated_decisions = [
+                *decisions,
+                {
+                    "requirement_id": str(selected_requirement.get("id") or ""),
+                    "actor_id": context.actor.actor_id,
+                    "actor_type": context.actor.actor_type,
+                    "actor_roles": list(context.actor.roles),
+                    "decision": status,
+                    "note": note,
+                    "decided_at": _now(),
+                },
+            ]
         if status == "approved":
             if str(approval.get("policy_gate_decision") or "").strip().lower() == "blocked":
                 raise OntologyCommandValidationError("Blocked policy gate results cannot be approved.")
@@ -345,6 +423,8 @@ class OntologyCommandService:
         if status == "rejected":
             props = {
                 **{k: v for k, v in approval.items() if not k.startswith("_")},
+                "approval_requirements": requirements,
+                "approval_decisions": updated_decisions,
                 "status": "rejected",
                 "resolution_state": "rejected",
                 "application_state": "not_applicable",
@@ -375,13 +455,63 @@ class OntologyCommandService:
                 actor=context.actor,
                 provenance_id=provenance_id,
                 object_refs=[{"type": "Approval", "id": approval["id"]}],
-                after_summary={"note": note},
+                after_summary={
+                    "requirement_id": selected_requirement.get("id") if selected_requirement else None,
+                    "note": note,
+                    "approval_policy_rule_id": approval.get("approval_policy_rule_id"),
+                    "approval_policy_reason": approval.get("approval_policy_reason"),
+                },
+            )
+            _refresh_temporal_read_models_after_command()
+            return resolved
+
+        updated_progress = approval_requirement_progress(requirements, updated_decisions)
+        if not updated_progress["completed"]:
+            props = {
+                **{k: v for k, v in approval.items() if not k.startswith("_")},
+                "approval_requirements": requirements,
+                "approval_decisions": updated_decisions,
+                "status": "pending",
+                "resolution_state": "pending",
+                "application_state": "pending",
+                "application_status": "pending",
+                "application_error": None,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            }
+            props.pop("id", None)
+            props.pop("object_uid", None)
+            row = self.objects.write_object(
+                "Approval",
+                approval["id"],
+                props,
+                now,
+                actor=actor_to_dict(context.actor),
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            resolved = _flatten_object(row)
+            self._write_audit(
+                "approval.decision.recorded",
+                "approval",
+                "succeeded",
+                actor=context.actor,
+                provenance_id=provenance_id,
+                object_refs=[{"type": "Approval", "id": approval["id"]}],
+                after_summary={
+                    "decision": "approved",
+                    "requirement_id": selected_requirement.get("id") if selected_requirement else None,
+                    "remaining_count": updated_progress["remaining_count"],
+                    "approval_policy_rule_id": approval.get("approval_policy_rule_id"),
+                    "approval_policy_reason": approval.get("approval_policy_reason"),
+                },
             )
             _refresh_temporal_read_models_after_command()
             return resolved
 
         applying_props = {
             **{k: v for k, v in approval.items() if not k.startswith("_")},
+            "approval_requirements": requirements,
+            "approval_decisions": updated_decisions,
             "status": "pending",
             "resolution_state": "pending",
             "application_state": "applying",
@@ -404,6 +534,22 @@ class OntologyCommandService:
             input_hash=input_hash,
         )
         resolved = _flatten_object(row)
+        if selected_requirement is not None:
+            self._write_audit(
+                "approval.decision.recorded",
+                "approval",
+                "succeeded",
+                actor=context.actor,
+                provenance_id=provenance_id,
+                object_refs=[{"type": "Approval", "id": approval["id"]}],
+                after_summary={
+                    "decision": "approved",
+                    "requirement_id": selected_requirement.get("id"),
+                    "remaining_count": 0,
+                    "approval_policy_rule_id": approval.get("approval_policy_rule_id"),
+                    "approval_policy_reason": approval.get("approval_policy_reason"),
+                },
+            )
         try:
             applied = self._apply_approval(
                 resolved,
@@ -621,7 +767,11 @@ class OntologyCommandService:
             actor=context.actor,
             provenance_id=provenance_id,
             object_refs=[{"type": "Approval", "id": approval["id"]}, {"type": "ActionRun", "id": run_uid}],
-            after_summary={"mutated_object_versions": version_refs},
+            after_summary={
+                "mutated_object_versions": version_refs,
+                "approval_policy_rule_id": approval.get("approval_policy_rule_id"),
+                "approval_policy_reason": approval.get("approval_policy_reason"),
+            },
         )
         return _flatten_object(applied)
 
@@ -2881,6 +3031,22 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
         _non_blank(payload.get("target_object_uid"), "target_object_uid")
         _non_blank(payload.get("target_object_type"), "target_object_type")
         _non_blank(payload.get("decision"), "decision")
+
+
+def _is_financial_action_for_payload(action_id: str, payload: Mapping[str, Any]) -> bool:
+    try:
+        from portfolio.policy_gate import is_financial_action
+
+        return is_financial_action(action_id, payload)
+    except Exception:
+        return action_id in FINANCIAL_ACTION_IDS
+
+
+def _approval_mode_from_context(context: OntologyCommandContext) -> str:
+    request_mode = str(context.request_mode or "").strip().lower()
+    if request_mode in {"self_apply", "break_glass"}:
+        return request_mode
+    return "approval_required"
 
 
 def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:

@@ -31,8 +31,25 @@ API_CONCURRENCY="${API_CONCURRENCY:-20}"
 
 mapfile -t COMMON_ENV < <(common_env_vars)
 
+# Resolve full git SHA for release identity env vars
+_repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || true)"
+_full_sha="$(git -C "${_repo_root:-.}" rev-parse HEAD 2>/dev/null || echo "unknown")"
+
+# Resolve Alembic migration head if alembic is available (best-effort, SHA-34)
+_migration_head=""
+if command -v alembic >/dev/null 2>&1; then
+  if _head="$(cd "${_repo_root:-.}" && alembic heads 2>/dev/null | head -1 | awk '{print $1}')"; then
+    [[ -n "${_head}" ]] && _migration_head="${_head}"
+  fi
+fi
+
 API_ENV_VARS=(
   "${COMMON_ENV[@]}"
+  "TALISMAN_RELEASE_GIT_SHA=${_full_sha}"
+  "TALISMAN_RELEASE_GIT_SHA_SHORT=${IMAGE_TAG}"
+  "TALISMAN_RELEASE_IMAGE_TAG=${IMAGE_TAG}"
+  "TALISMAN_RELEASE_ENVIRONMENT=production"
+  ${_migration_head:+"TALISMAN_RELEASE_MIGRATION_HEAD=${_migration_head}"}
   "CLOUD_RUN_JOBS_ENABLED=true"
   "ASYNC_JOB_BACKEND=cloud_run_jobs"
   "AGENT_CHAT_DISPATCH_BACKEND=warm_worker"

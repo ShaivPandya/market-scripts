@@ -1,0 +1,11 @@
+{
+  "as_of_date": "2006-08-01",
+  "position_status": "existing_position_to_press",
+  "position_direction": "short_subprime_credit",
+  "portfolio_role": "Convex credit-crisis hedge and profit center",
+  "conviction_at_initiation": 5,
+  "sizing_context": "Historical case: Paulson had tested the trade in April 2005, then built much larger protection positions after research showed the payoff remained highly asymmetric.",
+  "sizing_principle": "Special-situation convex sizing: define premium loss, buy protection where downside is capped by carry, and press only while the modeled default/refinance thesis remains intact.",
+  "risk_capacity_notes": "This is not a generic rule to short housing. The setup depended on cheap protection, thin BBB tranches, slowing home-price appreciation, and a research-backed view that zero home-price growth could wipe out the targeted securities. ABX was useful for timing and monitoring after July 2006, not the core reason for the trade.",
+  "human_notes": "Conviction 5 means full conviction on the 1-5 scale. Raw target weight is not mapped to the user's single-name equity sizing model because this was a historical derivatives/structured-credit trade."
+}

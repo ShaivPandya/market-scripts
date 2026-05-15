@@ -14,15 +14,20 @@ from ontology.schemas.identity import (
     account_id,
     asset_id,
     citation_id,
+    course_of_action_comparison_id,
+    course_of_action_id,
     evidence_id,
     object_version_ref_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
+    position_id,
     position_risk_snapshot_id,
     report_run_id,
     risk_metric_id,
+    scenario_assumption_id,
     scenario_id,
+    simulated_outcome_id,
     source_record_object_id,
     trade_proposal_id,
     workflow_artifact_id,
@@ -369,6 +374,409 @@ class DecisionOntologyWriteback:
         except Exception as exc:
             _handle_writeback_error("apply_approved_decision", exc)
         return rows
+
+    def record_scenario_simulation(
+        self,
+        *,
+        simulation: Mapping[str, Any],
+        request_payload: Mapping[str, Any],
+        actor: Mapping[str, Any] | None = None,
+        provenance: Mapping[str, Any] | str | None = None,
+    ) -> dict[str, Any]:
+        """Persist simulator output as ontology-backed COA artifacts."""
+        if not self.enabled():
+            return {"rows_written": 0, "artifact_ids": {}, "outcome_artifact_ids": {}}
+
+        actor = actor or {"actor_type": "api", "actor_id": "scenario_simulator"}
+        now = _now()
+        simulation_id = str(simulation.get("simulation_id") or _hash_value(simulation))
+        input_hash = str(simulation.get("input_hash") or _hash_value(request_payload))
+        provenance_id = _provenance_id(provenance, f"pv:{simulation_id}")
+        portfolio = _as_dict(simulation.get("portfolio"))
+        request_portfolio = _as_dict(request_payload.get("portfolio"))
+        request_position = _as_dict(request_payload.get("position"))
+        portfolio_id_value = str(portfolio.get("portfolio_id") or request_portfolio.get("portfolio_id") or "").strip()
+        account_id_value = str(portfolio.get("account_id") or request_portfolio.get("account_id") or "").strip()
+        position_uid = str(request_position.get("position_uid") or request_position.get("object_uid") or "").strip()
+        comparison_key = simulation_id
+        comparison_uid = course_of_action_comparison_id(comparison_key)
+        rows: list[dict[str, Any]] = []
+        outcome_artifacts: dict[str, dict[str, Any]] = {}
+        scenario_uids: dict[str, str] = {}
+        scenario_link_keys: list[str] = []
+        assumption_uids: list[str] = []
+        policy_gate_uids: list[str] = []
+
+        try:
+            comparison_row = self.object_service.write_object(
+                "CourseOfActionComparison",
+                comparison_key,
+                {
+                    "comparison_id": comparison_key,
+                    "objective": f"Compare scenario simulator candidate actions for {request_position.get('ticker') or 'position'}",
+                    "scope_type": "position" if position_uid else "portfolio",
+                    "scope_id": position_uid or portfolio_id_value or None,
+                    "selected_course_of_action_id": None,
+                    "decision_state": "generated",
+                    "status": "open",
+                    "ranking_summary": _as_dict(simulation.get("comparison")),
+                    "selection_reason": None,
+                    "as_of": simulation.get("generated_at") or now,
+                    "created_at": now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            rows.append(comparison_row)
+
+            scenarios = _dicts(request_payload.get("scenarios"))
+            for index, scenario in enumerate(scenarios):
+                scenario_key = str(
+                    scenario.get("scenario_id")
+                    or scenario.get("id")
+                    or f"{simulation_id}:scenario:{index + 1}:{scenario.get('name') or 'scenario'}"
+                )
+                scenario_uid = scenario_id(scenario_key)
+                scenario_uids[scenario_key] = scenario_uid
+                scenario_link_keys.append(scenario_key)
+                scenario_uids[str(scenario.get("scenario_id") or scenario.get("id") or f"scenario:{index + 1}")] = (
+                    scenario_uid
+                )
+                rows.append(
+                    self.object_service.write_object(
+                        "Scenario",
+                        scenario_key,
+                        {
+                            "scenario_id": scenario_key,
+                            "name": str(scenario.get("name") or scenario.get("label") or f"Scenario {index + 1}"),
+                            "scenario_type": str(scenario.get("scenario_type") or scenario.get("type") or "stress"),
+                            "scope_type": "position" if position_uid else "portfolio",
+                            "scope_id": position_uid or portfolio_id_value or None,
+                            "assumptions_hash": _hash_value(request_payload.get("assumptions") or scenario),
+                            "result": _as_dict(scenario.get("result")),
+                            "result_metrics": {
+                                "price_move_pct": scenario.get("price_move_pct"),
+                                "probability": scenario.get("probability"),
+                                "stress_loss_pct": scenario.get("stress_loss_pct"),
+                                "drawdown_pct": scenario.get("drawdown_pct"),
+                                "daily_volatility_pct": scenario.get("daily_volatility_pct"),
+                                "thesis_pressure": scenario.get("thesis_pressure"),
+                            },
+                            "loss_pct": _optional_float(scenario.get("stress_loss_pct")),
+                            "generated_by_source": "api",
+                            "generated_by_action": "scenario_simulator.evaluate",
+                            "generated_by_run_id": simulation_id,
+                            "as_of": simulation.get("generated_at") or now,
+                            "status": "simulated",
+                            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                        },
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=_hash_value(scenario),
+                    )
+                )
+
+            assumptions = _dicts(request_payload.get("assumptions"))
+            for index, assumption in enumerate(assumptions):
+                assumption_key = str(
+                    assumption.get("assumption_id")
+                    or assumption.get("id")
+                    or f"{simulation_id}:assumption:{index + 1}:{assumption.get('name') or 'assumption'}"
+                )
+                assumption_uid = scenario_assumption_id(assumption_key)
+                assumption_uids.append(assumption_uid)
+                scenario_ref = str(assumption.get("scenario_id") or "").strip()
+                rows.append(
+                    self.object_service.write_object(
+                        "ScenarioAssumption",
+                        assumption_key,
+                        {
+                            "assumption_id": assumption_key,
+                            "scenario_id": scenario_ref or None,
+                            "name": str(assumption.get("name") or f"Assumption {index + 1}"),
+                            "value": assumption.get("value"),
+                            "unit": assumption.get("unit"),
+                            "direction": assumption.get("direction"),
+                            "confidence": _optional_float(assumption.get("confidence")),
+                            "source_record_ids": [
+                                ref
+                                for ref in _ids_from(
+                                    assumption.get("source_record_refs") or assumption.get("source_refs"), "id"
+                                )
+                                if ref.startswith("source_record:")
+                            ],
+                            "as_of": assumption.get("as_of") or simulation.get("generated_at") or now,
+                            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                        },
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=_hash_value(assumption),
+                    )
+                )
+                linked_scenarios = [scenario_ref] if scenario_ref else list(scenario_link_keys)
+                for linked in linked_scenarios:
+                    target_scenario_uid = scenario_uids.get(linked) or scenario_id(linked)
+                    rows.append(
+                        self.object_service.write_relation(
+                            target_scenario_uid,
+                            assumption_uid,
+                            "scenario_has_assumption",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+
+            for outcome in _dicts(simulation.get("outcomes")):
+                candidate_id = str(outcome.get("candidate_id") or _hash_value(outcome))
+                action = str(outcome.get("action") or "hold")
+                course_key = f"{simulation_id}:{candidate_id}:{action}"
+                course_uid = course_of_action_id(course_key)
+                gate = _as_dict(outcome.get("policy_gate"))
+                gate_uid = None
+                if gate:
+                    gate_key = f"{simulation_id}:{candidate_id}:policy_gate"
+                    gate_uid = policy_gate_result_id(gate_key)
+                    policy_gate_uids.append(gate_uid)
+                    rows.append(
+                        self.object_service.write_object(
+                            "PolicyGateResult",
+                            gate_key,
+                            {
+                                "gate_result_id": gate_key,
+                                "decision": str(gate.get("decision") or "warn"),
+                                "review_required": bool(gate.get("review_required")),
+                                "approval_required": bool(gate.get("approval_required", True)),
+                                "approval_mode": gate.get("approval_mode"),
+                                "approval_requirements": _as_list(gate.get("approval_requirements")),
+                                "rule_id": gate.get("rule_id"),
+                                "reason": gate.get("reason"),
+                                "remediation": gate.get("remediation"),
+                                "matched_rules": _as_list(gate.get("matched_rules")),
+                                "limit_overrides": _as_dict(gate.get("limit_overrides")),
+                                "failure_reasons": _as_list(gate.get("failure_reasons")),
+                                "warnings": _as_list(gate.get("warnings")),
+                                "account_id": account_id_value or gate.get("account_id"),
+                                "portfolio_id": portfolio_id_value or gate.get("portfolio_id"),
+                                "policy_id": gate.get("policy_id"),
+                                "policy_matrix_id": gate.get("policy_matrix_id"),
+                                "evaluated_at": gate.get("evaluated_at") or now,
+                                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                            },
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=_hash_value(gate),
+                        )
+                    )
+
+                risk = _as_dict(outcome.get("risk"))
+                uncertainty = _as_dict(outcome.get("uncertainty"))
+                course_row = self.object_service.write_object(
+                    "CourseOfAction",
+                    course_key,
+                    {
+                        "course_of_action_id": course_key,
+                        "idempotency_key": course_key,
+                        "source_kind": "api",
+                        "source_type": "api",
+                        "source_id": "scenario_simulator.evaluate",
+                        "decision_type": "scenario_simulation",
+                        "action": action,
+                        "actionability": _coa_actionability(action, gate, uncertainty),
+                        "decision_state": "generated",
+                        "status": "simulated",
+                        "ticker": request_position.get("ticker"),
+                        "instrument_id": request_position.get("instrument_id"),
+                        "position_uid": position_uid or None,
+                        "account_id": account_id_value or None,
+                        "portfolio_id": portfolio_id_value or None,
+                        "policy_gate_result_id": gate_uid,
+                        "policy_gate_decision": gate.get("decision"),
+                        "approval_required": bool(action != "hold"),
+                        "approval_status": None,
+                        "comparison_id": comparison_uid,
+                        "confidence": _confidence_from_uncertainty(uncertainty),
+                        "rationale_summary": outcome.get("rationale"),
+                        "rationale_hash": _hash_text(str(outcome.get("rationale") or ""))
+                        if outcome.get("rationale")
+                        else None,
+                        "source_quality": uncertainty.get("level"),
+                        "sizing_summary": _as_dict(outcome.get("target_position")),
+                        "effect_summary": _as_dict(outcome.get("exposure")),
+                        "risk_summary": risk,
+                        "policy_summary": gate,
+                        "payload": _jsonable(dict(outcome)),
+                        "as_of": simulation.get("generated_at") or now,
+                        "created_at": now,
+                        "updated_at": now,
+                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    },
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=_hash_value(outcome),
+                )
+                rows.append(course_row)
+                rows.append(
+                    self.object_service.write_relation(
+                        comparison_uid,
+                        course_uid,
+                        "comparison_includes_course_of_action",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=input_hash,
+                    )
+                )
+                if portfolio_id_value:
+                    rows.append(
+                        self.object_service.write_relation(
+                            course_uid,
+                            portfolio_id(portfolio_id_value),
+                            "course_of_action_targets_portfolio",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+                if position_uid:
+                    rows.append(
+                        self.object_service.write_relation(
+                            course_uid,
+                            position_uid if position_uid.startswith("position:") else position_id(position_uid),
+                            "course_of_action_targets_position",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+                evidence_refs = _ids_from(_as_dict(outcome.get("provenance")).get("evidence_refs"), "id")
+                for evidence_ref in evidence_refs:
+                    rows.append(
+                        self.object_service.write_relation(
+                            course_uid,
+                            evidence_ref if evidence_ref.startswith("evidence:") else evidence_id(evidence_ref),
+                            "course_of_action_supported_by_evidence",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+
+                simulated_outcome_ids: list[str] = []
+                for index, scenario_outcome in enumerate(_dicts(outcome.get("scenario_outcomes"))):
+                    scenario_ref = str(scenario_outcome.get("scenario_id") or f"scenario:{index + 1}")
+                    scenario_uid = scenario_uids.get(scenario_ref) or scenario_id(scenario_ref)
+                    outcome_key = f"{simulation_id}:{candidate_id}:{scenario_ref}"
+                    simulated_uid = simulated_outcome_id(outcome_key)
+                    simulated_outcome_ids.append(simulated_uid)
+                    rows.append(
+                        self.object_service.write_object(
+                            "SimulatedOutcome",
+                            outcome_key,
+                            {
+                                "outcome_id": outcome_key,
+                                "course_of_action_id": course_uid,
+                                "scenario_id": scenario_uid,
+                                "assumptions_hash": _hash_value(request_payload.get("assumptions") or {}),
+                                "result": _as_dict(scenario_outcome),
+                                "result_metrics": {
+                                    "risk": risk,
+                                    "liquidity": _as_dict(outcome.get("liquidity")),
+                                    "thesis_pressure": _as_dict(outcome.get("thesis_pressure")),
+                                    "uncertainty": uncertainty,
+                                },
+                                "expected_return_pct": _ratio_from_pct(
+                                    scenario_outcome.get("target_return_pct_of_book")
+                                ),
+                                "loss_pct": _ratio_from_pct(scenario_outcome.get("loss_pct_of_book")),
+                                "probability": _optional_float(scenario_outcome.get("probability")),
+                                "confidence": _confidence_from_uncertainty(uncertainty),
+                                "generated_by_source": "api",
+                                "generated_by_action": "scenario_simulator.evaluate",
+                                "generated_by_run_id": simulation_id,
+                                "as_of": simulation.get("generated_at") or now,
+                                "status": "simulated",
+                                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                            },
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=_hash_value(scenario_outcome),
+                        )
+                    )
+                    rows.append(
+                        self.object_service.write_relation(
+                            course_uid,
+                            scenario_uid,
+                            "course_of_action_uses_scenario",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+                    rows.append(
+                        self.object_service.write_relation(
+                            course_uid,
+                            simulated_uid,
+                            "course_of_action_has_simulated_outcome",
+                            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                            now,
+                            actor=actor,
+                            provenance=provenance_id,
+                            input_hash=input_hash,
+                        )
+                    )
+                    if gate_uid:
+                        rows.append(
+                            self.object_service.write_relation(
+                                gate_uid,
+                                scenario_uid,
+                                "policy_gate_uses_scenario",
+                                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                                now,
+                                actor=actor,
+                                provenance=provenance_id,
+                                input_hash=input_hash,
+                            )
+                        )
+
+                outcome_artifacts[candidate_id] = {
+                    "course_of_action_id": course_uid,
+                    "simulated_outcome_ids": simulated_outcome_ids,
+                    **({"policy_gate_result_id": gate_uid} if gate_uid else {}),
+                }
+        except Exception as exc:
+            _handle_writeback_error("record_scenario_simulation", exc)
+
+        return {
+            "rows_written": len(rows),
+            "artifact_ids": {
+                "comparison_id": comparison_uid,
+                "scenario_ids": list(dict.fromkeys(scenario_uids.values())),
+                "assumption_ids": assumption_uids,
+                "policy_gate_result_ids": policy_gate_uids,
+            },
+            "outcome_artifact_ids": outcome_artifacts,
+        }
 
     def _record_recommendation_bundle(
         self,
@@ -941,6 +1349,10 @@ def apply_approved_decision(**kwargs: Any) -> list[dict[str, Any]]:
     return DecisionOntologyWriteback().apply_approved_decision(**kwargs)
 
 
+def record_scenario_simulation(**kwargs: Any) -> dict[str, Any]:
+    return DecisionOntologyWriteback().record_scenario_simulation(**kwargs)
+
+
 def _recommendation_key(record: Mapping[str, Any]) -> str:
     return str(
         record.get("id")
@@ -1028,6 +1440,27 @@ def _temporal(row: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def _is_actionable(record: Mapping[str, Any]) -> bool:
     return str(record.get("action") or "").lower() in ACTIONABLE_RECOMMENDATION_ACTIONS
+
+
+def _coa_actionability(action: str, gate: Mapping[str, Any], uncertainty: Mapping[str, Any]) -> str:
+    if str(gate.get("decision") or "").lower() == "blocked":
+        return "blocked_by_policy"
+    if str(uncertainty.get("level") or "").lower() == "high":
+        return "missing_inputs"
+    if action == "hold":
+        return "watch_only"
+    return "actionable"
+
+
+def _confidence_from_uncertainty(uncertainty: Mapping[str, Any]) -> float:
+    return {"low": 0.85, "medium": 0.65, "high": 0.35}.get(str(uncertainty.get("level") or "").lower(), 0.5)
+
+
+def _ratio_from_pct(value: Any) -> float | None:
+    number = _optional_float(value)
+    if number is None:
+        return None
+    return number / 100.0
 
 
 def _artifact_uri(payload: Mapping[str, Any]) -> str | None:

@@ -7,6 +7,12 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from ontology.approval_workflow import (
+    approval_requirement_progress,
+    normalize_approval_decisions,
+    normalize_approval_requirements,
+)
+
 ACTIONABLE_RECOMMENDATION_ACTIONS = {
     "buy",
     "add",
@@ -368,7 +374,14 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
     application_status = str(out.get("application_status") or "pending").strip().lower()
     gate = _filter_policy_gate(_nested_policy_gate(out), policy_context=out)
     proposed_change = _replace_nested_policy_gate(_as_dict(out.get("proposed_change")) or {}, gate)
+    approval_requirements = normalize_approval_requirements(out.get("approval_requirements"))
+    approval_decisions = normalize_approval_decisions(out.get("approval_decisions"))
+    approval_progress = approval_requirement_progress(approval_requirements, approval_decisions)
     out["proposed_change"] = proposed_change
+    out["approval_requirements"] = approval_progress["requirements"]
+    out["approval_decisions"] = approval_decisions
+    out["approval_progress"] = approval_progress
+    out["remaining_approval_requirements"] = approval_progress["remaining_requirements"]
     out["decision_state"] = _approval_decision_state(status, application_status)
     out["decision_kind"] = "proposal"
     out["effect_scope"] = "internal_state"
@@ -385,7 +398,12 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
     base_state = _approval_base_state(out)
     out.update(base_state)
     is_stale = base_state["base_state_status"] == "stale"
-    out["can_approve"] = status == "pending" and application_status in {"pending", "failed"} and not is_stale
+    out["can_approve"] = (
+        status == "pending"
+        and application_status in {"pending", "failed"}
+        and not is_stale
+        and (not approval_progress["completed"] or application_status == "failed")
+    )
     out["can_reject"] = status == "pending"
     out["can_retry_apply"] = status == "pending" and application_status == "failed" and not is_stale
     out["can_restage"] = status == "pending" and bool(out.get("action_id")) and is_stale

@@ -20,6 +20,7 @@ from ontology.extractors.deterministic import IMAGE_MIME_TYPES, image_dimensions
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.schemas.identity import source_manifest_id
 from ontology.sources.base import payload_fingerprint
+from ontology.sources.source_registry import source_registry_metadata
 from ontology.temporal_repository import SourceRecordWrite, TemporalOntologyRepository
 from paths import PROJECT_ROOT
 
@@ -93,13 +94,17 @@ class SourceIngestionService:
         manifest_id = _clean_key(payload.get("manifest_id") or payload.get("id") or payload.get("name"), "manifest_id")
         now = _now()
         event_id = provenance.deterministic_id("pv:source_manifest", manifest_id)
+        registry = source_registry_metadata("source_ingestion_document")
         provenance.start_event(
             event_id=event_id,
             event_type="source_manifest_write",
             event_name="source_ingestion.create_manifest",
             summary={"manifest_id": manifest_id, "source_kind": payload.get("source_kind")},
-            metadata={"retention_class": payload.get("retention_class") or "user_state"},
+            metadata={"retention_class": payload.get("retention_class") or "user_state", "source_registry": registry},
         )
+        manifest_metadata = dict(payload.get("metadata") or {})
+        if registry:
+            manifest_metadata["source_registry"] = registry
         properties = {
             "manifest_id": manifest_id,
             "name": payload.get("name") or manifest_id,
@@ -113,7 +118,7 @@ class SourceIngestionService:
             "status": payload.get("status") or "active",
             "created_at": payload.get("created_at") or now,
             "updated_at": now,
-            "metadata": dict(payload.get("metadata") or {}),
+            "metadata": manifest_metadata,
             "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
         }
         row = self.objects.write_object(
@@ -135,6 +140,7 @@ class SourceIngestionService:
             raise ValidationError("Uploaded file exceeds 30 MiB.")
         filename = _safe_filename(upload.filename)
         mime_type = sniff_mime_type(upload.content, upload.content_type, filename)
+        registry = _source_registry_for_mime(mime_type)
         manifest_uid = source_manifest_id(upload.manifest_id)
         manifest = self.objects.get_object(manifest_uid)
         if not manifest:
@@ -176,16 +182,18 @@ class SourceIngestionService:
             "byte_size": len(upload.content),
             "artifact_uri": artifact_uri,
         }
+        if registry:
+            payload["source_registry"] = registry
         provenance.start_event(
             event_id=event_id,
             event_type="source_upload",
             event_name="source_ingestion.upload",
             summary={key: value for key, value in payload.items() if key != "artifact_uri"},
-            metadata={"storage_key": storage_key, "redaction_policy": "hash_only"},
+            metadata={"storage_key": storage_key, "redaction_policy": "hash_only", "source_registry": registry},
         )
         source_record = self.temporal_repo.write_source_record_version(
             SourceRecordWrite(
-                vendor="user_upload",
+                vendor=str((registry or {}).get("vendor_name") or "user_upload"),
                 source_name=str(manifest_props.get("source_kind") or "multimodal_upload"),
                 source_version="1",
                 dataset=upload.dataset or str(manifest_props.get("dataset") or upload.manifest_id),
@@ -267,6 +275,7 @@ class SourceIngestionService:
             "storage_key": storage_key,
             "duplicate_artifact_bytes": artifact_bytes_existed,
             "extraction_runs": extraction_runs,
+            "_meta": {"source_registry": registry},
         }
 
     def run_extractions(
@@ -304,7 +313,12 @@ class SourceIngestionService:
             for extractor_id in disabled_or_unsupported:
                 get_extractor(extractor_id)
                 runs.append(self._write_disabled_extraction_run(context, extractor_id, actor=actor))
-        return {"status": "ok", "artifact_uid": artifact_uid, "runs": runs}
+        return {
+            "status": "ok",
+            "artifact_uid": artifact_uid,
+            "runs": runs,
+            "_meta": {"source_registry": source_registry_metadata("source_extraction")},
+        }
 
     def list_artifacts(
         self,
@@ -383,7 +397,10 @@ class SourceIngestionService:
             event_type="artifact_extraction",
             event_name=extractor_id,
             summary={"artifact_uid": context.artifact_uid, "mime_type": context.mime_type},
-            metadata={"extractor_version": extractor.version},
+            metadata={
+                "extractor_version": extractor.version,
+                "source_registry": source_registry_metadata("source_extraction"),
+            },
         )
         began = time.perf_counter()
         produced_uids: list[str] = []
@@ -438,7 +455,7 @@ class SourceIngestionService:
                 "error": error,
                 "provenance_event_id": event_id,
                 "produced_object_uids": [uid for uid in produced_uids if uid],
-                "metadata": {"output": output},
+                "metadata": {"output": output, "source_registry": source_registry_metadata("source_extraction")},
                 "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
             },
             started,
@@ -481,6 +498,7 @@ class SourceIngestionService:
                 "completed_at": now,
                 "error": "Extractor is disabled or unsupported for this artifact MIME type.",
                 "provenance_event_id": event_id,
+                "metadata": {"source_registry": source_registry_metadata("source_extraction")},
                 "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
             },
             now,
@@ -562,7 +580,11 @@ class SourceIngestionService:
             "source_id": provenance_event_id,
             "created_at": now,
             "updated_at": now,
-            "metadata": {"filename": filename, "storage_key": storage_key},
+            "metadata": {
+                "filename": filename,
+                "storage_key": storage_key,
+                "source_registry": _source_registry_for_mime(mime_type),
+            },
             "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
         }
         if mime_type in IMAGE_MIME_TYPES:
@@ -656,6 +678,11 @@ def sniff_mime_type(content: bytes, content_type: str, filename: str) -> str:
         _decode_text(content)
         return content_type
     raise ValidationError("File must be PDF, Markdown/text, PNG, JPEG, or WebP.")
+
+
+def _source_registry_for_mime(mime_type: str) -> dict[str, Any] | None:
+    source_id = "source_ingestion_media" if mime_type in IMAGE_MIME_TYPES else "source_ingestion_document"
+    return source_registry_metadata(source_id)
 
 
 def _safe_filename(filename: str) -> str:

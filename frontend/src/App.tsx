@@ -131,6 +131,7 @@ const IdeaWatchlist = lazyPage(() => import("@/pages/IdeaWatchlist"), "IdeaWatch
 const IdeaDetail = lazyPage(() => import("@/pages/IdeaDetail"), "IdeaDetail")
 const DCFModel = lazyPage(() => import("@/pages/DCFModel"), "DCFModel")
 const AISettings = lazyPage(() => import("@/pages/AISettings"), "AISettings")
+const PolicyMatrixSettings = lazyPage(() => import("@/pages/PolicyMatrixSettings"), "PolicyMatrixSettings")
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -216,6 +217,7 @@ function AppRoutes() {
               <Route path="/commodity-research" element={<CommodityResearch />} />
               <Route path="/portfolio-news" element={<PortfolioNews />} />
               <Route path="/settings/ai" element={<AISettings />} />
+              <Route path="/settings/policy-matrix" element={<PolicyMatrixSettings />} />
             </Route>
           </Route>
         </Routes>

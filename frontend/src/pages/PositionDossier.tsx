@@ -50,6 +50,7 @@ import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { Dialog } from "@/components/shared/Dialog"
 import { formatApprovalDisplayLabel, StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
+import { ApprovalProgressSummary, approvalActionLabel } from "@/components/shared/ApprovalProgressSummary"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
@@ -640,6 +641,7 @@ export function PositionDossier() {
                       {a.application_error && (
                         <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">Application failed: {a.application_error}</p>
                       )}
+                      <ApprovalProgressSummary approval={a} compact />
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
@@ -648,7 +650,7 @@ export function PositionDossier() {
                         className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
                         title={a.base_state_status === "stale" ? a.base_state_message || "The underlying state changed." : "Review and apply internal state change"}
                       >
-                        {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
+                        {approvalActionLabel(a)}
                       </button>
                       {a.can_restage && (
                         <button
@@ -809,6 +811,7 @@ export function PositionDossier() {
                 </span>
               </div>
               {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
+              <ApprovalProgressSummary approval={approvalReview.approval} />
               <ApprovalChangeSummary approval={approvalReview.approval} />
             </div>
             {approvalReview.approval.base_state_status === "stale" && (
@@ -847,7 +850,11 @@ export function PositionDossier() {
               <ActionButton
                 onClick={() => handleApproval(approvalReview.approval, approvalReview.action, approvalNote)}
                 loading={processingIds.has(approvalReview.approval.id)}
-                loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
+                loadingText={
+                  approvalReview.action === "approve" && approvalActionLabel(approvalReview.approval) === "Record Approval"
+                    ? "Recording..."
+                    : approvalReview.action === "approve" ? "Applying..." : "Rejecting..."
+                }
                 disabled={
                   approvalReview.action === "approve" &&
                   (!approvalNote.trim() || approvalReview.approval.can_approve === false)
@@ -857,7 +864,7 @@ export function PositionDossier() {
                   approvalReview.action === "approve" ? "theme-button-success" : "theme-button-destructive",
                 )}
               >
-                {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+                {approvalReview.action === "approve" ? approvalActionLabel(approvalReview.approval) : "Reject Proposal"}
               </ActionButton>
               {approvalReview.approval.can_restage && (
                 <ActionButton

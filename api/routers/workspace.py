@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+from api.source_health import build_workspace_source_health
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -139,6 +140,7 @@ def get_workspace():
             if isinstance(portfolio_risk, dict)
             else None,
         }
+    source_health = _safe_call(build_workspace_source_health, portfolio_risk=portfolio_risk)
 
     # Positions under thesis pressure
     owned_tickers = _portfolio_tickers(portfolio_data)
@@ -216,6 +218,7 @@ def get_workspace():
     return {
         "regime": regime_summary,
         "portfolio": portfolio_summary,
+        "source_health": source_health,
         "thesis_pressure": thesis_pressure,
         "pending_approvals": {
             "count": len(pending_approvals),

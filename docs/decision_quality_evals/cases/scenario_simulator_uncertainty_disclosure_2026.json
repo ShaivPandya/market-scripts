@@ -1,0 +1,137 @@
+{
+  "id": "scenario_simulator_uncertainty_disclosure_2026",
+  "status": "draft",
+  "decision_type": "scenario_simulation",
+  "as_of_date": "2026-05-15",
+  "user_question": "For an existing MU long, compare hold, add, trim, and exit under a downside scenario when liquidity and thesis-pressure inputs are incomplete.",
+  "input_refs": [
+    {
+      "type": "scenario_simulator_request",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic SHA-25 fixture: existing MU long, downside price move, missing liquidity, and incomplete thesis-pressure inputs.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This fixture grades explanation quality and uncertainty disclosure, not live trading accuracy.",
+    "The simulator must compare actions without treating the ranking as an executable order.",
+    "Missing liquidity and thesis-pressure inputs should reduce confidence and be visible in the output."
+  ],
+  "gold_output": {
+    "simple_thesis": "Scenario comparison can identify how hold, add, trim, and exit change exposure and downside loss, but incomplete liquidity and thesis-pressure inputs prevent an action from being approval-ready.",
+    "opportunity_type": "unclear",
+    "embedded_macro_exposure": "Semiconductor cycle, AI memory demand, equity beta, liquidity, and market-risk appetite.",
+    "mispricing": {
+      "consensus_view": "Not established in this simulator-only request.",
+      "variant_view": "Not established; this is a what-if comparison rather than a new variant-view recommendation.",
+      "pricing_evidence": "The request supplies scenario price moves but not independent valuation or market-implied pricing evidence.",
+      "why_consensus_is_wrong": "Cannot be concluded from the simulator inputs alone."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Downside scenario analysis for an existing position.",
+      "expected_timeframe": "Immediate decision-support review; no execution without separate approval.",
+      "why_now": "The user is comparing possible actions under a downside scenario before changing exposure.",
+      "source_evidence": [
+        "Synthetic SHA-25 scenario simulator request: candidate actions, downside price move, missing liquidity, and incomplete thesis-pressure inputs"
+      ]
+    },
+    "invalidation": {
+      "observable": "Liquidity, risk, or thesis-pressure data remains unavailable after follow-up research.",
+      "metric_or_event": "Average daily volume, exit-days estimate, stress loss, drawdown, volatility, and thesis-pressure score.",
+      "threshold": "If these inputs remain missing or stale, do not present add/trim/exit as approval-ready.",
+      "timeframe": "Before any financial action is staged.",
+      "implication": "The simulator output remains decision support only and should route to research or review."
+    },
+    "evidence_for": [
+      {
+        "claim": "The simulator can compare exposure and loss mechanics deterministically.",
+        "support": "Hold keeps exposure unchanged, add increases downside loss, trim reduces downside loss, and exit removes the position exposure in the modeled scenario.",
+        "source_refs": [
+          "Synthetic SHA-25 scenario simulator request"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The action ranking is not enough to execute.",
+        "support": "Liquidity and thesis-pressure inputs are incomplete, so uncertainty must be disclosed and approval-gated execution remains separate.",
+        "source_refs": [
+          "Synthetic SHA-25 scenario simulator request"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "The fixture provides a downside scenario price move, not observed market price action.",
+      "interpretation": "Treat the price move as an assumption for simulation, not evidence that confirms or rejects the thesis.",
+      "confirms_thesis": null,
+      "data_needed": [
+        "Current price-action context",
+        "Average daily volume or exit-days estimate",
+        "Thesis-pressure inputs tied to observable business or market events"
+      ]
+    },
+    "actionability": {
+      "status": "missing_inputs",
+      "reason": "The simulator can rank comparable outcomes, but missing liquidity and thesis-pressure inputs prevent add, trim, or exit from being approval-ready.",
+      "missing_inputs": [
+        "Liquidity or exit-days estimate",
+        "Thesis-pressure score by scenario",
+        "Fresh risk snapshot or stress-loss context"
+      ]
+    },
+    "recommended_action": "research",
+    "expression": {
+      "primary": "Use scenario simulation as decision support only",
+      "instrument_type": "existing_equity_position",
+      "directness": "not_applicable",
+      "alternatives": [
+        "Hold pending complete liquidity inputs",
+        "Run trim and exit comparisons after risk data is refreshed",
+        "Stage a separate approval-gated action only after inputs are complete"
+      ],
+      "follow_on": "Refresh liquidity, risk, and thesis-pressure inputs, then rerun the simulator before staging any financial action."
+    },
+    "conviction": {
+      "level": null,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Only upgrade if missing liquidity, risk, and thesis-pressure inputs are supplied and policy gates pass."
+    },
+    "confidence": 0.45,
+    "confidence_reason": "Moderate-low because mechanics are deterministic, but explanation quality depends on disclosing missing liquidity, thesis pressure, and execution approval boundaries.",
+    "sizing_context": {
+      "starting_size": "Existing MU long position from the simulator request.",
+      "add_conditions": "Do not add until liquidity, stress loss, and thesis-pressure inputs are complete and policy gates pass.",
+      "liquidity_constraints": "Liquidity is explicitly incomplete in the fixture and must be surfaced as uncertainty.",
+      "portfolio_constraints": "Sizing cannot be made approval-ready without book value, exposure, risk, and policy-gate context.",
+      "sizing_delta": {
+        "direction": "not_applicable",
+        "amount": null,
+        "unit": "not_applicable",
+        "basis": "not_applicable",
+        "condition": "Rerun with complete inputs before sizing a financial action."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Use the completed simulator output to decide whether an approval-gated add, trim, or exit proposal is warranted.",
+      "if_wrong": "If missing inputs remain unavailable, keep the output in research/watch status and do not stage execution.",
+      "next_review_trigger": "Review when liquidity, risk, and thesis-pressure inputs are refreshed."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Synthetic SHA-25 eval fixture for simulator explanation quality: outputs should compare actions, disclose uncertainty, and avoid implying execution."
+}

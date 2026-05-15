@@ -62,6 +62,70 @@ def test_normalize_approval_distinguishes_pending_failed_and_applied():
     assert applied["decision_state"] == "applied"
 
 
+def test_normalize_approval_reports_dual_control_progress_and_legacy_default():
+    legacy = normalize_approval(
+        {
+            "id": "approval:legacy",
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item",
+            "proposed_change": {},
+        }
+    )
+    assert legacy is not None
+    assert legacy["approval_progress"]["total_required"] == 1
+    assert legacy["approval_progress"]["remaining_count"] == 1
+    assert legacy["remaining_approval_requirements"][0]["id"] == "primary"
+
+    partial = normalize_approval(
+        {
+            "id": "approval:dual",
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item",
+            "proposed_change": {},
+            "approval_requirements": [
+                {"id": "research", "label": "Research", "min_count": 1, "actor_roles": ["admin"]},
+                {"id": "portfolio", "label": "Portfolio", "min_count": 1, "actor_roles": ["admin"]},
+            ],
+            "approval_decisions": [
+                {
+                    "requirement_id": "research",
+                    "actor_id": "alice",
+                    "actor_type": "user",
+                    "decision": "approved",
+                }
+            ],
+        }
+    )
+    assert partial is not None
+    assert partial["approval_progress"]["recorded_count"] == 1
+    assert partial["approval_progress"]["remaining_count"] == 1
+    assert partial["remaining_approval_requirements"][0]["id"] == "portfolio"
+
+    rejected = normalize_approval(
+        {
+            "id": "approval:rejected",
+            "status": "rejected",
+            "application_status": "not_applicable",
+            "entity_type": "action_item",
+            "proposed_change": {},
+            "approval_requirements": [{"id": "research", "label": "Research", "min_count": 1}],
+            "approval_decisions": [
+                {
+                    "requirement_id": "research",
+                    "actor_id": "alice",
+                    "actor_type": "user",
+                    "decision": "rejected",
+                }
+            ],
+        }
+    )
+    assert rejected is not None
+    assert rejected["decision_state"] == "rejected"
+    assert rejected["approval_decisions"][0]["decision"] == "rejected"
+
+
 def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeypatch):
     import ontology.action_registry as action_registry
 
@@ -409,3 +473,13 @@ def test_stale_approval_controls_are_wired_on_review_surfaces():
             "approvalReview.approval.can_approve === false" in source
             or "approvalReview.can_approve === false" in source
         )
+
+
+def test_workspace_source_health_panel_is_wired():
+    workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
+
+    assert "SourceHealthPanel" in workspace
+    assert "Source Health" in workspace
+    assert "stale required" in workspace
+    assert "optional degraded" in workspace
+    assert "theme-badge-error" in workspace

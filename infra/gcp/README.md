@@ -240,3 +240,84 @@ After migration:
 - Thesis and overview writes land in `live/theses/**` and `live/overviews/**`.
 - Async jobs persist status in `async_jobs`.
 - `ENVIRONMENT=production` direct writes under project root raise `ProductionLocalWriteError`.
+
+## Deploy Smoke Tests (SHA-34)
+
+Backend deploys automatically run smoke tests after the API service is updated.
+The smoke runner authenticates against the live API using a dedicated smoke
+password (separate from the normal admin password) and probes multiple endpoints.
+
+### Required Secrets
+
+`setup-secrets.sh` creates two paired secrets:
+
+- `AUTH_SMOKE_PASSWORD` — plaintext password used by the deploy runner. **Not
+  bound to any service account** (only the deploy operator accesses it).
+- `AUTH_SMOKE_PASSWORD_HASH` — bcrypt hash bound to `API_SA`. The API reads
+  this to authenticate smoke logins (subject `smoke`).
+
+To rotate: delete both secrets and re-run `setup-secrets.sh`:
+
+```bash
+gcloud secrets delete AUTH_SMOKE_PASSWORD --project=${PROJECT_ID}
+gcloud secrets delete AUTH_SMOKE_PASSWORD_HASH --project=${PROJECT_ID}
+./infra/gcp/setup-secrets.sh
+```
+
+### Default Behavior
+
+`deploy-backend.sh` runs smoke tests by default after `deploy-api.sh`:
+
+```bash
+# Normal deploy — smoke runs automatically
+./infra/gcp/deploy-backend.sh
+
+# Emergency deploy — skip smoke
+RUN_DEPLOY_SMOKE=0 ./infra/gcp/deploy-backend.sh
+```
+
+Smoke failure exits deploy-backend.sh nonzero, preventing a false healthy
+release signal.
+
+### Manual Post-Rollback Smoke
+
+After a manual rollback, run smoke tests against the rolled-back tag:
+
+```bash
+SMOKE_MODE=post-rollback EXPECTED_IMAGE_TAG=<rolled-back-tag> \
+  ./infra/gcp/run-backend-smoke.sh
+```
+
+### Smoke Checks
+
+The runner performs these required checks:
+
+1. `GET /api/health` — expects 200, `status=ok`, matching `release.image_tag`
+2. `POST /api/auth/login` — authenticates with the smoke password
+3. `GET /api/auth/me` — proves the session token works
+4. `GET /api/workspace` — proves core read-model route returns expected keys
+5. `GET /api/approvals/summary?limit=1` — proves approval read path is available
+6. `GET /api/admin/deploy-smoke` — checks Postgres, migration head, read-model,
+   and action/approval invariants
+
+### Admin Deploy Smoke Endpoint
+
+`GET /api/admin/deploy-smoke` (requires auth) runs backend invariant checks:
+
+- **postgres**: Postgres connectivity via `SELECT 1`
+- **migration_head**: Alembic version matches `TALISMAN_RELEASE_MIGRATION_HEAD`
+- **read_model**: Temporal ontology read service is queryable
+- **action_approval_safety**: Action/approval command service is available
+
+Returns 200 when all pass, 503 with `failed_checks` array on any failure.
+
+### Failure Triage
+
+| Symptom | Likely Cause |
+|---------|-------------|
+| Health/release mismatch | New revision not fully rolled out; retry in 30s |
+| Login/proxy secret failure | `AUTH_SMOKE_PASSWORD` or `API_PROXY_SECRET` out of sync; re-run `setup-secrets.sh` |
+| Migration mismatch | Alembic upgrade didn't complete; check migration job logs |
+| Read-model failure | Ontology DB tables missing or Postgres pool exhausted |
+| Approval safety failure | Command service initialization error; check API logs |
+

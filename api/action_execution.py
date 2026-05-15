@@ -19,7 +19,7 @@ from ontology.command_service import (
     OntologyCommandService,
     OntologyCommandValidationError,
 )
-from ontology.policy import admin_actor
+from ontology.policy import Actor, admin_actor
 
 
 def execute_api_action(
@@ -27,11 +27,19 @@ def execute_api_action(
     payload: dict[str, Any],
     *,
     source_id: str,
+    actor: Actor | None = None,
+    request_mode: str = "proposal",
     validation_status_code: int = 422,
     data_fetch_source: str | None = None,
 ) -> dict[str, Any]:
     service = OntologyCommandService()
-    context = OntologyCommandContext(actor=admin_actor(source="api"), source_type="api", source_id=source_id)
+    resolved_actor = actor or admin_actor(source="api")
+    context = OntologyCommandContext(
+        actor=resolved_actor,
+        source_type="api",
+        source_id=source_id,
+        request_mode=request_mode,
+    )
     try:
         if action_id == "resolve_approval":
             return service.resolve_approval(
@@ -39,6 +47,7 @@ def execute_api_action(
                 str(payload.get("status") or ""),
                 str(payload.get("note") or "") or None,
                 context,
+                requirement_id=str(payload.get("requirement_id") or "").strip() or None,
             )
         approval = service.propose_action(action_id, payload, context, reason=f"Requested via {source_id}")
         return service.resolve_approval(str(approval["id"]), "approved", "Approved via API action.", context)
@@ -63,6 +72,7 @@ def stage_api_action(
     payload: dict[str, Any],
     *,
     source_id: str,
+    actor: Actor | None = None,
     reason: str | None = None,
     apply: bool = False,
     approval_note: str | None = None,
@@ -74,10 +84,12 @@ def stage_api_action(
 
     proposal_reason = str(reason or "").strip() or f"Requested via {source_id}"
     service = OntologyCommandService()
+    resolved_actor = actor or admin_actor(source="api")
     context = OntologyCommandContext(
-        actor=admin_actor(source="api"),
+        actor=resolved_actor,
         source_type="user",
         source_id=source_id,
+        request_mode="self_apply" if apply else "proposal",
     )
     try:
         approval = service.propose_action(

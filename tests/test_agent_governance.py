@@ -219,3 +219,84 @@ def test_model_budget_fails_closed_before_provider_call():
             actor=agent_actor(admin_actor()),
             budget=budget,
         )
+
+
+def test_private_egress_deny_mode_blocks_portfolio_private(monkeypatch):
+    from api import llm_settings
+
+    base = llm_settings.default_gateway_policy()
+    monkeypatch.setattr(
+        llm_settings,
+        "get_gateway_policy_setting",
+        lambda: {**base, "private_egress_mode": "deny"},
+    )
+
+    with pytest.raises(ModelGatewayDenied) as exc_info:
+        prepare_model_egress(
+            provider="anthropic",
+            purpose="agent_chat",
+            stream_kwargs={
+                "model": "claude-test",
+                "max_tokens": 256,
+                "system": "system instructions",
+                "messages": [{"role": "user", "content": "Analyze my portfolio positions."}],
+            },
+            actor=agent_actor(admin_actor()),
+        )
+
+    assert exc_info.value.manifest["decision"] == "blocked"
+    assert exc_info.value.manifest["decision_reason"] == "private_egress_denied"
+    assert exc_info.value.manifest["data_sensitivity"] == "portfolio_private"
+
+
+def test_private_egress_deny_mode_allows_public_market(monkeypatch):
+    from api import llm_settings
+
+    base = llm_settings.default_gateway_policy()
+    monkeypatch.setattr(
+        llm_settings,
+        "get_gateway_policy_setting",
+        lambda: {**base, "private_egress_mode": "deny"},
+    )
+
+    _kwargs, manifest = prepare_model_egress(
+        provider="openai",
+        purpose="agent_chat",
+        stream_kwargs={
+            "model": "gpt-test",
+            "max_output_tokens": 16,
+            "instructions": "instructions",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "What moved the S&P 500?"}]}],
+        },
+        actor=agent_actor(admin_actor()),
+    )
+
+    assert manifest["decision"] == "allowed"
+    assert manifest["data_sensitivity"] == "public_market"
+
+
+def test_private_egress_deny_mode_blocks_research_private(monkeypatch):
+    from api import llm_settings
+
+    base = llm_settings.default_gateway_policy()
+    monkeypatch.setattr(
+        llm_settings,
+        "get_gateway_policy_setting",
+        lambda: {**base, "private_egress_mode": "deny"},
+    )
+
+    with pytest.raises(ModelGatewayDenied) as exc_info:
+        prepare_model_egress(
+            provider="gemini",
+            purpose="agent_chat",
+            stream_kwargs={
+                "model": "gemini-test",
+                "contents": [{"role": "user", "parts": [{"text": "Summarize my retrieval knowledge base memo."}]}],
+                "config": {"max_output_tokens": 256},
+            },
+            actor=agent_actor(admin_actor()),
+        )
+
+    assert exc_info.value.manifest["decision"] == "blocked"
+    assert exc_info.value.manifest["decision_reason"] == "private_egress_denied"
+    assert exc_info.value.manifest["data_sensitivity"] == "research_private"

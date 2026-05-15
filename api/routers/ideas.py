@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from decision_quality import (
     ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_ACTIONS,
 )
@@ -267,9 +268,16 @@ def _comparison_uid(value: Any) -> str:
     return text if text.startswith("idea_comparison_run:") else f"idea_comparison_run:{text}"
 
 
+def _writeable_object_props(props: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(props)
+    for key in ("_meta", "object_uid", "legacy_id"):
+        payload.pop(key, None)
+    return payload
+
+
 def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
     now = _now()
-    payload = {**props, "ontology_run_id": "operational"}
+    payload = {**_writeable_object_props(props), "ontology_run_id": "operational"}
     service = OntologyObjectService()
     row = service.write_object(
         object_type,
@@ -675,20 +683,43 @@ def _normalize_missing_rows(value: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
         if isinstance(row, str) and row.strip():
-            out.append({"field": row.strip(), "severity": "medium", "reason": row.strip()})
+            field = row.strip()
+            out.append({"field": field, "severity": "medium", "reason": _missing_reason_from_field(field)})
         elif isinstance(row, dict):
             field = str(row.get("field") or row.get("name") or "unspecified").strip()
             if not field:
                 field = "unspecified"
             severity = str(row.get("severity") or "medium").strip().lower()
+            reason = str(
+                row.get("reason") or row.get("description") or row.get("why_needed") or row.get("impact") or ""
+            ).strip()
+            if not reason or reason.lower() == field.lower():
+                reason = _missing_reason_from_field(field)
             out.append(
                 {
                     "field": field,
                     "severity": severity,
-                    "reason": str(row.get("reason") or row.get("message") or "").strip(),
+                    "reason": reason,
                 }
             )
     return out
+
+
+def _missing_reason_from_field(field: str) -> str:
+    normalized = field.lower()
+    if any(token in normalized for token in ("valuation", "multiple", "price", "p/e", "market cap")):
+        return "Needed to judge valuation asymmetry, entry price, and downside if the thesis is crowded."
+    if "capex" in normalized or "hyperscaler" in normalized:
+        return "Needed to verify whether the demand driver is accelerating, stable, or starting to decelerate."
+    if "portfolio" in normalized or "risk budget" in normalized or "concentration" in normalized:
+        return "Needed to decide whether the idea fits current exposure and can be sized responsibly."
+    if "customer" in normalized:
+        return "Needed to test whether customer concentration is improving or becoming a larger thesis risk."
+    if "short interest" in normalized or "insider" in normalized or "ownership" in normalized:
+        return "Needed to assess positioning, squeeze risk, and whether consensus already owns the thesis."
+    if "win/loss" in normalized or "spectrum-x" in normalized or "competitive" in normalized:
+        return "Needed to validate the competitive threat and whether share is actually shifting."
+    return "Needed before treating the idea as actionable."
 
 
 def _has_critical_missing(rows: list[dict[str, Any]]) -> bool:
@@ -732,9 +763,57 @@ def _as_json_dict(value: Any) -> dict[str, Any] | None:
 
 
 def _idea_evaluator_json_schema() -> dict[str, Any]:
-    object_schema = {"type": "object", "additionalProperties": True}
-    array_object_schema = {"type": "array", "items": object_schema}
     nullable_string = {"type": ["string", "null"]}
+    string_array = {"type": "array", "items": {"type": "string"}}
+    factor_score_schema = {
+        "type": "object",
+        "description": "One factor score row. Always return an object, never a bare number.",
+        "additionalProperties": False,
+        "required": ["score", "status", "rationale", "source", "missing"],
+        "properties": {
+            "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+            "status": {
+                "type": "string",
+                "description": "Short state such as supportive, mixed, challenged, incomplete, or reviewable.",
+            },
+            "rationale": {
+                "type": "string",
+                "description": "One concrete sentence explaining why this factor got this score; do not repeat the factor name.",
+            },
+            "source": {"type": "string", "description": "Evidence source or context used for the score."},
+            "missing": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific missing inputs for this factor, or an empty list.",
+            },
+        },
+    }
+    missing_information_schema = {
+        "type": "object",
+        "description": "A missing input that would change actionability, confidence, or sizing.",
+        "additionalProperties": False,
+        "required": ["field", "severity", "reason"],
+        "properties": {
+            "field": {"type": "string", "description": "Short name of the missing input."},
+            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical", "block"]},
+            "reason": {
+                "type": "string",
+                "description": "Why this input matters. Must not duplicate field.",
+            },
+        },
+    }
+    evidence_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["source", "url", "summary", "claim", "support"],
+        "properties": {
+            "source": {"type": "string"},
+            "url": nullable_string,
+            "summary": {"type": "string"},
+            "claim": {"type": "string"},
+            "support": {"type": "string"},
+        },
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -762,14 +841,48 @@ def _idea_evaluator_json_schema() -> dict[str, Any]:
             "score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
             "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
             "rationale": {"type": "string"},
-            "factor_scores": object_schema,
-            "missing_information": array_object_schema,
-            "data_quality": object_schema,
-            "evidence": array_object_schema,
-            "disconfirming_evidence": array_object_schema,
+            "factor_scores": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(CANONICAL_IDEA_FACTORS),
+                "properties": {name: factor_score_schema for name in CANONICAL_IDEA_FACTORS},
+            },
+            "missing_information": {"type": "array", "items": missing_information_schema},
+            "data_quality": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "critical_data_quality",
+                    "source_quality",
+                    "quality",
+                    "tool_errors",
+                    "missing_count",
+                    "critical_missing_count",
+                    "portfolio_context_used",
+                ],
+                "properties": {
+                    "critical_data_quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "source_quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "quality": {"type": "string", "enum": sorted(SOURCE_QUALITY_VALUES)},
+                    "tool_errors": string_array,
+                    "missing_count": {"type": "integer", "minimum": 0},
+                    "critical_missing_count": {"type": "integer", "minimum": 0},
+                    "portfolio_context_used": {"type": "boolean"},
+                },
+            },
+            "evidence": {"type": "array", "items": evidence_schema},
+            "disconfirming_evidence": {"type": "array", "items": evidence_schema},
             "catalyst": nullable_string,
             "invalidation": nullable_string,
-            "portfolio_fit": object_schema,
+            "portfolio_fit": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status", "note"],
+                "properties": {
+                    "status": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+            },
             "decision_quality": decision_quality_schema(),
         },
     }
@@ -1147,13 +1260,34 @@ def _build_context_for_evaluation(
     return context
 
 
-def _factor(score: float, status: str, rationale: str, missing: list[str] | None = None) -> dict[str, Any]:
+def _factor(
+    score: float,
+    status: str,
+    rationale: str,
+    missing: list[str] | None = None,
+    *,
+    source: str = "evaluator",
+) -> dict[str, Any]:
     return {
         "score": max(0, min(100, round(float(score), 1))),
         "status": status,
         "rationale": rationale,
         "missing": missing or [],
+        "source": source,
     }
+
+
+def _factor_rationale_from_score(key: str, score: float) -> str:
+    label = key.replace("_", " ")
+    if score >= 75:
+        posture = "strong support"
+    elif score >= 60:
+        posture = "moderate support"
+    elif score >= 45:
+        posture = "mixed support"
+    else:
+        posture = "weak support"
+    return f"{label} scored as {posture}; evaluator did not provide a separate rationale."
 
 
 def _ensure_canonical_factor_rows(factor_scores: dict[str, Any]) -> dict[str, Any]:
@@ -1162,13 +1296,136 @@ def _ensure_canonical_factor_rows(factor_scores: dict[str, Any]) -> dict[str, An
         row = factor_scores.get(key)
         if isinstance(row, dict):
             score = _numeric_or_none(row.get("score"), minimum=0, maximum=100)
+            final_score = 50.0 if score is None else round(score, 1)
+            rationale = str(row.get("rationale") or row.get("summary") or row.get("reason") or "").strip()
+            if not rationale:
+                rationale = _factor_rationale_from_score(key, final_score)
             normalized[key] = {
                 **row,
-                "score": 50.0 if score is None else round(score, 1),
+                "score": final_score,
                 "status": str(row.get("status") or "reviewable"),
+                "rationale": rationale,
+                "source": str(row.get("source") or "evaluator"),
+                "missing": row.get("missing") if isinstance(row.get("missing"), list) else [],
             }
         else:
             normalized[key] = _factor(50, "missing", f"{key} was not returned by the evaluator.")
+    return normalized
+
+
+_FACTOR_ALIASES = {
+    "macro": "macro_support",
+    "macro_support": "macro_support",
+    "industry": "industry_attractiveness",
+    "industry_attractiveness": "industry_attractiveness",
+    "business": "business_quality",
+    "business_quality": "business_quality",
+    "management": "management_quality",
+    "management_quality": "management_quality",
+    "valuation": "valuation_asymmetry",
+    "valuation_asymmetry": "valuation_asymmetry",
+    "portfolio": "portfolio_fit",
+    "portfolio_fit": "portfolio_fit",
+}
+
+
+def _normalize_factor_scores(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    rows: dict[str, Any] = {}
+    for raw_key, raw_row in raw.items():
+        key = _FACTOR_ALIASES.get(str(raw_key).strip().lower())
+        if key is None:
+            continue
+        if isinstance(raw_row, dict):
+            score = _numeric_or_none(
+                raw_row.get("score") or raw_row.get("value") or raw_row.get("rating"),
+                minimum=0,
+                maximum=100,
+            )
+            rows[key] = _factor(
+                50 if score is None else score,
+                str(raw_row.get("status") or raw_row.get("label") or "reviewable"),
+                str(
+                    raw_row.get("rationale")
+                    or raw_row.get("summary")
+                    or raw_row.get("evidence")
+                    or raw_row.get("reason")
+                    or ""
+                ),
+                _as_list(raw_row.get("missing")),
+                source=str(raw_row.get("source") or "evaluator"),
+            )
+        else:
+            score = _numeric_or_none(raw_row, minimum=0, maximum=100)
+            if score is not None:
+                rows[key] = _factor(score, "reviewable", _factor_rationale_from_score(key, score))
+    return _ensure_canonical_factor_rows(rows)
+
+
+def _join_structured_text(value: Any, keys: Sequence[str]) -> str | None:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in keys:
+            item = value.get(key)
+            if item in (None, "", [], {}):
+                continue
+            label = key.replace("_", " ")
+            if isinstance(item, list):
+                text = "; ".join(str(child) for child in item if child not in (None, "", [], {}))
+            else:
+                text = str(item)
+            if text:
+                parts.append(f"{label}: {text}")
+        if parts:
+            return "; ".join(parts)
+    return str(value)
+
+
+def _normalize_evidence_rows(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, str):
+            summary = row.strip()
+            if summary:
+                normalized.append({"source": "evaluator", "summary": summary})
+            continue
+        if not isinstance(row, dict):
+            continue
+        source_refs = row.get("source_refs") if isinstance(row.get("source_refs"), list) else []
+        source = (
+            row.get("source")
+            or row.get("title")
+            or row.get("citation")
+            or (", ".join(str(ref) for ref in source_refs if ref) if source_refs else None)
+            or "evaluator"
+        )
+        summary = (
+            row.get("summary")
+            or row.get("claim")
+            or row.get("support")
+            or row.get("detail")
+            or row.get("rationale")
+            or row.get("evidence")
+        )
+        if str(summary or "").strip().lower() == "evidence item":
+            summary = row.get("claim") or row.get("support") or row.get("detail") or row.get("rationale")
+        summary_text = str(summary or "").strip()
+        if not summary_text:
+            continue
+        normalized_row = {
+            "source": str(source),
+            "summary": summary_text,
+        }
+        if row.get("url"):
+            normalized_row["url"] = str(row["url"])
+        if row.get("observed_at"):
+            normalized_row["observed_at"] = str(row["observed_at"])
+        normalized.append(normalized_row)
     return normalized
 
 
@@ -1497,10 +1754,7 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
     if _has_critical_missing(missing) and action == "buy":
         action = "watch"
 
-    factor_scores_raw = parsed.get("factor_scores")
-    factor_scores: dict[str, Any] = (
-        cast(dict[str, Any], factor_scores_raw) if isinstance(factor_scores_raw, dict) else {}
-    )
+    factor_scores = _normalize_factor_scores(parsed.get("factor_scores"))
     score = _numeric_or_none(parsed.get("score"), minimum=0, maximum=100)
     confidence = _numeric_or_none(parsed.get("confidence"), minimum=0, maximum=1)
     decision_quality, decision_quality_errors = parse_decision_quality(parsed.get("decision_quality"))
@@ -1531,16 +1785,19 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         "factor_scores": factor_scores,
         "missing_information": missing,
         "data_quality": data_quality,
-        "evidence": parsed.get("evidence") if isinstance(parsed.get("evidence"), list) else [],
-        "disconfirming_evidence": (
-            parsed.get("disconfirming_evidence") if isinstance(parsed.get("disconfirming_evidence"), list) else []
+        "evidence": _normalize_evidence_rows(parsed.get("evidence")),
+        "disconfirming_evidence": _normalize_evidence_rows(parsed.get("disconfirming_evidence")),
+        "catalyst": _join_structured_text(
+            parsed.get("catalyst"),
+            ("primary", "event_or_condition", "expected_timeframe", "why_now", "status", "source_evidence"),
         ),
-        "catalyst": parsed.get("catalyst"),
-        "invalidation": parsed.get("invalidation"),
+        "invalidation": _join_structured_text(
+            parsed.get("invalidation"),
+            ("observable", "metric", "metric_or_event", "threshold", "timeframe", "implication"),
+        ),
         "portfolio_fit": parsed.get("portfolio_fit") if isinstance(parsed.get("portfolio_fit"), dict) else {},
         "decision_quality": decision_quality.model_dump(mode="json") if decision_quality else None,
         "decision_quality_gate": gate.model_dump(mode="json"),
-        "decision_quality_errors": decision_quality_errors,
     }
     result = _merge_analyzer_context_into_result(context, result)
     if not result["rationale"]:
@@ -1571,7 +1828,10 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
                 "You are evaluating independent watchlist ideas. Return only valid JSON. "
                 "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing. "
                 "The canonical score denominator is exactly six factors. Do not add fundamental_momentum or "
-                "price_momentum as top-level factors; they are analyzer diagnostics only."
+                "price_momentum as top-level factors; they are analyzer diagnostics only. "
+                "Each factor_scores entry must be an object with score, status, rationale, source, and missing. "
+                "Never return a bare numeric factor score. Each missing_information reason must explain why the "
+                "input matters and must not simply repeat the field."
             ),
         ]
     )
@@ -1582,7 +1842,11 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         "factor_scores, missing_information, data_quality, evidence, disconfirming_evidence, catalyst, invalidation, "
         "portfolio_fit, decision_quality. "
         "factor_scores must include macro_support, industry_attractiveness, business_quality, management_quality, "
-        "valuation_asymmetry, and portfolio_fit. Analyzer raw qualitative scores, when present, will override "
+        "valuation_asymmetry, and portfolio_fit. Each factor must be an object: "
+        "{score, status, rationale, source, missing}. Do not return numeric-only factor rows. "
+        "missing_information rows must be {field, severity, reason}; reason must be a concrete explanation of "
+        "how the missing input affects actionability, confidence, or sizing. "
+        "Analyzer raw qualitative scores, when present, will override "
         "business/industry/management quality factors on the native 0-100 scale. Analyzer valuation_signal, when "
         "present, will be clipped to +/-3 and mapped to 0-100 with 50 neutral. action must use the shared "
         "canonical decision action vocabulary.\n\n"
@@ -1592,7 +1856,7 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         text, citations, _response = call_llm_text(
             prompt=prompt,
             model=MODEL_HIGH,
-            max_tokens=3000,
+            max_tokens=6000,
             system=system,
             max_web_search_uses=4,
             json_schema=_idea_evaluator_json_schema(),
@@ -2231,7 +2495,12 @@ def get_idea_evaluation_job(job_id: str):
 
 
 @router.post("/ideas/{idea_id}/evaluations/{evaluation_id}/accept")
-def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptRequest | None = None):
+def accept_idea_evaluation(
+    idea_id: str,
+    evaluation_id: str,
+    actor: ActorDep,
+    body: IdeaAcceptRequest | None = None,
+):
     idea = _get_idea(idea_id)
     evaluation = _get_idea_evaluation(evaluation_id)
     if not idea:
@@ -2247,7 +2516,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
     context = OntologyCommandContext(
-        actor=admin_actor(source="ideas"),
+        actor=actor,
         source_type="user",
         source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
     )
@@ -2295,6 +2564,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
                     "urgency": "normal" if action in DECISION_ACTIONABLE_ACTIONS else "low",
                 },
                 source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
+                actor=actor,
                 reason=(body.note if body else None)
                 or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
             )

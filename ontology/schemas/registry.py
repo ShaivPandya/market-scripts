@@ -23,6 +23,10 @@ from ontology.schemas.identity import (
     classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
+    course_of_action_comparison_id,
+    course_of_action_dissent_id,
+    course_of_action_id,
+    course_of_action_rationale_id,
     document_artifact_id,
     equity_overview_id,
     evaluation_id,
@@ -73,11 +77,13 @@ from ontology.schemas.identity import (
     report_run_id,
     risk_limit_id,
     risk_metric_id,
+    scenario_assumption_id,
     scenario_id,
     schema_definition_ref_id,
     sector_id,
     signal_factor_score_id,
     signal_id,
+    simulated_outcome_id,
     source_freshness_id,
     source_manifest_id,
     source_record_object_id,
@@ -108,6 +114,10 @@ from ontology.schemas.objects import (
     Classification,
     CompanyFinancialProfile,
     ComputedSnapshotRef,
+    CourseOfAction,
+    CourseOfActionComparison,
+    CourseOfActionDissent,
+    CourseOfActionRationale,
     DocumentArtifact,
     EquityOverview,
     Evaluation,
@@ -160,10 +170,12 @@ from ontology.schemas.objects import (
     RiskLimit,
     RiskMetric,
     Scenario,
+    ScenarioAssumption,
     SchemaDefinitionRef,
     Sector,
     Signal,
     SignalFactorScore,
+    SimulatedOutcome,
     SourceFreshness,
     SourceManifest,
     SourceRecord,
@@ -245,6 +257,12 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "WorkflowRun": WorkflowRun,
     "WorkflowArtifact": WorkflowArtifact,
     "Recommendation": Recommendation,
+    "CourseOfAction": CourseOfAction,
+    "CourseOfActionComparison": CourseOfActionComparison,
+    "ScenarioAssumption": ScenarioAssumption,
+    "SimulatedOutcome": SimulatedOutcome,
+    "CourseOfActionRationale": CourseOfActionRationale,
+    "CourseOfActionDissent": CourseOfActionDissent,
     "ReportRun": ReportRun,
     "SourceManifest": SourceManifest,
     "DocumentArtifact": DocumentArtifact,
@@ -292,6 +310,12 @@ OPTIONAL_NODE_TYPES = {
     "WorkflowRun",
     "WorkflowArtifact",
     "Recommendation",
+    "CourseOfAction",
+    "CourseOfActionComparison",
+    "ScenarioAssumption",
+    "SimulatedOutcome",
+    "CourseOfActionRationale",
+    "CourseOfActionDissent",
     "ReportRun",
     "SourceManifest",
     "DocumentArtifact",
@@ -687,6 +711,18 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
             or model.idempotency_key
             or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}"
         )
+    if isinstance(model, CourseOfAction):
+        return course_of_action_id(model.course_of_action_id or model.idempotency_key)
+    if isinstance(model, CourseOfActionComparison):
+        return course_of_action_comparison_id(model.comparison_id)
+    if isinstance(model, ScenarioAssumption):
+        return scenario_assumption_id(model.assumption_id)
+    if isinstance(model, SimulatedOutcome):
+        return simulated_outcome_id(model.outcome_id)
+    if isinstance(model, CourseOfActionRationale):
+        return course_of_action_rationale_id(model.rationale_id)
+    if isinstance(model, CourseOfActionDissent):
+        return course_of_action_dissent_id(model.dissent_id)
     if isinstance(model, ReportRun):
         return report_run_id(model.report_id)
     if isinstance(model, SourceManifest):
@@ -939,6 +975,18 @@ def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
         return model.ticker
     if isinstance(model, IdeaComparisonRanking):
         return f"{model.ticker} rank {model.rank}"
+    if isinstance(model, CourseOfAction):
+        return f"{model.action}: {model.ticker or model.instrument_id or model.course_of_action_id}"
+    if isinstance(model, CourseOfActionComparison):
+        return model.objective
+    if isinstance(model, ScenarioAssumption):
+        return model.name
+    if isinstance(model, SimulatedOutcome):
+        return f"Simulated outcome: {model.outcome_id}"
+    if isinstance(model, CourseOfActionRationale):
+        return model.summary[:80]
+    if isinstance(model, CourseOfActionDissent):
+        return model.claim[:80]
     if isinstance(model, FactorScore):
         return model.factor_name
     if isinstance(model, MissingInformationRequirement):

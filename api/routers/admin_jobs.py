@@ -4,6 +4,7 @@ import hmac
 import os
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
@@ -147,3 +148,107 @@ def get_admin_job(job_id: str, _sub: str = Depends(require_job_admin)):
         return poll_registered_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown job_id")  # noqa: B904
+
+
+# ---------------------------------------------------------------------------
+# SHA-34: Deploy smoke endpoint
+# ---------------------------------------------------------------------------
+
+
+def _check_postgres() -> tuple[bool, str]:
+    """Verify Postgres connectivity."""
+    try:
+        from api.postgres import connect
+
+        with connect() as conn:
+            conn.execute("SELECT 1")
+        return True, "ok"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _check_migration_head() -> tuple[bool, str]:
+    """Compare deployed TALISMAN_RELEASE_MIGRATION_HEAD with actual DB head."""
+    expected = (os.environ.get("TALISMAN_RELEASE_MIGRATION_HEAD") or "").strip()
+    if not expected:
+        return True, "not_configured"
+    try:
+        from api.postgres import connect
+
+        with connect() as conn:
+            row = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
+            if row is None:
+                return False, "no alembic_version row"
+            actual = row["version_num"] if isinstance(row, dict) else row[0]
+            if actual == expected:
+                return True, f"head={actual}"
+            return False, f"mismatch: deployed={expected} db={actual}"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _check_read_model() -> tuple[bool, str]:
+    """Verify the temporal read model (ontology) is queryable."""
+    try:
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+
+        reads = OntologyRuntimeReadService()
+        bundle = reads.workspace_bundle()
+        if isinstance(bundle, dict):
+            return True, "ok"
+        return False, "unexpected bundle type"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _check_action_approval_safety() -> tuple[bool, str]:
+    """Light invariant check on action/approval registry availability."""
+    try:
+        from ontology.command_service import OntologyCommandService
+        from ontology.policy import admin_actor
+
+        service = OntologyCommandService()
+        actor = admin_actor(source="deploy-smoke")
+        approvals = service.list_approvals(status="pending", actor=actor)
+        if not isinstance(approvals, list):
+            return False, "approvals list not a list"
+        return True, f"pending_count={len(approvals)}"
+    except Exception as exc:
+        return False, str(exc)
+
+
+@router.get("/admin/deploy-smoke")
+def deploy_smoke(_sub: str = Depends(require_job_admin)):
+    """Run backend invariant checks for post-deploy / post-rollback smoke tests."""
+    checks: dict[str, dict[str, object]] = {}
+    failed_checks: list[str] = []
+
+    for name, fn in [
+        ("postgres", _check_postgres),
+        ("migration_head", _check_migration_head),
+        ("read_model", _check_read_model),
+        ("action_approval_safety", _check_action_approval_safety),
+    ]:
+        passed, detail = fn()
+        checks[name] = {"passed": passed, "detail": detail}
+        if not passed:
+            failed_checks.append(name)
+
+    # Include release metadata for debugging
+    migration_head = (os.environ.get("TALISMAN_RELEASE_MIGRATION_HEAD") or "").strip()
+    release_info: dict[str, str] = {}
+    if migration_head:
+        release_info["migration_head"] = migration_head
+    image_tag = (os.environ.get("TALISMAN_RELEASE_IMAGE_TAG") or "").strip()
+    if image_tag:
+        release_info["image_tag"] = image_tag
+
+    body: dict[str, object] = {"checks": checks}
+    if release_info:
+        body["release"] = release_info
+
+    if failed_checks:
+        body["failed_checks"] = failed_checks
+        return JSONResponse(body, status_code=503)
+
+    return body

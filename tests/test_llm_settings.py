@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,6 +51,12 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider"] == "anthropic"
+    assert payload["provider_mode"] == "single"
+    assert payload["provider_by_tier"] == {
+        "low": "anthropic",
+        "mid": "anthropic",
+        "high": "anthropic",
+    }
     assert payload["models"]["low"] == "claude-haiku-4-5"
     assert payload["models_by_provider"]["openai"]["mid"] == "gpt-5.4"
     assert payload["models_by_provider"]["gemini"]["mid"] == "gemini-3.1-pro-preview-customtools"
@@ -135,6 +142,8 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
     assert len(calls) == 1
     assert calls[0] == [
         "llm.provider",
+        "llm.provider_mode",
+        "llm.provider_by_tier",
         "llm.gateway_policy",
         "llm.reasoning_effort.anthropic.low",
         "llm.reasoning_effort.anthropic.mid",
@@ -231,6 +240,110 @@ def test_put_llm_settings_persists_gemini_provider(temp_llm_settings, auth_clien
     assert temp_llm_settings.get_llm_reasoning_effort_setting("gemini", "low") == "minimal"
 
 
+def test_put_llm_settings_persists_custom_provider_by_tier(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    response = auth_client.put(
+        "/api/settings/llm",
+        json={
+            "provider": "gemini",
+            "provider_mode": "custom",
+            "provider_by_tier": {
+                "low": "gemini",
+                "mid": "gemini",
+                "high": "openai",
+            },
+            "reasoning_efforts_by_provider": {
+                "gemini": {
+                    "low": "minimal",
+                    "mid": "medium",
+                    "high": "high",
+                },
+                "openai": {
+                    "low": "none",
+                    "mid": "medium",
+                    "high": "xhigh",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "gemini"
+    assert payload["provider_mode"] == "custom"
+    assert payload["provider_by_tier"] == {
+        "low": "gemini",
+        "mid": "gemini",
+        "high": "openai",
+    }
+    assert payload["models"] == {
+        "low": "gemini-3.1-flash-lite",
+        "mid": "gemini-3.1-pro-preview-customtools",
+        "high": "gpt-5.5",
+    }
+    assert payload["reasoning_efforts"]["gemini"]["mid"] == "medium"
+    assert payload["reasoning_efforts"]["openai"]["high"] == "xhigh"
+    assert temp_llm_settings.get_llm_provider_mode_setting() == "custom"
+    assert temp_llm_settings.get_llm_provider_by_tier_setting(fallback_provider="gemini") == {
+        "low": "gemini",
+        "mid": "gemini",
+        "high": "openai",
+    }
+
+
+def test_custom_provider_by_tier_routes_model_helpers(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-key-12345678901234567890")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    temp_llm_settings.set_llm_provider_setting("gemini")
+    temp_llm_settings.set_llm_provider_mode_setting("custom")
+    temp_llm_settings.set_llm_provider_by_tier_setting(
+        {"low": "gemini", "mid": "gemini", "high": "openai"},
+        fallback_provider="gemini",
+    )
+
+    assert llm_utils.selected_provider() == "gemini"
+    assert llm_utils.selected_provider_for_tier(llm_utils.MODEL_MID) == "gemini"
+    assert llm_utils.selected_provider_for_tier(llm_utils.MODEL_HIGH) == "openai"
+    assert llm_utils.model_for_tier(llm_utils.MODEL_MID) == "gemini-3.1-pro-preview-customtools"
+    assert llm_utils.model_for_tier(llm_utils.MODEL_HIGH) == "gpt-5.5"
+    assert not llm_utils.has_llm_api_key()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert llm_utils.has_llm_api_key()
+
+
+def test_custom_provider_by_tier_routes_call_llm_text(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    temp_llm_settings.set_llm_provider_setting("gemini")
+    temp_llm_settings.set_llm_provider_mode_setting("custom")
+    temp_llm_settings.set_llm_provider_by_tier_setting(
+        {"low": "gemini", "mid": "gemini", "high": "openai"},
+        fallback_provider="gemini",
+    )
+    monkeypatch.setattr(
+        llm_utils,
+        "_prepare_text_egress",
+        lambda **kwargs: (kwargs["prompt"], kwargs["system"]),
+    )
+    captured = {}
+
+    def fake_openai_response(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_text="answer")
+
+    monkeypatch.setattr(llm_utils, "_call_openai_response", fake_openai_response)
+
+    text, _citations, _response = llm_utils.call_llm_text(prompt="hello", model=llm_utils.MODEL_HIGH)
+
+    assert text == "answer"
+    assert captured["provider"] == "openai"
+    assert captured["model"] == "gpt-5.5"
+
+
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):
     response = auth_client.put("/api/settings/llm", json={"provider": "other"})
 
@@ -305,6 +418,128 @@ def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth
     )
 
     assert response.status_code == 422
+
+
+def test_get_financial_policy_matrix_returns_default(temp_llm_settings, auth_client):
+    response = auth_client.get("/api/settings/financial-policy-matrix")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["policy"]["schema_version"] == 1
+    assert payload["policy"]["rules"][0]["id"] == "default.current_checks"
+    assert "max_position_weight_pct" in payload["limit_defaults"]
+    assert "blocked" in payload["metadata"]["outcomes"]
+
+
+def test_validate_financial_policy_matrix_reports_errors(temp_llm_settings, auth_client):
+    response = auth_client.post(
+        "/api/settings/financial-policy-matrix/validate",
+        json={
+            "policy": {
+                "schema_version": 1,
+                "policy_id": "bad-policy",
+                "rules": [{"id": "bad", "match": {"risk_levels": ["extreme"]}}],
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert "risk_levels" in response.text
+
+
+def test_put_financial_policy_matrix_requires_note(temp_llm_settings, auth_client):
+    policy = auth_client.get("/api/settings/financial-policy-matrix").json()["policy"]
+
+    response = auth_client.put("/api/settings/financial-policy-matrix", json={"policy": policy})
+
+    assert response.status_code == 422
+    assert "note" in response.text
+
+
+def test_put_financial_policy_matrix_persists_with_audit(temp_llm_settings, auth_client, monkeypatch):
+    from api.routers import settings
+
+    audit_events = []
+    monkeypatch.setattr(settings, "emit_audit_event", lambda *args, **kwargs: audit_events.append((args, kwargs)))
+    policy = auth_client.get("/api/settings/financial-policy-matrix").json()["policy"]
+    policy["rules"].append(
+        {
+            "id": "test.block_self_apply",
+            "enabled": True,
+            "priority": 100,
+            "match": {"request_modes": ["self_apply"]},
+            "limits": {},
+            "outcome": "blocked",
+            "approval_mode": None,
+            "reason": "No self apply in tests.",
+            "remediation": "Use proposal review.",
+        }
+    )
+
+    response = auth_client.put(
+        "/api/settings/financial-policy-matrix",
+        json={"policy": policy, "note": "Add test self-apply guard."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["policy"]["rules"][-1]["id"] == "test.block_self_apply"
+    assert temp_llm_settings.get_setting("financial.policy_matrix") is not None
+    assert audit_events
+    assert audit_events[0][0][0] == "settings.financial_policy_matrix.updated"
+
+
+def test_put_financial_policy_matrix_rejects_invalid_rule(temp_llm_settings, auth_client):
+    response = auth_client.put(
+        "/api/settings/financial-policy-matrix",
+        json={
+            "note": "Invalid rule.",
+            "policy": {
+                "schema_version": 1,
+                "policy_id": "bad-policy",
+                "rules": [{"id": "bad", "limits": {"bad_limit": 1}}],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unsupported limit key" in response.text
+
+
+def test_normalize_gateway_policy_accepts_deny_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "deny"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "deny"
+
+
+def test_normalize_gateway_policy_accepts_allow_with_warning_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "allow_with_warning"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "allow_with_warning"
+
+
+def test_normalize_gateway_policy_rejects_invalid_mode(temp_llm_settings):
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "block_everything"
+
+    with pytest.raises(ValueError, match="private_egress_mode"):
+        temp_llm_settings.normalize_gateway_policy(policy)
+
+
+def test_normalize_gateway_policy_env_override_takes_precedence(temp_llm_settings, monkeypatch):
+    monkeypatch.setenv("PRIVATE_EGRESS_MODE", "deny")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["private_egress_mode"] = "allow_with_warning"
+
+    normalized = temp_llm_settings.normalize_gateway_policy(policy)
+
+    assert normalized["private_egress_mode"] == "deny"
 
 
 def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):

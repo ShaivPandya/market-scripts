@@ -120,9 +120,51 @@ export interface PolicyGateReason {
 export interface PolicyGateResult {
   decision?: string
   review_required?: boolean
+  approval_required?: boolean
+  approval_mode?: string | null
+  approval_requirements?: ApprovalRequirement[]
+  rule_id?: string | null
+  reason?: string
+  remediation?: string
+  matched_rules?: Record<string, unknown>[]
+  limit_overrides?: Record<string, unknown>
   failure_reasons?: PolicyGateReason[]
   warnings?: PolicyGateReason[]
   disclosures?: string[]
+}
+
+export interface ApprovalRequirement {
+  id: string
+  label: string
+  min_count: number
+  actor_roles: string[]
+  actor_ids: string[]
+  scope_type?: string | null
+  scope_id?: string | null
+  allow_requester?: boolean
+  allow_actor_reuse?: boolean
+  approved_count?: number
+  remaining_count?: number
+  satisfied?: boolean
+}
+
+export interface ApprovalDecision {
+  requirement_id: string
+  actor_id: string
+  actor_type?: string | null
+  actor_roles?: string[]
+  decision: string
+  note?: string | null
+  decided_at?: string | null
+}
+
+export interface ApprovalProgress {
+  total_required: number
+  recorded_count: number
+  remaining_count: number
+  completed: boolean
+  requirements: ApprovalRequirement[]
+  remaining_requirements: ApprovalRequirement[]
 }
 
 export interface ApprovalRecord extends DecisionStateFields {
@@ -142,6 +184,12 @@ export interface ApprovalRecord extends DecisionStateFields {
   source_type?: string | null
   source_id?: string | null
   proposed_change: Record<string, unknown>
+  approval_requirements?: ApprovalRequirement[]
+  approval_decisions?: ApprovalDecision[]
+  approval_progress?: ApprovalProgress
+  remaining_approval_requirements?: ApprovalRequirement[]
+  approval_policy_rule_id?: string | null
+  approval_policy_reason?: string | null
   policy_gate?: PolicyGateResult | null
   can_approve?: boolean
   can_reject?: boolean
@@ -499,9 +547,11 @@ export const authApi = {
 }
 
 export type LLMProvider = "anthropic" | "openai" | "gemini"
+export type LLMProviderMode = "single" | "custom"
 export type LLMModelTier = "low" | "mid" | "high"
 export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 export type LLMModelTierMap = Record<LLMModelTier, string>
+export type LLMProviderTierMap = Record<LLMModelTier, LLMProvider>
 export type LLMReasoningEffortMap = Record<LLMModelTier, LLMReasoningEffort>
 export type ToolLifecycleState = "draft" | "enabled" | "deprecated" | "disabled"
 export type GatewayDecision = "allowed" | "allowed_with_warning" | "blocked"
@@ -541,6 +591,8 @@ export interface GatewayPolicySettings {
 
 export interface LLMSettings {
   provider: LLMProvider
+  provider_mode: LLMProviderMode
+  provider_by_tier: LLMProviderTierMap
   available_providers: LLMProviderStatus[]
   models: LLMModelTierMap
   models_by_provider: Record<LLMProvider, LLMModelTierMap>
@@ -549,16 +601,89 @@ export interface LLMSettings {
   gateway_policy: GatewayPolicySettings
 }
 
+export type FinancialPolicyOutcome = "use_checks" | "pass" | "warn" | "review_required" | "blocked"
+export type FinancialPolicyApprovalMode = "approval_required" | "self_apply" | "break_glass" | "none"
+
+export interface FinancialPolicyRuleMatch {
+  action_ids: string[]
+  action_kinds: string[]
+  request_modes: string[]
+  actor_roles: string[]
+  actor_ids: string[]
+  account_ids: string[]
+  portfolio_ids: string[]
+  risk_levels: string[]
+  data_freshness: string[]
+}
+
+export interface FinancialPolicyRule {
+  id: string
+  enabled: boolean
+  priority: number
+  match: FinancialPolicyRuleMatch
+  limits: Record<string, number>
+  outcome: FinancialPolicyOutcome
+  approval_mode?: FinancialPolicyApprovalMode | null
+  approval_requirements?: ApprovalRequirement[]
+  reason: string
+  remediation: string
+}
+
+export interface FinancialPolicyMatrix {
+  schema_version: 1
+  policy_id: string
+  description: string
+  rules: FinancialPolicyRule[]
+}
+
+export interface FinancialPolicyMatrixMetadata {
+  outcomes: FinancialPolicyOutcome[]
+  approval_modes: FinancialPolicyApprovalMode[]
+  request_modes: string[]
+  risk_levels: string[]
+  data_freshness: string[]
+  action_ids: string[]
+  action_kinds: string[]
+  limit_keys: string[]
+}
+
+export interface FinancialPolicyMatrixSettings {
+  policy: FinancialPolicyMatrix
+  default_policy: FinancialPolicyMatrix
+  metadata: FinancialPolicyMatrixMetadata
+  limit_defaults: Record<string, number>
+}
+
+export interface FinancialPolicyMatrixValidation {
+  valid: boolean
+  errors: string[]
+  policy?: FinancialPolicyMatrix
+}
+
 export const fetchLLMSettings = () =>
   client.get("/settings/llm").then(r => r.data as LLMSettings)
 
 export const updateLLMSettings = (settings: {
   provider: LLMProvider
+  provider_mode?: LLMProviderMode
+  provider_by_tier?: LLMProviderTierMap
   reasoning_efforts?: LLMReasoningEffortMap
+  reasoning_efforts_by_provider?: Record<LLMProvider, LLMReasoningEffortMap>
   gateway_policy?: GatewayPolicySettings
   gateway_note?: string
 }) =>
   client.put("/settings/llm", settings).then(r => r.data as LLMSettings)
+
+export const fetchFinancialPolicyMatrixSettings = () =>
+  client.get("/settings/financial-policy-matrix").then(r => r.data as FinancialPolicyMatrixSettings)
+
+export const validateFinancialPolicyMatrix = (policy: FinancialPolicyMatrix) =>
+  client
+    .post("/settings/financial-policy-matrix/validate", { policy })
+    .then(r => r.data as FinancialPolicyMatrixValidation)
+
+export const updateFinancialPolicyMatrix = (settings: { policy: FinancialPolicyMatrix; note: string }) =>
+  client.put("/settings/financial-policy-matrix", settings).then(r => r.data as FinancialPolicyMatrixSettings)
 
 export type AgentPreferenceLevel = "less" | "balanced" | "more"
 export type AgentPersonality = "friendly" | "pragmatic"
@@ -2512,10 +2637,10 @@ export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
-export const approveItem = (id: string, note: string) =>
-  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note }).then(r => r.data as ApprovalRecord)
-export const rejectItem = (id: string, note?: string) =>
-  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+export const approveItem = (id: string, note: string, requirement_id?: string) =>
+  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note, requirement_id }).then(r => r.data as ApprovalRecord)
+export const rejectItem = (id: string, note?: string, requirement_id?: string) =>
+  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note || requirement_id ? { note, requirement_id } : {}).then(r => r.data as ApprovalRecord)
 export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
     .post(`/approvals/${encodeURIComponent(id)}/reject-and-restage`, note ? { note } : {})

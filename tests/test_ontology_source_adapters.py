@@ -24,6 +24,7 @@ def test_portfolio_adapter_normalizes_positions():
     assert result.data is not None
     assert result.data.positions["MU"].latest_price == 111.5
     assert result.to_status_dict()["source_version"] == "1"
+    assert result.to_status_dict()["source_registry"]["source_id"] == "portfolio"
 
 
 def test_vix_adapter_marks_missing_latest_as_partial():

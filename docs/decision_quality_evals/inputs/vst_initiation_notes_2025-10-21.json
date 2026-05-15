@@ -1,0 +1,25 @@
+{
+  "ticker": "VST",
+  "company_name": "Vistra Corp",
+  "as_of_date": "2025-10-21",
+  "decision_context": "New long idea evaluation",
+  "human_initiation_rationale": "Avoid despite a good story around energy demand for data centers. The company had strong revenue growth, but valuation was elevated, technicals were poor, and it had missed revenue and EPS estimates in the prior reported quarter.",
+  "selected_inputs": [
+    "data-center power demand narrative",
+    "strong revenue growth",
+    "elevated P/E",
+    "poor short/intermediate price action",
+    "prior-quarter revenue and EPS estimate miss"
+  ],
+  "as_of_known_negatives": [
+    "Elevated P/E made the setup less forgiving.",
+    "The stock closed below its 100D SMA.",
+    "1-month and 3-month ROC were negative.",
+    "The company had missed revenue and EPS estimates in the prior reported quarter."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "The company later missed EPS and revenue estimates when it reported earnings in November 2025. This is outcome context for grading the case, not evidence the model should use for the as-of decision."
+  },
+  "human_notes": ""
+}

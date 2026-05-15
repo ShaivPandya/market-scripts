@@ -67,6 +67,11 @@ export function patchResolvedApprovalSummaries(
       const id = approval.id
       const beforeMatches = approvalMatchesSummary(current, approval)
       const removedItem = current.items.find(item => item.id === id)
+      const afterMatches = approvalMatchesSummary(current, resolvedApproval)
+      if (beforeMatches && afterMatches) {
+        const items = current.items.map(item => item.id === id ? resolvedApproval : item)
+        return { ...current, items }
+      }
       const items = current.items.filter(item => item.id !== id)
       const decrementPending = current.status === "pending" && beforeMatches
       const count = decrementPending ? Math.max(0, current.count - 1) : current.count

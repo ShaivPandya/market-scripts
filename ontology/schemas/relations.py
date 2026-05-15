@@ -118,6 +118,27 @@ RECOMMENDATION_HAS_POLICY_GATE_RESULT: RelationType = "recommendation_has_policy
 RECOMMENDATION_HAS_TRADE_PROPOSAL: RelationType = "recommendation_has_trade_proposal"
 RECOMMENDATION_USES_POSITION_RISK_SNAPSHOT: RelationType = "recommendation_uses_position_risk_snapshot"
 RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationType = "recommendation_uses_portfolio_risk_snapshot"
+COURSE_OF_ACTION_TARGETS_ACCOUNT: RelationType = "course_of_action_targets_account"
+COURSE_OF_ACTION_TARGETS_PORTFOLIO: RelationType = "course_of_action_targets_portfolio"
+COURSE_OF_ACTION_TARGETS_POSITION: RelationType = "course_of_action_targets_position"
+COURSE_OF_ACTION_TARGETS_INSTRUMENT: RelationType = "course_of_action_targets_instrument"
+COURSE_OF_ACTION_TARGETS_THESIS: RelationType = "course_of_action_targets_thesis"
+COURSE_OF_ACTION_TARGETS_CATALYST: RelationType = "course_of_action_targets_catalyst"
+COURSE_OF_ACTION_USES_POSITION_RISK_SNAPSHOT: RelationType = "course_of_action_uses_position_risk_snapshot"
+COURSE_OF_ACTION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationType = "course_of_action_uses_portfolio_risk_snapshot"
+COURSE_OF_ACTION_USES_SCENARIO: RelationType = "course_of_action_uses_scenario"
+COURSE_OF_ACTION_LINKS_RECOMMENDATION: RelationType = "course_of_action_links_recommendation"
+SCENARIO_HAS_ASSUMPTION: RelationType = "scenario_has_assumption"
+COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME: RelationType = "course_of_action_has_simulated_outcome"
+COURSE_OF_ACTION_HAS_RATIONALE: RelationType = "course_of_action_has_rationale"
+COURSE_OF_ACTION_SUPPORTED_BY_EVIDENCE: RelationType = "course_of_action_supported_by_evidence"
+COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE: RelationType = "course_of_action_contradicted_by_evidence"
+COURSE_OF_ACTION_HAS_DISSENT: RelationType = "course_of_action_has_dissent"
+COURSE_OF_ACTION_REQUIRES_APPROVAL: RelationType = "course_of_action_requires_approval"
+APPROVAL_TARGETS_COURSE_OF_ACTION: RelationType = "approval_targets_course_of_action"
+ACTION_RUN_APPLIES_COURSE_OF_ACTION: RelationType = "action_run_applies_course_of_action"
+COMPARISON_INCLUDES_COURSE_OF_ACTION: RelationType = "comparison_includes_course_of_action"
+COMPARISON_SELECTS_COURSE_OF_ACTION: RelationType = "comparison_selects_course_of_action"
 DOCUMENT_ARTIFACT_MATERIALIZES_RESEARCH_OBJECT: RelationType = "document_artifact_materializes_research_object"
 SOURCE_MANIFEST_GOVERNS_SOURCE_RECORD: RelationType = "source_manifest_governs_source_record"
 SOURCE_RECORD_PRODUCES_DOCUMENT_ARTIFACT: RelationType = "source_record_produces_document_artifact"
@@ -1006,6 +1027,174 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         name=RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT,
         source_type="Recommendation",
         target_type="PortfolioRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_ACCOUNT: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_ACCOUNT,
+        source_type="CourseOfAction",
+        target_type="Account",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_PORTFOLIO: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_PORTFOLIO,
+        source_type="CourseOfAction",
+        target_type="Portfolio",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_POSITION: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_POSITION,
+        source_type="CourseOfAction",
+        target_type="Position",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_INSTRUMENT: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_INSTRUMENT,
+        source_type="CourseOfAction",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_THESIS: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_THESIS,
+        source_type="CourseOfAction",
+        target_type="Thesis",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_TARGETS_CATALYST: RelationDefinition(
+        name=COURSE_OF_ACTION_TARGETS_CATALYST,
+        source_type="CourseOfAction",
+        target_type="Catalyst",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_USES_POSITION_RISK_SNAPSHOT: RelationDefinition(
+        name=COURSE_OF_ACTION_USES_POSITION_RISK_SNAPSHOT,
+        source_type="CourseOfAction",
+        target_type="PositionRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationDefinition(
+        name=COURSE_OF_ACTION_USES_PORTFOLIO_RISK_SNAPSHOT,
+        source_type="CourseOfAction",
+        target_type="PortfolioRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_USES_SCENARIO: RelationDefinition(
+        name=COURSE_OF_ACTION_USES_SCENARIO,
+        source_type="CourseOfAction",
+        target_type="Scenario",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_LINKS_RECOMMENDATION: RelationDefinition(
+        name=COURSE_OF_ACTION_LINKS_RECOMMENDATION,
+        source_type="CourseOfAction",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    SCENARIO_HAS_ASSUMPTION: RelationDefinition(
+        name=SCENARIO_HAS_ASSUMPTION,
+        source_type="Scenario",
+        target_type="ScenarioAssumption",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME: RelationDefinition(
+        name=COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME,
+        source_type="CourseOfAction",
+        target_type="SimulatedOutcome",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_HAS_RATIONALE: RelationDefinition(
+        name=COURSE_OF_ACTION_HAS_RATIONALE,
+        source_type="CourseOfAction",
+        target_type="CourseOfActionRationale",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_SUPPORTED_BY_EVIDENCE: RelationDefinition(
+        name=COURSE_OF_ACTION_SUPPORTED_BY_EVIDENCE,
+        source_type="CourseOfAction",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE: RelationDefinition(
+        name=COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE,
+        source_type="CourseOfAction",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_HAS_DISSENT: RelationDefinition(
+        name=COURSE_OF_ACTION_HAS_DISSENT,
+        source_type="CourseOfAction",
+        target_type="CourseOfActionDissent",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_REQUIRES_APPROVAL: RelationDefinition(
+        name=COURSE_OF_ACTION_REQUIRES_APPROVAL,
+        source_type="CourseOfAction",
+        target_type="Approval",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    APPROVAL_TARGETS_COURSE_OF_ACTION: RelationDefinition(
+        name=APPROVAL_TARGETS_COURSE_OF_ACTION,
+        source_type="Approval",
+        target_type="CourseOfAction",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACTION_RUN_APPLIES_COURSE_OF_ACTION: RelationDefinition(
+        name=ACTION_RUN_APPLIES_COURSE_OF_ACTION,
+        source_type="ActionRun",
+        target_type="CourseOfAction",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COMPARISON_INCLUDES_COURSE_OF_ACTION: RelationDefinition(
+        name=COMPARISON_INCLUDES_COURSE_OF_ACTION,
+        source_type="CourseOfActionComparison",
+        target_type="CourseOfAction",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COMPARISON_SELECTS_COURSE_OF_ACTION: RelationDefinition(
+        name=COMPARISON_SELECTS_COURSE_OF_ACTION,
+        source_type="CourseOfActionComparison",
+        target_type="CourseOfAction",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,

@@ -297,6 +297,86 @@ def test_typed_provenance_relation_requires_redaction_retention_and_refs():
         )
 
 
+def test_object_service_writes_course_of_action_objects_and_relations():
+    repo = _FakeTemporalRepo()
+    service = OntologyObjectService(repository=repo)
+
+    coa = service.write_object(
+        "CourseOfAction",
+        "MU reduce after failed catalyst",
+        {
+            "course_of_action_id": "MU reduce after failed catalyst",
+            "action": "reduce",
+            "ticker": "MU",
+            "actionability": "actionable",
+            "confidence": 0.68,
+            "rationale_summary": "Trim if earnings fail to confirm HBM strength.",
+        },
+        valid_from="2026-05-01T00:00:00Z",
+        actor={"actor_type": "system", "actor_id": "unit"},
+        provenance="pv:coa",
+    )
+    outcome = service.write_object(
+        "SimulatedOutcome",
+        "MU trim bear case",
+        {
+            "outcome_id": "MU trim bear case",
+            "course_of_action_id": "course_of_action:mu_reduce_after_failed_catalyst",
+            "result_metrics": {"drawdown_avoided_pct": 0.12},
+            "status": "simulated",
+        },
+        valid_from="2026-05-01T00:00:00Z",
+        actor={"actor_type": "system", "actor_id": "unit"},
+        provenance="pv:coa",
+    )
+    relation = service.write_relation(
+        coa["object_uid"],
+        outcome["object_uid"],
+        "course_of_action_has_simulated_outcome",
+        {"ontology_run_id": "operational"},
+        valid_from="2026-05-01T00:00:00Z",
+        actor={"actor_type": "system", "actor_id": "unit"},
+        provenance="pv:coa",
+    )
+
+    assert coa["object_uid"] == "course_of_action:mu_reduce_after_failed_catalyst"
+    assert coa["properties"]["action"] == "trim"
+    assert outcome["object_uid"] == "simulated_outcome:mu_trim_bear_case"
+    assert relation["relation_type"] == "course_of_action_has_simulated_outcome"
+    assert repo.object_writes[0].object_type == "CourseOfAction"
+    assert repo.object_writes[1].object_type == "SimulatedOutcome"
+    assert repo.relation_writes[0].relation_type == "course_of_action_has_simulated_outcome"
+
+
+def test_course_of_action_writes_require_provenance():
+    service = OntologyObjectService(repository=_FakeTemporalRepo())
+
+    with pytest.raises(OntologyWriteContractError, match="requires provenance"):
+        service.write_object(
+            "CourseOfAction",
+            "MU add",
+            {"course_of_action_id": "MU add", "action": "add", "ticker": "MU"},
+            valid_from="2026-05-01T00:00:00Z",
+        )
+
+    with pytest.raises(OntologyWriteContractError, match="requires provenance"):
+        service.write_object(
+            "SimulatedOutcome",
+            "MU add bull",
+            {"outcome_id": "MU add bull", "status": "simulated"},
+            valid_from="2026-05-01T00:00:00Z",
+        )
+
+    with pytest.raises(OntologyWriteContractError, match="requires provenance"):
+        service.write_relation(
+            "course_of_action:mu_add",
+            "simulated_outcome:mu_add_bull",
+            "course_of_action_has_simulated_outcome",
+            {"ontology_run_id": "operational"},
+            valid_from="2026-05-01T00:00:00Z",
+        )
+
+
 def test_postgres_snapshot_success_uses_temporal_versions(monkeypatch):
     from api import snapshot_store
 

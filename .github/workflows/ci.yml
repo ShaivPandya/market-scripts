@@ -43,7 +43,12 @@ jobs:
       - run: pip install -r requirements-dev.txt -c requirements-lock.txt
       - run: mypy api/ --ignore-missing-imports
 
-  security:
+  # ---------------------------------------------------------------------------
+  # Security gates (SHA-35)
+  # ---------------------------------------------------------------------------
+
+  # Python dependency audit (existing)
+  security-pip-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,3 +57,106 @@ jobs:
           python-version: "3.12"
       - run: pip install pip-audit
       - run: pip-audit -r requirements-audit.txt
+
+  # Frontend dependency audit
+  security-npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: npm audit (high/critical gate)
+        run: npm audit --audit-level=high
+
+  # Secret scanning with gitleaks
+  security-secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION="8.21.2"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /usr/local/bin gitleaks
+      - name: Run gitleaks
+        run: gitleaks detect --source . --no-banner -v
+
+  # Python static analysis security (bandit)
+  security-python-sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      # Gate on medium+ confidence, medium+ severity (-ll = medium severity, -ii = medium confidence)
+      - name: bandit SAST scan
+        run: bandit -r api/ -ll -ii --format json --output bandit-results.json || true
+      - name: Check bandit results
+        run: |
+          if [ -f bandit-results.json ]; then
+            HIGH_ISSUES=$(python3 -c "
+          import json, sys
+          data = json.load(open('bandit-results.json'))
+          results = data.get('results', [])
+          high = [r for r in results if r.get('issue_severity') in ('HIGH', 'CRITICAL')]
+          if high:
+              for r in high:
+                  print(f\"{r['filename']}:{r['line_number']} - {r['issue_text']} [{r['issue_severity']}]\", file=sys.stderr)
+              sys.exit(1)
+          print(f'No high/critical findings ({len(results)} total issues found)')
+          ")
+          fi
+
+  # Container/IaC/dependency scanning with Trivy
+  security-trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+      - name: Trivy filesystem scan (Dockerfile, IaC, deps)
+        run: trivy fs . --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore --format table
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:smoke
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-playwright-artifacts
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore

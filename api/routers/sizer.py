@@ -209,6 +209,11 @@ def get_sizer_prefill():
             if "instrument_type" in df.columns
             else pd.Series(["security"] * len(df))
         )
+        assets = (
+            df["asset"].astype(str).str.strip().str.lower()
+            if "asset" in df.columns
+            else pd.Series(["equity"] * len(df))
+        )
         group_names = (
             df["group_name"].apply(normalize_group_name) if "group_name" in df.columns else pd.Series([None] * len(df))
         )
@@ -220,14 +225,17 @@ def get_sizer_prefill():
 
         deduped_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for ticker, direction, conviction, instrument_type, group_name, group_conviction in zip(  # noqa: B905
+        for ticker, direction, conviction, instrument_type, asset, group_name, group_conviction in zip(  # noqa: B905
             tickers.tolist(),
             directions.tolist(),
             convictions.tolist(),
             instrument_types.tolist(),
+            assets.tolist(),
             group_names.tolist(),
             group_convictions.tolist(),
         ):
+            if asset != "equity":
+                continue
             if ticker and ticker not in seen:
                 seen.add(ticker)
                 group_conviction_out = None if pd.isna(group_conviction) else int(group_conviction)

@@ -12,6 +12,8 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from portfolio.policy_matrix import FinancialPolicyFacts, evaluate_financial_policy_matrix
+
 POLICY_GATE_DECISIONS = ("pass", "warn", "review_required", "blocked", "error")
 ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
 FINANCIAL_ACTION_ITEM_TYPES = {"enter", "exit", "resize", "hedge"}
@@ -121,8 +123,20 @@ def ensure_policy_gate_for_action(
             "gate_result_id": gate_key,
             "decision": gate.get("decision") or "review_required",
             "review_required": bool(gate.get("review_required")),
+            "approval_required": bool(gate.get("approval_required", True)),
+            "approval_mode": gate.get("approval_mode"),
+            "approval_requirements": gate.get("approval_requirements", []),
+            "rule_id": gate.get("rule_id"),
+            "reason": gate.get("reason"),
+            "remediation": gate.get("remediation"),
+            "matched_rules": gate.get("matched_rules", []),
+            "limit_overrides": gate.get("limit_overrides", {}),
             "failure_reasons": gate.get("failure_reasons", []),
             "warnings": gate.get("warnings", []),
+            "account_id": gate.get("account_id"),
+            "portfolio_id": gate.get("portfolio_id"),
+            "policy_id": gate.get("policy_id"),
+            "policy_matrix_id": gate.get("policy_matrix_id"),
             "evaluated_at": datetime.now(UTC).isoformat(),
             "ontology_run_id": "operational",
         },
@@ -181,15 +195,23 @@ def evaluate_policy_gate(
             context=context,
         )
 
-    policy = default_policy_snapshot()
-    check_results: list[dict[str, Any]] = []
-    check_results.extend(_required_disclosure_checks(payload))
-    check_results.extend(_data_freshness_checks(payload, source_quality=source_quality))
-    check_results.extend(_portfolio_constraint_checks(action_id, payload, policy))
-    check_results.extend(_liquidity_checks(payload, policy))
-    check_results.extend(_scenario_checks(action_id, payload, policy))
+    from api.financial_policy_settings import get_financial_policy_matrix_setting
 
-    return _result(action_id=action_id, decision=None, check_results=check_results, context=context, policy=policy)
+    matrix = get_financial_policy_matrix_setting()
+    facts = _financial_policy_facts(action_id, payload, context=context, source_quality=source_quality)
+    matrix_decision = evaluate_financial_policy_matrix(matrix, facts)
+    policy = default_policy_snapshot()
+    _apply_policy_limit_overrides(policy, matrix_decision)
+    check_results = _policy_gate_check_results(action_id, payload, policy, source_quality=source_quality)
+
+    return _result(
+        action_id=action_id,
+        decision=None,
+        check_results=check_results,
+        context=context,
+        policy=policy,
+        matrix_decision=matrix_decision,
+    )
 
 
 def normalize_policy_gate_result(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -203,6 +225,18 @@ def normalize_policy_gate_result(result: Mapping[str, Any]) -> dict[str, Any]:
     gate["check_results"] = [dict(item) for item in _as_list(gate.get("check_results")) if isinstance(item, Mapping)]
     gate["review_required"] = bool(gate.get("review_required") or decision == "review_required")
     gate["override_acknowledged"] = bool(gate.get("override_acknowledged"))
+    gate["approval_required"] = bool(gate.get("approval_required", True))
+    gate["approval_mode"] = str(gate.get("approval_mode") or "approval_required")
+    gate["approval_requirements"] = [
+        dict(item) for item in _as_list(gate.get("approval_requirements")) if isinstance(item, Mapping)
+    ]
+    gate["rule_id"] = str(gate.get("rule_id") or "") or None
+    gate["reason"] = str(gate.get("reason") or "")
+    gate["remediation"] = str(gate.get("remediation") or "")
+    gate["matched_rules"] = [dict(item) for item in _as_list(gate.get("matched_rules")) if isinstance(item, Mapping)]
+    gate["limit_overrides"] = (
+        dict(gate.get("limit_overrides") or {}) if isinstance(gate.get("limit_overrides"), Mapping) else {}
+    )
     gate.setdefault("disclosures", list(DECISION_SUPPORT_DISCLOSURES))
     gate.setdefault("assumptions", [])
     gate.setdefault("uncertainty", {})
@@ -220,6 +254,7 @@ def _result(
     check_results: list[dict[str, Any]],
     context: Mapping[str, Any] | None = None,
     policy: Mapping[str, Any] | None = None,
+    matrix_decision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy_snapshot = deepcopy(dict(policy or default_policy_snapshot()))
     if decision is None:
@@ -250,7 +285,83 @@ def _result(
     }
     if ctx:
         gate["context"] = ctx
+    if matrix_decision:
+        _apply_matrix_decision(gate, matrix_decision)
     return normalize_policy_gate_result(gate)
+
+
+def _policy_gate_check_results(
+    action_id: str,
+    payload: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    *,
+    source_quality: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    check_results: list[dict[str, Any]] = []
+    check_results.extend(_required_disclosure_checks(payload))
+    check_results.extend(_data_freshness_checks(payload, source_quality=source_quality))
+    check_results.extend(_portfolio_constraint_checks(action_id, payload, policy))
+    check_results.extend(_liquidity_checks(payload, policy))
+    check_results.extend(_scenario_checks(action_id, payload, policy))
+    return check_results
+
+
+def _apply_policy_limit_overrides(policy: dict[str, Any], matrix_decision: Mapping[str, Any]) -> None:
+    overrides = matrix_decision.get("limit_overrides")
+    if not isinstance(overrides, Mapping):
+        return
+    policy_limits = policy.setdefault("policy", {})
+    if not isinstance(policy_limits, dict):
+        return
+    for key, item in overrides.items():
+        if not isinstance(item, Mapping) or "value" not in item:
+            continue
+        policy_limits[str(key)] = item.get("value")
+
+
+def _apply_matrix_decision(gate: dict[str, Any], matrix_decision: Mapping[str, Any]) -> None:
+    outcome = str(matrix_decision.get("outcome") or "use_checks").strip().lower()
+    rule_id = str(matrix_decision.get("rule_id") or "").strip()
+    reason = str(matrix_decision.get("reason") or "").strip()
+    remediation = str(matrix_decision.get("remediation") or "").strip()
+    gate["policy_matrix_id"] = matrix_decision.get("policy_id")
+    gate["policy_matrix_schema_version"] = matrix_decision.get("schema_version")
+    gate["rule_id"] = rule_id or None
+    gate["reason"] = reason
+    gate["remediation"] = remediation
+    gate["approval_required"] = bool(matrix_decision.get("approval_required", True))
+    gate["approval_mode"] = str(matrix_decision.get("approval_mode") or "approval_required")
+    gate["approval_requirements"] = [
+        dict(item) for item in _as_list(matrix_decision.get("approval_requirements")) if isinstance(item, Mapping)
+    ]
+    gate["matched_rules"] = [
+        dict(item) for item in _as_list(matrix_decision.get("matched_rules")) if isinstance(item, Mapping)
+    ]
+    gate["limit_overrides"] = (
+        dict(matrix_decision.get("limit_overrides") or {})
+        if isinstance(matrix_decision.get("limit_overrides"), Mapping)
+        else {}
+    )
+    if outcome == "use_checks" or outcome not in POLICY_GATE_DECISIONS:
+        return
+
+    gate["decision"] = outcome
+    gate["review_required"] = outcome == "review_required"
+    entry = {
+        "code": "policy_matrix_rule",
+        "check": "policy_matrix",
+        "rule_id": rule_id or None,
+        "message": reason or f"Policy matrix rule set decision to {outcome}.",
+        "remediation": remediation or None,
+    }
+    if outcome == "pass":
+        gate["failure_reasons"] = []
+        gate["warnings"] = []
+    elif outcome == "warn":
+        gate["failure_reasons"] = []
+        gate["warnings"] = [entry]
+    else:
+        gate["failure_reasons"] = [entry]
 
 
 def _decision_from_checks(checks: list[dict[str, Any]]) -> str:
@@ -704,6 +815,100 @@ def _recommendation_record(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload)
 
 
+def _financial_policy_facts(
+    action_id: str,
+    payload: Mapping[str, Any],
+    *,
+    context: Mapping[str, Any] | None,
+    source_quality: Mapping[str, Any] | None,
+) -> FinancialPolicyFacts:
+    record = _recommendation_record(payload)
+    ctx = dict(context or {})
+    actor_roles = ctx.get("actor_roles")
+    if not isinstance(actor_roles, (list, tuple, set)):
+        actor_roles = []
+    request_mode = str(ctx.get("request_mode") or "").strip().lower()
+    source_id = str(ctx.get("source_id") or "").strip().lower()
+    if not request_mode:
+        if source_id.startswith("break_glass."):
+            request_mode = "break_glass"
+        elif source_id.endswith(".self_apply") or ".self_apply" in source_id:
+            request_mode = "self_apply"
+        else:
+            request_mode = "proposal"
+    return FinancialPolicyFacts(
+        action_id=str(action_id or ""),
+        action_kind=_financial_action_kind(action_id, payload),
+        request_mode=request_mode,
+        actor_id=str(ctx.get("actor_id") or ""),
+        actor_roles=tuple(str(role) for role in actor_roles if str(role).strip()),
+        account_id=str(
+            record.get("account_id") or payload.get("account_id") or DEFAULT_POLICY["account"]["account_id"]
+        ),
+        portfolio_id=str(
+            record.get("portfolio_id") or payload.get("portfolio_id") or DEFAULT_POLICY["portfolio"]["portfolio_id"]
+        ),
+        risk_level=_risk_level_for_policy(record, payload),
+        data_freshness=_data_freshness_for_policy(record, source_quality=source_quality),
+    )
+
+
+def _financial_action_kind(action_id: str, payload: Mapping[str, Any]) -> str:
+    action = str(action_id or "").strip()
+    if action == "update_portfolio_positions":
+        return "portfolio_positions"
+    if action == "update_hedge_positions":
+        return "hedge_positions"
+    if action == "create_action_item":
+        return str(payload.get("action_type") or "action_item").strip().lower() or "action_item"
+    if action == "create_recommendation":
+        record = _recommendation_record(payload)
+        return str(record.get("action") or "recommendation").strip().lower() or "recommendation"
+    return action
+
+
+def _data_freshness_for_policy(
+    record: Mapping[str, Any],
+    *,
+    source_quality: Mapping[str, Any] | None,
+) -> str:
+    qualities = [
+        record.get("critical_data_quality"),
+        record.get("source_quality"),
+        record.get("risk_quality"),
+        (source_quality or {}).get("critical_data_quality"),
+        (source_quality or {}).get("overall_status"),
+        (source_quality or {}).get("quality"),
+    ]
+    normalized = {str(item or "").strip().lower() for item in qualities if str(item or "").strip()}
+    if "failed" in normalized:
+        return "failed"
+    if "stale" in normalized:
+        return "stale"
+    if "degraded" in normalized or "insufficient" in normalized:
+        return "degraded"
+    if "ok" in normalized or "fresh" in normalized:
+        return "ok"
+    return "missing"
+
+
+def _risk_level_for_policy(record: Mapping[str, Any], payload: Mapping[str, Any]) -> str:
+    for value in (record.get("risk_level"), payload.get("risk_level")):
+        normalized = str(value or "").strip().lower()
+        if normalized in {"low", "medium", "high", "unknown"}:
+            return normalized
+    risk_score = _risk_score_from_recommendation(record)
+    if risk_score is None:
+        risk_score = _payload_number(payload, "risk_score")
+    if risk_score is None:
+        return "unknown"
+    if risk_score >= 0.75:
+        return "high"
+    if risk_score >= 0.5:
+        return "medium"
+    return "low"
+
+
 def _existing_gate_result(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
     if action_id == "create_recommendation":
         record = _recommendation_record(payload)
@@ -722,6 +927,9 @@ def _attach_gate_to_payload(action_id: str, payload: dict[str, Any], gate: dict[
     payload["policy_gate_result"] = gate
     payload["policy_gate_decision"] = gate["decision"]
     payload["policy_gate_review_required"] = gate["review_required"]
+    payload["policy_gate_rule_id"] = gate.get("rule_id")
+    payload["approval_mode"] = gate.get("approval_mode")
+    payload["approval_required"] = gate.get("approval_required")
     return payload
 
 
@@ -733,12 +941,17 @@ def _apply_gate_fields(record: dict[str, Any], gate: dict[str, Any]) -> None:
     record["policy_gate_failures"] = gate.get("failure_reasons", [])
     record["policy_gate_warnings"] = gate.get("warnings", [])
     record["policy_gate_disclosures"] = gate.get("disclosures", [])
+    record["policy_gate_rule_id"] = gate.get("rule_id")
+    record["approval_mode"] = gate.get("approval_mode")
+    record["approval_required"] = gate.get("approval_required")
     record["account_id"] = gate.get("account_id")
     record["portfolio_id"] = gate.get("portfolio_id")
     record["policy_id"] = gate.get("policy_id")
 
 
 def _gate_summary(gate: Mapping[str, Any]) -> str:
+    if str(gate.get("reason") or "").strip() and str(gate.get("decision") or "").strip().lower() == "blocked":
+        return str(gate.get("reason"))
     reasons = gate.get("failure_reasons") or gate.get("warnings") or []
     if isinstance(reasons, list) and reasons:
         first = reasons[0]

@@ -53,9 +53,20 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
         "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
         lambda **kwargs: {"regime": {"label": "neutral", "score": 0}},
     )
+    monkeypatch.setattr(
+        workspace_router,
+        "build_workspace_source_health",
+        lambda **kwargs: {
+            "generated_at": "2026-05-14T00:00:00",
+            "overall_quality": "ok",
+            "counts": {"total": 1, "ok": 1},
+            "domains": [{"domain": "market", "label": "Market", "sources": []}],
+        },
+    )
 
     payload = workspace_router.get_workspace()
 
+    assert payload["source_health"]["overall_quality"] == "ok"
     assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
     assert payload["pending_approvals"]["count"] == 1
     assert payload["recommendations"]["latest_daily"]["id"] == 3

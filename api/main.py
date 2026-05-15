@@ -47,6 +47,24 @@ configure_logging(json_format=IS_PRODUCTION)
 logger = logging.getLogger("api")
 
 # ---------------------------------------------------------------------------
+# Release identity (set by deploy-api.sh via TALISMAN_RELEASE_* env vars)
+# ---------------------------------------------------------------------------
+_RELEASE_META = {
+    "git_sha": os.environ.get("TALISMAN_RELEASE_GIT_SHA", ""),
+    "git_sha_short": os.environ.get("TALISMAN_RELEASE_GIT_SHA_SHORT", ""),
+    "image_tag": os.environ.get("TALISMAN_RELEASE_IMAGE_TAG", ""),
+    "environment": os.environ.get("TALISMAN_RELEASE_ENVIRONMENT", ENVIRONMENT),
+}
+_RELEASE_META_SAFE = {
+    k: v
+    for k, v in {
+        "git_sha_short": _RELEASE_META["git_sha_short"],
+        "image_tag": _RELEASE_META["image_tag"],
+    }.items()
+    if v
+}
+
+# ---------------------------------------------------------------------------
 # Import routers AFTER path + env setup
 # ---------------------------------------------------------------------------
 # Core routers (must succeed)
@@ -378,6 +396,7 @@ from api.routers import (
     provenance,
     recommendations,
     report_sync,
+    scenario_simulator,
     triggers,
     workflow_runs,
     workspace,
@@ -395,6 +414,7 @@ app.include_router(provenance.router, prefix=_API_PREFIX, dependencies=_auth_dep
 app.include_router(recommendations.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["recommendations"])
 app.include_router(optimization.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["optimization"])
 app.include_router(policy_gate.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["policy-gate"])
+app.include_router(scenario_simulator.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["scenario-simulator"])
 app.include_router(workflow_runs.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["workflows"])
 app.include_router(admin_jobs.router, prefix=_API_PREFIX, tags=["admin"])
 app.include_router(report_sync.router, prefix=_API_PREFIX, tags=["reports"])
@@ -438,7 +458,10 @@ def clear_cache():
 
 @app.get("/api/health", tags=["admin"])
 def health():
-    return {"status": "ok"}
+    resp: dict = {"status": "ok"}
+    if _RELEASE_META_SAFE:
+        resp["release"] = _RELEASE_META_SAFE
+    return resp
 
 
 def _detailed_health_response() -> JSONResponse:
@@ -485,8 +508,14 @@ def _detailed_health_response() -> JSONResponse:
     else:
         status = "unhealthy"
 
+    # Include full release identity in admin health (no secrets)
+    release_full = {k: v for k, v in _RELEASE_META.items() if v}
+
     status_code = 200 if status != "unhealthy" else 503
-    return JSONResponse({"status": status, "checks": checks}, status_code=status_code)
+    body: dict = {"status": status, "checks": checks}
+    if release_full:
+        body["release"] = release_full
+    return JSONResponse(body, status_code=status_code)
 
 
 @app.get("/api/admin/health", dependencies=_auth_dep, tags=["admin"])

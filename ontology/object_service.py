@@ -27,6 +27,10 @@ from ontology.schemas.identity import (
     classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
+    course_of_action_comparison_id,
+    course_of_action_dissent_id,
+    course_of_action_id,
+    course_of_action_rationale_id,
     document_artifact_id,
     equity_overview_id,
     evaluation_id,
@@ -77,11 +81,13 @@ from ontology.schemas.identity import (
     report_run_id,
     risk_limit_id,
     risk_metric_id,
+    scenario_assumption_id,
     scenario_id,
     schema_definition_ref_id,
     sector_id,
     signal_factor_score_id,
     signal_id,
+    simulated_outcome_id,
     source_freshness_id,
     source_manifest_id,
     source_record_object_id,
@@ -140,6 +146,12 @@ _GOVERNED_OBJECT_TYPES = {
     "PortfolioRiskSnapshot",
     "Position",
     "PositionRiskSnapshot",
+    "CourseOfAction",
+    "CourseOfActionComparison",
+    "ScenarioAssumption",
+    "SimulatedOutcome",
+    "CourseOfActionRationale",
+    "CourseOfActionDissent",
     "Recommendation",
     "RegimeEpisode",
     "SignalFactorScore",
@@ -195,6 +207,27 @@ _GOVERNED_RELATION_TYPES = {
     "thesis_document_covers_instrument",
     "thesis_document_has_section",
     "computed_snapshot_materializes_object_version",
+    "course_of_action_targets_account",
+    "course_of_action_targets_portfolio",
+    "course_of_action_targets_position",
+    "course_of_action_targets_instrument",
+    "course_of_action_targets_thesis",
+    "course_of_action_targets_catalyst",
+    "course_of_action_uses_position_risk_snapshot",
+    "course_of_action_uses_portfolio_risk_snapshot",
+    "course_of_action_uses_scenario",
+    "course_of_action_links_recommendation",
+    "scenario_has_assumption",
+    "course_of_action_has_simulated_outcome",
+    "course_of_action_has_rationale",
+    "course_of_action_supported_by_evidence",
+    "course_of_action_contradicted_by_evidence",
+    "course_of_action_has_dissent",
+    "course_of_action_requires_approval",
+    "approval_targets_course_of_action",
+    "action_run_applies_course_of_action",
+    "comparison_includes_course_of_action",
+    "comparison_selects_course_of_action",
     "market_regime_has_factor_score",
     "market_regime_has_forward_outlook",
     "market_regime_has_episode",
@@ -711,6 +744,30 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("recommendation:"):
             return key
         return recommendation_id(props.get("recommendation_id") or props.get("idempotency_key") or key)
+    if object_type == "CourseOfAction":
+        if key.startswith("course_of_action:"):
+            return key
+        return course_of_action_id(props.get("course_of_action_id") or props.get("idempotency_key") or key)
+    if object_type == "CourseOfActionComparison":
+        if key.startswith("course_of_action_comparison:"):
+            return key
+        return course_of_action_comparison_id(props.get("comparison_id") or key)
+    if object_type == "ScenarioAssumption":
+        if key.startswith("scenario_assumption:"):
+            return key
+        return scenario_assumption_id(props.get("assumption_id") or key)
+    if object_type == "SimulatedOutcome":
+        if key.startswith("simulated_outcome:"):
+            return key
+        return simulated_outcome_id(props.get("outcome_id") or key)
+    if object_type == "CourseOfActionRationale":
+        if key.startswith("course_of_action_rationale:"):
+            return key
+        return course_of_action_rationale_id(props.get("rationale_id") or key)
+    if object_type == "CourseOfActionDissent":
+        if key.startswith("course_of_action_dissent:"):
+            return key
+        return course_of_action_dissent_id(props.get("dissent_id") or key)
     if object_type == "ReportRun":
         if key.startswith("report_run:"):
             return key

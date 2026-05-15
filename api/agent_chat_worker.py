@@ -11,7 +11,7 @@ from typing import Any
 from api.agent_models import AgentChatJobRequest, AgentChatRequest
 from api.job_events import append_job_event
 from api.job_queue import get_job
-from llm_utils import api_key_env, selected_provider
+from llm_utils import MODEL_MID, api_key_env, selected_provider_for_tier
 
 
 def _env_int(name: str, *, default: int, minimum: int) -> int:
@@ -82,7 +82,7 @@ def _format_stream_error(exc: Exception) -> str:
 
     if status_code == 401 or "invalid x-api-key" in lowered or "authentication_error" in lowered:
         try:
-            provider = selected_provider()
+            provider = selected_provider_for_tier(MODEL_MID)
             key_env = api_key_env(provider)
         except Exception:
             provider = "configured provider"

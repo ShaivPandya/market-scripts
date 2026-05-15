@@ -22,6 +22,7 @@ from api.snapshot_store import (
     write_snapshot_failure,
     write_snapshot_success,
 )
+from ontology.sources.source_registry import attach_source_registry_metadata, source_registry_metadata_for_snapshot
 
 logger = logging.getLogger("api.macro_snapshots")
 
@@ -57,13 +58,14 @@ def _load_and_write_snapshot(
     load_payload: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
     payload = load_payload()
+    payload_for_write = attach_source_registry_metadata(payload, snapshot_key=snapshot_key)
     record = write_snapshot_success(
         snapshot_key,
-        payload,
-        as_of_date=payload_as_of(payload),
+        payload_for_write,
+        as_of_date=payload_as_of(payload_for_write),
         version=SNAPSHOT_SCHEMA_VERSION,
     )
-    return attach_snapshot_meta(payload, record)
+    return attach_snapshot_meta(payload_for_write, record)
 
 
 def get_snapshot_backed_response(
@@ -114,15 +116,25 @@ def refresh_macro_snapshots(_payload: dict[str, Any] | None = None) -> dict[str,
 
     results: list[dict[str, Any]] = []
     for name, snapshot_key, loader in specs:
+        registry = source_registry_metadata_for_snapshot(snapshot_key)
         try:
             payload = loader()
+            payload_for_write = attach_source_registry_metadata(payload, snapshot_key=snapshot_key)
             record = write_snapshot_success(
                 snapshot_key,
-                payload,
-                as_of_date=payload_as_of(payload),
+                payload_for_write,
+                as_of_date=payload_as_of(payload_for_write),
                 version=SNAPSHOT_SCHEMA_VERSION,
             )
-            results.append({"snapshot_key": snapshot_key, "module": name, "status": "ok", "as_of": record.as_of_date})
+            results.append(
+                {
+                    "snapshot_key": snapshot_key,
+                    "module": name,
+                    "status": "ok",
+                    "as_of": record.as_of_date,
+                    "source_registry": registry,
+                }
+            )
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__
             failure_record = write_snapshot_failure(snapshot_key, message, version=SNAPSHOT_SCHEMA_VERSION)
@@ -134,6 +146,7 @@ def refresh_macro_snapshots(_payload: dict[str, Any] | None = None) -> dict[str,
                     "status": "error",
                     "error": message,
                     "as_of": failure_record.as_of_date if failure_record else None,
+                    "source_registry": registry,
                 }
             )
 

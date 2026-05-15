@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal, Protocol, cast
 
+from ontology.sources.source_registry import source_registry_metadata
+
 RawSourcePayload = Any
 SourceStatus = Literal["ok", "partial", "error"]
 SourceQuality = Literal["ok", "degraded", "missing", "schema_drift"]
@@ -36,6 +38,7 @@ class LineageMetadata:
     adapter: str
     adapter_version: str
     parameters: dict[str, Any] = field(default_factory=dict)
+    source_registry: dict[str, Any] = field(default_factory=dict)
     cache_hint: str | None = None
     snapshot_hint: str | None = None
     payload_fingerprint: str | None = None
@@ -67,6 +70,8 @@ class SourceResult[T]:
             "fetched_at": self.fetched_at,
             "lineage": self.lineage.to_dict(),
         }
+        if self.lineage.source_registry:
+            out["source_registry"] = dict(self.lineage.source_registry)
         if self.as_of:
             out["as_of"] = self.as_of
         if self.detail:
@@ -97,6 +102,7 @@ def run_source_adapter[T](
 ) -> SourceResult[T]:
     started = time.perf_counter()
     provenance_event_id: str | None = None
+    registry_metadata = _source_registry_metadata_for_adapter(adapter)
     try:
         from api import provenance
 
@@ -120,6 +126,7 @@ def run_source_adapter[T](
             metadata={
                 "parameters": dict(getattr(adapter, "parameters", {}) or {}),
                 "required": bool(getattr(adapter, "required", False)),
+                "source_registry": registry_metadata,
             },
         )
     except Exception:
@@ -148,6 +155,7 @@ def run_source_adapter[T](
                 metadata={
                     "duration_ms": round(duration_ms, 1),
                     "schema_drift_count": len(result.schema_drift),
+                    "source_registry": registry_metadata,
                 },
                 error=result.detail if result.status == "error" else None,
             )
@@ -183,12 +191,14 @@ def build_source_result[T](
     fingerprint_payload: Any | None = None,
 ) -> SourceResult[T]:
     fetched_at = now_iso()
+    registry_metadata = _source_registry_metadata_for_adapter(adapter)
     lineage = LineageMetadata(
         raw_module=adapter.raw_module,
         raw_function=adapter.raw_function,
         adapter=adapter.source_name,
         adapter_version=adapter.source_version,
         parameters=dict(getattr(adapter, "parameters", {}) or {}),
+        source_registry=registry_metadata,
         cache_hint=cache_hint,
         snapshot_hint=snapshot_hint,
         payload_fingerprint=payload_fingerprint(fingerprint_payload if fingerprint_payload is not None else raw),
@@ -208,12 +218,14 @@ def build_source_result[T](
 
 def error_result[T](adapter: SourceAdapter[T], detail: str) -> SourceResult[T]:
     fetched_at = now_iso()
+    registry_metadata = _source_registry_metadata_for_adapter(adapter)
     lineage = LineageMetadata(
         raw_module=getattr(adapter, "raw_module", ""),
         raw_function=getattr(adapter, "raw_function", ""),
         adapter=adapter.source_name,
         adapter_version=adapter.source_version,
         parameters=dict(getattr(adapter, "parameters", {}) or {}),
+        source_registry=registry_metadata,
     )
     return SourceResult(
         data=None,
@@ -224,6 +236,14 @@ def error_result[T](adapter: SourceAdapter[T], detail: str) -> SourceResult[T]:
         lineage=lineage,
         detail=_sanitize_detail(detail),
     )
+
+
+def _source_registry_metadata_for_adapter(adapter: SourceAdapter[Any]) -> dict[str, Any]:
+    metadata = source_registry_metadata(
+        getattr(adapter, "source_name", None),
+        required=bool(getattr(adapter, "required", False)),
+    )
+    return dict(metadata or {})
 
 
 def now_iso() -> str:
