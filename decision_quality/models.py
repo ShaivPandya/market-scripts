@@ -468,9 +468,7 @@ def coerce_decision_quality_input(value: Any) -> Any:
             "observed_behavior": _dq_text(
                 _dq_pick(price_action, "observed_behavior", "what_price_did", "observed", "behavior", "price_action")
             ),
-            "interpretation": _dq_text(
-                _dq_pick(price_action, "interpretation", "what_it_implies", "read", "meaning")
-            ),
+            "interpretation": _dq_text(_dq_pick(price_action, "interpretation", "what_it_implies", "read", "meaning")),
             "confirms_thesis": _dq_bool_or_none(
                 _dq_pick(price_action, "confirms_thesis", "confirms", "supports_thesis")
             ),

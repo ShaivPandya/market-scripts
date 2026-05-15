@@ -1,0 +1,20 @@
+{
+  "as_of_date": "1989-11-10",
+  "decision_context": "Initiate long Deutsche mark versus U.S. dollar after the Berlin Wall collapse and initial Deutsche mark selloff.",
+  "human_initiation_rationale": "Buy the Deutsche mark because the market was treating reunification deficits as mechanically currency bearish, while the more important driver was the Bundesbank reaction function. Large fiscal costs and inflation pressure would likely force tighter German monetary policy, raise expected rates, and support the currency.",
+  "selected_inputs": [
+    "Berlin Wall collapse as policy shock",
+    "Expected German reunification deficits and inflation pressure",
+    "Initial Deutsche mark selloff after the Wall fell",
+    "Bundesbank anti-inflation mandate and credibility",
+    "Reagan-deficit analogy: loose fiscal plus tight central bank can strengthen a currency",
+    "Dominant price-setting variable: expected relative interest rates",
+    "Trade-after-the-trade: Italian lira, British pound, and Swedish krona"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Berlin Wall collapse and the market's initial deficit-driven Deutsche mark selloff.",
+    "expected_date": "1989-11-09 to 1989-11-10",
+    "why_it_mattered": "The selloff created an entry point where the market priced fiscal deterioration but not the likely Bundesbank tightening response."
+  },
+  "human_notes": "User specifically noted that the trade after the trade was other currencies: Italian lira, British pound, and Swedish krona."
+}

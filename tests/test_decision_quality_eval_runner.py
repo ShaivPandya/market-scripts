@@ -108,6 +108,50 @@ def test_wrong_action_fails_deterministic_scoring():
     assert any(check["name"] == "recommended_action" and not check["passed"] for check in score["checks"])
 
 
+def test_missing_inputs_alignment_fails_when_gold_has_missing_inputs_but_candidate_omits_them():
+    case = _case("mu_ai_memory_cycle_2025.json")
+    raw = copy.deepcopy(case.gold_output)
+    raw["actionability"]["missing_inputs"] = []
+    candidate = DecisionQuality.model_validate(raw)
+    gate = apply_decision_quality_gates(
+        candidate, current_action=candidate.recommended_action, recommendation_status="clear"
+    )
+
+    score = deterministic_score(case=case, candidate=candidate, gate=gate)
+
+    assert score["passed"] is False
+    assert any(check["name"] == "missing_inputs_alignment" and not check["passed"] for check in score["checks"])
+
+
+def test_missing_inputs_alignment_passes_when_candidate_surfaces_missing_inputs():
+    case = _case("mu_ai_memory_cycle_2025.json")
+    candidate = DecisionQuality.model_validate(case.gold_output)
+    gate = apply_decision_quality_gates(
+        candidate, current_action=candidate.recommended_action, recommendation_status="clear"
+    )
+
+    score = deterministic_score(case=case, candidate=candidate, gate=gate)
+
+    assert any(check["name"] == "missing_inputs_alignment" and check["passed"] for check in score["checks"])
+
+
+def test_missing_inputs_status_requires_missing_inputs_list():
+    case = _case("mu_ai_memory_cycle_2025.json")
+    raw = copy.deepcopy(case.gold_output)
+    raw["recommended_action"] = "research"
+    raw["actionability"]["status"] = "missing_inputs"
+    raw["actionability"]["missing_inputs"] = []
+    candidate = DecisionQuality.model_validate(raw)
+    gate = apply_decision_quality_gates(
+        candidate, current_action=candidate.recommended_action, recommendation_status="clear"
+    )
+
+    score = deterministic_score(case=case, candidate=candidate, gate=gate)
+
+    assert score["passed"] is False
+    assert any(check["name"] == "missing_inputs_alignment" and not check["passed"] for check in score["checks"])
+
+
 def test_build_report_counts_failed_check_even_when_score_exceeds_threshold():
     report = build_report(
         [

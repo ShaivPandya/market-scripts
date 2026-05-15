@@ -1,0 +1,16 @@
+{
+  "case": "Druckenmiller long Deutsche mark after the Berlin Wall collapse",
+  "as_of_date": "1989-11-10",
+  "source_type": "historical_case_study",
+  "source_summary": "Historical macro/FX case study of Stanley Druckenmiller buying Deutsche marks soon after the Berlin Wall fell. The market initially sold the Deutsche mark because German reunification looked likely to require large fiscal deficits, higher public spending, and inflationary pressure. Druckenmiller's variant view was that Germany was not a weak-currency fiscal-dominance case: the Bundesbank's anti-inflation credibility meant fiscal expansion would likely be met with tighter money and higher interest rates, attracting capital into the Deutsche mark.",
+  "key_claims": [
+    "The collapse of the Berlin Wall created a likely fiscal shock for West Germany because reunification would require large public spending and deficits.",
+    "Traders initially dumped Deutsche marks on the view that deficits and inflation pressure would weaken the currency.",
+    "Druckenmiller analogized the setup to Reagan-era U.S. deficits: loose fiscal policy paired with tight central-bank policy can strengthen, not weaken, a currency.",
+    "The Bundesbank's institutional bias was to defend monetary stability and fight inflation.",
+    "If reunification costs raised inflation pressure, the Bundesbank was likely to raise interest rates rather than accommodate the shock.",
+    "Higher expected German interest rates would make Deutsche marks more attractive to hold.",
+    "The edge came from understanding the government's and central bank's reaction function, not from treating fiscal deficits mechanically as currency bearish."
+  ],
+  "human_notes": "User requested this as a macro/FX decision-quality eval based on Druckenmiller's long Deutsche mark reunification trade."
+}

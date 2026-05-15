@@ -14,7 +14,7 @@ The object must make the decision testable:
 - `price_action_read`: use `observed_behavior`, `interpretation`, `confirms_thesis`, `data_needed`. `confirms_thesis` must be `true`, `false`, or `null`, not a sentence.
 - `actionability.status`: one of `actionable`, `missing_inputs`, `blocked_by_policy`, `watch_only`, `do_nothing`.
 - `recommended_action`: one of `buy`, `add`, `short`, `sell`, `trim`, `reduce`, `exit`, `hedge`, `rebalance`, `hold`, `watch`, `research`, `avoid`, `do_nothing`.
-- `recommended_action` is the broad investment decision, not the mechanical trade verb. Do not use `add` just because sizing is increasing an existing position. Use `short` for a bearish thesis or a trade that profits from an asset, currency, credit, or spread complex deteriorating, even if the implementation is buying CDS protection or put options. Use `buy` for a bullish long thesis. Express press/add/trim sizing in `sizing_delta`.
+- `recommended_action` is the broad investment decision, not the mechanical trade verb. Use `short` for a bearish thesis or a trade that profits from an asset, currency, credit, or spread complex deteriorating, even if the implementation is buying CDS protection or put options. Use `buy` for a bullish long thesis. Use `add` only when the decision itself is to increase an existing broad position; do not use `add` merely because `sizing_delta.direction` is `increase` or the trade should be pressed. Express press/add/trim sizing in `sizing_delta`.
 - `expression`: use `primary`, `instrument_type`, `directness`, `alternatives`, `follow_on`.
 - `conviction`: use `level`, `max_level`, `raw_target_weight`, `upgrade_condition`. `level` is 1-5, `max_level` is always 5, and conviction is not the same thing as confidence.
 - `confidence`: number from 0 to 1, or `null` only if confidence cannot be estimated.
@@ -31,3 +31,6 @@ The object must make the decision testable:
 - Use `missing_inputs` for `research`.
 
 If inputs are missing, put them in `actionability.missing_inputs`. Do not invent facts to make a decision look complete.
+`actionability.missing_inputs` is not only for blocked or research decisions. If a decision is still actionable but important nonblocking inputs are absent, list them anyway and reflect that uncertainty in `confidence_reason` and `sizing_context`.
+
+Common missing inputs to surface include portfolio exposure, ADV/liquidity, borrow cost or short interest for shorts, executed/current size, target-size inputs, valuation comps, next event date, and relative-performance benchmark. Missing inputs do not automatically make a decision non-actionable; they make the remaining uncertainty explicit.

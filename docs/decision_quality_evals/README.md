@@ -42,16 +42,37 @@ For approved cases, prefer stable source snapshots or hashes so future repo edit
 
 ## Running Evals
 
-Offline tests validate that every case has a strict `DecisionQuality` gold output, clean input refs, and passing gate behavior:
+Use offline tests first. They validate that every case has a strict `DecisionQuality` gold output, clean input refs, and passing gate behavior without calling an LLM:
 
 ```bash
 .venv/bin/python -m pytest tests/test_decision_quality_model.py tests/test_decision_quality_eval_runner.py
 ```
 
-Manual model evals run the solver against sanitized case inputs and write a report under `outputs/decision_quality_evals/`:
+Run the full judged model eval before and after prompt or model changes:
 
 ```bash
 .venv/bin/python -m decision_quality.eval_runner --judge
 ```
 
-Use `--dry-run --no-judge` to inspect sanitized prompts without calling an LLM. The runner excludes gold outputs, human notes, and future outcome context from solver prompts.
+Run one case when debugging a specific failure:
+
+```bash
+.venv/bin/python -m decision_quality.eval_runner --case nvda_ai_platform_long_2026 --no-judge
+```
+
+Inspect sanitized prompts without calling an LLM:
+
+```bash
+.venv/bin/python -m decision_quality.eval_runner --dry-run --no-judge
+```
+
+Reports are written to `outputs/decision_quality_evals/` unless `--output` is supplied. The runner excludes gold outputs, human notes, and future outcome context from solver prompts.
+
+Interpret the report summary as follows:
+
+- `deterministic_failures` - cases where schema parsing, gates, action, conviction, missing-input alignment, or required decision fields failed.
+- `judge_failures` - cases where the optional judge score fell below threshold, leakage was detected, or the judge reported fatal issues.
+- `leakage_detected` - whether the candidate appears to use future outcomes or answer-key facts not present in the sanitized inputs.
+- Judge totals are scored `0-20`; use `18+` as strong, `14-17` as review, and below `14` as failed by default.
+
+For a baseline workflow, run `--judge`, save the report path, make the prompt/model change, run `--judge` again, and compare failures plus judge-score deltas.

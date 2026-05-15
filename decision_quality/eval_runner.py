@@ -238,7 +238,10 @@ def build_solver_prompt(payload: dict[str, Any]) -> str:
     return (
         "Solve this decision-quality eval case using only the supplied as-of inputs. "
         "Do not use later outcomes, outside knowledge, or facts not present in the payload. "
-        "Return only the structured DecisionQuality JSON object, not a wrapper and not markdown.\n\n"
+        "Return only the structured DecisionQuality JSON object, not a wrapper and not markdown. "
+        "For recommended_action, classify the broad economic exposure: pressing an existing bearish trade is still "
+        "`short`, and buying CDS protection or put options to profit from deterioration is `short`; put any add/press "
+        "instruction in sizing_context.sizing_delta instead.\n\n"
         f"Sanitized case payload:\n{json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2)}"
     )
 
@@ -295,6 +298,19 @@ def deterministic_score(
             "actionability_status",
             candidate.actionability.status == gold.actionability.status,
             f"expected {gold.actionability.status}, got {candidate.actionability.status}",
+        )
+    )
+    gold_missing_inputs = gold.actionability.missing_inputs
+    candidate_missing_inputs = candidate.actionability.missing_inputs
+    missing_inputs_required = bool(gold_missing_inputs) or candidate.actionability.status == "missing_inputs"
+    checks.append(
+        _check(
+            "missing_inputs_alignment",
+            not missing_inputs_required or bool(candidate_missing_inputs),
+            (
+                "candidate must surface missing inputs when gold has missing inputs "
+                "or actionability.status=missing_inputs"
+            ),
         )
     )
     checks.append(

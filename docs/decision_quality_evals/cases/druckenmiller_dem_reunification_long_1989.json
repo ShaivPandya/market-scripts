@@ -1,0 +1,211 @@
+{
+  "id": "druckenmiller_dem_reunification_long_1989",
+  "status": "review",
+  "decision_type": "macro_stance",
+  "as_of_date": "1989-11-10",
+  "user_question": "Using the immediate post-Berlin-Wall setup in November 1989, should buying Deutsche marks versus U.S. dollars have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json",
+      "sha256": "6fbe63bb9d33dd1e874bf4917e4a4347132f5bcce213b409a2d97c84b5470632",
+      "description": "Historical case-study source summary for Druckenmiller buying Deutsche marks after the Berlin Wall collapse.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json",
+      "sha256": "8f020011b89bd5da901ac82919abe4d21ad954b7d5d622ac0492e0b289ab796d",
+      "description": "Macro, market-structure, catalyst, risk/reward, and trade-after-the-trade setup for the Deutsche mark reunification trade.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/dem_reunification_portfolio_context_1989-11-10.json",
+      "sha256": "7951b9d292481231db899761b632e145cf1708f17ac6b42907bbc2af8e094e4f",
+      "description": "Historical portfolio context: new long Deutsche mark macro/FX trade, conviction 5.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/dem_reunification_initiation_notes_1989-11-10.json",
+      "sha256": "40a15f3f345b2ca7cc5d4466bfba15724f6510e45ec1c2b0912d12566f86fada",
+      "description": "User-requested framing and initiation rationale for the historical Deutsche mark reunification case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical macro/FX eval case, not a live trading recommendation.",
+    "The decision date is 1989-11-10, immediately after the Berlin Wall collapse and the initial Deutsche mark selloff.",
+    "The case should teach central-bank reaction-function reasoning, not hindsight outcome chasing.",
+    "No exact DEM/USD spot, German yield curve, or execution log is selected beyond the historical source summary."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy Deutsche marks versus U.S. dollars because the market was treating reunification deficits as mechanically bearish for the currency, while the Bundesbank's likely anti-inflation response would raise German rates and support the mark.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Long Bundesbank anti-inflation credibility, German relative interest rates, and Deutsche mark strength; short the naive fiscal-deficit-equals-weak-currency interpretation of reunification.",
+    "mispricing": {
+      "consensus_view": "German reunification would require large deficits and spending, fuel inflation, and weaken the Deutsche mark.",
+      "variant_view": "The fiscal shock would more likely force a hawkish Bundesbank response, raising German rates and making the Deutsche mark more attractive to hold.",
+      "pricing_evidence": "Traders dumped Deutsche marks after the Berlin Wall fell and the currency dipped against the U.S. dollar even though the dominant price-setting variable was likely to become expected relative German rates.",
+      "why_consensus_is_wrong": "Consensus stopped at the first-order fiscal deficit effect and failed to pass the shock through the Bundesbank reaction function. A deficit weakens a currency mainly when policy accommodates it or confidence breaks; Germany had a credible anti-inflation central bank likely to tighten instead."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Berlin Wall collapse and the immediate Deutsche mark selloff on reunification deficit fears.",
+      "expected_timeframe": "Immediate entry after 1989-11-09, with confirmation expected over the next several months as German rate expectations adjusted.",
+      "why_now": "The event created both the macro shock and the mispricing: the market priced fiscal deterioration quickly, but had not yet fully priced the Bundesbank tightening response.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json: Berlin Wall collapse, initial Deutsche mark selloff, and Reagan-deficit analogy",
+        "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json: dominant price-setting variable and Bundesbank reaction-function setup",
+        "docs/decision_quality_evals/inputs/dem_reunification_initiation_notes_1989-11-10.json: selected catalyst and trade-after-the-trade framing"
+      ]
+    },
+    "invalidation": {
+      "observable": "The Bundesbank accommodates reunification fiscal expansion or the market proves right that deficits overwhelm monetary credibility.",
+      "metric_or_event": "Bundesbank policy signals, German relative rate expectations, DEM/USD trend after the initial selloff, and evidence of capital flight or loss of confidence.",
+      "threshold": "Reduce or exit if the Bundesbank signals accommodation rather than tightening, German relative rate expectations fall, or DEM/USD continues to weaken for 4-8 weeks despite hawkish policy signals.",
+      "timeframe": "First several weeks to months after the Berlin Wall collapse.",
+      "implication": "The reaction-function thesis is wrong or too early; reunification costs are being priced as fiscal dominance rather than as a catalyst for tighter money."
+    },
+    "evidence_for": [
+      {
+        "claim": "The market initially priced the wrong first-order effect.",
+        "support": "Traders sold Deutsche marks because reunification implied deficits and inflation pressure, creating an entry point if the more important effect was tighter money.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json",
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "The Bundesbank reaction function directly supported the variant view.",
+        "support": "The Bundesbank had a strong anti-inflation mandate and credibility, making rate hikes more likely than monetary accommodation if reunification raised inflation pressure.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json",
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "Relative rates were the key price-setting variable for the currency.",
+        "support": "The market setup identifies expected German relative interest rates and Bundesbank credibility as the dominant drivers over the reunification horizon.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "The historical analogy was coherent before the outcome.",
+        "support": "Druckenmiller applied the Reagan-deficit lesson: loose fiscal policy can strengthen a currency when it forces tight central-bank policy and higher rates.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "The trade-after-the-trade was visible from the same policy logic.",
+        "support": "If Bundesbank-led high rates strained weaker European economies, follow-on opportunities could emerge in the Italian lira, British pound, and Swedish krona.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json",
+          "docs/decision_quality_evals/inputs/dem_reunification_initiation_notes_1989-11-10.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Reunification costs were real and could damage confidence.",
+        "support": "Large public spending, deficits, inflation pressure, and the burden of integrating a less productive East German economy were genuine risks.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json",
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "The Bundesbank could face political pressure to accommodate.",
+        "support": "Reunification was a national political priority, so monetary tightening could become politically difficult if it conflicted with fiscal integration.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      },
+      {
+        "claim": "The initial price action was against the long mark trade.",
+        "support": "The Deutsche mark dipped against the U.S. dollar after the Wall fell, so the trade was not yet price-confirmed at initiation.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/dem_reunification_source_case_1989-11-10.json",
+          "docs/decision_quality_evals/inputs/dem_reunification_market_setup_1989-11-10.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "The Deutsche mark dipped against the U.S. dollar after the Berlin Wall fell as traders sold the currency on reunification deficit fears.",
+      "interpretation": "Price action showed the consensus view being expressed, not confirmation of the variant thesis. The selloff made the trade actionable only because the policy reaction-function analysis suggested the move had the wrong sign.",
+      "confirms_thesis": false,
+      "data_needed": [
+        "Exact DEM/USD spot level and size of the post-Wall move",
+        "German-U.S. yield differential and rate-expectation changes",
+        "Bundesbank communication and market-implied rate path",
+        "Speculative FX positioning after the initial selloff"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The trade had a clear macro shock, a visible market misread, a direct liquid FX expression, a credible central-bank reaction function, and a concrete invalidation path.",
+      "missing_inputs": [
+        "Exact DEM/USD spot and recent move size",
+        "German-U.S. rate differential and forward-rate expectations",
+        "Bundesbank communication immediately after the Wall fell",
+        "Portfolio-level FX and European macro exposure",
+        "Execution/liquidity constraints for the intended notional size"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Long Deutsche mark versus U.S. dollar",
+      "instrument_type": "fx",
+      "directness": "direct",
+      "alternatives": [
+        "Long Deutsche mark versus a broader currency basket",
+        "Long German short-rate exposure if the instrument set allows direct rates expression",
+        "Use options on DEM/USD if spot drawdown tolerance is limited"
+      ],
+      "follow_on": "Monitor for related short opportunities in the Italian lira, British pound, and Swedish krona if Bundesbank-led tight money strains weaker European economies."
+    },
+    "conviction": {
+      "level": 5,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Already maximum conviction based on the policy-shock setup; size should be governed by liquidity, rate-expectation confirmation, and portfolio risk rather than ordinary single-name rules."
+    },
+    "confidence": 0.84,
+    "confidence_reason": "High confidence because the thesis identifies the correct policy reaction function and dominant price-setting variable, but not higher because reunification costs, political pressure, and initial adverse price action were real risks.",
+    "sizing_context": {
+      "starting_size": "New conviction 5 macro/FX position; historical framing supports large notional because DEM/USD was liquid and the market had likely misread the central-bank reaction function.",
+      "add_conditions": "Add if the Deutsche mark stabilizes or strengthens after the initial selloff, German rate expectations rise, and Bundesbank communication confirms anti-inflation discipline.",
+      "liquidity_constraints": "DEM/USD was a liquid major FX pair, but exact execution prices, slippage, stop levels, and risk limits are not selected in the inputs.",
+      "portfolio_constraints": "Sizing should account for total FX exposure, European macro concentration, U.S. dollar exposure, and drawdown tolerance if the market continues pricing reunification as mark-negative before rate expectations adjust.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Initiate/increase long DEM exposure while the market prices fiscal fear but before German rate expectations fully reprice higher."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Look for follow-on short opportunities in the Italian lira, British pound, and Swedish krona if German reunification and Bundesbank tightness pressure weaker European economies and currencies.",
+      "if_wrong": "If the Bundesbank accommodates, German rate expectations fall, or the Deutsche mark keeps weakening despite hawkish signals, reduce the DEM long and do not pursue related European currency shorts.",
+      "next_review_trigger": "Review on Bundesbank communication, German-U.S. rate differential repricing, DEM/USD failing to stabilize within 4-8 weeks, or signs that weaker European currencies are beginning to absorb the German rate shock."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical macro/FX example designed to teach fiscal-policy versus central-bank reaction-function reasoning and trade-after-the-trade setup."
+}

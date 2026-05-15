@@ -1,0 +1,50 @@
+{
+  "instrument": "DEM/USD",
+  "as_of_date": "1989-11-10",
+  "trade_direction": "long_DEM_short_USD",
+  "market_structure": {
+    "regime": "Major floating FX pair with price driven by relative interest-rate expectations, inflation expectations, fiscal credibility, and central-bank reaction functions.",
+    "dominant_price_setting_variable": "Expected German relative interest rates and Bundesbank anti-inflation credibility over the reunification horizon.",
+    "market_error": "The market treated reunification deficits as directly bearish for the Deutsche mark without translating the fiscal shock through the Bundesbank's likely policy response."
+  },
+  "macro_setup": {
+    "germany_conditions": [
+      "Berlin Wall collapse created a path toward German reunification.",
+      "Reunification implied large fiscal costs, public spending, and probable deficits.",
+      "East German integration raised real economic burdens and inflation pressure.",
+      "The Bundesbank had strong anti-inflation credibility and a clear institutional bias toward monetary stability."
+    ],
+    "currency_consensus": [
+      "Deficits and inflation pressure were viewed as Deutsche mark negative.",
+      "Traders sold Deutsche marks after the Wall fell and the currency dipped against the U.S. dollar."
+    ],
+    "variant_policy_view": [
+      "Loose fiscal policy would likely force tighter monetary policy.",
+      "Higher German interest rates would attract capital and support the Deutsche mark.",
+      "The deficit shock had the wrong sign for the currency once filtered through the Bundesbank reaction function."
+    ]
+  },
+  "trigger": {
+    "event": "Berlin Wall collapse and immediate market selloff in the Deutsche mark.",
+    "date": "1989-11-09",
+    "interpretation": "The event created both the fiscal shock and the mispricing: the currency sold off on deficit fears even though the likely central-bank response was tighter money."
+  },
+  "risk_reward": {
+    "downside_if_wrong": "The Deutsche mark could continue falling if deficits damaged confidence, if the Bundesbank accommodated fiscal expansion, if U.S. rates dominated, or if reunification costs caused capital flight.",
+    "upside_if_right": "A shift toward higher German rates and renewed confidence in Bundesbank anti-inflation discipline could create a sustained Deutsche mark rally.",
+    "probability_view": "High conviction because the central bank reaction function directly affected the main price-setting variable: relative interest rates."
+  },
+  "liquidity_and_capacity": {
+    "market_liquidity": "DEM/USD was a highly liquid major FX pair, allowing large notional expression.",
+    "position_scale_note": "Historical source framing describes a very large position built over a few days, but exact execution prices and risk limits are not selected here."
+  },
+  "trade_after_trade": {
+    "primary_follow_on": "Look for related pressure in other European currencies whose domestic economies could not tolerate the high-rate environment created by German reunification and Bundesbank policy.",
+    "candidate_follow_ons": [
+      "Italian lira",
+      "British pound",
+      "Swedish krona"
+    ]
+  },
+  "human_notes": ""
+}

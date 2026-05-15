@@ -1,0 +1,11 @@
+{
+  "as_of_date": "1989-11-10",
+  "position_status": "new_position",
+  "position_direction": "long_DEM_short_USD",
+  "portfolio_role": "Concentrated macro/FX reaction-function trade",
+  "conviction_at_initiation": 5,
+  "sizing_context": "Historical case: Druckenmiller built a very large Deutsche mark position over a few days because he believed the market had misread the policy reaction function after the Berlin Wall fell.",
+  "sizing_principle": "Special-situation macro sizing: when a major policy shock causes the market to price the first-order fiscal effect but not the central-bank reaction function, the trade can be sized aggressively if liquidity is deep and invalidation is clear.",
+  "risk_capacity_notes": "This is not a generic rule to buy currencies after deficits rise. It depends on a credible anti-inflation central bank, liquid FX expression, and the deficit shock increasing rather than reducing expected relative rates.",
+  "human_notes": "This eval is historical and should teach reaction-function reasoning, not hindsight outcome chasing."
+}
