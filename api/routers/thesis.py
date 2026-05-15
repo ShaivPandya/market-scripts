@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from api.action_execution import stage_api_action
 from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -329,7 +330,7 @@ class StatusChangeRequest(BaseModel):
 
 
 @router.put("/thesis/{ticker}/status")
-def change_thesis_status(ticker: str, body: StatusChangeRequest):
+def change_thesis_status(ticker: str, body: StatusChangeRequest, actor: ActorDep):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
@@ -337,6 +338,7 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
         "change_thesis_status",
         {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
         source_id="thesis.change_thesis_status",
+        actor=actor,
         reason=body.reason or f"Change thesis status for {normalized_ticker}",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -351,7 +353,7 @@ class SaveThesisRequest(BaseModel):
 
 
 @router.put("/thesis/{ticker}")
-def save_thesis(ticker: str, body: SaveThesisRequest):
+def save_thesis(ticker: str, body: SaveThesisRequest, actor: ActorDep):
     """Save thesis markdown content directly."""
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
@@ -365,6 +367,7 @@ def save_thesis(ticker: str, body: SaveThesisRequest):
         "save_thesis_content",
         {"ticker": normalized_ticker, "content": content},
         source_id="thesis.save_thesis",
+        actor=actor,
         reason=body.reason or f"Update thesis content for {normalized_ticker}",
         apply=body.apply,
         approval_note=body.approval_note,

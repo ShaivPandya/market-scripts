@@ -119,6 +119,54 @@ def test_policy_gate_applies_role_specific_limit_override():
     assert gate["failure_reasons"][0]["code"] == "concentration_limit"
 
 
+def test_policy_matrix_emits_dual_control_approval_requirements():
+    set_financial_policy_matrix_setting(
+        {
+            "schema_version": 1,
+            "policy_id": "dual-control",
+            "rules": [
+                {
+                    "id": "high-risk-two-approvers",
+                    "priority": 100,
+                    "match": {"action_ids": ["update_portfolio_positions"]},
+                    "outcome": "use_checks",
+                    "approval_requirements": [
+                        {
+                            "id": "research_lead",
+                            "label": "Research lead",
+                            "actor_roles": ["admin"],
+                            "scope_type": "ticker",
+                            "scope_id": "MU",
+                            "allow_requester": False,
+                        },
+                        {
+                            "id": "portfolio_manager",
+                            "label": "Portfolio manager",
+                            "actor_roles": ["admin"],
+                            "scope_type": "portfolio",
+                            "scope_id": "default",
+                            "allow_requester": False,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    gate = evaluate_policy_gate(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "notional_base": 10}]},
+        context={"actor_roles": ["admin"]},
+    )
+
+    assert gate["rule_id"] == "high-risk-two-approvers"
+    assert [requirement["id"] for requirement in gate["approval_requirements"]] == [
+        "research_lead",
+        "portfolio_manager",
+    ]
+    assert gate["approval_requirements"][0]["allow_requester"] is False
+
+
 def test_policy_gate_blocks_self_apply_by_matrix_rule():
     set_financial_policy_matrix_setting(
         {

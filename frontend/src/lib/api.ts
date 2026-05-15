@@ -122,6 +122,7 @@ export interface PolicyGateResult {
   review_required?: boolean
   approval_required?: boolean
   approval_mode?: string | null
+  approval_requirements?: ApprovalRequirement[]
   rule_id?: string | null
   reason?: string
   remediation?: string
@@ -130,6 +131,40 @@ export interface PolicyGateResult {
   failure_reasons?: PolicyGateReason[]
   warnings?: PolicyGateReason[]
   disclosures?: string[]
+}
+
+export interface ApprovalRequirement {
+  id: string
+  label: string
+  min_count: number
+  actor_roles: string[]
+  actor_ids: string[]
+  scope_type?: string | null
+  scope_id?: string | null
+  allow_requester?: boolean
+  allow_actor_reuse?: boolean
+  approved_count?: number
+  remaining_count?: number
+  satisfied?: boolean
+}
+
+export interface ApprovalDecision {
+  requirement_id: string
+  actor_id: string
+  actor_type?: string | null
+  actor_roles?: string[]
+  decision: string
+  note?: string | null
+  decided_at?: string | null
+}
+
+export interface ApprovalProgress {
+  total_required: number
+  recorded_count: number
+  remaining_count: number
+  completed: boolean
+  requirements: ApprovalRequirement[]
+  remaining_requirements: ApprovalRequirement[]
 }
 
 export interface ApprovalRecord extends DecisionStateFields {
@@ -149,6 +184,12 @@ export interface ApprovalRecord extends DecisionStateFields {
   source_type?: string | null
   source_id?: string | null
   proposed_change: Record<string, unknown>
+  approval_requirements?: ApprovalRequirement[]
+  approval_decisions?: ApprovalDecision[]
+  approval_progress?: ApprovalProgress
+  remaining_approval_requirements?: ApprovalRequirement[]
+  approval_policy_rule_id?: string | null
+  approval_policy_reason?: string | null
   policy_gate?: PolicyGateResult | null
   can_approve?: boolean
   can_reject?: boolean
@@ -583,6 +624,7 @@ export interface FinancialPolicyRule {
   limits: Record<string, number>
   outcome: FinancialPolicyOutcome
   approval_mode?: FinancialPolicyApprovalMode | null
+  approval_requirements?: ApprovalRequirement[]
   reason: string
   remediation: string
 }
@@ -2595,10 +2637,10 @@ export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
-export const approveItem = (id: string, note: string) =>
-  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note }).then(r => r.data as ApprovalRecord)
-export const rejectItem = (id: string, note?: string) =>
-  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+export const approveItem = (id: string, note: string, requirement_id?: string) =>
+  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note, requirement_id }).then(r => r.data as ApprovalRecord)
+export const rejectItem = (id: string, note?: string, requirement_id?: string) =>
+  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note || requirement_id ? { note, requirement_id } : {}).then(r => r.data as ApprovalRecord)
 export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
     .post(`/approvals/${encodeURIComponent(id)}/reject-and-restage`, note ? { note } : {})

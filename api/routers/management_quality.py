@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from api.action_execution import stage_api_action
 from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -484,7 +485,7 @@ class SaveManagementQualityRequest(BaseModel):
 
 
 @router.put("/management-quality/{ticker}")
-def save_management_quality(ticker: str, body: SaveManagementQualityRequest):
+def save_management_quality(ticker: str, body: SaveManagementQualityRequest, actor: ActorDep):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
@@ -497,6 +498,7 @@ def save_management_quality(ticker: str, body: SaveManagementQualityRequest):
         "save_management_quality_content",
         {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
         source_id="management_quality.save_management_quality",
+        actor=actor,
         reason=body.reason or f"Update management quality assessment for {normalized_ticker}",
         apply=body.apply,
         approval_note=body.approval_note,

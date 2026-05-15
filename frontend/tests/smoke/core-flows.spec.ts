@@ -35,6 +35,8 @@ test("renders workspace common operating picture and enforces approval note gati
   await expect(page.getByText("Risk-on")).toBeVisible()
   await expect(page.getByText("Portfolio Risk")).toBeVisible()
   await expect(page.getByRole("heading", { name: /Pending Approvals/ })).toBeVisible()
+  await expect(page.getByText("1/2 approvals recorded")).toBeVisible()
+  await expect(page.getByText("Portfolio manager (portfolio:default)")).toBeVisible()
 
   await page.getByRole("button", { name: "Review" }).click()
 

@@ -1,0 +1,21 @@
+{
+  "as_of_date": "2006-08-01",
+  "decision_context": "Historical structured-credit short case",
+  "human_initiation_rationale": "Short BBB-rated subprime mortgage exposure because housing and mortgage credit were priced for continued stability, while the research showed that merely flat home prices could block refinancing and wipe out thin BBB tranches.",
+  "selected_inputs": [
+    "low-volatility credit bubble",
+    "abundant liquidity and yield-seeking demand for mortgage paper",
+    "thin BBB subprime tranches",
+    "CDS protection with capped premium loss and large payoff",
+    "Pellegrini mortgage database research",
+    "slowing home-price appreciation from Fed rate hikes",
+    "ABX subprime mortgage index launched in July 2006 as a market reference"
+  ],
+  "known_timing_issue": "The first April 2005 trades were early and had not made money by August 2006, so the model should explicitly distinguish being early from being wrong.",
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "New Century and HSBC announcements on February 7, 2007, plus the sharp ABX decline, later confirmed the thesis but were not known on 2006-08-01."
+  },
+  "key_lesson": "The model should recognize convex trades where poor early mark-to-market is tolerable because loss is capped by premium while the fundamental trigger path is getting more likely.",
+  "human_notes": "Add as a historical conviction 5 short case. Ask for a different as-of date if the eval should represent the April 2005 first probe or the February 2007 confirmation instead."
+}

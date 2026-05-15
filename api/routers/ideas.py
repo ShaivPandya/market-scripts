@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from decision_quality import (
     ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_ACTIONS,
 )
@@ -2494,7 +2495,12 @@ def get_idea_evaluation_job(job_id: str):
 
 
 @router.post("/ideas/{idea_id}/evaluations/{evaluation_id}/accept")
-def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptRequest | None = None):
+def accept_idea_evaluation(
+    idea_id: str,
+    evaluation_id: str,
+    actor: ActorDep,
+    body: IdeaAcceptRequest | None = None,
+):
     idea = _get_idea(idea_id)
     evaluation = _get_idea_evaluation(evaluation_id)
     if not idea:
@@ -2510,7 +2516,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
 
     context = OntologyCommandContext(
-        actor=admin_actor(source="ideas"),
+        actor=actor,
         source_type="user",
         source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
     )
@@ -2558,6 +2564,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
                     "urgency": "normal" if action in DECISION_ACTIONABLE_ACTIONS else "low",
                 },
                 source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
+                actor=actor,
                 reason=(body.note if body else None)
                 or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
             )

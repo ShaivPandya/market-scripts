@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.action_execution import stage_api_action
+from api.routers.auth import ActorDep
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -42,11 +43,12 @@ def list_triggers(
 
 
 @router.post("/triggers")
-def create_trigger(body: CreateTriggerRequest):
+def create_trigger(body: CreateTriggerRequest, actor: ActorDep):
     return stage_api_action(
         "create_watch_trigger",
         body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="triggers.create_trigger",
+        actor=actor,
         reason=body.reason or "Create watch trigger",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -54,11 +56,12 @@ def create_trigger(body: CreateTriggerRequest):
 
 
 @router.put("/triggers/{trigger_id}/fire")
-def fire_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
+def fire_trigger(trigger_id: str, actor: ActorDep, body: TriggerMutationRequest | None = None):
     return stage_api_action(
         "fire_watch_trigger",
         {"trigger_id": trigger_id},
         source_id="triggers.fire_trigger",
+        actor=actor,
         reason=(body.reason if body else None) or f"Fire watch trigger {trigger_id}",
         apply=body.apply if body else False,
         approval_note=body.approval_note if body else None,
@@ -67,11 +70,12 @@ def fire_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
 
 
 @router.put("/triggers/{trigger_id}/cancel")
-def cancel_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
+def cancel_trigger(trigger_id: str, actor: ActorDep, body: TriggerMutationRequest | None = None):
     return stage_api_action(
         "cancel_watch_trigger",
         {"trigger_id": trigger_id},
         source_id="triggers.cancel_trigger",
+        actor=actor,
         reason=(body.reason if body else None) or f"Cancel watch trigger {trigger_id}",
         apply=body.apply if body else False,
         approval_note=body.approval_note if body else None,
@@ -80,11 +84,12 @@ def cancel_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
 
 
 @router.put("/triggers/{trigger_id}/replace")
-def replace_trigger(trigger_id: str, body: ReplaceTriggerRequest):
+def replace_trigger(trigger_id: str, body: ReplaceTriggerRequest, actor: ActorDep):
     return stage_api_action(
         "replace_watch_trigger",
         {"trigger_id": trigger_id, **body.model_dump(exclude={"reason", "apply", "approval_note"})},
         source_id="triggers.replace_trigger",
+        actor=actor,
         reason=body.reason or f"Replace watch trigger {trigger_id}",
         apply=body.apply,
         approval_note=body.approval_note,

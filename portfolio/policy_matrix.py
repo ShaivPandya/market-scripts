@@ -121,6 +121,52 @@ class FinancialPolicyRuleMatch(BaseModel):
         return self
 
 
+class FinancialPolicyApprovalRequirement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str = ""
+    min_count: int = Field(default=1, ge=1, le=20)
+    actor_roles: list[str] = Field(default_factory=list)
+    actor_ids: list[str] = Field(default_factory=list)
+    scope_type: str | None = None
+    scope_id: str | None = None
+    allow_requester: bool = False
+    allow_actor_reuse: bool = False
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not _RULE_ID_RE.match(normalized):
+            raise ValueError("approval requirement id must start with a letter or number")
+        return normalized
+
+    @field_validator("label")
+    @classmethod
+    def _normalize_label(cls, value: str) -> str:
+        return str(value or "").strip()[:200]
+
+    @field_validator("actor_roles", "actor_ids", mode="before")
+    @classmethod
+    def _coerce_list(cls, value: Any) -> list[str]:
+        return _list(value)
+
+    @field_validator("scope_type", "scope_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    @model_validator(mode="after")
+    def _normalize(self) -> FinancialPolicyApprovalRequirement:
+        self.actor_roles = _lower_list(self.actor_roles)
+        self.actor_ids = _lower_list(self.actor_ids)
+        if not self.label:
+            self.label = self.id.replace("_", " ").replace("-", " ").title()
+        return self
+
+
 class FinancialPolicyRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -131,6 +177,7 @@ class FinancialPolicyRule(BaseModel):
     limits: dict[str, float] = Field(default_factory=dict)
     outcome: Outcome = "use_checks"
     approval_mode: ApprovalMode | None = None
+    approval_requirements: list[FinancialPolicyApprovalRequirement] = Field(default_factory=list)
     reason: str = ""
     remediation: str = ""
 
@@ -306,12 +353,17 @@ def evaluate_financial_policy_matrix(
         "reason": outcome_rule.reason if outcome_rule else "",
         "remediation": outcome_rule.remediation if outcome_rule else "",
         "limit_overrides": limit_overrides,
+        "approval_requirements": [
+            requirement.model_dump(mode="json")
+            for requirement in (outcome_rule.approval_requirements if outcome_rule else [])
+        ],
         "matched_rules": [
             {
                 "id": rule.id,
                 "priority": rule.priority,
                 "outcome": rule.outcome,
                 "approval_mode": rule.approval_mode,
+                "approval_requirement_count": len(rule.approval_requirements),
                 "limit_keys": sorted(rule.limits),
             }
             for rule in matching_rules

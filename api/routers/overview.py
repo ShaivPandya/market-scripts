@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from api.action_execution import stage_api_action
 from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
 from paths import PROJECT_ROOT
@@ -582,7 +583,7 @@ class SaveOverviewRequest(BaseModel):
 
 
 @router.put("/overview/{ticker}")
-def save_overview(ticker: str, body: SaveOverviewRequest):
+def save_overview(ticker: str, body: SaveOverviewRequest, actor: ActorDep):
     """Stage an overview markdown save through the governed action path."""
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
@@ -597,6 +598,7 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
         "save_overview_content",
         {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
         source_id="overview.save_overview",
+        actor=actor,
         reason=body.reason or f"Update equity overview for {normalized_ticker}",
         apply=body.apply,
         approval_note=body.approval_note,

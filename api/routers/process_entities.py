@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from api.action_execution import stage_api_action
+from api.routers.auth import ActorDep
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -51,11 +52,12 @@ def list_catalysts(ticker: str):
 
 
 @router.post("/catalysts")
-def create_catalyst(body: CreateCatalystRequest):
+def create_catalyst(body: CreateCatalystRequest, actor: ActorDep):
     return stage_api_action(
         "create_catalyst",
         body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="process_entities.create_catalyst",
+        actor=actor,
         reason=body.reason or f"Create catalyst for {body.ticker}",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -63,12 +65,13 @@ def create_catalyst(body: CreateCatalystRequest):
 
 
 @router.put("/catalysts/{catalyst_id}/status")
-def update_catalyst_status(catalyst_id: str, body: UpdateCatalystStatusRequest):
+def update_catalyst_status(catalyst_id: str, body: UpdateCatalystStatusRequest, actor: ActorDep):
     resolved_catalyst_id = _canonical_route_id(catalyst_id, "catalyst")
     return stage_api_action(
         "update_catalyst_status",
         {"catalyst_id": resolved_catalyst_id, "status": body.status, "evidence": body.evidence},
         source_id="process_entities.update_catalyst_status",
+        actor=actor,
         reason=body.reason or f"Update catalyst {resolved_catalyst_id} status",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -105,11 +108,12 @@ def list_kill_conditions(ticker: str):
 
 
 @router.post("/kill-conditions")
-def create_kill_condition(body: CreateKillConditionRequest):
+def create_kill_condition(body: CreateKillConditionRequest, actor: ActorDep):
     return stage_api_action(
         "create_kill_condition",
         body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="process_entities.create_kill_condition",
+        actor=actor,
         reason=body.reason or f"Create kill condition for {body.ticker}",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -183,7 +187,7 @@ def list_thesis_claims(
 
 
 @router.post("/thesis-claims")
-def create_thesis_claim(body: CreateThesisClaimRequest):
+def create_thesis_claim(body: CreateThesisClaimRequest, actor: ActorDep):
     return stage_api_action(
         "create_thesis_claim",
         {
@@ -200,6 +204,7 @@ def create_thesis_claim(body: CreateThesisClaimRequest):
             "source_type": "user",
         },
         source_id="process_entities.create_thesis_claim",
+        actor=actor,
         reason=body.reason or f"Create thesis claim for {body.ticker}",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -207,7 +212,7 @@ def create_thesis_claim(body: CreateThesisClaimRequest):
 
 
 @router.put("/thesis-claims/{claim_id}")
-def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
+def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest, actor: ActorDep):
     updates = body.model_dump(exclude_unset=True, exclude={"reason", "apply", "approval_note"})
     if "source_requirements" in updates:
         updates["source_requirements"] = _source_requirements_payload(body.source_requirements)
@@ -215,6 +220,7 @@ def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
         "update_thesis_claim",
         {"claim_id": claim_id, **updates},
         source_id="process_entities.update_thesis_claim",
+        actor=actor,
         reason=body.reason or f"Update thesis claim {claim_id}",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -223,12 +229,13 @@ def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
 
 
 @router.put("/kill-conditions/{kc_id}/status")
-def update_kill_condition_status(kc_id: str, body: UpdateKillConditionStatusRequest):
+def update_kill_condition_status(kc_id: str, body: UpdateKillConditionStatusRequest, actor: ActorDep):
     resolved_kc_id = _canonical_route_id(kc_id, "kill_condition")
     return stage_api_action(
         "update_kill_condition_status",
         {"kill_condition_id": resolved_kc_id, "status": body.status},
         source_id="process_entities.update_kill_condition_status",
+        actor=actor,
         reason=body.reason or f"Update kill condition {resolved_kc_id} status",
         apply=body.apply,
         approval_note=body.approval_note,

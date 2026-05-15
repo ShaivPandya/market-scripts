@@ -477,6 +477,7 @@ class PolicyGateResult(OntologySchemaBase):
     review_required: bool = False
     approval_required: bool = True
     approval_mode: str | None = None
+    approval_requirements: list[dict[str, Any]] = Field(default_factory=list)
     rule_id: str | None = None
     reason: str | None = None
     remediation: str | None = None
@@ -1220,6 +1221,10 @@ class Approval(OntologySchemaBase):
     risk_class: str | None = None
     approval_required: bool = True
     approval_mode: str | None = None
+    approval_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    approval_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    approval_policy_rule_id: str | None = None
+    approval_policy_reason: str | None = None
     approval_note_required: bool = True
     policy_gate_result: dict[str, Any] | None = None
     policy_gate_result_id: str | None = None
@@ -1258,6 +1263,8 @@ class Approval(OntologySchemaBase):
         "application_completed_at",
         "application_error",
         "risk_class",
+        "approval_policy_rule_id",
+        "approval_policy_reason",
         "policy_gate_result_id",
         "policy_gate_decision",
         "base_state_hash",

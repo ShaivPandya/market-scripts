@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from api.action_execution import execute_api_action
 from api.decision_state import normalize_approval
 from api.exceptions import AppError, ConflictError, NotFoundError, ValidationError
+from api.routers.auth import ActorDep
 from ontology.command_service import (
     OntologyCommandConflict,
     OntologyCommandContext,
@@ -17,13 +18,13 @@ from ontology.command_service import (
     OntologyCommandService,
     OntologyCommandValidationError,
 )
-from ontology.policy import admin_actor
 
 router = APIRouter()
 
 
 class ResolveRequest(BaseModel):
     note: str | None = None
+    requirement_id: str | None = None
 
 
 class BulkResolveRequest(BaseModel):
@@ -48,6 +49,7 @@ def _approval_uid(approval_id: str) -> str:
 
 def _list_approval_records(
     *,
+    actor,
     status: str | None,
     ticker: str | None,
     application_status: str | None,
@@ -56,19 +58,20 @@ def _list_approval_records(
         status=status,
         ticker=ticker,
         application_status=application_status,
-        actor=admin_actor(source="api"),
+        actor=actor,
     )
 
 
-def _get_approval_record(approval_id: str) -> dict[str, Any]:
+def _get_approval_record(approval_id: str, *, actor) -> dict[str, Any]:
     try:
-        return OntologyCommandService().get_approval(approval_id, actor=admin_actor(source="api"))
+        return OntologyCommandService().get_approval(approval_id, actor=actor)
     except OntologyCommandNotFound as exc:
         raise NotFoundError("Approval", str(approval_id)) from exc
 
 
 @router.get("/approvals")
 def list_approvals(
+    actor: ActorDep,
     status: str | None = "pending",
     ticker: str | None = None,
     application_status: str | None = None,
@@ -78,7 +81,12 @@ def list_approvals(
     if application_status == "all":
         application_status = None
     try:
-        approvals = _list_approval_records(status=status, ticker=ticker, application_status=application_status)
+        approvals = _list_approval_records(
+            actor=actor,
+            status=status,
+            ticker=ticker,
+            application_status=application_status,
+        )
     except ValueError as e:
         raise ValidationError(str(e)) from e
     return {"approvals": [normalize_approval(a) for a in approvals], "count": len(approvals)}
@@ -86,6 +94,7 @@ def list_approvals(
 
 @router.get("/approvals/summary")
 def approval_summary(
+    actor: ActorDep,
     status: str | None = "pending",
     ticker: str | None = None,
     application_status: str | None = None,
@@ -96,6 +105,7 @@ def approval_summary(
     normalized_ticker = ticker.strip().upper() if ticker and ticker.strip() else None
     try:
         approvals = _list_approval_records(
+            actor=actor,
             status=normalized_status,
             ticker=normalized_ticker,
             application_status=normalized_application_status,
@@ -127,37 +137,48 @@ def approval_summary(
 
 
 @router.get("/approvals/{approval_id}")
-def get_approval(approval_id: str):
-    approval = _get_approval_record(approval_id)
+def get_approval(approval_id: str, actor: ActorDep):
+    approval = _get_approval_record(approval_id, actor=actor)
     approval["provenance_summary"] = {"selector": {"approval_id": approval.get("id")}, "lineage_state": "ontology"}
     return normalize_approval(approval)
 
 
 @router.post("/approvals/{approval_id}/approve")
-def approve_item(approval_id: str, body: ResolveRequest | None = None):
+def approve_item(approval_id: str, actor: ActorDep, body: ResolveRequest | None = None):
     note = body.note if body else None
     if not str(note or "").strip():
         raise ValidationError("Approval note is required.")
     return execute_api_action(
         "resolve_approval",
-        {"approval_id": approval_id, "status": "approved", "note": note},
+        {
+            "approval_id": approval_id,
+            "status": "approved",
+            "note": note,
+            "requirement_id": body.requirement_id if body else None,
+        },
         source_id="approvals.approve_item",
+        actor=actor,
     )
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject_item(approval_id: str, body: ResolveRequest | None = None):
+def reject_item(approval_id: str, actor: ActorDep, body: ResolveRequest | None = None):
     return execute_api_action(
         "resolve_approval",
-        {"approval_id": approval_id, "status": "rejected", "note": body.note if body else None},
+        {
+            "approval_id": approval_id,
+            "status": "rejected",
+            "note": body.note if body else None,
+            "requirement_id": body.requirement_id if body else None,
+        },
         source_id="approvals.reject_item",
+        actor=actor,
     )
 
 
 @router.post("/approvals/{approval_id}/reject-and-restage")
-def reject_and_restage_item(approval_id: str, body: ResolveRequest | None = None):
+def reject_and_restage_item(approval_id: str, actor: ActorDep, body: ResolveRequest | None = None):
     service = OntologyCommandService()
-    actor = admin_actor(source="api")
     context = OntologyCommandContext(
         actor=actor, source_type="user", source_id=f"approvals.reject_and_restage:{approval_id}"
     )
@@ -199,8 +220,14 @@ def reject_and_restage_item(approval_id: str, body: ResolveRequest | None = None
         note = f"Superseded by approval {replacement['id']} after underlying state changed."
     original = execute_api_action(
         "resolve_approval",
-        {"approval_id": approval_id, "status": "rejected", "note": note},
+        {
+            "approval_id": approval_id,
+            "status": "rejected",
+            "note": note,
+            "requirement_id": body.requirement_id if body else None,
+        },
         source_id="approvals.reject_and_restage",
+        actor=actor,
     )
     return {
         "status": "replacement_created",
@@ -210,9 +237,8 @@ def reject_and_restage_item(approval_id: str, body: ResolveRequest | None = None
 
 
 @router.post("/approvals/{approval_id}/replace")
-def replace_item(approval_id: str, body: ReplaceWatchTriggerApprovalRequest):
+def replace_item(approval_id: str, body: ReplaceWatchTriggerApprovalRequest, actor: ActorDep):
     service = OntologyCommandService()
-    actor = admin_actor(source="api")
     context = OntologyCommandContext(actor=actor, source_type="user", source_id=f"approvals.replace:{approval_id}")
     try:
         approval = service.get_approval(approval_id, actor=actor)
@@ -249,6 +275,7 @@ def replace_item(approval_id: str, body: ReplaceWatchTriggerApprovalRequest):
         "resolve_approval",
         {"approval_id": approval_id, "status": "rejected", "note": note},
         source_id="approvals.replace",
+        actor=actor,
     )
     return {
         "status": "replacement_created",
@@ -258,7 +285,7 @@ def replace_item(approval_id: str, body: ReplaceWatchTriggerApprovalRequest):
 
 
 @router.post("/approvals/bulk-approve")
-def bulk_approve(body: BulkResolveRequest):
+def bulk_approve(body: BulkResolveRequest, actor: ActorDep):
     if not str(body.note or "").strip():
         raise ValidationError("Bulk approval note is required.")
     results = []
@@ -268,6 +295,7 @@ def bulk_approve(body: BulkResolveRequest):
                 "resolve_approval",
                 {"approval_id": aid, "status": "approved", "note": body.note},
                 source_id="approvals.bulk_approve",
+                actor=actor,
             )
             results.append({"id": aid, "status": "approved"})
         except ConflictError as e:
@@ -278,7 +306,7 @@ def bulk_approve(body: BulkResolveRequest):
 
 
 @router.post("/approvals/bulk-reject")
-def bulk_reject(body: BulkResolveRequest):
+def bulk_reject(body: BulkResolveRequest, actor: ActorDep):
     results = []
     for aid in body.ids:
         try:
@@ -286,6 +314,7 @@ def bulk_reject(body: BulkResolveRequest):
                 "resolve_approval",
                 {"approval_id": aid, "status": "rejected", "note": body.note},
                 source_id="approvals.bulk_reject",
+                actor=actor,
             )
             results.append({"id": aid, "status": "rejected"})
         except AppError as e:

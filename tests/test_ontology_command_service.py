@@ -13,7 +13,7 @@ from ontology.command_service import (
     OntologyCommandValidationError,
 )
 from ontology.object_service import OntologyObjectService
-from ontology.policy import admin_actor
+from ontology.policy import Actor, admin_actor
 from ontology.schemas.identity import document_artifact_id
 from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
 
@@ -187,6 +187,56 @@ def _isolate_news_digest_store(monkeypatch, tmp_path):
     monkeypatch.setattr(digests, "FILES_GCS_PREFIX", "test/news_digests/files")
     monkeypatch.setenv("STATE_STORAGE_BACKEND", "local")
     return digests
+
+
+def _actor(actor_id: str, *roles: str) -> Actor:
+    resolved_roles = tuple(dict.fromkeys(("owner", *(roles or ("admin",)))))
+    return Actor(actor_id=actor_id, actor_type="user", roles=resolved_roles, source="test")
+
+
+def _dual_control_requirements(*, allow_requester: bool = False) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "research_lead",
+            "label": "Research lead",
+            "min_count": 1,
+            "actor_roles": ["admin"],
+            "actor_ids": [],
+            "scope_type": "ticker",
+            "scope_id": "MU",
+            "allow_requester": allow_requester,
+            "allow_actor_reuse": False,
+        },
+        {
+            "id": "portfolio_manager",
+            "label": "Portfolio manager",
+            "min_count": 1,
+            "actor_roles": ["admin"],
+            "actor_ids": [],
+            "scope_type": "portfolio",
+            "scope_id": "default",
+            "allow_requester": allow_requester,
+            "allow_actor_reuse": False,
+        },
+    ]
+
+
+def _patch_dual_control_gate(monkeypatch, *, allow_requester: bool = False) -> None:
+    import portfolio.policy_gate as policy_gate
+
+    def fake_gate(action_id, payload, *, context=None, object_service=None):
+        del context, object_service
+        return dict(payload), {
+            "decision": "pass",
+            "approval_required": True,
+            "approval_mode": "approval_required",
+            "rule_id": "dual-control-test",
+            "reason": "Two approvals required.",
+            "approval_requirements": _dual_control_requirements(allow_requester=allow_requester),
+        }
+
+    monkeypatch.setattr(policy_gate, "is_financial_action", lambda _action_id, _payload=None: True)
+    monkeypatch.setattr(policy_gate, "ensure_policy_gate_for_action", fake_gate)
 
 
 def test_propose_and_apply_position_update_writes_only_ontology_objects():
@@ -890,11 +940,77 @@ def test_restaged_approval_uses_distinct_uid_and_survives_original_rejection(mon
 
     assert replacement["id"] != original["id"]
     assert replacement["supersedes_approval_id"] == original["id"]
+    assert any(
+        row["object_type"] == "AuditEvent" and row["properties"].get("action_name") == "approval.replacement.created"
+        for row in service.objects.objects.values()  # type: ignore[attr-defined]
+    )
 
     rejected = service.resolve_approval(original["id"], "rejected", "Superseded", context)
 
     assert rejected["status"] == "rejected"
     assert service.get_approval(replacement["id"], actor=context.actor)["status"] == "pending"
+
+
+def test_dual_control_approval_applies_after_two_distinct_approvers(monkeypatch):
+    _patch_dual_control_gate(monkeypatch, allow_requester=False)
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    requester_context = OntologyCommandContext(actor=_actor("requester", "admin"), source_type="test", source_id="unit")
+    alice_context = OntologyCommandContext(actor=_actor("alice", "admin"), source_type="test", source_id="unit")
+    bob_context = OntologyCommandContext(actor=_actor("bob", "admin"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_action_item",
+        {"ticker": "MU", "description": "Review MU sizing", "action_type": "enter"},
+        requester_context,
+        reason="Create financial action item",
+    )
+
+    first = service.resolve_approval(approval["id"], "approved", "Research reviewed", alice_context)
+    assert first["status"] == "pending"
+    assert first["application_status"] == "pending"
+    assert len(first["approval_decisions"]) == 1
+
+    with pytest.raises(OntologyCommandValidationError, match="already satisfied another approval requirement"):
+        service.resolve_approval(approval["id"], "approved", "Second approval", alice_context)
+
+    applied = service.resolve_approval(approval["id"], "approved", "Portfolio reviewed", bob_context)
+    assert applied["status"] == "approved"
+    assert applied["application_status"] == "applied"
+    assert [decision["actor_id"] for decision in applied["approval_decisions"]] == ["alice", "bob"]
+
+
+def test_dual_control_denies_requester_self_approval(monkeypatch):
+    _patch_dual_control_gate(monkeypatch, allow_requester=False)
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    requester_context = OntologyCommandContext(actor=_actor("requester", "admin"), source_type="test", source_id="unit")
+    approval = service.propose_action(
+        "create_action_item",
+        {"ticker": "MU", "description": "Review MU sizing", "action_type": "enter"},
+        requester_context,
+        reason="Create financial action item",
+    )
+
+    with pytest.raises(OntologyCommandValidationError, match="requesting actor cannot approve"):
+        service.resolve_approval(approval["id"], "approved", "Self approval", requester_context)
+
+
+def test_dual_control_rejection_records_decision_and_rejects_proposal(monkeypatch):
+    _patch_dual_control_gate(monkeypatch, allow_requester=False)
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    requester_context = OntologyCommandContext(actor=_actor("requester", "admin"), source_type="test", source_id="unit")
+    alice_context = OntologyCommandContext(actor=_actor("alice", "admin"), source_type="test", source_id="unit")
+    approval = service.propose_action(
+        "create_action_item",
+        {"ticker": "MU", "description": "Review MU sizing", "action_type": "enter"},
+        requester_context,
+        reason="Create financial action item",
+    )
+
+    rejected = service.resolve_approval(approval["id"], "rejected", "Not enough support", alice_context)
+    assert rejected["status"] == "rejected"
+    assert rejected["application_status"] == "not_applicable"
+    assert rejected["approval_decisions"][-1]["decision"] == "rejected"
+    assert rejected["approval_decisions"][-1]["actor_id"] == "alice"
 
 
 def test_action_item_status_proposal_accepts_ontology_uid_and_keeps_item_context(monkeypatch):

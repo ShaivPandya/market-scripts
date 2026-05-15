@@ -35,6 +35,7 @@ import { RefreshButton } from "@/components/shared/RefreshButton"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
+import { ApprovalProgressSummary, approvalActionLabel } from "@/components/shared/ApprovalProgressSummary"
 import { ActionButton } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
@@ -988,6 +989,7 @@ export function Workspace() {
                         {approvalNeedsPolicyGate(a, gate) && (
                           <PolicyGatePanel gate={gate} />
                         )}
+                        <ApprovalProgressSummary approval={a} compact />
                       </div>
                       <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
                         <button
@@ -1218,6 +1220,7 @@ export function Workspace() {
                 <span>Application: {applicationLabel(approvalReview)}</span>
               </div>
               {approvalReasonLabel(approvalReview) && <p className="mb-2">{approvalReasonLabel(approvalReview)}</p>}
+              <ApprovalProgressSummary approval={approvalReview} />
               {(() => {
                 const record = approvalReview.proposed_change.record
                 if (record && typeof record === "object" && !Array.isArray(record)) {
@@ -1300,11 +1303,11 @@ export function Workspace() {
               <ActionButton
                 onClick={() => handleApproval(approvalReview, "approve", approvalNote)}
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
-                loadingText="Applying..."
+                loadingText={approvalActionLabel(approvalReview) === "Record Approval" ? "Recording..." : "Applying..."}
                 disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
                 className="theme-button-success w-auto px-4"
               >
-                {approvalReview.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
+                {approvalActionLabel(approvalReview)}
               </ActionButton>
             </div>
           </div>

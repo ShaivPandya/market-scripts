@@ -1,0 +1,210 @@
+{
+  "id": "paulson_subprime_cds_short_2006",
+  "status": "review",
+  "decision_type": "macro_stance",
+  "as_of_date": "2006-08-01",
+  "user_question": "Using the August 2006 subprime setup, should buying CDS protection on BBB subprime mortgage exposure have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json",
+      "sha256": "878848da56aae193c53eec9e88e47ba583b549ecf4b268110027e980ea74a947",
+      "description": "Historical case-study summary for John Paulson shorting BBB-rated subprime mortgage securities with CDS protection.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json",
+      "sha256": "7e87796a23e23da538f393be518d5a86ee5c642acf53bab3ffa762044b2efe0b",
+      "description": "Macro, housing, structured-credit, catalyst, risk/reward, and timing setup for the August 2006 subprime short.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/paulson_subprime_portfolio_context_2006-08-01.json",
+      "sha256": "95afae5a5047b40ad4311d9c674057092037df1f2ebdd884bc68fc000a4c7f48",
+      "description": "Historical portfolio context: existing exploratory subprime short to press into a conviction 5 structured-credit trade.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/paulson_subprime_initiation_notes_2006-08-01.json",
+      "sha256": "8a1c09c3f57b84162c3fdc2af401ddc9178553ff1f9ac30b2e16a7ed5e65195b",
+      "description": "User-requested framing and initiation rationale for the Paulson subprime CDS short case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical structured-credit eval case, not a live trading recommendation.",
+    "The decision date is set to 2006-08-01 to reflect that the initial April 2005 probe was early and that the case should sit after the July 2006 ABX launch. ABX is a timing/monitoring improvement, not the core reason for the trade.",
+    "The February 7, 2007 New Century and HSBC events are confirmation/outcome context, not evidence available at the decision date.",
+    "Conviction 5 means full conviction on the 1-5 scale, but raw target weight is not mapped to the user's single-name equity sizing model because this was a derivatives/structured-credit trade.",
+    "Exact CDS spreads, ABX levels, reference bonds, tranche attachments, and position sizes are not selected beyond the source summary."
+  ],
+  "gold_output": {
+    "simple_thesis": "Short BBB-rated subprime mortgage exposure by buying CDS protection because housing credit was priced for continued home-price appreciation, while research showed that merely flat home prices could block refinancing, push defaults above BBB loss thresholds, and wipe out thin junior tranches.",
+    "opportunity_type": "unsustainable_process",
+    "embedded_macro_exposure": "Short U.S. housing, subprime credit, mortgage securitization, structured-credit leverage, yield-chasing liquidity, and the belief that national home prices could not fall or flatten enough to matter.",
+    "mispricing": {
+      "consensus_view": "Mortgage securities backed by diversified pools of U.S. housing loans were safe enough because national home prices had not fallen in a synchronized way and borrowers could refinance if needed.",
+      "variant_view": "The securities depended on continued home-price appreciation, not true borrower credit quality; if appreciation slowed to zero, refinancing would fail and thin BBB tranches could be wiped out.",
+      "pricing_evidence": "The source case describes CDS protection costing roughly $1.4 million per year on $100 million of BBB subprime exposure, with potential payout near the full notional if the bonds were wiped out.",
+      "why_consensus_is_wrong": "Consensus mistook liquidity and rising collateral values for structural safety, while underweighting refinance dependence, tranche thinness, and the possibility that flat home prices alone could create enough defaults to destroy BBB bonds."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Home-price appreciation was slowing as Fed rate hikes raised mortgage costs, making the refinance escape hatch less reliable.",
+      "expected_timeframe": "6-12 months from August 2006, with confirmation expected through delinquencies, lender losses, downgrades, CDS spread widening, or ABX weakness.",
+      "why_now": "By August 2006 the trade had been researched deeply, protection remained cheap relative to modeled payoff, and the housing setup was moving toward the key trigger: flat or falling home prices. The July 2006 ABX launch helps set the date and gives a cleaner market reference, but it is not the reason the trade works.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json: database research, zero home-price appreciation leading to default losses, slowing home-price appreciation, and Fed hikes",
+        "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json: Fed hikes, slowing home-price appreciation, thin BBB tranches, and cheap convex protection",
+        "docs/decision_quality_evals/inputs/paulson_subprime_initiation_notes_2006-08-01.json: early but actionable setup with capped premium loss; ABX launch used as timing/market-reference context"
+      ]
+    },
+    "invalidation": {
+      "observable": "The housing/refinance mechanism remains intact long enough that the protection carry overwhelms the edge, or the selected securities are not actually exposed to the modeled loss path.",
+      "metric_or_event": "National and regional home-price appreciation, subprime delinquency/default rates, refinancing availability, mortgage resets, BBB tranche spread/downgrade behavior, CDS premium levels, and reference-bond collateral quality.",
+      "threshold": "Stop adding or reduce if home-price appreciation remains strong enough to preserve refinancing, subprime delinquencies fail to rise over the next 2-4 quarters, BBB tranche spreads do not widen despite deteriorating collateral, or protection premiums reprice so the payoff is no longer many times the carry at risk.",
+      "timeframe": "Review quarterly through 2006; hard review if there is no collateral deterioration before another year of premium carry is committed.",
+      "implication": "The trade may be too early, the reference securities may be the wrong expression, or the market may have repriced the edge before the thesis pays."
+    },
+    "evidence_for": [
+      {
+        "claim": "The payoff was unusually convex.",
+        "support": "The source case describes paying about $1.4 million per year for $100 million of protection, with potential payout near full notional if BBB bonds were wiped out.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "The targeted BBB tranches were structurally fragile.",
+        "support": "The source case explains that once losses exceeded the junior protection below BBB, the thin BBB tranche could be wiped out quickly.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json",
+          "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "The research identified the key mechanism before the market priced it.",
+        "support": "Pellegrini's analysis found that flat home prices could block refinancing and drive default rates high enough to destroy BBB subprime bonds.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "The macro trigger path was starting to develop.",
+        "support": "By August 2006, Fed rate hikes were raising mortgage costs and home-price appreciation was slowing, making zero appreciation more plausible. The ABX launch added a useful market reference but did not create the thesis.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json",
+          "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The trade was early and carried negatively.",
+        "support": "The source case says Paulson's initial mortgage bets had not made money immediately and remained early into 2006, while CDS premiums had to be paid to keep the protection alive.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json",
+          "docs/decision_quality_evals/inputs/paulson_subprime_initiation_notes_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "Rising home prices could keep delaying defaults.",
+        "support": "Pellegrini's first discovery was that borrowers could avoid default while home prices rose because refinancing remained available.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "Instrument selection mattered.",
+        "support": "Exact CDS reference bonds, tranche attachment points, counterparty terms, and spread levels are not selected, and the trade depends on owning the right protection at the right price.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json"
+        ]
+      },
+      {
+        "claim": "Liquidity could persist longer than fundamentals.",
+        "support": "The setup itself says the world was awash with money and investors were buying mortgage paper, which could suppress spreads and delay mark-to-market confirmation.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/paulson_subprime_source_case_2006-08-01.json",
+          "docs/decision_quality_evals/inputs/paulson_subprime_market_setup_2006-08-01.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "As of August 2006, the short had not yet fully paid off and mortgage credit still priced benign outcomes; the later sharp ABX break and lender-loss announcements were not yet known.",
+      "interpretation": "There was still no full market-price confirmation. The trade was actionable because the downside was defined by premium carry, the payoff was highly convex, and the fundamental housing/refinance trigger path was getting more likely. ABX was useful for monitoring and expression, not the core reason to act.",
+      "confirms_thesis": null,
+      "data_needed": [
+        "Exact BBB CDS premiums or spreads as of 2006-08-01",
+        "ABX levels and tranche pricing as of initiation",
+        "Subprime delinquency, refinancing, and home-price data by vintage and region"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear structural thesis, deep data work, cheap convex expression, capped premium loss, identifiable housing/refinance catalysts, and explicit invalidation through continued home-price appreciation or lack of delinquency deterioration.",
+      "missing_inputs": [
+        "Exact selected reference bonds and tranche attachments",
+        "Exact CDS premiums and counterparty terms",
+        "ABX levels at initiation",
+        "Security-level position sizing and carry budget",
+        "Contemporaneous home-price and delinquency data by vintage"
+      ]
+    },
+    "recommended_action": "short",
+    "expression": {
+      "primary": "Buy CDS protection on BBB-rated subprime mortgage bonds",
+      "instrument_type": "structured_credit_derivative",
+      "directness": "direct",
+      "alternatives": [
+        "Buy protection on ABX BBB or BBB- subprime indices where available",
+        "Short subprime lenders as a secondary expression",
+        "Use a dedicated fund structure to isolate premium carry and convex payoff"
+      ],
+      "follow_on": "Add protection if home-price appreciation slows further, delinquencies rise, or spreads remain too cheap relative to modeled loss risk."
+    },
+    "conviction": {
+      "level": 5,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Already maximum conviction; incremental adds depend on protection pricing, carry budget, reference-bond quality, and confirming deterioration in housing or delinquencies."
+    },
+    "confidence": 0.88,
+    "confidence_reason": "High because the structural fragility, data work, cheap convex payoff, and developing housing slowdown aligned; capped because the trade was early, carried negatively, and exact instrument terms are missing.",
+    "sizing_context": {
+      "starting_size": "Existing exploratory protection should be pressed into a conviction 5 structured-credit short, with premium outlay budgeted explicitly rather than treated like a normal equity weight.",
+      "add_conditions": "Add while protection remains cheap, home-price appreciation continues slowing, refinancing gets harder, and subprime delinquency/default evidence starts moving in the thesis direction.",
+      "liquidity_constraints": "CDS and ABX liquidity, counterparty capacity, and reference-bond selection are binding constraints; do not size from common-equity portfolio rules.",
+      "portfolio_constraints": "This is a convex crisis hedge and profit center, but sizing must respect annual premium carry, mark-to-market pain, counterparty exposure, and correlation with other credit shorts.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Increase notional protection while the annual premium loss remains acceptable and the payoff remains many times the carry at risk."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Press protection as lender losses, ABX weakness, downgrades, and forced selling confirm the thesis; later monetize gains as spreads gap wider and counterparties reprice mortgage risk.",
+      "if_wrong": "If home prices keep rising, refinancing remains open, and delinquencies do not deteriorate before carry consumes the edge, stop adding, let protection roll off, or rotate to cleaner expressions.",
+      "next_review_trigger": "Review quarterly on home-price appreciation, refinancing availability, subprime delinquencies, CDS/ABX pricing, rating-agency actions, lender earnings, and annual premium carry consumed."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical conviction 5 structured-credit short dated after the July 2006 ABX launch to teach convex payoff, early-but-not-wrong timing, and the distinction between missing price confirmation and invalidation."
+}

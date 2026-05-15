@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from api.action_execution import stage_api_action
 from api.exceptions import NotFoundError
+from api.routers.auth import ActorDep
 from ontology.object_service import OntologyObjectService
 
 router = APIRouter()
@@ -60,11 +61,12 @@ def get_action(item_id: str):
 
 
 @router.post("/actions")
-def create_action(body: CreateActionRequest):
+def create_action(body: CreateActionRequest, actor: ActorDep):
     return stage_api_action(
         "create_action_item",
         body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="action_items.create_action",
+        actor=actor,
         reason=body.reason or "Create action item",
         apply=body.apply,
         approval_note=body.approval_note,
@@ -72,11 +74,12 @@ def create_action(body: CreateActionRequest):
 
 
 @router.put("/actions/{item_id}/complete")
-def complete_action(item_id: str, body: CompleteActionRequest | None = None):
+def complete_action(item_id: str, actor: ActorDep, body: CompleteActionRequest | None = None):
     return stage_api_action(
         "complete_action_item",
         {"item_id": item_id, "resolution_note": body.resolution_note if body else ""},
         source_id="action_items.complete_action",
+        actor=actor,
         reason=(body.reason if body else None) or f"Complete action item {item_id}",
         apply=body.apply if body else False,
         approval_note=body.approval_note if body else None,
@@ -85,11 +88,12 @@ def complete_action(item_id: str, body: CompleteActionRequest | None = None):
 
 
 @router.put("/actions/{item_id}/dismiss")
-def dismiss_action(item_id: str, body: DismissActionRequest | None = None):
+def dismiss_action(item_id: str, actor: ActorDep, body: DismissActionRequest | None = None):
     return stage_api_action(
         "dismiss_action_item",
         {"item_id": item_id},
         source_id="action_items.dismiss_action",
+        actor=actor,
         reason=(body.reason if body else None) or f"Dismiss action item {item_id}",
         apply=body.apply if body else False,
         approval_note=body.approval_note if body else None,

@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, UploadFile
 from api.action_execution import stage_api_action
 from api.exceptions import AppError, NotFoundError, ValidationError
 from api.request_limits import read_upload_file_bytes
+from api.routers.auth import ActorDep
 from api.serializers import serialize_response
 from ontology.sources.source_registry import attach_source_registry_metadata
 
@@ -73,6 +74,7 @@ def list_portfolio_news(refresh: bool = False):
 
 @router.post("/portfolio-news")
 async def upload_portfolio_news_digest(
+    actor: ActorDep,
     file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
 ):
     """Upload a user-curated markdown digest."""
@@ -91,6 +93,7 @@ async def upload_portfolio_news_digest(
             "create_portfolio_news_digest",
             {"content": content, "filename": filename},
             source_id="portfolio_news.upload_portfolio_news_digest",
+            actor=actor,
             reason=f"Upload portfolio news digest {filename}",
         )
         return attach_source_registry_metadata(serialize_response(staged), source_id="portfolio_news_digest")
@@ -115,7 +118,7 @@ def get_portfolio_news_digest(digest_id: str):
 
 
 @router.delete("/portfolio-news/{digest_id}")
-def delete_portfolio_news_digest(digest_id: str):
+def delete_portfolio_news_digest(digest_id: str, actor: ActorDep):
     from portfolio.news_digests import get_digest, validate_digest_id
 
     try:
@@ -131,6 +134,7 @@ def delete_portfolio_news_digest(digest_id: str):
         "delete_portfolio_news_digest",
         {"digest_id": normalized_digest_id},
         source_id="portfolio_news.delete_portfolio_news_digest",
+        actor=actor,
         reason=f"Delete portfolio news digest {normalized_digest_id}",
     )
     return attach_source_registry_metadata(staged, source_id="portfolio_news_digest")

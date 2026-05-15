@@ -1,0 +1,57 @@
+{
+  "theme": "subprime_mortgage_cds_short",
+  "as_of_date": "2006-08-01",
+  "macro_setup": {
+    "credit_cycle": [
+      "Markets were frothy after a long period of low interest rates.",
+      "Investors were reaching for yield and buying complex mortgage paper.",
+      "Low volatility and abundant liquidity created a false sense of stability."
+    ],
+    "housing_setup": [
+      "Home prices had appreciated rapidly, allowing weak borrowers to refinance instead of default.",
+      "Fed rate hikes were raising mortgage costs and slowing home-price appreciation.",
+      "If home prices merely stopped rising, refinancing would become harder and defaults could rise sharply."
+    ],
+    "structured_credit_setup": [
+      "Subprime mortgage bonds and CDOs were sliced into tranches.",
+      "BBB-rated tranches were thin and could be wiped out by modest collateral losses.",
+      "Unlike corporate bonds, a pool of defaulted loans had no franchise value."
+    ]
+  },
+  "risk_reward": {
+    "upside_if_right": "Large payoff on CDS protection if BBB subprime bonds were downgraded, impaired, or wiped out as defaults rose.",
+    "downside_if_wrong": "Loss of paid premiums and negative carry if home prices kept rising, refinancing stayed open, and defaults remained contained.",
+    "asymmetry": "The premium outlay was small relative to notional protection, while the modeled payoff could be many times the capital at risk if housing stopped appreciating."
+  },
+  "market_reference": {
+    "event": "ABX subprime mortgage index launch",
+    "date": "2006-07",
+    "role": "Date anchor and market reference. ABX made subprime risk easier to observe and express, but the core thesis remained housing/refinance deterioration and BBB tranche fragility."
+  },
+  "catalysts": [
+    {
+      "event": "Home-price appreciation slows toward zero",
+      "date": "2006",
+      "interpretation": "The refinance escape hatch weakens, exposing unaffordable mortgages and raising default risk."
+    },
+    {
+      "event": "Subprime lender losses, delinquencies, downgrades, and ABX weakness",
+      "date": "2006 to 2007",
+      "interpretation": "Evidence that collateral losses are moving from theoretical research into market prices."
+    }
+  ],
+  "price_action_context": {
+    "observed_behavior": "As of August 2006, the short had been early and had not yet meaningfully paid off; mortgage credit still priced benign outcomes.",
+    "interpretation": "Lack of full price confirmation did not invalidate the trade because the cost of waiting was defined premium carry and the payoff was convex if housing stopped appreciating. ABX was useful for monitoring and expression, not the reason for the thesis.",
+    "data_needed": [
+      "Exact BBB CDS spreads or premiums on selected reference bonds as of 2006-08-01",
+      "ABX levels and tranche spreads as of 2006-08-01",
+      "Contemporaneous home-price appreciation, delinquency, and refinancing data"
+    ]
+  },
+  "trade_after_trade": {
+    "if_right": "Add protection as spreads remain too cheap or early collateral deterioration appears; later monetize into ABX declines, downgrades, and forced selling.",
+    "if_wrong": "Stop adding and let protection roll off if home prices keep appreciating, refinancing remains open, and default data fails to deteriorate before carry erodes the edge."
+  },
+  "human_notes": ""
+}

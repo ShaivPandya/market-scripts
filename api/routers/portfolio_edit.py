@@ -176,12 +176,13 @@ def get_portfolio_positions(include_hedges: bool = False):
 
 
 @router.put("/portfolio-positions")
-def update_portfolio_positions(req: PortfolioUpdateRequest):
+def update_portfolio_positions(req: PortfolioUpdateRequest, actor: ActorDep):
     try:
         result = stage_api_action(
             "update_portfolio_positions",
             {"positions": [position.model_dump() for position in req.positions]},
             source_id="portfolio_edit.update_portfolio_positions",
+            actor=actor,
             reason=req.reason,
             apply=req.apply,
             approval_note=req.approval_note,
@@ -276,12 +277,13 @@ def get_hedge_positions_endpoint():
 
 
 @router.put("/hedge-positions")
-def update_hedge_positions(req: HedgeUpdateRequest):
+def update_hedge_positions(req: HedgeUpdateRequest, actor: ActorDep):
     try:
         result = stage_api_action(
             "update_hedge_positions",
             {"positions": [position.model_dump() for position in req.positions]},
             source_id="portfolio_edit.update_hedge_positions",
+            actor=actor,
             reason=req.reason,
             apply=req.apply,
             approval_note=req.approval_note,

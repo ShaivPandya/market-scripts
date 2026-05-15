@@ -86,6 +86,7 @@ function newRule(rules: FinancialPolicyRule[]): FinancialPolicyRule {
     limits: {},
     outcome: "use_checks",
     approval_mode: null,
+    approval_requirements: [],
     reason: "Apply configured financial approval policy.",
     remediation: "Review the rule, proposed action, and current portfolio state.",
   }

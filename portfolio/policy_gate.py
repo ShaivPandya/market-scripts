@@ -125,6 +125,7 @@ def ensure_policy_gate_for_action(
             "review_required": bool(gate.get("review_required")),
             "approval_required": bool(gate.get("approval_required", True)),
             "approval_mode": gate.get("approval_mode"),
+            "approval_requirements": gate.get("approval_requirements", []),
             "rule_id": gate.get("rule_id"),
             "reason": gate.get("reason"),
             "remediation": gate.get("remediation"),
@@ -226,6 +227,9 @@ def normalize_policy_gate_result(result: Mapping[str, Any]) -> dict[str, Any]:
     gate["override_acknowledged"] = bool(gate.get("override_acknowledged"))
     gate["approval_required"] = bool(gate.get("approval_required", True))
     gate["approval_mode"] = str(gate.get("approval_mode") or "approval_required")
+    gate["approval_requirements"] = [
+        dict(item) for item in _as_list(gate.get("approval_requirements")) if isinstance(item, Mapping)
+    ]
     gate["rule_id"] = str(gate.get("rule_id") or "") or None
     gate["reason"] = str(gate.get("reason") or "")
     gate["remediation"] = str(gate.get("remediation") or "")
@@ -327,6 +331,9 @@ def _apply_matrix_decision(gate: dict[str, Any], matrix_decision: Mapping[str, A
     gate["remediation"] = remediation
     gate["approval_required"] = bool(matrix_decision.get("approval_required", True))
     gate["approval_mode"] = str(matrix_decision.get("approval_mode") or "approval_required")
+    gate["approval_requirements"] = [
+        dict(item) for item in _as_list(matrix_decision.get("approval_requirements")) if isinstance(item, Mapping)
+    ]
     gate["matched_rules"] = [
         dict(item) for item in _as_list(matrix_decision.get("matched_rules")) if isinstance(item, Mapping)
     ]

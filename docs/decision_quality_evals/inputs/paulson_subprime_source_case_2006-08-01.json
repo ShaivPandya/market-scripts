@@ -1,0 +1,26 @@
+{
+  "case": "John Paulson shorting subprime mortgage securities before the 2007 break",
+  "as_of_date": "2006-08-01",
+  "source_summary": {
+    "setup": "After years of low interest rates and abundant liquidity, credit markets were pricing stability as if housing and mortgage performance had structurally improved.",
+    "target_selection": "Paulson searched for the weakest point in the credit cycle: a cyclical asset backed by too much debt, with junior securities that could be wiped out if losses rose only modestly.",
+    "instrument": "The selected expression was buying credit default swap protection on BBB-rated subprime mortgage bonds and related mortgage indices/securities.",
+    "research_process": "Paolo Pellegrini bought a large mortgage database, hired outside support, and analyzed default behavior, home-price appreciation, and refinance dependence.",
+    "core_discovery": "Borrowers could refinance while home prices rose, but if home-price appreciation merely went to zero, refinancing would become harder and defaults could rise enough to wipe out BBB subprime bonds.",
+    "payoff_structure": "The BBB tranche was thin: once losses exceeded the protection beneath it, the tranche could go to zero. The source case frames the trade as paying a small annual premium for potentially very large protection payouts.",
+    "timing_issue": "Paulson's first April 2005 trades did not make money immediately, and by 2006 investors were questioning whether he was early or outside his core competence.",
+    "conviction_shift": "By August 2006, slowing home-price appreciation and Fed rate hikes made flat home prices a realistic enough scenario that the asymmetric payoff justified full conviction. The July 2006 ABX launch helps anchor the date and adds a cleaner market reference, but it is not the core thesis.",
+    "confirmation_context": "On February 7, 2007, New Century delayed earnings because of mortgage losses and HSBC announced large loan-loss reserves. ABX then fell sharply, confirming the thesis. This was later confirmation, not initiation-date evidence."
+  },
+  "selected_details": [
+    "Paulson placed an initial CDS bet against $100 million of BBB-rated subprime debt in April 2005.",
+    "The annual insurance premium was described as roughly $1.4 million for $100 million of notional protection.",
+    "Pellegrini's analysis suggested that zero home-price appreciation could eventually produce at least a 7% mortgage default rate.",
+    "A default rate above the relevant threshold could wipe out the thin BBB tranche.",
+    "In July 2006, Wall Street's top investment banks launched the ABX subprime mortgage index.",
+    "By August 2006, home-price appreciation was slowing as Fed rate hikes raised mortgage costs.",
+    "Paulson described the payoff as many times the premium if BBB bonds suffered large losses.",
+    "Paulson later built very large positions across banks, totaling billions of dollars of protection."
+  ],
+  "human_notes": "Historical source case supplied by the user. Use 2006-08-01 as the decision date because it comes after the July 2006 ABX launch, while keeping the thesis centered on housing/refinance deterioration and BBB tranche fragility."
+}
