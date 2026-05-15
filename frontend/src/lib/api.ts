@@ -2418,13 +2418,18 @@ type AdminJobResponse =
 export const startMarketSnapshotRefresh = () =>
   client.post("/admin/jobs/enqueue-market-snapshot-refresh", {}, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
 
+export const startMacroSnapshotRefresh = () =>
+  client.post("/admin/jobs/enqueue-macro-snapshot-refresh", {}, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
+
+export const startWorkspaceSourceRefresh = () =>
+  client.post("/admin/jobs/enqueue-workspace-source-refresh", {}, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
+
 export const fetchAdminJob = (job_id: string) =>
   client.get(`/admin/jobs/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
 
-export async function refreshMarketSnapshots(): Promise<unknown> {
-  const started = await startMarketSnapshotRefresh()
+async function waitForAdminJob(started: AdminJobResponse, label: string): Promise<unknown> {
   if (started.status === "done" && "result" in started) return started.result
-  if (started.status === "error") throw new Error(started.error || "Market snapshot refresh failed")
+  if (started.status === "error") throw new Error(started.error || `${label} failed`)
 
   const deadline = Date.now() + 15 * 60_000
   const job_id = started.job_id
@@ -2437,8 +2442,20 @@ export async function refreshMarketSnapshots(): Promise<unknown> {
     await new Promise(r => setTimeout(r, 2000))
     const job = await fetchAdminJob(job_id)
     if (job.status === "done") return "result" in job ? job.result : undefined
-    if (job.status === "error") throw new Error(job.error || "Market snapshot refresh failed")
+    if (job.status === "error") throw new Error(job.error || `${label} failed`)
   }
+}
+
+export async function refreshMarketSnapshots(): Promise<unknown> {
+  return waitForAdminJob(await startMarketSnapshotRefresh(), "Market snapshot refresh")
+}
+
+export async function refreshMacroSnapshots(): Promise<unknown> {
+  return waitForAdminJob(await startMacroSnapshotRefresh(), "Macro snapshot refresh")
+}
+
+export async function refreshWorkspaceSources(): Promise<unknown> {
+  return waitForAdminJob(await startWorkspaceSourceRefresh(), "Workspace source refresh")
 }
 
 // ---------------------------------------------------------------------------

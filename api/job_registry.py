@@ -292,6 +292,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Macro snapshot refresh failed",
     ),
+    "workspace_source_refresh": JobSpec(
+        job_type="workspace_source_refresh",
+        request_model=None,
+        compute_func="api.maintenance_jobs.refresh_workspace_sources",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_WORKSPACE_SOURCE_REFRESH_SECONDS", 35 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Workspace source refresh failed",
+    ),
     "async_job_sweep": JobSpec(
         job_type="async_job_sweep",
         request_model=None,

@@ -38,6 +38,34 @@ def warm_caches(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"tools": results}
 
 
+def refresh_workspace_sources(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Refresh the persisted inputs that drive the Workspace source-health panel."""
+    from api.macro_snapshots import refresh_macro_snapshots
+    from api.market_snapshots import refresh_market_snapshots
+    from api.position_risk import refresh_portfolio_risk
+
+    steps: list[dict[str, Any]] = []
+    for name, fn in (
+        ("market_snapshot_refresh", refresh_market_snapshots),
+        ("macro_snapshot_refresh", refresh_macro_snapshots),
+        ("portfolio_risk_refresh", refresh_portfolio_risk),
+    ):
+        try:
+            result = fn()
+            logger.info("workspace_source_refresh step=%s status=ok", name)
+            steps.append({"step": name, "status": "ok", "result": result})
+        except Exception as exc:
+            logger.warning("workspace_source_refresh step=%s status=error", name, exc_info=True)
+            steps.append({"step": name, "status": "error", "error": str(exc) or exc.__class__.__name__})
+
+    errors = [step for step in steps if step["status"] == "error"]
+    if errors:
+        summary = "; ".join(f"{step['step']}: {step['error']}" for step in errors)
+        raise RuntimeError(f"Workspace source refresh failed: {summary}")
+
+    return {"steps": steps}
+
+
 def sweep_async_jobs(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     from api.async_job_runner import fail_stale_active_jobs
     from api.job_queue import sweep_expired_jobs

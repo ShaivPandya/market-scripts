@@ -120,6 +120,17 @@ def enqueue_macro_snapshot_refresh(_sub: str = Depends(require_scheduler_or_job_
     return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-workspace-source-refresh")
+def enqueue_workspace_source_refresh(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "workspace_source_refresh",
+        {"source": "workspace"},
+        cache_key="maintenance:workspace_source_refresh:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
+
+
 @router.post("/admin/jobs/enqueue-watch-trigger-monitor")
 def enqueue_watch_trigger_monitor(_sub: str = Depends(require_scheduler_or_job_admin)):
     row, _disposition = enqueue_registered_job(

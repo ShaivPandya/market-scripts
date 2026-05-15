@@ -13,7 +13,7 @@ import {
   cancelTrigger,
   dismissAction,
   replaceTrigger,
-  refreshMarketSnapshots,
+  refreshWorkspaceSources,
   type ApprovalRecord,
   type PolicyGateReason,
   type PolicyGateResult,
@@ -730,7 +730,7 @@ export function Workspace() {
         <h1 className="text-2xl font-semibold text-app">Workspace</h1>
         <RefreshButton
           queryKeys={[["workspace"]]}
-          beforeRefetch={refreshMarketSnapshots}
+          beforeRefetch={refreshWorkspaceSources}
           onSuccess={() => setRefreshError(null)}
           onError={err => setRefreshError(err instanceof Error ? err.message : String(err))}
         />

@@ -12,6 +12,7 @@ from api.snapshot_keys import (
     SNAPSHOT_LABOR_MARKET,
     SNAPSHOT_LIQUIDITY,
     SNAPSHOT_MARKET_BREADTH,
+    SNAPSHOT_MOMENTUM,
     SNAPSHOT_POSITIONING_SUMMARY,
     SNAPSHOT_SECTOR_METRICS,
     SNAPSHOT_SENTIMENT,
@@ -32,6 +33,7 @@ _SNAPSHOT_SOURCE_NAMES = {
     SNAPSHOT_POSITIONING_SUMMARY: "positioning_summary",
     SNAPSHOT_ECONOMIC_GROWTH: "economic_growth",
     SNAPSHOT_LABOR_MARKET: "labor_market",
+    SNAPSHOT_MOMENTUM: "momentum",
     SNAPSHOT_SIGNAL_AGGREGATOR: "market_regime",
 }
 
@@ -46,6 +48,7 @@ _SNAPSHOT_DOMAINS = {
     SNAPSHOT_LABOR_MARKET: "macro",
     SNAPSHOT_SENTIMENT: "retrieval",
     SNAPSHOT_POSITIONING_SUMMARY: "risk",
+    SNAPSHOT_MOMENTUM: "market",
 }
 
 _RISK_SNAPSHOT_KEYS = {
@@ -60,10 +63,17 @@ _RISK_SNAPSHOT_KEYS = {
     "labor_market": SNAPSHOT_LABOR_MARKET,
 }
 
+_REGIME_MODULE_SNAPSHOT_KEYS = {
+    **_RISK_SNAPSHOT_KEYS,
+    "momentum": SNAPSHOT_MOMENTUM,
+}
+
 
 def build_workspace_source_health(
     *,
     portfolio_risk: dict[str, Any] | None = None,
+    portfolio_data: dict[str, Any] | None = None,
+    regime_data: dict[str, Any] | None = None,
     now: datetime | None = None,
     snapshot_records: list[SnapshotRecord] | None = None,
 ) -> dict[str, Any]:
@@ -80,6 +90,14 @@ def build_workspace_source_health(
     for module, state in _risk_source_status(portfolio_risk).items():
         source = _source_from_risk_status(module, state, required=module in required_sources)
         sources_by_key[source["id"]] = _merge_source(sources_by_key.get(source["id"]), source)
+
+    for source in _sources_from_regime_data(regime_data, required_sources=required_sources, now=now):
+        if source["id"] not in sources_by_key:
+            sources_by_key[source["id"]] = source
+
+    portfolio_source = _source_from_portfolio_data(portfolio_data, now=now)
+    if portfolio_source is not None and portfolio_source["id"] not in sources_by_key:
+        sources_by_key[portfolio_source["id"]] = portfolio_source
 
     for source_id, required in required_sources.items():
         if source_id in sources_by_key:
@@ -179,7 +197,7 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
     freshness = raw_freshness if isinstance(raw_freshness, dict) else {}
     stale = str(state.get("status") or "").lower() == "stale" or freshness.get("fresh") is False
     snapshot_key = str(state.get("snapshot_key") or _RISK_SNAPSHOT_KEYS.get(module) or module)
-    source_id = snapshot_key if snapshot_key in _RISK_SNAPSHOT_KEYS.values() else module
+    source_id = snapshot_key if snapshot_key in _SNAPSHOT_SOURCE_NAMES else module
     raw_registry = state.get("source_registry")
     registry = raw_registry if isinstance(raw_registry, dict) else None
     if registry is None:
@@ -231,6 +249,155 @@ def _merge_source(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> 
     out["domain"] = existing.get("domain") or incoming.get("domain")
     out["source_name"] = incoming.get("source_name") or existing.get("source_name")
     return out
+
+
+def _sources_from_regime_data(
+    regime_data: dict[str, Any] | None,
+    *,
+    required_sources: dict[str, bool],
+    now: datetime | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(regime_data, dict):
+        return []
+
+    sources = [_source_from_regime_data(regime_data, required=SNAPSHOT_SIGNAL_AGGREGATOR in required_sources, now=now)]
+    module_status = regime_data.get("module_status")
+    if not isinstance(module_status, dict):
+        return sources
+
+    fallback_as_of = _first_non_empty(_snapshot_meta(regime_data).get("as_of"), regime_data.get("as_of"))
+    fallback_fetched_at = _first_non_empty(
+        _snapshot_meta(regime_data).get("fetched_at"), (now or datetime.now()).isoformat()
+    )
+    raw_modules = regime_data.get("raw_modules")
+    raw_modules = raw_modules if isinstance(raw_modules, dict) else {}
+    for module, raw_state in module_status.items():
+        if not isinstance(raw_state, dict):
+            continue
+        module_name = str(module)
+        snapshot_key = _REGIME_MODULE_SNAPSHOT_KEYS.get(module_name)
+        if snapshot_key is None:
+            continue
+
+        state = dict(raw_state)
+        state["snapshot_key"] = snapshot_key
+        state.setdefault("as_of", _payload_as_of(raw_modules.get(module_name)) or fallback_as_of)
+        state.setdefault("fetched_at", fallback_fetched_at)
+        source = _source_from_risk_status(module_name, state, required=snapshot_key in required_sources)
+        sources.append(source)
+    return sources
+
+
+def _source_from_regime_data(
+    regime_data: dict[str, Any],
+    *,
+    required: bool,
+    now: datetime | None,
+) -> dict[str, Any]:
+    registry = source_registry_metadata_for_snapshot(SNAPSHOT_SIGNAL_AGGREGATOR)
+    meta = _snapshot_meta(regime_data)
+    refresh_status = meta.get("refresh_status")
+    status_value = refresh_status if refresh_status not in (None, "") else regime_data.get("status") or "ok"
+    stale = bool(meta.get("stale"))
+    status = _normalize_status(status_value, stale=stale, quality=regime_data.get("quality"), required=required)
+    as_of = _first_non_empty(meta.get("as_of"), regime_data.get("as_of"))
+    fetched_at = _first_non_empty(meta.get("fetched_at"), (now or datetime.now()).isoformat())
+    detail = meta.get("error")
+    if not detail and meta.get("source") == "module_snapshots":
+        detail = "computed from module snapshots"
+    return {
+        "id": SNAPSHOT_SIGNAL_AGGREGATOR,
+        "domain": str((registry or {}).get("dataset_domain") or _domain_for_snapshot(SNAPSHOT_SIGNAL_AGGREGATOR)),
+        "source_name": "market_regime",
+        "snapshot_key": SNAPSHOT_SIGNAL_AGGREGATOR,
+        "status": status,
+        "quality_state": _quality_state(status, required=required),
+        "required": required or bool((registry or {}).get("required")),
+        "as_of": as_of,
+        "fetched_at": fetched_at,
+        "freshness_timestamp": as_of or fetched_at,
+        "stale": stale,
+        "error": meta.get("error"),
+        "detail": detail,
+        "payload_hash": None,
+        "source_registry": registry,
+    }
+
+
+def _source_from_portfolio_data(
+    portfolio_data: dict[str, Any] | None, *, now: datetime | None
+) -> dict[str, Any] | None:
+    if not isinstance(portfolio_data, dict):
+        return None
+    registry = source_registry_metadata("portfolio")
+    fetched_at = (now or datetime.now()).isoformat()
+    error = portfolio_data.get("error")
+    positions = portfolio_data.get("positions")
+    as_of = _first_non_empty(
+        portfolio_data.get("as_of"),
+        portfolio_data.get("computed_at"),
+        _latest_position_as_of(positions),
+        fetched_at,
+    )
+    status = "failed" if error else "ok"
+    return {
+        "id": "portfolio",
+        "domain": "portfolio",
+        "source_name": "portfolio",
+        "snapshot_key": None,
+        "status": status,
+        "quality_state": _quality_state(status, required=True),
+        "required": True,
+        "as_of": as_of,
+        "fetched_at": fetched_at,
+        "freshness_timestamp": as_of or fetched_at,
+        "stale": False,
+        "error": error,
+        "detail": str(error) if error else None,
+        "source_registry": registry,
+        "position_count": len(positions) if isinstance(positions, list) else None,
+    }
+
+
+def _snapshot_meta(payload: dict[str, Any]) -> dict[str, Any]:
+    meta = payload.get("_meta")
+    if not isinstance(meta, dict):
+        return {}
+    snapshot = meta.get("snapshot")
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _latest_position_as_of(positions: Any) -> str | None:
+    if not isinstance(positions, list):
+        return None
+    dates = [
+        str(row.get("as_of") or row.get("date") or row.get("updated_at"))
+        for row in positions
+        if isinstance(row, dict) and (row.get("as_of") or row.get("date") or row.get("updated_at"))
+    ]
+    return max(dates) if dates else None
+
+
+def _payload_as_of(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("as_of", "as_of_date", "latest_date", "date", "timestamp"):
+        value = payload.get(key)
+        if value is not None:
+            return str(value)[:32]
+    latest = payload.get("latest_df")
+    if isinstance(latest, list) and latest and isinstance(latest[0], dict):
+        value = latest[0].get("Date") or latest[0].get("date")
+        if value is not None:
+            return str(value)[:32]
+    return None
+
+
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def _worse_status(left: str, right: str) -> str:

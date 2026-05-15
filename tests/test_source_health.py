@@ -106,6 +106,47 @@ def test_source_health_missing_required_source_does_not_throw():
     assert payload["counts"]["required_failed"] > 0
 
 
+def test_source_health_uses_workspace_runtime_sources_for_missing_freshness_records():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_data={"positions": [{"ticker": "MU", "as_of": now.isoformat()}]},
+        regime_data={
+            "status": "ok",
+            "as_of": now.date().isoformat(),
+            "_meta": {
+                "snapshot": {
+                    "key": "signal_aggregator:current:v1",
+                    "as_of": now.date().isoformat(),
+                    "fetched_at": now.isoformat(),
+                    "refresh_status": "ok",
+                    "stale": False,
+                }
+            },
+            "module_status": {
+                "liquidity": {
+                    "status": "ok",
+                    "detail": "live fallback",
+                }
+            },
+        },
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=now - timedelta(hours=1)),
+            _snapshot("top50_breadth:sp500:2y", fetched_at=now - timedelta(hours=1)),
+            _snapshot("vix_term_structure:current:v1", fetched_at=now - timedelta(hours=1)),
+            _snapshot("sector_metrics:sp500:2y", fetched_at=now - timedelta(hours=1)),
+            _snapshot("economic_growth:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    sources = _sources(payload)
+    assert sources["portfolio"]["status"] == "ok"
+    assert sources["signal_aggregator:current:v1"]["status"] == "ok"
+    assert sources["liquidity:current:v1"]["status"] == "ok"
+    assert payload["overall_quality"] == "ok"
+    assert payload["counts"]["required_failed"] == 0
+
+
 def test_source_health_degraded_optional_is_not_required_failure():
     now = datetime(2026, 5, 14, 18, 0)
     payload = build_workspace_source_health(

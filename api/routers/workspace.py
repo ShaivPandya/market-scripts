@@ -140,7 +140,12 @@ def get_workspace():
             if isinstance(portfolio_risk, dict)
             else None,
         }
-    source_health = _safe_call(build_workspace_source_health, portfolio_risk=portfolio_risk)
+    source_health = _safe_call(
+        build_workspace_source_health,
+        portfolio_risk=portfolio_risk,
+        portfolio_data=portfolio_data if isinstance(portfolio_data, dict) else None,
+        regime_data=regime_data if isinstance(regime_data, dict) else None,
+    )
 
     # Positions under thesis pressure
     owned_tickers = _portfolio_tickers(portfolio_data)
