@@ -1,0 +1,52 @@
+{
+  "theme": "distressed_financials_policy_backstop",
+  "as_of_date": "2009-02-10",
+  "macro_setup": {
+    "crisis_state": [
+      "The U.S. banking system was still under severe stress after the 2008 financial crisis.",
+      "Investors feared additional losses, capital shortfalls, dilution, and possible nationalization.",
+      "Market participants were selling or avoiding large-bank equity and preferred securities."
+    ],
+    "policy_backdrop": [
+      "The U.S. government had already shown willingness to inject capital and support systemically important financial institutions.",
+      "The Financial Stability Plan indicated further support for banks through preferred-stock purchases.",
+      "Low interest rates and fiscal stimulus could help stabilize the economy and bank balance sheets over time."
+    ],
+    "market_psychology": [
+      "The market treated nationalization and common-equity wipeout as plausible.",
+      "Bank securities kept falling even after the policy announcement.",
+      "Lack of natural buyers created distressed prices in common, preferred, and debt."
+    ]
+  },
+  "risk_reward": {
+    "upside_if_right": "Large upside across bank common equity, preferred shares, and debt if the government backstop prevented nationalization and stabilized the system.",
+    "downside_if_wrong": "Severe loss or wipeout in common equity if the government nationalized large banks or imposed terms that left little value for existing shareholders; preferred and debt could also suffer depending on restructuring terms.",
+    "asymmetry": "The market priced a very high probability of catastrophic outcomes while the policy signal suggested a lower probability of full wipeout and a high probability of survival with dilution."
+  },
+  "catalysts": [
+    {
+      "event": "Treasury Financial Stability Plan",
+      "date": "2009-02-10",
+      "interpretation": "A written policy signal that the government intended to support banks rather than immediately nationalize them."
+    },
+    {
+      "event": "Further capital injections, bank capital raises, and implementation of the plan",
+      "date": "2009-02 to 2009-03",
+      "interpretation": "Follow-through would confirm that the government backstop was real and that private capital could return."
+    }
+  ],
+  "price_action_context": {
+    "observed_behavior": "Bank equities and preferreds were collapsing or trading at distressed levels despite policy support signals.",
+    "interpretation": "For this distressed-policy setup, bad price action was evidence of panic and forced selling, not a reason by itself to reject the trade, because the policy backstop created the variant view.",
+    "data_needed": [
+      "Exact prices and securities selected for BAC, C, preferred shares, and bank debt",
+      "Bank capital terms and dilution scenarios as of each purchase date",
+      "Credit spreads and preferred yields for selected instruments"
+    ]
+  },
+  "trade_after_trade": {
+    "if_right": "Add to bank common/preferred/debt as policy implementation confirms survival, and participate in capital raises if they validate private-market access.",
+    "if_wrong": "Move up the capital structure, reduce common exposure, or exit if policy terms imply nationalization or existing-equity wipeout."
+  },
+  "human_notes": ""
+}

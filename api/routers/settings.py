@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
@@ -12,6 +12,10 @@ from pydantic import ValidationError as PydanticValidationError
 
 from api.audit import emit_audit_event
 from api.exceptions import ValidationError
+from api.financial_policy_settings import (
+    get_financial_policy_matrix_setting,
+    set_financial_policy_matrix_setting,
+)
 from api.llm_settings import (
     ALLOWED_LLM_PROVIDERS,
     LLM_GATEWAY_POLICY_KEY,
@@ -51,6 +55,12 @@ from llm_utils import (
     require_api_key,
 )
 from ontology.policy import Actor
+from portfolio.policy_gate import default_policy_snapshot
+from portfolio.policy_matrix import (
+    default_financial_policy_matrix,
+    normalize_financial_policy_matrix,
+    policy_matrix_metadata,
+)
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
@@ -133,6 +143,15 @@ class LLMSettingsUpdate(BaseModel):
     reasoning_efforts_by_provider: dict[Provider, ReasoningEffortSettings] | None = None
     gateway_policy: GatewayPolicySettings | None = None
     gateway_note: str | None = Field(default=None, max_length=2000)
+
+
+class FinancialPolicyMatrixValidationRequest(BaseModel):
+    policy: dict[str, Any]
+
+
+class FinancialPolicyMatrixUpdate(BaseModel):
+    policy: dict[str, Any]
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class AgentResponsePreferencesSettings(BaseModel):
@@ -314,6 +333,27 @@ def _agent_response_preferences_response() -> dict:
         return AgentResponsePreferencesSettings().model_dump()
 
 
+def _financial_policy_matrix_summary(policy: dict[str, Any]) -> dict[str, Any]:
+    rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
+    return {
+        "policy_id": policy.get("policy_id"),
+        "schema_version": policy.get("schema_version"),
+        "rule_count": len(rules),
+        "enabled_rule_count": sum(1 for rule in rules if isinstance(rule, dict) and rule.get("enabled", True)),
+    }
+
+
+def _financial_policy_matrix_response() -> dict:
+    policy = get_financial_policy_matrix_setting()
+    investment_policy = default_policy_snapshot()
+    return {
+        "policy": policy,
+        "default_policy": default_financial_policy_matrix(),
+        "metadata": policy_matrix_metadata(),
+        "limit_defaults": dict(investment_policy.get("policy") or {}),
+    }
+
+
 def _agent_response_preferences_audit_summary(prefs: dict) -> dict:
     custom = str(prefs.get("custom_instructions") or "")
     return {
@@ -409,6 +449,44 @@ def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
             metadata={"note": str(body.gateway_note or "").strip()},
         )
     return after
+
+
+@router.get("/settings/financial-policy-matrix")
+def get_financial_policy_matrix_settings():
+    return _financial_policy_matrix_response()
+
+
+@router.post("/settings/financial-policy-matrix/validate")
+def validate_financial_policy_matrix(body: FinancialPolicyMatrixValidationRequest):
+    try:
+        normalized = normalize_financial_policy_matrix(body.policy)
+    except (TypeError, ValueError, PydanticValidationError) as exc:
+        return {"valid": False, "errors": [str(exc)]}
+    return {"valid": True, "errors": [], "policy": normalized}
+
+
+@router.put("/settings/financial-policy-matrix")
+def update_financial_policy_matrix(body: FinancialPolicyMatrixUpdate, actor: ActorDep):
+    note = str(body.note or "").strip()
+    if not note:
+        raise ValidationError("note is required when changing financial policy matrix.")
+    before = get_financial_policy_matrix_setting()
+    try:
+        normalized = normalize_financial_policy_matrix(body.policy)
+    except (TypeError, ValueError, PydanticValidationError) as exc:
+        raise ValidationError(str(exc)) from exc
+    set_financial_policy_matrix_setting(normalized)
+    after = get_financial_policy_matrix_setting()
+    emit_audit_event(
+        "settings.financial_policy_matrix.updated",
+        "permission",
+        "succeeded",
+        actor=actor,
+        before_summary=_financial_policy_matrix_summary(before),
+        after_summary=_financial_policy_matrix_summary(after),
+        metadata={"note": note},
+    )
+    return _financial_policy_matrix_response()
 
 
 @router.get("/settings/agent-response-preferences")

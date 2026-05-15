@@ -1,0 +1,208 @@
+{
+  "id": "tepper_banks_policy_backstop_2009",
+  "status": "review",
+  "decision_type": "macro_stance",
+  "as_of_date": "2009-02-10",
+  "user_question": "Using the 2009 U.S. bank policy-backstop setup, should buying distressed bank securities have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json",
+      "sha256": "f9789d13227fa7ff2fd263576244586cf1aeb60f3245ea5b79fd4e9e935ba2dc",
+      "description": "Historical case-study summary for David Tepper buying distressed U.S. bank securities during February and March 2009.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json",
+      "sha256": "572a5278a6572334ea7b67d41df83d70d0c1c10444491a72747369b4fc8f7181",
+      "description": "Macro, market psychology, policy catalyst, risk/reward, and trade-after-the-trade setup for the 2009 distressed bank trade.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/tepper_banks_portfolio_context_2009-02-10.json",
+      "sha256": "10b9f742768b1ed4c86af73b86dfd61d25740e2f0dc925364aa1af563802abc9",
+      "description": "Historical portfolio context: new or expanding long distressed bank basket, conviction 5.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/tepper_banks_initiation_notes_2009-02-10.json",
+      "sha256": "63650aff5c78531befe44926ff3b4cb9e6adcaedf37207e7beb445775e23ff28",
+      "description": "User-requested framing and initiation rationale for the Tepper bank-buying case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical distressed financials eval case, not a live trading recommendation.",
+    "The decision date is 2009-02-10, when the Treasury Financial Stability Plan created the explicit policy-backstop signal.",
+    "The case should teach recognition of a policy backstop during panic, not a generic rule to buy banks with bad price action.",
+    "Conviction 5 means full conviction on the 1-5 scale, but raw target weight is not mapped to the user's single-name equity sizing model because this was a multi-instrument distressed basket.",
+    "Exact security-level prices, position sizes, capital terms, and bank balance-sheet estimates are not selected beyond the source summary."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy distressed U.S. bank securities because the market was pricing nationalization and collapse while the Treasury had put in writing that it intended to support banks through capital injections, making survival with dilution more likely than total wipeout.",
+    "opportunity_type": "policy_backstop_distressed",
+    "embedded_macro_exposure": "Long U.S. financial-system stabilization, government credibility, bank recapitalization, reflation, low rates, stimulus, credit recovery, and mean reversion from crisis panic.",
+    "mispricing": {
+      "consensus_view": "Large U.S. banks might be nationalized, common equity could be wiped out, and investors should avoid or sell bank securities until losses and capital needs were fully known.",
+      "variant_view": "The government was more likely to support the banking system through capital injections and dilution than to wipe out existing bank securities, and the market was not believing the written policy signal.",
+      "pricing_evidence": "The source case describes Bank of America trading below $3, Citigroup preferred shares trading below $1, Citigroup common later trading near $0.97, no natural buyers, and continued market weakness even after the Treasury plan.",
+      "why_consensus_is_wrong": "Consensus overweighted nationalization and underweighted the legal, political, and systemic incentive for the government to follow through on its stated capital-support plan."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Treasury Financial Stability Plan and stated commitment to inject capital into banks through preferred-stock purchases.",
+      "expected_timeframe": "Immediate initiation on 2009-02-10, with confirmation or invalidation over the following weeks as the government implemented the plan and banks raised capital.",
+      "why_now": "The policy announcement created a concrete reason to act while securities still traded at panic prices and the market continued to price nationalization risk as if the government backstop were not credible.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json: Treasury plan, distressed BAC/C prices, market fear, and Tepper's interpretation",
+        "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json: crisis psychology, policy backstop, and risk/reward asymmetry",
+        "docs/decision_quality_evals/inputs/tepper_banks_initiation_notes_2009-02-10.json: buy banks because the market was pricing nationalization while policy support was explicit"
+      ]
+    },
+    "invalidation": {
+      "observable": "The government abandons or reverses the support path, or bank recapitalization terms imply existing securities are impaired far more severely than the thesis allows.",
+      "metric_or_event": "Treasury/Fed/FDIC actions, nationalization language, capital-injection terms, stress-test or capital-raise outcomes, common/preferred treatment, debt impairment, and private capital access.",
+      "threshold": "Reduce or exit common equity if authorities move toward full nationalization, wipe out or near-wipe out existing common, suspend the stated support mechanism, or impose capital terms that leave little residual value. Move up or out of the capital structure if preferred or debt impairment becomes likely.",
+      "timeframe": "Days to weeks after the Treasury plan, with ongoing review through capital injections, stress tests, and bank capital raises.",
+      "implication": "The market's nationalization fear was right, the policy signal was not binding, or the chosen part of the capital structure is too risky."
+    },
+    "evidence_for": [
+      {
+        "claim": "The policy signal changed the probability distribution.",
+        "support": "The Treasury plan explicitly included bank capital support through preferred-stock purchases, which supported the view that the government intended to stabilize banks rather than immediately nationalize them.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json",
+          "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "The market was pricing extreme fear.",
+        "support": "Bank of America traded below $3, Citigroup preferred traded below $1, and investors were reluctant to bid even after the policy announcement.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "The trade could be expressed across the capital structure.",
+        "support": "The source case says Appaloosa bought common equity, preferred shares, debt, and related distressed credit, allowing risk to be balanced between upside and survival claims.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json",
+          "docs/decision_quality_evals/inputs/tepper_banks_portfolio_context_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "Macro policy was turning supportive.",
+        "support": "The market setup cites low interest rates, fiscal stimulus, and prior government willingness to support systemically important financial institutions.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Nationalization was a real left-tail risk.",
+        "support": "The source case says investors feared nationalization and common-equity wipeout, and Tepper himself estimated a nonzero nationalization probability.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "Bank losses and capital needs were still uncertain.",
+        "support": "The crisis setup included severe balance-sheet stress, unknown losses, and the possibility that recapitalization could dilute or impair existing securities.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "Price action remained terrible after the policy announcement.",
+        "support": "The market kept selling bank securities after the Treasury plan, with major indices and bank stocks continuing to fall.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json",
+          "docs/decision_quality_evals/inputs/tepper_banks_market_setup_2009-02-10.json"
+        ]
+      },
+      {
+        "claim": "Safer expressions existed higher in the capital structure.",
+        "support": "The source case notes that conservative internal debate favored bank debt over riskier common shares.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/tepper_banks_source_case_2009-02-10.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "Bank securities were collapsing or trading at distressed levels despite the Treasury plan: Bank of America traded below $3, Citigroup preferred traded below $1, and many investors were unwilling to bid.",
+      "interpretation": "Normally this price action would be a warning, but in this policy-backstop case it was also the opportunity: the market was still pricing nationalization while the written policy signal suggested survival with dilution was more likely.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Exact BAC, C common, preferred, and debt prices on each purchase date",
+        "Capital structure seniority and terms for selected securities",
+        "Market-implied nationalization or impairment probabilities"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a specific policy catalyst, extreme forced-selling prices, a clear variant view on government behavior, multiple instrument expressions, and explicit invalidation through nationalization or punitive capital terms.",
+      "missing_inputs": [
+        "Exact intended position sizes by security",
+        "Security-level capital structure and recovery analysis",
+        "Detailed bank capital and loss estimates",
+        "Liquidity and risk limits for each instrument"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy a distressed basket of large U.S. bank securities, including common equity, preferred shares, and bank debt",
+      "instrument_type": "multi_instrument_basket",
+      "directness": "direct",
+      "alternatives": [
+        "Emphasize preferred shares and debt for a more senior expression",
+        "Use common equity only where survival upside justifies wipeout risk",
+        "Pair the bank basket with broader distressed credit exposure if reflation confirms"
+      ],
+      "follow_on": "Add when policy implementation confirms the backstop, banks raise private capital, or market pricing begins to reject nationalization."
+    },
+    "conviction": {
+      "level": 5,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Already maximum conviction; incremental additions depend on policy follow-through, capital-raise confirmation, and security-level risk controls."
+    },
+    "confidence": 0.86,
+    "confidence_reason": "High because the written policy backstop, extreme pricing, liquid instruments, and capital-structure flexibility aligned; capped because nationalization, dilution, bank losses, and mark-to-market collapse were still real risks.",
+    "sizing_context": {
+      "starting_size": "Conviction 5 historical distressed basket; initiate across bank common, preferred, and debt rather than relying only on the riskiest common equity expression.",
+      "add_conditions": "Add when the government follows through on the support plan, banks access capital markets, or price action begins confirming reduced nationalization risk.",
+      "liquidity_constraints": "Large bank securities were liquid, but liquidity could be one-sided during panic; size should respect gap risk, policy headlines, and instrument seniority.",
+      "portfolio_constraints": "This is a concentrated crisis-policy trade and should be sized against total financials exposure, credit exposure, and left-tail nationalization risk.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Increase exposure through a capital-structure basket while the government backstop remains credible and securities price nationalization too aggressively."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Press the trade as policy follow-through confirms survival: add to bank securities during capital raises, rotate more risk budget toward common equity where wipeout risk falls, and hold related distressed credit as reflation improves.",
+      "if_wrong": "If the government shifts toward nationalization or punitive terms, reduce common equity first, move up the capital structure where recovery remains plausible, or exit if the policy backstop is no longer credible.",
+      "next_review_trigger": "Review on Treasury/Fed/FDIC implementation details, bank stress tests, capital-raise terms, nationalization rhetoric, preferred/debt impairment signs, or a failure of private capital to return."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical high-conviction distressed financials example designed to teach policy-backstop reasoning, capital-structure expression, and buying when bad price action is part of the opportunity rather than automatic invalidation."
+}

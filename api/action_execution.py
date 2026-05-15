@@ -27,11 +27,17 @@ def execute_api_action(
     payload: dict[str, Any],
     *,
     source_id: str,
+    request_mode: str = "proposal",
     validation_status_code: int = 422,
     data_fetch_source: str | None = None,
 ) -> dict[str, Any]:
     service = OntologyCommandService()
-    context = OntologyCommandContext(actor=admin_actor(source="api"), source_type="api", source_id=source_id)
+    context = OntologyCommandContext(
+        actor=admin_actor(source="api"),
+        source_type="api",
+        source_id=source_id,
+        request_mode=request_mode,
+    )
     try:
         if action_id == "resolve_approval":
             return service.resolve_approval(
@@ -78,6 +84,7 @@ def stage_api_action(
         actor=admin_actor(source="api"),
         source_type="user",
         source_id=source_id,
+        request_mode="self_apply" if apply else "proposal",
     )
     try:
         approval = service.propose_action(

@@ -74,6 +74,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Settings",
     pages: [
       { label: "AI Settings", path: "/settings/ai" },
+      { label: "Policy Matrix", path: "/settings/policy-matrix" },
     ],
   },
 ]

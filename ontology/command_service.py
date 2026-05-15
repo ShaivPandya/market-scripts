@@ -127,6 +127,7 @@ class OntologyCommandContext:
     actor: Actor
     source_type: str
     source_id: str
+    request_mode: str = "proposal"
 
     @property
     def actor_type(self) -> str:
@@ -193,6 +194,7 @@ class OntologyCommandService:
             self._prepare_action_payload(action_id, payload_dict)
             base_state_hash = _base_state_hash(action_id, payload_dict)
         policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
+        is_financial = _is_financial_action_for_payload(action_id, payload_dict)
         now = _now()
         input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
         entity_type = _entity_type_for_action(action_id)
@@ -230,7 +232,10 @@ class OntologyCommandService:
             "application_state": "pending",
             "application_status": "pending",
             "application_attempts": 0,
-            "risk_class": "financial" if action_id in FINANCIAL_ACTION_IDS else "research",
+            "risk_class": "financial" if is_financial else "research",
+            "approval_required": bool((policy_gate_result or {}).get("approval_required", True)),
+            "approval_mode": (policy_gate_result or {}).get("approval_mode") or _approval_mode_from_context(context),
+            "approval_note_required": True,
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
             "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
@@ -292,9 +297,10 @@ class OntologyCommandService:
         payload: dict[str, Any],
         context: OntologyCommandContext,
     ) -> dict[str, Any] | None:
-        if action_id not in FINANCIAL_ACTION_IDS:
+        from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action, is_financial_action
+
+        if not is_financial_action(action_id, payload):
             return None
-        from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action
 
         try:
             gated_payload, gate = ensure_policy_gate_for_action(
@@ -303,7 +309,10 @@ class OntologyCommandService:
                 context={
                     "source_type": context.source_type,
                     "source_id": context.source_id,
+                    "request_mode": context.request_mode,
                     "actor_id": context.actor.actor_id,
+                    "actor_type": context.actor.actor_type,
+                    "actor_roles": list(context.actor.roles),
                 },
                 object_service=self.objects,
             )
@@ -2881,6 +2890,22 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
         _non_blank(payload.get("target_object_uid"), "target_object_uid")
         _non_blank(payload.get("target_object_type"), "target_object_type")
         _non_blank(payload.get("decision"), "decision")
+
+
+def _is_financial_action_for_payload(action_id: str, payload: Mapping[str, Any]) -> bool:
+    try:
+        from portfolio.policy_gate import is_financial_action
+
+        return is_financial_action(action_id, payload)
+    except Exception:
+        return action_id in FINANCIAL_ACTION_IDS
+
+
+def _approval_mode_from_context(context: OntologyCommandContext) -> str:
+    request_mode = str(context.request_mode or "").strip().lower()
+    if request_mode in {"self_apply", "break_glass"}:
+        return request_mode
+    return "approval_required"
 
 
 def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,24 @@
+{
+  "case": "David Tepper buying distressed U.S. banks during the 2009 crisis",
+  "as_of_date": "2009-02-10",
+  "source_summary": {
+    "setup": "During February and March 2009, many investors feared that large U.S. banks could be nationalized and that common shareholders could be wiped out.",
+    "policy_signal": "The Treasury Department introduced the Financial Stability Plan, including a stated commitment to inject capital into banks through preferred-stock purchases.",
+    "variant_view": "Tepper interpreted the written government plan as a credible backstop: the government had stated how it would support the banks, and the market was not fully believing it.",
+    "market_behavior": "Bank shares and preferreds kept collapsing after the plan. Bank of America traded below $3, Citigroup preferred traded below $1, and many investors were unwilling to bid.",
+    "instruments": "Appaloosa bought a mix of bank common equity, preferred shares, debt, and related distressed credit.",
+    "risk_debate": "Skeptical investors and partners worried that more carnage was coming, nationalization could wipe out common equity, and bank debt or preferreds were safer than common shares.",
+    "positioning": "Tepper bought through severe fear and mark-to-market pressure, then added more when banks later raised capital and the thesis was confirming.",
+    "outcome_context": "By late March 2009, Citigroup common had tripled from its lows, and broader bank and junk-bond holdings were rising. This later outcome is useful for grading but should not be treated as known at the decision date."
+  },
+  "selected_details": [
+    "Bank of America common traded below $3 during the panic.",
+    "Citigroup preferred shares traded below $1 during the panic.",
+    "Bank of America reached an indicated low around $2.53 on 2009-02-20.",
+    "Citigroup common traded as low as $0.97 by 2009-03-05.",
+    "The market fell sharply on the day Treasury Secretary Timothy Geithner introduced the plan.",
+    "Tepper estimated roughly a 20% chance of nationalization for banks such as Citigroup.",
+    "Tepper viewed the written government support plan as legally and politically difficult to ignore."
+  ],
+  "human_notes": "Historical source case supplied by the user. Keep source details summarized; do not reproduce long article text in the gold output."
+}

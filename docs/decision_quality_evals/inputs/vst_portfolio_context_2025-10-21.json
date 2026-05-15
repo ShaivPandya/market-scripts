@@ -1,0 +1,21 @@
+{
+  "ticker": "VST",
+  "company_name": "Vistra Corp",
+  "as_of_date": "2025-10-21",
+  "position_status": "new_position_candidate",
+  "position_direction": "none",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "No position opened; evaluated as a potential new long but rejected.",
+  "intended_role_notes": "The idea had a compelling data-center power story but did not clear the actionability bar for a new position.",
+  "conviction_at_evaluation": 4,
+  "raw_target_weight_at_evaluation": 0.0,
+  "conviction_mapping_source": "Conviction 4 expresses confidence in the avoid decision, not a long target weight, because the final action was avoid.",
+  "target_size": "0%; avoid initiating a new position.",
+  "initial_size": 0.0,
+  "current_energy_exposure": null,
+  "current_power_infrastructure_exposure": null,
+  "current_ai_infrastructure_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "User stated Vistra was a new-position candidate and the correct decision was avoid at conviction 4."
+}

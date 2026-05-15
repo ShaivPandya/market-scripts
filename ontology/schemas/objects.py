@@ -475,11 +475,19 @@ class PolicyGateResult(OntologySchemaBase):
     gate_result_id: NonBlankStr
     decision: NonBlankStr
     review_required: bool = False
+    approval_required: bool = True
+    approval_mode: str | None = None
+    rule_id: str | None = None
+    reason: str | None = None
+    remediation: str | None = None
+    matched_rules: list[dict[str, Any]] = Field(default_factory=list)
+    limit_overrides: dict[str, Any] = Field(default_factory=dict)
     failure_reasons: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     account_id: str | None = None
     portfolio_id: str | None = None
     policy_id: str | None = None
+    policy_matrix_id: str | None = None
     evaluated_at: str | None = None
     ontology_run_id: NonBlankStr = "operational"
 
@@ -493,7 +501,18 @@ class PolicyGateResult(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("account_id", "portfolio_id", "policy_id", "evaluated_at", mode="before")
+    @field_validator(
+        "account_id",
+        "portfolio_id",
+        "policy_id",
+        "policy_matrix_id",
+        "approval_mode",
+        "rule_id",
+        "reason",
+        "remediation",
+        "evaluated_at",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -1199,6 +1218,9 @@ class Approval(OntologySchemaBase):
     application_completed_at: str | None = None
     application_error: str | None = None
     risk_class: str | None = None
+    approval_required: bool = True
+    approval_mode: str | None = None
+    approval_note_required: bool = True
     policy_gate_result: dict[str, Any] | None = None
     policy_gate_result_id: str | None = None
     policy_gate_decision: str | None = None

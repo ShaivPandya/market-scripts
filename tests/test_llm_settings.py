@@ -420,6 +420,92 @@ def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth
     assert response.status_code == 422
 
 
+def test_get_financial_policy_matrix_returns_default(temp_llm_settings, auth_client):
+    response = auth_client.get("/api/settings/financial-policy-matrix")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["policy"]["schema_version"] == 1
+    assert payload["policy"]["rules"][0]["id"] == "default.current_checks"
+    assert "max_position_weight_pct" in payload["limit_defaults"]
+    assert "blocked" in payload["metadata"]["outcomes"]
+
+
+def test_validate_financial_policy_matrix_reports_errors(temp_llm_settings, auth_client):
+    response = auth_client.post(
+        "/api/settings/financial-policy-matrix/validate",
+        json={
+            "policy": {
+                "schema_version": 1,
+                "policy_id": "bad-policy",
+                "rules": [{"id": "bad", "match": {"risk_levels": ["extreme"]}}],
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert "risk_levels" in response.text
+
+
+def test_put_financial_policy_matrix_requires_note(temp_llm_settings, auth_client):
+    policy = auth_client.get("/api/settings/financial-policy-matrix").json()["policy"]
+
+    response = auth_client.put("/api/settings/financial-policy-matrix", json={"policy": policy})
+
+    assert response.status_code == 422
+    assert "note" in response.text
+
+
+def test_put_financial_policy_matrix_persists_with_audit(temp_llm_settings, auth_client, monkeypatch):
+    from api.routers import settings
+
+    audit_events = []
+    monkeypatch.setattr(settings, "emit_audit_event", lambda *args, **kwargs: audit_events.append((args, kwargs)))
+    policy = auth_client.get("/api/settings/financial-policy-matrix").json()["policy"]
+    policy["rules"].append(
+        {
+            "id": "test.block_self_apply",
+            "enabled": True,
+            "priority": 100,
+            "match": {"request_modes": ["self_apply"]},
+            "limits": {},
+            "outcome": "blocked",
+            "approval_mode": None,
+            "reason": "No self apply in tests.",
+            "remediation": "Use proposal review.",
+        }
+    )
+
+    response = auth_client.put(
+        "/api/settings/financial-policy-matrix",
+        json={"policy": policy, "note": "Add test self-apply guard."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["policy"]["rules"][-1]["id"] == "test.block_self_apply"
+    assert temp_llm_settings.get_setting("financial.policy_matrix") is not None
+    assert audit_events
+    assert audit_events[0][0][0] == "settings.financial_policy_matrix.updated"
+
+
+def test_put_financial_policy_matrix_rejects_invalid_rule(temp_llm_settings, auth_client):
+    response = auth_client.put(
+        "/api/settings/financial-policy-matrix",
+        json={
+            "note": "Invalid rule.",
+            "policy": {
+                "schema_version": 1,
+                "policy_id": "bad-policy",
+                "rules": [{"id": "bad", "limits": {"bad_limit": 1}}],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unsupported limit key" in response.text
+
+
 def test_normalize_gateway_policy_accepts_deny_mode(temp_llm_settings):
     policy = temp_llm_settings.default_gateway_policy()
     policy["private_egress_mode"] = "deny"

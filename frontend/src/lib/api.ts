@@ -120,6 +120,13 @@ export interface PolicyGateReason {
 export interface PolicyGateResult {
   decision?: string
   review_required?: boolean
+  approval_required?: boolean
+  approval_mode?: string | null
+  rule_id?: string | null
+  reason?: string
+  remediation?: string
+  matched_rules?: Record<string, unknown>[]
+  limit_overrides?: Record<string, unknown>
   failure_reasons?: PolicyGateReason[]
   warnings?: PolicyGateReason[]
   disclosures?: string[]
@@ -553,6 +560,64 @@ export interface LLMSettings {
   gateway_policy: GatewayPolicySettings
 }
 
+export type FinancialPolicyOutcome = "use_checks" | "pass" | "warn" | "review_required" | "blocked"
+export type FinancialPolicyApprovalMode = "approval_required" | "self_apply" | "break_glass" | "none"
+
+export interface FinancialPolicyRuleMatch {
+  action_ids: string[]
+  action_kinds: string[]
+  request_modes: string[]
+  actor_roles: string[]
+  actor_ids: string[]
+  account_ids: string[]
+  portfolio_ids: string[]
+  risk_levels: string[]
+  data_freshness: string[]
+}
+
+export interface FinancialPolicyRule {
+  id: string
+  enabled: boolean
+  priority: number
+  match: FinancialPolicyRuleMatch
+  limits: Record<string, number>
+  outcome: FinancialPolicyOutcome
+  approval_mode?: FinancialPolicyApprovalMode | null
+  reason: string
+  remediation: string
+}
+
+export interface FinancialPolicyMatrix {
+  schema_version: 1
+  policy_id: string
+  description: string
+  rules: FinancialPolicyRule[]
+}
+
+export interface FinancialPolicyMatrixMetadata {
+  outcomes: FinancialPolicyOutcome[]
+  approval_modes: FinancialPolicyApprovalMode[]
+  request_modes: string[]
+  risk_levels: string[]
+  data_freshness: string[]
+  action_ids: string[]
+  action_kinds: string[]
+  limit_keys: string[]
+}
+
+export interface FinancialPolicyMatrixSettings {
+  policy: FinancialPolicyMatrix
+  default_policy: FinancialPolicyMatrix
+  metadata: FinancialPolicyMatrixMetadata
+  limit_defaults: Record<string, number>
+}
+
+export interface FinancialPolicyMatrixValidation {
+  valid: boolean
+  errors: string[]
+  policy?: FinancialPolicyMatrix
+}
+
 export const fetchLLMSettings = () =>
   client.get("/settings/llm").then(r => r.data as LLMSettings)
 
@@ -566,6 +631,17 @@ export const updateLLMSettings = (settings: {
   gateway_note?: string
 }) =>
   client.put("/settings/llm", settings).then(r => r.data as LLMSettings)
+
+export const fetchFinancialPolicyMatrixSettings = () =>
+  client.get("/settings/financial-policy-matrix").then(r => r.data as FinancialPolicyMatrixSettings)
+
+export const validateFinancialPolicyMatrix = (policy: FinancialPolicyMatrix) =>
+  client
+    .post("/settings/financial-policy-matrix/validate", { policy })
+    .then(r => r.data as FinancialPolicyMatrixValidation)
+
+export const updateFinancialPolicyMatrix = (settings: { policy: FinancialPolicyMatrix; note: string }) =>
+  client.put("/settings/financial-policy-matrix", settings).then(r => r.data as FinancialPolicyMatrixSettings)
 
 export type AgentPreferenceLevel = "less" | "balanced" | "more"
 export type AgentPersonality = "friendly" | "pragmatic"

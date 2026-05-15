@@ -58,6 +58,7 @@ def break_glass_domain_action(action_id: str, body: BreakGlassRequest):
         action_id,
         body.payload,
         source_id=f"break_glass.{body.reason_code}",
+        request_mode="break_glass",
     )
     return {
         "status": "break_glass_applied",

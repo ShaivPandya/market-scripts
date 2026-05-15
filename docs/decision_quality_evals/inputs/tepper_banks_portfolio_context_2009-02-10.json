@@ -1,0 +1,11 @@
+{
+  "as_of_date": "2009-02-10",
+  "position_status": "new_or_expanding_position",
+  "position_direction": "long_distressed_banks",
+  "portfolio_role": "Concentrated distressed financials policy-backstop trade",
+  "conviction_at_initiation": 5,
+  "sizing_context": "Historical case: Tepper bought a basket of bank securities during extreme panic, including common equity, preferred shares, debt, and related distressed credit.",
+  "sizing_principle": "Special-situation distressed sizing: use the capital structure to balance upside and survival risk, then press exposure when policy follow-through confirms the backstop.",
+  "risk_capacity_notes": "This is not a generic rule to buy falling banks. The position depended on a specific written policy backstop, liquid securities, and a probability view that nationalization was much less likely than the market implied.",
+  "human_notes": "Conviction 5 means full conviction on the 1-5 scale. Raw target weight is not mapped to the user's single-name equity sizing model because this is a historical multi-instrument distressed basket."
+}

@@ -1,0 +1,180 @@
+{
+  "id": "vst_data_center_power_avoid_2025",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2025-10-21",
+  "user_question": "Using the Vistra setup as of its evaluation date, should this have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/vst_price_action_2025-10-21.json",
+      "sha256": "22994c665105519cd938ba1acf95016c5f2a6d4978cc134133e686fb93416a5c",
+      "description": "Historical VST price-action snapshot through the 2025-10-21 close: close, moving averages, and 1m/3m/12m rate of change.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/vst_portfolio_context_2025-10-21.json",
+      "sha256": "cc5b34741421c48365a91f60db3b21a8bfa77fb0aa203a0cc4b80b453a1c778e",
+      "description": "Portfolio context: VST was a new-position candidate, but no position was opened.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json",
+      "sha256": "365d6b47f894b10cfcf6e1b9f29f4457720e0c1187c9a834871427bf4c641dc7",
+      "description": "Human-provided evaluation rationale: good data-center power story, strong revenue growth, elevated P/E, poor technicals, and prior-quarter revenue/EPS estimate miss.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This draft case uses human-provided price action, portfolio context, and initiation notes.",
+    "VST was evaluated on 2025-10-21 as a possible new position, but the correct decision was avoid.",
+    "Conviction 4 expresses confidence in the avoid decision, not a 16% long target weight, because no position was initiated.",
+    "The November 2025 earnings miss is outcome context only and should not be treated as evidence available on 2025-10-21.",
+    "No exact P/E, next earnings date, detailed analyst estimates, power-price curve, or full portfolio exposure input has been selected yet."
+  ],
+  "gold_output": {
+    "simple_thesis": "Avoid VST as a new long because the data-center power story and revenue growth did not offset elevated valuation, poor short/intermediate price action, and recent revenue/EPS estimate misses.",
+    "opportunity_type": "avoid_overpriced_story",
+    "embedded_macro_exposure": "Long AI data-center electricity demand, power prices, independent power producers, nuclear/gas generation scarcity, and momentum in AI infrastructure beneficiaries.",
+    "mispricing": {
+      "consensus_view": "The market could treat Vistra as a direct beneficiary of rising electricity demand from AI data centers and reward revenue growth with a premium multiple.",
+      "variant_view": "The story was not enough for a new long because valuation was already elevated, estimate quality had weakened, and technical confirmation had turned negative.",
+      "pricing_evidence": "The selected inputs cite elevated P/E, a prior-quarter revenue and EPS estimate miss, a close below the 100D SMA, 1-month ROC of -14.41%, and 3-month ROC of -6.80%.",
+      "why_consensus_is_wrong": "Consensus may be over-capitalizing the AI power narrative while underweighting estimate risk, valuation risk, and the market's deteriorating sponsorship of the stock."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "No positive catalyst cleared the bar for a new long; the relevant near-term condition was deterioration after a prior estimate miss.",
+      "expected_timeframe": "As of 2025-10-21, with next review around the next earnings update or technical repair.",
+      "why_now": "The right action was to avoid initiating because the stock had already broken below its 100D SMA, 1-month and 3-month momentum were negative, and the prior reported quarter had missed revenue and EPS estimates.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/vst_price_action_2025-10-21.json: close below 100D SMA with negative 1m and 3m ROC",
+        "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json: elevated P/E and prior-quarter revenue/EPS estimate miss",
+        "docs/decision_quality_evals/inputs/vst_portfolio_context_2025-10-21.json: new-position candidate with final decision to avoid"
+      ]
+    },
+    "invalidation": {
+      "observable": "VST repairs technical damage and confirms the data-center power thesis with stronger estimate quality.",
+      "metric_or_event": "Daily close versus the 100D SMA, 1-month and 3-month ROC, next earnings revenue/EPS versus estimates, forward guidance, valuation reset, and evidence of durable data-center power demand.",
+      "threshold": "Reopen the idea for research or possible buy if VST reclaims the 100D SMA, 1-month and 3-month ROC turn positive, and the next earnings/guidance update beats revenue and EPS expectations or shows clear acceleration tied to durable power demand.",
+      "timeframe": "Next earnings cycle or 1-3 months after 2025-10-21.",
+      "implication": "The avoid call may have been too cautious if fundamentals and price action both repair."
+    },
+    "evidence_for": [
+      {
+        "claim": "Short/intermediate technicals argued against a new long.",
+        "support": "VST closed at $186.52, below the 100D SMA of $194.48, with 1-month ROC of -14.41% and 3-month ROC of -6.80%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_price_action_2025-10-21.json"
+        ]
+      },
+      {
+        "claim": "The valuation left less room for disappointment.",
+        "support": "The human notes identify elevated P/E as a reason the setup did not clear the new-position bar.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json"
+        ]
+      },
+      {
+        "claim": "Estimate quality had already weakened.",
+        "support": "The human notes say Vistra missed revenue and EPS estimates in the prior reported quarter.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The top-down story was legitimately attractive.",
+        "support": "The human notes identify energy demand for data centers as a good story and cite strong revenue growth.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json"
+        ]
+      },
+      {
+        "claim": "The longer-term trend had not fully broken.",
+        "support": "VST was still above the 150D, 200D, 40W, 200W, 10M, and 20M moving averages, with 12-month ROC of 46.55%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_price_action_2025-10-21.json"
+        ]
+      },
+      {
+        "claim": "Missing detailed valuation and estimate inputs limit precision.",
+        "support": "The selected inputs do not include exact P/E, forward estimates, segment-level drivers, or power-price assumptions.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/vst_initiation_notes_2025-10-21.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "VST closed at $186.52 on 2025-10-21, below the 100D SMA of $194.48 but above the 150D, 200D, 40W, 200W, 10M, and 20M moving averages. The 1-month ROC was -14.41%, 3-month ROC was -6.80%, and 12-month ROC was 46.55%.",
+      "interpretation": "For a new long, price action did not confirm the story. Longer-term trend remained positive, but short/intermediate momentum had turned negative and the stock had lost the 100D SMA.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Relative performance versus S&P 500 or utilities/power benchmark",
+        "Volume behavior around the 100D SMA break"
+      ]
+    },
+    "actionability": {
+      "status": "do_nothing",
+      "reason": "The idea was interesting but not actionable as a new long because valuation, estimate misses, and poor short/intermediate technicals outweighed the data-center power narrative.",
+      "missing_inputs": [
+        "Exact elevated P/E and forward valuation range",
+        "Prior-quarter revenue and EPS estimate details",
+        "Next earnings date and estimate setup",
+        "Relative performance benchmark",
+        "Portfolio exposure to energy, power infrastructure, and AI infrastructure"
+      ]
+    },
+    "recommended_action": "avoid",
+    "expression": {
+      "primary": "Do not initiate VST common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Revisit only if technicals repair and earnings/guidance confirm the data-center power thesis."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": 0.0,
+      "upgrade_condition": "Move from avoid to research or buy only if VST reclaims the 100D SMA, momentum turns positive, and earnings/guidance beat expectations with credible demand support."
+    },
+    "confidence": 0.7,
+    "confidence_reason": "Moderately high because the avoid decision had multiple aligned reasons: elevated valuation, prior estimate miss, broken short/intermediate momentum, and no need to force a new position. Confidence is capped because the long-term trend and AI power narrative remained intact and detailed valuation inputs were not selected.",
+    "sizing_context": {
+      "starting_size": "No existing position; this was a new-position candidate.",
+      "add_conditions": "Do not initiate unless price action repairs and future earnings/guidance validate the story.",
+      "liquidity_constraints": "No ADV or exit-cost input selected; liquidity is not the binding reason for avoid in this case.",
+      "portfolio_constraints": "No full portfolio exposure input selected; avoid also prevents incremental exposure to crowded AI infrastructure and power-demand themes.",
+      "sizing_delta": {
+        "direction": "not_applicable",
+        "amount": null,
+        "unit": "not_applicable",
+        "basis": "not_applicable",
+        "condition": "No position should be initiated under the selected inputs."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If the avoid call is right, keep the idea out of the portfolio and reassess after technicals or earnings show whether the weakness was temporary or fundamental.",
+      "if_wrong": "If VST quickly reclaims the 100D SMA, turns 1-month and 3-month ROC positive, and beats revenue/EPS expectations, move it back to research or actionable buy review rather than anchoring on the avoid call.",
+      "next_review_trigger": "Review on the next earnings report, a reclaim of the 100D SMA with positive 1m/3m ROC, a valuation reset, or material evidence that data-center power demand is flowing into earnings."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Gold output reflects a conviction 4 avoid decision for a new-position candidate. The later November 2025 EPS/revenue miss supports the case outcome but is deliberately excluded from source evidence available as of 2025-10-21."
+}

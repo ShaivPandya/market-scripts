@@ -527,6 +527,22 @@ def test_create_catalyst_approval_defaults_to_pending_status():
     assert catalyst["properties_json"]["status"] == "pending"
 
 
+def test_financial_action_item_approval_gets_policy_gate():
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_action_item",
+        {"description": "Evaluate MU hedge", "action_type": "hedge", "ticker": "MU"},
+        context,
+        reason="unit",
+    )
+
+    assert approval["risk_class"] == "financial"
+    assert approval["policy_gate_result"]["decision"] == "pass"
+    assert approval["policy_gate_result"]["approval_required"] is True
+
+
 def test_create_recommendation_approval_applies_with_real_schema_normalization():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
