@@ -43,7 +43,7 @@
   ],
   "gold_output": {
     "simple_thesis": "Buy distressed U.S. bank securities because the market was pricing nationalization and collapse while the Treasury had put in writing that it intended to support banks through capital injections, making survival with dilution more likely than total wipeout.",
-    "opportunity_type": "policy_backstop_distressed",
+    "opportunity_type": "forced_liquidation",
     "embedded_macro_exposure": "Long U.S. financial-system stabilization, government credibility, bank recapitalization, reflation, low rates, stimulus, credit recovery, and mean reversion from crisis panic.",
     "mispricing": {
       "consensus_view": "Large U.S. banks might be nationalized, common equity could be wiped out, and investors should avoid or sell bank securities until losses and capital needs were fully known.",

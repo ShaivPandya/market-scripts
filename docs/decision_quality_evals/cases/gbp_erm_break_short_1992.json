@@ -8,14 +8,14 @@
     {
       "type": "source_document",
       "path": "docs/decision_quality_evals/inputs/gbp_erm_source_case_1992-09-15.json",
-      "sha256": "47df1dde77cd5f86ee6ccc437d967c02c2066cedf22928a95c556c092d7d02ff",
+      "sha256": "41952911a2827d9e6240ded7189676117dd6520eb14b2af69cfa49d071eca0ed",
       "description": "Historical case-study source summary for Soros/Druckenmiller shorting GBP versus DEM.",
       "required": true
     },
     {
       "type": "market_data",
       "path": "docs/decision_quality_evals/inputs/gbp_erm_market_setup_1992-09-15.json",
-      "sha256": "393c9dc453dc7ca544f3f89caaa107d8e27ff95cc93f63380b141fb146993c48",
+      "sha256": "3b73462e0a305990be0066b12a8d28a3e3fcffc84581454b7b70db7912bc47bf",
       "description": "Macro, market-structure, catalyst, risk/reward, and trade-after-the-trade setup for the 1992 ERM break.",
       "required": true
     },
@@ -29,7 +29,7 @@
     {
       "type": "user_notes",
       "path": "docs/decision_quality_evals/inputs/gbp_erm_initiation_notes_1992-09-15.json",
-      "sha256": "89a33a87ffb72dd4df09e6fc41c309567a643fefecd4acb350abbe25af3a5f32",
+      "sha256": "bc2361a3552ba1fcc8e3b5fe1ee503947ac15d153b43778b58e3d69ec6e96ead",
       "description": "User-requested framing and initiation rationale for the historical macro/FX case.",
       "required": true
     }

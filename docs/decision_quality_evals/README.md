@@ -40,3 +40,18 @@ Use the `status` field to track authoring state:
 
 For approved cases, prefer stable source snapshots or hashes so future repo edits do not silently change the eval.
 
+## Running Evals
+
+Offline tests validate that every case has a strict `DecisionQuality` gold output, clean input refs, and passing gate behavior:
+
+```bash
+.venv/bin/python -m pytest tests/test_decision_quality_model.py tests/test_decision_quality_eval_runner.py
+```
+
+Manual model evals run the solver against sanitized case inputs and write a report under `outputs/decision_quality_evals/`:
+
+```bash
+.venv/bin/python -m decision_quality.eval_runner --judge
+```
+
+Use `--dry-run --no-judge` to inspect sanitized prompts without calling an LLM. The runner excludes gold outputs, human notes, and future outcome context from solver prompts.

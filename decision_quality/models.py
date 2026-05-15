@@ -23,6 +23,7 @@ OpportunityType = Literal[
     "policy_inflection",
     "quality_compounder",
     "cyclical_upturn",
+    "crowded_narrative_avoid",
     "unclear",
 ]
 
@@ -182,6 +183,7 @@ _OPPORTUNITY_TYPES = {
     "policy_inflection",
     "quality_compounder",
     "cyclical_upturn",
+    "crowded_narrative_avoid",
     "unclear",
 }
 

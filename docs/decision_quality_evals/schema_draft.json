@@ -30,7 +30,8 @@
         "macro_stance",
         "sizing",
         "risk_control",
-        "comparison"
+        "comparison",
+        "scenario_simulation"
       ]
     },
     "as_of_date": {
@@ -81,6 +82,7 @@
             "report",
             "source_document",
             "user_notes",
+            "scenario_simulator_request",
             "other"
           ]
         },
@@ -153,6 +155,7 @@
             "policy_inflection",
             "quality_compounder",
             "cyclical_upturn",
+            "crowded_narrative_avoid",
             "unclear"
           ]
         },

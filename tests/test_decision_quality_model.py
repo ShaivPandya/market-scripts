@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,7 +9,8 @@ import pytest
 from pydantic import ValidationError
 
 from auto_report.recommendations import validate_recommendations_payload
-from decision_quality import DecisionQuality, apply_decision_quality_gates, parse_decision_quality
+from decision_quality import ACTIONABLE_ACTIONS, DecisionQuality, apply_decision_quality_gates, parse_decision_quality
+from decision_quality.eval_runner import EvalCase, validate_case_input_refs
 
 CASES_DIR = Path("docs/decision_quality_evals/cases")
 
@@ -17,24 +19,69 @@ def _case_gold(case_name: str) -> dict:
     return json.loads((CASES_DIR / case_name).read_text(encoding="utf-8"))["gold_output"]
 
 
+def _case_paths() -> list[Path]:
+    return sorted(CASES_DIR.glob("*.json"))
+
+
+def _load_case(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _valid_dq() -> dict:
     return _case_gold("mu_ai_memory_cycle_2025.json")
 
 
-@pytest.mark.parametrize(
-    "case_name",
-    [
-        "mu_ai_memory_cycle_2025.json",
-        "oklo_pre_revenue_smr_short_2025.json",
-        "gbp_erm_break_short_1992.json",
-        "nvda_ai_platform_long_2026.json",
-    ],
-)
-def test_eval_gold_outputs_parse_as_decision_quality(case_name: str):
-    dq = DecisionQuality.model_validate(_case_gold(case_name))
+@pytest.mark.parametrize("case_path", _case_paths(), ids=lambda path: path.name)
+def test_eval_gold_outputs_parse_as_decision_quality(case_path: Path):
+    dq = DecisionQuality.model_validate(_load_case(case_path)["gold_output"])
 
     assert dq.conviction.max_level == 5
-    assert dq.actionability.status == "actionable"
+
+
+@pytest.mark.parametrize("case_path", _case_paths(), ids=lambda path: path.name)
+def test_eval_gold_outputs_pass_decision_quality_gates(case_path: Path):
+    dq = DecisionQuality.model_validate(_load_case(case_path)["gold_output"])
+
+    gate = apply_decision_quality_gates(dq, current_action=dq.recommended_action, recommendation_status="clear")
+
+    assert gate.status == "pass"
+    assert gate.final_action == dq.recommended_action
+    assert not any(reason.severity == "blocker" for reason in gate.reasons)
+
+
+@pytest.mark.parametrize("case_path", _case_paths(), ids=lambda path: path.name)
+def test_eval_gold_actionability_matches_action_type(case_path: Path):
+    dq = DecisionQuality.model_validate(_load_case(case_path)["gold_output"])
+
+    if dq.recommended_action in ACTIONABLE_ACTIONS:
+        assert dq.actionability.status == "actionable"
+    else:
+        assert dq.actionability.status != "actionable"
+
+
+@pytest.mark.parametrize("case_path", _case_paths(), ids=lambda path: path.name)
+def test_eval_case_input_refs_exist_and_hash(case_path: Path):
+    case_data = _load_case(case_path)
+    errors = validate_case_input_refs(EvalCase(path=case_path, data=case_data), root=Path("."))
+
+    assert errors == []
+
+
+def test_eval_case_input_ref_hash_test_skips_null_path_and_hash():
+    case_path = CASES_DIR / "scenario_simulator_uncertainty_disclosure_2026.json"
+    case_data = _load_case(case_path)
+
+    assert validate_case_input_refs(EvalCase(path=case_path, data=case_data), root=Path(".")) == []
+
+
+def test_eval_case_input_ref_hash_test_detects_mismatch():
+    case_path = CASES_DIR / "mu_ai_memory_cycle_2025.json"
+    case_data = copy.deepcopy(_load_case(case_path))
+    case_data["input_refs"][0]["sha256"] = hashlib.sha256(b"wrong").hexdigest()
+
+    errors = validate_case_input_refs(EvalCase(path=case_path, data=case_data), root=Path("."))
+
+    assert errors
 
 
 def test_decision_quality_rejects_invalid_conviction_level():

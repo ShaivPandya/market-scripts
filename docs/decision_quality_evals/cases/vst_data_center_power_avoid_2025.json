@@ -36,7 +36,7 @@
   ],
   "gold_output": {
     "simple_thesis": "Avoid VST as a new long because the data-center power story and revenue growth did not offset elevated valuation, poor short/intermediate price action, and recent revenue/EPS estimate misses.",
-    "opportunity_type": "avoid_overpriced_story",
+    "opportunity_type": "crowded_narrative_avoid",
     "embedded_macro_exposure": "Long AI data-center electricity demand, power prices, independent power producers, nuclear/gas generation scarcity, and momentum in AI infrastructure beneficiaries.",
     "mispricing": {
       "consensus_view": "The market could treat Vistra as a direct beneficiary of rising electricity demand from AI data centers and reward revenue growth with a premium multiple.",
