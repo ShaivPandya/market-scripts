@@ -20,6 +20,7 @@ from api.snapshot_keys import (
     SNAPSHOT_VIX_TERM_STRUCTURE,
 )
 from api.snapshot_store import SnapshotRecord, list_snapshot_records
+from ontology.sources.source_registry import source_registry_metadata, source_registry_metadata_for_snapshot
 
 _SNAPSHOT_SOURCE_NAMES = {
     SNAPSHOT_MARKET_BREADTH: "market_breadth",
@@ -145,12 +146,18 @@ def _risk_source_status(portfolio_risk: dict[str, Any] | None) -> dict[str, dict
 
 
 def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: datetime | None) -> dict[str, Any]:
+    registry = source_registry_metadata_for_snapshot(record.snapshot_key)
+    required = required or bool((registry or {}).get("required"))
     stale = _snapshot_is_stale(record, now=now)
     status = _normalize_status(record.status, stale=stale, quality=record.quality, required=required)
-    source_name = _SNAPSHOT_SOURCE_NAMES.get(record.snapshot_key) or _source_name_from_snapshot_key(record.snapshot_key)
+    source_name = str(
+        (registry or {}).get("source_id")
+        or _SNAPSHOT_SOURCE_NAMES.get(record.snapshot_key)
+        or _source_name_from_snapshot_key(record.snapshot_key)
+    )
     return {
         "id": record.snapshot_key,
-        "domain": _domain_for_snapshot(record.snapshot_key),
+        "domain": str((registry or {}).get("dataset_domain") or _domain_for_snapshot(record.snapshot_key)),
         "source_name": source_name,
         "snapshot_key": record.snapshot_key,
         "status": status,
@@ -163,6 +170,7 @@ def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: dateti
         "error": record.error,
         "detail": record.error or ("snapshot is stale" if stale else None),
         "payload_hash": record.payload_hash,
+        "source_registry": registry,
     }
 
 
@@ -170,12 +178,17 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
     raw_freshness = state.get("freshness")
     freshness = raw_freshness if isinstance(raw_freshness, dict) else {}
     stale = str(state.get("status") or "").lower() == "stale" or freshness.get("fresh") is False
-    status = _normalize_status(state.get("status"), stale=stale, quality=state.get("quality"), required=required)
     snapshot_key = str(state.get("snapshot_key") or _RISK_SNAPSHOT_KEYS.get(module) or module)
     source_id = snapshot_key if snapshot_key in _RISK_SNAPSHOT_KEYS.values() else module
+    raw_registry = state.get("source_registry")
+    registry = raw_registry if isinstance(raw_registry, dict) else None
+    if registry is None:
+        registry = source_registry_metadata_for_snapshot(snapshot_key) or source_registry_metadata(module)
+    required = required or bool(state.get("required")) or bool((registry or {}).get("required"))
+    status = _normalize_status(state.get("status"), stale=stale, quality=state.get("quality"), required=required)
     return {
         "id": source_id,
-        "domain": "portfolio" if module == "portfolio" else "risk",
+        "domain": str((registry or {}).get("dataset_domain") or ("portfolio" if module == "portfolio" else "risk")),
         "source_name": module,
         "snapshot_key": snapshot_key if snapshot_key != module else None,
         "status": status,
@@ -188,6 +201,7 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
         "error": state.get("error"),
         "detail": state.get("detail") or state.get("error") or freshness.get("reason"),
         "freshness": freshness or None,
+        "source_registry": registry,
     }
 
 
@@ -200,7 +214,16 @@ def _merge_source(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> 
     out["status"] = status
     out["quality_state"] = _quality_state(status, required=bool(out["required"]))
     out["stale"] = bool(existing.get("stale")) or bool(incoming.get("stale"))
-    for key in ("status", "quality_state", "stale", "error", "detail", "freshness", "freshness_timestamp"):
+    for key in (
+        "status",
+        "quality_state",
+        "stale",
+        "error",
+        "detail",
+        "freshness",
+        "freshness_timestamp",
+        "source_registry",
+    ):
         if key in {"status", "quality_state", "stale"}:
             continue
         if incoming.get(key) not in (None, "", False):
@@ -216,10 +239,18 @@ def _worse_status(left: str, right: str) -> str:
 
 
 def _missing_required_source(source_id: str) -> dict[str, Any]:
+    registry = source_registry_metadata_for_snapshot(source_id) or source_registry_metadata(source_id)
     return {
         "id": source_id,
-        "domain": "portfolio" if source_id == "portfolio" else _domain_for_snapshot(source_id),
-        "source_name": _SNAPSHOT_SOURCE_NAMES.get(source_id) or _source_name_from_snapshot_key(source_id),
+        "domain": str(
+            (registry or {}).get("dataset_domain")
+            or ("portfolio" if source_id == "portfolio" else _domain_for_snapshot(source_id))
+        ),
+        "source_name": str(
+            (registry or {}).get("source_id")
+            or _SNAPSHOT_SOURCE_NAMES.get(source_id)
+            or _source_name_from_snapshot_key(source_id)
+        ),
         "snapshot_key": source_id if ":" in source_id else None,
         "status": "missing",
         "quality_state": "missing",
@@ -230,6 +261,7 @@ def _missing_required_source(source_id: str) -> dict[str, Any]:
         "stale": False,
         "error": None,
         "detail": "source has no freshness record yet",
+        "source_registry": registry,
     }
 
 

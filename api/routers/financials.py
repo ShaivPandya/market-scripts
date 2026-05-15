@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from api.cache import get_or_set_cached, long_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_value
+from ontology.sources.source_registry import attach_source_registry_metadata
 
 router = APIRouter()
 
@@ -30,6 +31,6 @@ def run_financials(req: FinancialsRequest):
         except Exception as e:
             raise DataFetchError(source="financials", detail=str(e)) from e
 
-        return serialize_value(data)
+        return attach_source_registry_metadata(serialize_value(data), source_id="financials")
 
     return get_or_set_cached(long_cache, key, loader)

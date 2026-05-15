@@ -124,3 +124,15 @@ def test_ev_revenue_multiples_do_not_require_ebitda():
     assert ev_ebitda == []
     assert len(ev_revenue) == 2
     assert all(row["ev_revenue"] > 0 for row in ev_revenue)
+
+
+def test_dcf_historical_route_includes_source_registry(monkeypatch):
+    from api.cache import invalidate_all
+    from api.routers import dcf as dcf_router
+
+    invalidate_all()
+    monkeypatch.setattr(dcf, "get_historical_data", lambda ticker: {"ticker": ticker, "data_source": "edgar"})
+
+    result = dcf_router.get_dcf_historical("TEST")
+
+    assert result["_meta"]["source_registry"]["source_id"] == "dcf_historical"

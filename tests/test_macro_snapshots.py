@@ -62,8 +62,11 @@ def test_snapshot_backed_response_writes_snapshot_on_cache_miss(monkeypatch):
         load_payload=lambda: {"latest": {"housing_starts": {"date": "2026-05-01", "value": 1.0}}},
     )
 
-    assert writes == [("housing:current:v1", {"latest": {"housing_starts": {"date": "2026-05-01", "value": 1.0}}})]
+    assert writes[0][0] == "housing:current:v1"
+    assert writes[0][1]["latest"] == {"housing_starts": {"date": "2026-05-01", "value": 1.0}}
+    assert writes[0][1]["_meta"]["source_registry"]["source_id"] == "housing"
     assert result["_meta"]["snapshot"]["key"] == "housing:current:v1"
+    assert result["_meta"]["source_registry"]["source_id"] == "housing"
 
 
 def test_snapshot_backed_response_force_refresh_bypasses_cache(monkeypatch):
@@ -144,6 +147,7 @@ def test_refresh_macro_snapshots_records_independent_failures(monkeypatch):
     result = ms.refresh_macro_snapshots()
 
     assert [row["status"] for row in result["snapshots"]] == ["ok", "error", "ok"]
+    assert result["snapshots"][1]["source_registry"]["source_id"] == "housing"
     assert {key for key, _payload in writes} == {ms.SNAPSHOT_LABOR_MARKET, ms.SNAPSHOT_ECONOMIC_GROWTH}
     assert failures == [(ms.SNAPSHOT_HOUSING, "FRED down")]
 

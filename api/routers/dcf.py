@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from api.cache import get_or_set_cached, long_cache, stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_value
+from ontology.sources.source_registry import attach_source_registry_metadata
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ def get_dcf_historical(ticker: str):
         except Exception as e:
             raise DataFetchError(source="dcf_historical", detail=str(e)) from e
 
-        return serialize_value(data)
+        return attach_source_registry_metadata(serialize_value(data), source_id="dcf_historical")
 
     return get_or_set_cached(long_cache, key, loader)
 
@@ -170,4 +171,4 @@ def run_dcf_valuation(req: DCFValuationRequest):
     except Exception as e:
         raise DataFetchError(source="dcf_valuation", detail=str(e)) from e
 
-    return stamp_fresh(serialize_value(data))
+    return attach_source_registry_metadata(stamp_fresh(serialize_value(data)), source_id="dcf_valuation")

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from api.postgres import open_connection, use_postgres_state
+from ontology.sources.source_registry import source_registry_metadata
 
 logger = logging.getLogger("api.retrieval")
 
@@ -41,6 +42,12 @@ _EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
 _MAX_CHUNK_TOKENS = 500
 _OVERLAP_TOKENS = 100
 _CHARS_PER_TOKEN = 4  # rough estimate
+
+
+def _source_registry_for_doc_type(doc_type: Any) -> dict[str, Any] | None:
+    source_id = "portfolio_news_digest" if str(doc_type or "") == "news_digest" else "retrieval_index"
+    return source_registry_metadata(source_id)
+
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -529,6 +536,7 @@ def search(
                 "stale_after": row["stale_after"],
                 "is_stale": bool(row["is_stale"]),
                 "content_hash": row["content_hash"],
+                "source_registry": _source_registry_for_doc_type(row["doc_type"]),
             }
         )
 
@@ -722,6 +730,7 @@ def _retrieval_result_from_row(
         "is_stale": bool(_row_get(row, "is_stale", False)),
         "content_hash": _row_get(row, "content_hash"),
         "retrieval_mode": mode,
+        "source_registry": _source_registry_for_doc_type(_row_get(row, "doc_type")),
     }
     if fallback_reason:
         result["fallback_reason"] = fallback_reason

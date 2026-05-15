@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.serializers import serialize_dataframe, serialize_value
+from ontology.sources.source_registry import attach_source_registry_metadata
 
 router = APIRouter()
 
@@ -117,7 +118,7 @@ def _compute_fundamental_momentum(req: FMRequest) -> dict[str, Any]:
         rev_data = get_rev(tickers=tickers, benchmark=benchmark)
         result["rev"] = _serialize_fm(rev_data)
 
-    return result
+    return attach_source_registry_metadata(result, source_id="fundamental_momentum")
 
 
 @router.post("/fundamental-momentum")

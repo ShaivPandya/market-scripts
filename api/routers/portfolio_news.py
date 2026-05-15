@@ -9,6 +9,7 @@ from api.action_execution import stage_api_action
 from api.exceptions import AppError, NotFoundError, ValidationError
 from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
+from ontology.sources.source_registry import attach_source_registry_metadata
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ def list_portfolio_news(refresh: bool = False):
     del refresh
     from portfolio.news_digests import list_digests
 
-    return serialize_response(list_digests())
+    return attach_source_registry_metadata(serialize_response(list_digests()), source_id="portfolio_news_digest")
 
 
 @router.post("/portfolio-news")
@@ -86,14 +87,13 @@ async def upload_portfolio_news_digest(
     filename = Path(file.filename or "digest.md").name
 
     try:
-        return serialize_response(
-            stage_api_action(
-                "create_portfolio_news_digest",
-                {"content": content, "filename": filename},
-                source_id="portfolio_news.upload_portfolio_news_digest",
-                reason=f"Upload portfolio news digest {filename}",
-            )
+        staged = stage_api_action(
+            "create_portfolio_news_digest",
+            {"content": content, "filename": filename},
+            source_id="portfolio_news.upload_portfolio_news_digest",
+            reason=f"Upload portfolio news digest {filename}",
         )
+        return attach_source_registry_metadata(serialize_response(staged), source_id="portfolio_news_digest")
     except Exception as exc:
         if isinstance(exc, (AppError, ValidationError)):
             raise
@@ -105,7 +105,9 @@ def get_portfolio_news_digest(digest_id: str):
     from portfolio.news_digests import get_digest, validate_digest_id
 
     try:
-        return serialize_response(get_digest(validate_digest_id(digest_id)))
+        return attach_source_registry_metadata(
+            serialize_response(get_digest(validate_digest_id(digest_id))), source_id="portfolio_news_digest"
+        )
     except ValueError as exc:
         raise ValidationError("Invalid news digest id.") from exc
     except FileNotFoundError as exc:
@@ -125,9 +127,10 @@ def delete_portfolio_news_digest(digest_id: str):
         get_digest(normalized_digest_id)
     except FileNotFoundError as exc:
         raise NotFoundError("news digest", normalized_digest_id) from exc
-    return stage_api_action(
+    staged = stage_api_action(
         "delete_portfolio_news_digest",
         {"digest_id": normalized_digest_id},
         source_id="portfolio_news.delete_portfolio_news_digest",
         reason=f"Delete portfolio news digest {normalized_digest_id}",
     )
+    return attach_source_registry_metadata(staged, source_id="portfolio_news_digest")

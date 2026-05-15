@@ -361,6 +361,19 @@ def _fill_liquidity_snapshot_gap(raw: dict[str, Any], module_status: dict[str, d
         }
 
 
+def _attach_source_registry_to_module_status(module_status: dict[str, dict[str, Any]]) -> None:
+    try:
+        from ontology.sources.source_registry import source_registry_metadata
+    except Exception:
+        return
+    for module_name, state in module_status.items():
+        if not isinstance(state, dict):
+            continue
+        registry = source_registry_metadata(module_name)
+        if registry:
+            state.setdefault("source_registry", registry)
+
+
 def _score_positioning(rows: Any) -> tuple[float | None, dict[str, Any]]:
     clean_rows = _as_rows(rows)
     if not clean_rows:
@@ -1019,6 +1032,7 @@ def build_signal_aggregator_from_payloads(
     """Build a signal-aggregator response from already-fetched module payloads."""
     lookback = max(26, min(int(lookback_weeks), 520))
     _fill_liquidity_snapshot_gap(raw, module_status)
+    _attach_source_registry_to_module_status(module_status)
 
     vix_data = _as_dict(raw.get("vix_term_structure"))
     breadth_data = _as_dict(raw.get("market_breadth"))

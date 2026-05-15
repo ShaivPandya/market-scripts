@@ -76,6 +76,7 @@ def test_source_health_marks_fresh_snapshot_ok():
     sources = _sources(payload)
     assert sources["market_breadth:sp500:1y"]["status"] == "ok"
     assert sources["market_breadth:sp500:1y"]["required"] is True
+    assert sources["market_breadth:sp500:1y"]["source_registry"]["source_id"] == "market_breadth"
 
 
 def test_source_health_stale_required_affects_overall_quality():

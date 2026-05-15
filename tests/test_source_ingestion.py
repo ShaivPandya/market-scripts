@@ -175,12 +175,15 @@ def test_upload_markdown_writes_redacted_source_and_dedupes_bytes(fake_service: 
     second = fake_service.upload_artifact(upload)
 
     assert first["artifact"]["object_type"] == "DocumentArtifact"
+    assert first["_meta"]["source_registry"]["source_id"] == "source_ingestion_document"
+    assert first["artifact"]["metadata"]["source_registry"]["source_id"] == "source_ingestion_document"
     assert first["duplicate_artifact_bytes"] is False
     assert second["duplicate_artifact_bytes"] is True
     source_records = fake_service.temporal_repo.records.values()  # type: ignore[attr-defined]
     assert len(list(source_records)) == 1
     source_record = next(iter(fake_service.temporal_repo.records.values()))  # type: ignore[attr-defined]
     assert "This is source text" not in str(source_record["payload"])
+    assert source_record["payload"]["source_registry"]["source_id"] == "source_ingestion_document"
     assert {"source_manifest_governs_source_record", "source_record_produces_document_artifact"} <= {
         relation["relation_type"]
         for relation in fake_service.objects.relations  # type: ignore[attr-defined]
@@ -208,6 +211,7 @@ def test_image_upload_with_extractors_writes_media_observation_and_classificatio
         )
     )
     assert result["artifact"]["object_type"] == "MediaArtifact"
+    assert result["_meta"]["source_registry"]["source_id"] == "source_ingestion_media"
     assert result["artifact"]["width"] == 2
     assert result["artifact"]["height"] == 3
     object_types = {row["object_type"] for row in fake_service.objects.objects.values()}  # type: ignore[attr-defined]

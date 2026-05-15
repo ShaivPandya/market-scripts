@@ -68,6 +68,8 @@ def write_source_result_records(
     repo = repository or TemporalOntologyRepository()
     data = getattr(result, "data", None)
     lineage = getattr(result, "lineage", None)
+    registry = getattr(lineage, "source_registry", None)
+    registry_metadata = registry if isinstance(registry, dict) else {}
     source_version = str(getattr(lineage, "adapter_version", "") or "unknown")
     provenance_event_id = getattr(lineage, "provenance_event_id", None)
     if not provenance_event_id:
@@ -77,14 +79,15 @@ def write_source_result_records(
     valid_from: datetime | str = as_of or fetched_at
     status = str(getattr(result, "status", "ok") or "ok")
     quality = str(getattr(result, "quality", "ok") or "ok")
-    dataset_name = dataset or source_name
+    dataset_name = dataset or str(registry_metadata.get("source_id") or source_name)
+    vendor_name = str(registry_metadata.get("vendor_name") or vendor)
 
     rows: list[dict[str, Any]] = []
     for record_kind, record_key, payload in _records_from_data(source_name, data):
         rows.append(
             repo.write_source_record_version(
                 SourceRecordWrite(
-                    vendor=vendor,
+                    vendor=vendor_name,
                     source_name=source_name,
                     source_version=source_version,
                     dataset=dataset_name,

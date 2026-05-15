@@ -13,6 +13,7 @@ from typing import Any
 
 from api.postgres import use_postgres_state
 from api.snapshot_keys import DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
+from ontology.sources.source_registry import source_registry_metadata_for_snapshot
 from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
 
 logger = logging.getLogger(__name__)
@@ -301,6 +302,9 @@ def attach_snapshot_meta(
     if record.artifact_uri:
         snapshot_meta["artifact_uri"] = record.artifact_uri
     meta["snapshot"] = snapshot_meta
+    source_registry = source_registry_metadata_for_snapshot(record.snapshot_key)
+    if source_registry:
+        meta["source_registry"] = source_registry
     out["_meta"] = meta
     return out
 
