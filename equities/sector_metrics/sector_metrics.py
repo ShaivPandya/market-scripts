@@ -109,6 +109,7 @@ def get_sp500_constituents() -> pd.DataFrame:
 def download_prices(
     tickers: list[str],
     period: str = "2y",
+    interval: str = "1d",
     batch_size: int = 100,
     auto_adjust: bool = True,
 ) -> pd.DataFrame:
@@ -122,7 +123,7 @@ def download_prices(
         data = yf_download(
             tickers=" ".join(batch),
             period=period,
-            interval="1d",
+            interval=interval,
             auto_adjust=auto_adjust,
             progress=False,
             group_by="column",
@@ -151,6 +152,68 @@ def download_prices(
     # Drop duplicate columns if any batch overlaps
     closes_all = closes_all.loc[:, ~closes_all.columns.duplicated()]
     return closes_all
+
+
+SECTOR_SERIES_TIMEFRAMES = {
+    "This Week": {"period": "5d", "interval": "15m"},
+    "Daily": {"period": "90d", "interval": "1d"},
+    "Weekly": {"period": "2y", "interval": "1wk"},
+    "Monthly": {"period": "5y", "interval": "1mo"},
+}
+
+
+def get_sector_etf_series(timeframe: str = "Daily") -> dict:
+    """
+    Return sector ETF price series and SPY-relative ratio series.
+
+    The raw series are adjusted sector SPDR ETF prices. The relative series are
+    ETF price divided by SPY price, so frontend chart normalization shows each
+    sector's performance versus the benchmark over the selected window.
+    """
+    tf = SECTOR_SERIES_TIMEFRAMES.get(timeframe)
+    if tf is None:
+        return {"error": f"Invalid timeframe: {timeframe}"}
+
+    etf_prices = fetch_etf_prices(
+        SECTOR_ETFS,
+        benchmark=BENCHMARK_ETF,
+        period=tf["period"],
+        interval=tf["interval"],
+    ).ffill()
+
+    if etf_prices.empty:
+        return {"error": "No data returned from yfinance"}
+    if hasattr(etf_prices.index, "tz") and etf_prices.index.tz is not None:
+        etf_prices.index = etf_prices.index.tz_localize(None)
+
+    sector_prices: dict[str, pd.Series] = {}
+    sector_relative_prices: dict[str, pd.Series] = {}
+    benchmark_raw = etf_prices[BENCHMARK_ETF] if BENCHMARK_ETF in etf_prices.columns else pd.Series(dtype=float)
+    benchmark = pd.to_numeric(benchmark_raw, errors="coerce")
+
+    for sector, ticker in SECTOR_ETFS.items():
+        if ticker not in etf_prices.columns:
+            continue
+
+        prices = pd.to_numeric(etf_prices[ticker], errors="coerce").dropna()
+        if prices.empty:
+            continue
+
+        sector_prices[sector] = prices
+
+        aligned = pd.concat([prices.rename("sector"), benchmark.rename("benchmark")], axis=1).ffill().dropna()
+        aligned = aligned[aligned["benchmark"] > 0]
+        if not aligned.empty:
+            sector_relative_prices[sector] = aligned["sector"] / aligned["benchmark"]
+
+    return {
+        "sector_prices": sector_prices,
+        "sector_relative_prices": sector_relative_prices,
+        "sector_order": list(SECTOR_ETFS.keys()),
+        "benchmark": BENCHMARK_ETF,
+        "timeframe": timeframe,
+        "timestamp": dt.datetime.now(),
+    }
 
 
 def nearest_on_or_before(index: pd.DatetimeIndex, target: pd.Timestamp) -> pd.Timestamp:
@@ -391,10 +454,15 @@ def compute_sector_weights(
     return out[col].dropna()
 
 
-def fetch_etf_prices(sector_etfs: dict[str, str], benchmark: str = BENCHMARK_ETF, period: str = "2y") -> pd.DataFrame:
+def fetch_etf_prices(
+    sector_etfs: dict[str, str],
+    benchmark: str = BENCHMARK_ETF,
+    period: str = "2y",
+    interval: str = "1d",
+) -> pd.DataFrame:
     """Download all sector ETF prices plus benchmark in one pass."""
     tickers = list(sector_etfs.values()) + [benchmark]
-    return download_prices(tickers, period=period, batch_size=50, auto_adjust=True)
+    return download_prices(tickers, period=period, interval=interval, batch_size=50, auto_adjust=True)
 
 
 def compute_pct_above_200dma(sector_etfs: dict[str, str], etf_prices: pd.DataFrame) -> pd.Series:

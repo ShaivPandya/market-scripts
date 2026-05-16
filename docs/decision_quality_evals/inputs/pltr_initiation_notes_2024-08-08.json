@@ -1,0 +1,23 @@
+{
+  "as_of_date": "2024-08-08",
+  "decision_type": "new_buy",
+  "decision_context": "Initiate PLTR as a new long after Q2 2024 results and price confirmation.",
+  "human_initiation_rationale": "Buy PLTR because Q2 2024 showed AIP and U.S. commercial acceleration were real, the bootcamp model appeared to shorten sales cycles, GAAP profitability and Rule of 40 quality supported business maturity, and price action confirmed the inflection by closing above all selected moving averages with strong 3-month and 12-month ROC.",
+  "selected_inputs": [
+    "Q2 2024 revenue growth of 27% YoY and raised guidance",
+    "U.S. commercial revenue growth of 55% YoY",
+    "U.S. commercial customer count growth of 83% YoY",
+    "Seven consecutive quarters of GAAP profitability",
+    "Rule of 40 score of 64%",
+    "AIP bootcamp go-to-market acceleration",
+    "High valuation and insider selling as disconfirming evidence",
+    "Close above all selected moving averages",
+    "Positive 1-month, 3-month, and 12-month ROC"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Q2 2024 earnings and AIP commercial acceleration.",
+    "expected_date": "2024-08-05 to 2024-08-08",
+    "why_it_mattered": "The report converted AIP from narrative to measurable commercial acceleration and made the market reassess Palantir's scalability."
+  },
+  "human_notes": "User provided PLTR decision date, new buy decision type, close, moving averages, and ROC values."
+}

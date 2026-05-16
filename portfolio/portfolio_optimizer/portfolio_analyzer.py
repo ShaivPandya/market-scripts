@@ -581,15 +581,24 @@ def _synthetic_idea_rows(existing_tickers: set[str]) -> list[dict[str, Any]]:
         direction = _idea_analyzer_direction(idea)
         if direction not in ANALYZER_IDEA_DIRECTIONS:
             continue
+        asset = str(idea.get("asset") or "equity").strip().lower()
+        instrument_type = str(idea.get("instrument_type") or "security").strip().lower()
+        price_symbol = str(idea.get("price_symbol") or ticker).strip().upper()
+        contract_multiplier = _safe_float(idea.get("contract_multiplier"))
         rows.append(
             {
                 "ticker": ticker,
-                "asset": "equity",
-                "instrument_type": "security",
+                "asset": asset,
+                "instrument_type": instrument_type,
                 "direction": direction,
                 "quantity": 0,
-                "contract_multiplier": 1,
-                "price_symbol": ticker,
+                "contract_multiplier": contract_multiplier if contract_multiplier and contract_multiplier > 0 else 1,
+                "price_symbol": price_symbol,
+                "fx_base_currency": str(idea.get("fx_base_currency") or "").strip().upper(),
+                "fx_quote_currency": str(idea.get("fx_quote_currency") or "").strip().upper(),
+                "currency": str(idea.get("currency") or "").strip().upper(),
+                "country": str(idea.get("country") or "").strip().upper(),
+                "exchange": str(idea.get("exchange") or "").strip().upper(),
                 "source_type": "idea",
                 "source_id": str(idea.get("id") or idea.get("object_uid") or ""),
                 "idea_id": str(idea.get("id") or idea.get("object_uid") or ""),

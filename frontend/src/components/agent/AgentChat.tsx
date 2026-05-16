@@ -1,5 +1,5 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import {
@@ -9,7 +9,7 @@ import {
   type AgentResponsePreferences,
   type AgentWorkflow,
 } from "@/lib/api"
-import { deleteSession, fetchSessionHistory, useAgentChat, type SessionSummary } from "@/hooks/useAgentChat"
+import { deleteSession, fetchSessionHistory, renameSessionTitle, useAgentChat, type SessionSummary } from "@/hooks/useAgentChat"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import { AgentChatComposer } from "./AgentChatComposer"
 import { AgentChatHeader } from "./AgentChatHeader"
@@ -90,7 +90,18 @@ function invalidateWorkflowRunQueries(
 }
 
 export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
-  const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat, loadSession } = useAgentChat()
+  const {
+    messages,
+    isStreaming,
+    error,
+    sessionId,
+    sessionTitle,
+    sendMessage,
+    stopStreaming,
+    clearChat,
+    loadSession,
+    applySessionTitle,
+  } = useAgentChat()
   const queryClient = useQueryClient()
   const isDesktop = useMediaQuery("(min-width: 1024px)")
   const [viewModeOverride, setViewModeOverride] = useState<AgentViewMode | null>(null)
@@ -105,7 +116,11 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const [draftPreferences, setDraftPreferences] = useState<AgentResponsePreferences>(cachedPreferences)
   const [preferenceSaveError, setPreferenceSaveError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputValueRef = useRef(input)
+  const inputSelectionRef = useRef<{ start: number; end: number } | null>(null)
+  const wasOpenRef = useRef(open)
   const wasStreamingRef = useRef(isStreaming)
   const pendingWorkflowInvalidationRef = useRef<WorkflowInvalidationTarget | null>(null)
 
@@ -145,9 +160,41 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     ? normalizePreferences(preferencesQuery.data)
     : cachedPreferences
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? "auto" : "smooth" })
-  }, [messages, isStreaming, activePanel])
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior) => {
+    const container = messagesScrollRef.current
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior })
+      return
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" })
+  }, [])
+
+  const focusComposerTextarea = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    const inputValue = inputValueRef.current
+    const selection = inputSelectionRef.current ?? { start: inputValue.length, end: inputValue.length }
+    textarea.focus()
+    const start = Math.min(selection.start, inputValue.length)
+    const end = Math.min(selection.end, inputValue.length)
+    textarea.setSelectionRange(start, end)
+  }, [])
+
+  useLayoutEffect(() => {
+    const wasOpen = wasOpenRef.current
+    wasOpenRef.current = open
+
+    if (!open || activePanel !== "chat") return
+
+    const behavior: ScrollBehavior = isStreaming || !wasOpen ? "auto" : "smooth"
+    scrollMessagesToBottom(behavior)
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      scrollMessagesToBottom(behavior)
+    })
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [messages, isStreaming, activePanel, open, scrollMessagesToBottom])
 
   useEffect(() => {
     if (wasStreamingRef.current && !isStreaming && pendingWorkflowInvalidationRef.current) {
@@ -159,13 +206,17 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
 
   useEffect(() => {
     if (open && activePanel === "chat") {
-      window.setTimeout(() => textareaRef.current?.focus(), 160)
+      window.setTimeout(focusComposerTextarea, 160)
     }
-  }, [open, activePanel])
+  }, [open, activePanel, focusComposerTextarea])
 
   useEffect(() => {
     if (textareaRef.current) resizeChatTextarea(textareaRef.current)
   }, [input, open, viewMode])
+
+  useEffect(() => {
+    inputValueRef.current = input
+  }, [input])
 
   useEffect(() => {
     if (preferencesQuery.data) {
@@ -182,6 +233,8 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
     pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(trimmed)
+    inputValueRef.current = ""
+    inputSelectionRef.current = { start: 0, end: 0 }
     setInput("")
     setActivePanel("chat")
     sendMessage(trimmed, screenContext, activePreferences)
@@ -239,9 +292,53 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     }
   }
 
+  async function handleRenameSession(targetSessionId: string, title: string) {
+    const previous = history.find(session => session.session_id === targetSessionId)
+    const previousActiveTitle = sessionId === targetSessionId ? sessionTitle : null
+    const now = new Date().toISOString()
+
+    setHistory(prev => prev.map(session =>
+      session.session_id === targetSessionId
+        ? { ...session, title, title_source: "manual", title_updated_at: now }
+        : session,
+    ))
+    if (sessionId === targetSessionId) {
+      applySessionTitle(targetSessionId, title, "manual")
+    }
+
+    try {
+      const updated = await renameSessionTitle(targetSessionId, title)
+      setHistory(prev => prev.map(session =>
+        session.session_id === targetSessionId ? { ...session, ...updated } : session,
+      ))
+      if (sessionId === targetSessionId) {
+        applySessionTitle(targetSessionId, updated.title ?? title, updated.title_source ?? "manual")
+      }
+    } catch (err) {
+      if (previous) {
+        setHistory(prev => prev.map(session =>
+          session.session_id === targetSessionId ? previous : session,
+        ))
+      }
+      if (sessionId === targetSessionId) {
+        applySessionTitle(targetSessionId, previousActiveTitle, previous?.title_source ?? null)
+      }
+      throw err
+    }
+  }
+
   function handleClearChat() {
     clearChat()
     setActivePanel("chat")
+  }
+
+  function handleInputChange(value: string) {
+    inputValueRef.current = value
+    setInput(value)
+  }
+
+  function handleInputSelectionChange(start: number, end: number) {
+    inputSelectionRef.current = { start, end }
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -275,7 +372,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
           onOpenAutoFocus={event => {
             event.preventDefault()
             if (activePanel === "chat") {
-              window.setTimeout(() => textareaRef.current?.focus(), 120)
+              window.setTimeout(focusComposerTextarea, 120)
             }
           }}
         >
@@ -289,6 +386,12 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             viewMode={viewMode}
             isDesktop={isDesktop}
             canClear={messages.length > 0}
+            sessionId={sessionId}
+            sessionTitle={sessionTitle}
+            onRenameTitle={title => {
+              if (!sessionId) return Promise.resolve()
+              return handleRenameSession(sessionId, title)
+            }}
             onBack={() => setActivePanel("chat")}
             onShowHistory={handleShowHistory}
             onShowPreferences={handleShowPreferences}
@@ -305,6 +408,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   loading={historyLoading}
                   onLoadSession={handleLoadSession}
                   onDeleteSession={handleDeleteSession}
+                  onRenameSession={handleRenameSession}
                 />
               ) : activePanel === "preferences" ? (
                 <AgentPreferencesPanel
@@ -322,11 +426,13 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     isStreaming={isStreaming}
                     error={error}
                     onPrompt={handleQuickPrompt}
+                    scrollContainerRef={messagesScrollRef}
                     messagesEndRef={messagesEndRef}
                   />
                   <AgentChatComposer
                     input={input}
-                    onInputChange={setInput}
+                    onInputChange={handleInputChange}
+                    onInputSelectionChange={handleInputSelectionChange}
                     onSend={handleSend}
                     onStop={stopStreaming}
                     isStreaming={isStreaming}

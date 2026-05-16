@@ -1,0 +1,14 @@
+{
+  "ticker": "NFLX",
+  "as_of_date": "2012-10-31",
+  "portfolio_context": {
+    "position_status": "new_position",
+    "decision": "buy",
+    "historical_expression": "Common equity plus call-option exposure disclosed through a Schedule 13D.",
+    "position_size_context": "Icahn disclosed about 9.98% beneficial ownership, including options, with an aggregate purchase price of about $168.9 million.",
+    "conviction": 4,
+    "conviction_context": "High-conviction new position because the stake size and activist framing were substantial, but this gold fixture stops short of max conviction because exact portfolio risk budget, price-action snapshot, liquidity constraints, and invalidation sizing rules were not selected.",
+    "target_size": null,
+    "current_exposure": "No prior NFLX exposure selected in the case inputs."
+  }
+}

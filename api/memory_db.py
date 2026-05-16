@@ -8,6 +8,7 @@ research across sessions.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -37,6 +38,9 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
     key_tickers  TEXT,          -- JSON array
     key_topics   TEXT,          -- JSON array
     summary      TEXT,
+    title        TEXT,
+    title_source TEXT,
+    title_updated_at TEXT,
     transcript   TEXT NOT NULL  -- JSON array of messages
 )
 """
@@ -45,6 +49,8 @@ _CREATE_SESSIONS_IDX = """
 CREATE INDEX IF NOT EXISTS idx_sessions_ended_at
 ON conversation_sessions(ended_at DESC)
 """
+
+SESSION_TITLE_MAX_CHARS = 80
 
 # ---------------------------------------------------------------------------
 # Connection
@@ -85,11 +91,15 @@ def _init_db(conn: sqlite3.Connection) -> None:
     for col, typedef in [
         ("rolling_summary", "TEXT"),
         ("server_messages", "TEXT NOT NULL DEFAULT '[]'"),
+        ("title", "TEXT"),
+        ("title_source", "TEXT"),
+        ("title_updated_at", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE conversation_sessions ADD COLUMN {col} {typedef}")
         except sqlite3.OperationalError:
             pass  # column already exists
+    _backfill_missing_titles(conn)
     conn.commit()
 
 
@@ -127,6 +137,10 @@ def save_session(
             (sid, started_at, now, len(messages), transcript_json, transcript_json),
         )
         conn.commit()
+
+    first_user = _first_user_content(messages)
+    if first_user:
+        set_deterministic_title_if_missing(sid, first_user)
 
     return {
         "session_id": sid,
@@ -171,7 +185,8 @@ def list_sessions(limit: int = 20) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT session_id, started_at, ended_at, message_count,
-                   key_tickers, key_topics, summary
+                   key_tickers, key_topics, summary,
+                   title, title_source, title_updated_at
             FROM conversation_sessions
             ORDER BY ended_at DESC
             LIMIT ?
@@ -188,7 +203,9 @@ def get_session(session_id: str) -> dict[str, Any] | None:
         row = conn.execute(
             """
                 SELECT session_id, started_at, ended_at, message_count,
-                   key_tickers, key_topics, summary, transcript, server_messages
+                   key_tickers, key_topics, summary,
+                   title, title_source, title_updated_at,
+                   transcript, server_messages
             FROM conversation_sessions
             WHERE session_id = ?
             """,
@@ -236,7 +253,8 @@ def get_recent_summaries(
         rows = conn.execute(
             """
             SELECT session_id, started_at, ended_at, message_count,
-                   key_tickers, key_topics, summary
+                   key_tickers, key_topics, summary,
+                   title, title_source, title_updated_at
             FROM conversation_sessions
             WHERE summary IS NOT NULL AND summary != ''
             ORDER BY ended_at DESC
@@ -275,7 +293,8 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
             row = conn.execute(
                 """
                 SELECT session_id, started_at, ended_at, message_count,
-                       rolling_summary, server_messages, transcript
+                       rolling_summary, server_messages, transcript,
+                       title, title_source, title_updated_at
                 FROM conversation_sessions
                 WHERE session_id = ?
                 """,
@@ -297,6 +316,9 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
                 "rolling_summary": row["rolling_summary"],
                 "server_messages": msgs,
                 "message_count": row["message_count"] or 0,
+                "title": row["title"],
+                "title_source": row["title_source"],
+                "title_updated_at": row["title_updated_at"],
             }
 
     # Create a new session
@@ -317,6 +339,9 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
         "rolling_summary": None,
         "server_messages": [],
         "message_count": 0,
+        "title": None,
+        "title_source": None,
+        "title_updated_at": None,
     }
 
 
@@ -369,6 +394,143 @@ def update_rolling_summary(session_id: str, summary: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Session titles
+# ---------------------------------------------------------------------------
+
+
+def normalize_session_title(value: str) -> str:
+    """Collapse and validate a user-visible conversation title."""
+    title = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not title:
+        raise ValueError("Title cannot be empty")
+    if len(title) > SESSION_TITLE_MAX_CHARS:
+        raise ValueError(f"Title must be {SESSION_TITLE_MAX_CHARS} characters or fewer")
+    return title
+
+
+def deterministic_title_from_text(value: str | None) -> str | None:
+    """Build a useful fallback title from the first user prompt."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return None
+
+    workflow_match = re.match(r"^/workflow:([A-Za-z0-9_]+)(?::([A-Za-z0-9._=-]+))?(?:\s+(.*))?$", text)
+    if workflow_match:
+        workflow = workflow_match.group(1).replace("_", " ").strip().title()
+        ticker = (workflow_match.group(2) or "").strip().upper()
+        trailing = (workflow_match.group(3) or "").strip()
+        if trailing:
+            text = trailing
+        elif ticker:
+            text = f"{ticker} {workflow}"
+        else:
+            text = workflow
+
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n-:,.!?")
+    if not text:
+        return None
+    return _truncate_title(text)
+
+
+def set_deterministic_title_if_missing(session_id: str, first_user_message: str | None) -> bool:
+    title = deterministic_title_from_text(first_user_message)
+    if not title:
+        return False
+    now = datetime.now(UTC).isoformat()
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET title = ?,
+                title_source = ?,
+                title_updated_at = ?
+            WHERE session_id = ?
+              AND (title IS NULL OR trim(title) = '')
+              AND (title_source IS NULL OR title_source != 'manual')
+            """,
+            (title, "deterministic", now, session_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def update_generated_title(session_id: str, title: str) -> bool:
+    normalized = normalize_session_title(title)
+    now = datetime.now(UTC).isoformat()
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET title = ?,
+                title_source = ?,
+                title_updated_at = ?
+            WHERE session_id = ?
+              AND (title_source IS NULL OR title_source = 'deterministic')
+            """,
+            (normalized, "generated", now, session_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def rename_session(session_id: str, title: str) -> dict[str, Any] | None:
+    normalized = normalize_session_title(title)
+    now = datetime.now(UTC).isoformat()
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET title = ?,
+                title_source = ?,
+                title_updated_at = ?
+            WHERE session_id = ?
+            """,
+            (normalized, "manual", now, session_id),
+        )
+        conn.commit()
+    if cur.rowcount <= 0:
+        return None
+    return get_session_summary(session_id)
+
+
+def get_session_summary(session_id: str) -> dict[str, Any] | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute(
+            """
+            SELECT session_id, started_at, ended_at, message_count,
+                   key_tickers, key_topics, summary,
+                   title, title_source, title_updated_at
+            FROM conversation_sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def get_session_title_metadata(session_id: str) -> dict[str, Any] | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute(
+            """
+            SELECT session_id, title, title_source, title_updated_at
+            FROM conversation_sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return cast(dict[str, Any], dict(row))
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -384,6 +546,64 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
                 d[key] = None
     d.pop("transcript", None)
     return d
+
+
+def _truncate_title(value: str) -> str:
+    if len(value) <= SESSION_TITLE_MAX_CHARS:
+        return value
+    candidate = value[:SESSION_TITLE_MAX_CHARS].rstrip()
+    word_boundary = candidate.rfind(" ")
+    if word_boundary >= 40:
+        candidate = candidate[:word_boundary]
+    return candidate.rstrip(" -:,.!?")
+
+
+def _first_user_content(messages: list[dict[str, Any]]) -> str | None:
+    for msg in messages:
+        if msg.get("role") == "user":
+            content = str(msg.get("content", "")).strip()
+            if content:
+                return content
+    return None
+
+
+def _backfill_missing_titles(conn: sqlite3.Connection) -> None:
+    try:
+        rows = conn.execute(
+            """
+            SELECT session_id, transcript, server_messages
+            FROM conversation_sessions
+            WHERE title IS NULL OR trim(title) = ''
+            """
+        ).fetchall()
+    except Exception:
+        return
+    now = datetime.now(UTC).isoformat()
+    for row in rows:
+        messages: list[dict[str, Any]] = []
+        for field in ("transcript", "server_messages"):
+            try:
+                raw = row[field]
+                parsed = json.loads(raw) if raw else []
+                if isinstance(parsed, list) and parsed:
+                    messages = [m for m in parsed if isinstance(m, dict)]
+                    break
+            except Exception:
+                continue
+        title = deterministic_title_from_text(_first_user_content(messages))
+        if not title:
+            continue
+        conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET title = ?,
+                title_source = ?,
+                title_updated_at = ?
+            WHERE session_id = ?
+              AND (title IS NULL OR trim(title) = '')
+            """,
+            (title, "deterministic", now, row["session_id"]),
+        )
 
 
 def _tickers_overlap(

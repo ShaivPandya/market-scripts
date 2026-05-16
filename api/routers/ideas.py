@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
@@ -31,6 +31,16 @@ from decision_quality import (
 from ontology.object_service import OntologyObjectService
 from ontology.policy import actor_to_dict, admin_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.instruments import (
+    default_contract_multiplier,
+    futures_spec,
+    is_continuous_future_symbol,
+    normalize_asset,
+    normalize_instrument_type,
+    normalize_spot_fx_symbol,
+    normalize_symbol,
+    spot_fx_currencies,
+)
 
 router = APIRouter()
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +60,8 @@ CANONICAL_IDEA_FACTORS = (
 )
 type IdeaComparisonStatus = Literal["watching", "researching", "ready_for_review"]
 type IdeaStatus = Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"]
+type IdeaAsset = Literal["equity", "commodity", "fx", "bond"]
+type IdeaInstrumentType = Literal["security", "future", "spot_fx"]
 ACTIONABLE_IDEA_STATUSES: tuple[IdeaComparisonStatus, ...] = ("watching", "researching", "ready_for_review")
 CRITICAL_MISSING_SEVERITIES = {"critical", "block"}
 RECOMMENDATION_STATUSES = {"clear", "review_required", "blocked", "error"}
@@ -62,11 +74,32 @@ IDEA_EVALUATION_OWNED_CHILD_RELATIONS = {
     "research_object_disconfirmed_by_evidence",
 }
 IDEA_EVIDENCE_OWNED_CHILD_RELATIONS = {"evidence_has_citation", "evidence_cites_citation"}
+IDEA_INSTRUMENT_FIELDS = {
+    "ticker",
+    "asset",
+    "instrument_type",
+    "price_symbol",
+    "contract_multiplier",
+    "fx_base_currency",
+    "fx_quote_currency",
+    "currency",
+    "country",
+    "exchange",
+}
 
 
 class IdeaCreateRequest(BaseModel):
     ticker: str
     company_name: str | None = None
+    asset: IdeaAsset | None = None
+    instrument_type: IdeaInstrumentType | None = None
+    price_symbol: str | None = None
+    contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
     status: IdeaStatus = "watching"
@@ -81,10 +114,26 @@ class IdeaCreateRequest(BaseModel):
             raise ValueError("Ticker cannot be empty.")
         return ticker
 
+    @model_validator(mode="after")
+    def _normalize_instrument(self) -> IdeaCreateRequest:
+        normalized = _normalized_idea_instrument(self.model_dump())
+        for key, value in normalized.items():
+            setattr(self, key, value)
+        return self
+
 
 class IdeaUpdateRequest(BaseModel):
     ticker: str | None = None
     company_name: str | None = None
+    asset: IdeaAsset | None = None
+    instrument_type: IdeaInstrumentType | None = None
+    price_symbol: str | None = None
+    contract_multiplier: float | None = None
+    fx_base_currency: str | None = None
+    fx_quote_currency: str | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
     user_notes: str | None = None
     tags: list[str] | None = None
     status: IdeaStatus | None = None
@@ -160,6 +209,107 @@ def _normalize_use_portfolio_context(value: Any, *, default: bool = True) -> boo
         if normalized in {"0", "false", "f", "no", "n", "off"}:
             return False
     return bool(value)
+
+
+def _normalized_idea_instrument(payload: dict[str, Any], *, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    merged = {**(base or {}), **payload}
+    ticker_raw = merged.get("ticker") or merged.get("price_symbol")
+    price_symbol_raw = merged.get("price_symbol") or ticker_raw
+    instrument_type = normalize_instrument_type(
+        merged.get("instrument_type"),
+        ticker=str(ticker_raw or ""),
+        price_symbol=str(price_symbol_raw or ticker_raw or ""),
+    )
+
+    if instrument_type == "spot_fx":
+        price_symbol = normalize_spot_fx_symbol(price_symbol_raw or ticker_raw, field_name="price_symbol")
+        ticker = price_symbol
+        fx_base, fx_quote = spot_fx_currencies(price_symbol)
+        asset = "fx"
+        currency = fx_quote
+        exchange = str(merged.get("exchange") or "FX").strip().upper() or "FX"
+    else:
+        ticker = normalize_symbol(ticker_raw, field_name="ticker")
+        price_symbol = normalize_symbol(price_symbol_raw or ticker, field_name="price_symbol")
+        if instrument_type == "future" and not is_continuous_future_symbol(price_symbol):
+            raise ValueError("Futures ideas require a continuous '=F' price_symbol.")
+        fx_base = str(merged.get("fx_base_currency") or "").strip().upper() or None
+        fx_quote = str(merged.get("fx_quote_currency") or "").strip().upper() or None
+        spec = futures_spec(price_symbol) if instrument_type == "future" else None
+        asset = (
+            spec.asset
+            if spec is not None
+            else normalize_asset(merged.get("asset"), instrument_type=instrument_type, symbol=price_symbol)
+        )
+        currency = str(merged.get("currency") or "").strip().upper() or None
+        exchange = str(merged.get("exchange") or "").strip().upper() or None
+
+    return {
+        "ticker": ticker,
+        "asset": asset,
+        "instrument_type": instrument_type,
+        "price_symbol": price_symbol,
+        "contract_multiplier": default_contract_multiplier(
+            instrument_type=instrument_type,
+            symbol=price_symbol,
+            override=merged.get("contract_multiplier"),
+        ),
+        "fx_base_currency": fx_base,
+        "fx_quote_currency": fx_quote,
+        "currency": currency,
+        "country": str(merged.get("country") or "").strip().upper() or None,
+        "exchange": exchange,
+    }
+
+
+def _with_default_idea_instrument_fields(idea: dict[str, Any]) -> dict[str, Any]:
+    if not idea:
+        return idea
+    try:
+        normalized = _normalized_idea_instrument({}, base=idea)
+    except Exception:
+        normalized = {
+            "asset": "equity",
+            "instrument_type": "security",
+            "price_symbol": str(idea.get("ticker") or "").strip().upper(),
+            "contract_multiplier": 1.0,
+            "fx_base_currency": None,
+            "fx_quote_currency": None,
+            "currency": idea.get("currency"),
+            "country": idea.get("country"),
+            "exchange": idea.get("exchange"),
+        }
+    out = dict(idea)
+    for key, default in normalized.items():
+        if key == "ticker":
+            continue
+        if out.get(key) in (None, ""):
+            out[key] = default
+    return out
+
+
+def _idea_instrument_metadata(idea: dict[str, Any]) -> dict[str, Any]:
+    normalized = _with_default_idea_instrument_fields(idea)
+    return {
+        "ticker": normalized.get("ticker"),
+        "asset": normalized.get("asset"),
+        "instrument_type": normalized.get("instrument_type"),
+        "price_symbol": normalized.get("price_symbol"),
+        "contract_multiplier": normalized.get("contract_multiplier"),
+        "fx_base_currency": normalized.get("fx_base_currency"),
+        "fx_quote_currency": normalized.get("fx_quote_currency"),
+        "currency": normalized.get("currency"),
+        "country": normalized.get("country"),
+        "exchange": normalized.get("exchange"),
+    }
+
+
+def _is_equity_security_idea(idea: dict[str, Any]) -> bool:
+    normalized = _with_default_idea_instrument_fields(idea)
+    return (
+        str(normalized.get("asset") or "equity").lower() == "equity"
+        and str(normalized.get("instrument_type") or "security").lower() == "security"
+    )
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -628,7 +778,8 @@ def _write_idea_comparison_graph(service: OntologyObjectService, run: dict[str, 
 def _get_idea(idea_id: Any) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
     text = str(idea_id or "").strip()
-    return reads.get(text) if text.startswith("investment_idea:") else reads.get(_idea_uid(text))
+    idea = reads.get(text) if text.startswith("investment_idea:") else reads.get(_idea_uid(text))
+    return _with_default_idea_instrument_fields(idea) if idea else None
 
 
 def _list_ideas(*, status: str | None = None, include_archived: bool = False, limit: int = 200) -> list[dict[str, Any]]:
@@ -636,7 +787,7 @@ def _list_ideas(*, status: str | None = None, include_archived: bool = False, li
     ideas = OntologyRuntimeReadService().list_objects("InvestmentIdea", filters=filters, limit=limit)
     if not include_archived:
         ideas = [idea for idea in ideas if str(idea.get("status") or "").lower() != "archived"]
-    return ideas
+    return [_with_default_idea_instrument_fields(idea) for idea in ideas]
 
 
 def _list_idea_evaluations(idea_id: Any | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
@@ -654,9 +805,12 @@ def _get_idea_evaluation(evaluation_id: Any) -> dict[str, Any] | None:
 def _write_idea_evaluation(
     idea: dict[str, Any], result: dict[str, Any], *, job_id: str | None = None
 ) -> dict[str, Any]:
+    instrument = _idea_instrument_metadata(idea)
+    data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
     uid = _evaluation_uid(_stable_hash({"idea_id": idea.get("id"), "result": result, "job_id": job_id}))
     payload = {
         **result,
+        "data_quality": {**cast(dict[str, Any], data_quality), "instrument": instrument},
         "idea_id": idea.get("id"),
         "ticker": idea.get("ticker"),
         "job_id": job_id,
@@ -1177,15 +1331,28 @@ def _build_context(
     *,
     use_portfolio_context: bool = True,
 ) -> dict[str, Any]:
+    idea = _with_default_idea_instrument_fields(idea)
     ticker = str(idea["ticker"]).upper()
+    instrument = _idea_instrument_metadata(idea)
+    equity_security = _is_equity_security_idea(idea)
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
-    management_quality, management_quality_error = _read_management_quality_text(ticker)
+    management_quality, management_quality_error = (
+        _read_management_quality_text(ticker) if equity_security else (None, None)
+    )
 
     portfolio = _safe_tool("get_portfolio", {"include_hedges": True}) if use_portfolio_context else None
     signal_aggregator = _safe_tool("get_signal_aggregator", {"include_history": False, "lookback_weeks": 156})
-    industry_monitor = _safe_tool("get_industry_monitor", {"refresh": False})
-    dossier = _safe_tool("get_dossier", {"ticker": ticker})
+    industry_monitor = (
+        _safe_tool("get_industry_monitor", {"refresh": False})
+        if equity_security
+        else {"ok": True, "skipped": True, "reason": "Equity industry monitor does not apply to this instrument."}
+    )
+    dossier = (
+        _safe_tool("get_dossier", {"ticker": ticker})
+        if equity_security
+        else {"ok": True, "skipped": True, "reason": "Equity dossier does not apply to this instrument."}
+    )
 
     tool_payloads = {
         "signal_aggregator": signal_aggregator,
@@ -1216,6 +1383,9 @@ def _build_context(
     context = {
         "idea": idea,
         "ticker": ticker,
+        "instrument": instrument,
+        "asset": instrument.get("asset"),
+        "instrument_type": instrument.get("instrument_type"),
         "analyzer_context": analyzer_payload,
         "use_portfolio_context": bool(use_portfolio_context),
         "overview_content": _safe_text(overview),
@@ -1275,6 +1445,42 @@ def _factor(
         "missing": missing or [],
         "source": source,
     }
+
+
+def _asset_label(context: dict[str, Any]) -> str:
+    instrument = _as_dict(context.get("instrument"))
+    asset = str(context.get("asset") or instrument.get("asset") or "equity").lower()
+    instrument_type = str(context.get("instrument_type") or instrument.get("instrument_type") or "security").lower()
+    if instrument_type == "spot_fx":
+        base = str(instrument.get("fx_base_currency") or "").upper()
+        quote = str(instrument.get("fx_quote_currency") or "").upper()
+        return f"{base}/{quote} spot FX" if base and quote else "spot FX"
+    if instrument_type == "future":
+        return f"{asset} future"
+    return f"{asset} security"
+
+
+def _asset_factor_rationale(context: dict[str, Any], factor_name: str, *, has_equity_doc: bool = False) -> str:
+    label = _asset_label(context)
+    if factor_name == "industry_attractiveness":
+        return f"{label} regime and market-structure evidence requires review."
+    if factor_name == "business_quality":
+        return (
+            "Business quality is supported by company-specific overview material."
+            if has_equity_doc
+            else f"{label} thesis quality depends on macro, carry, curve, supply-demand, and liquidity evidence rather than company fundamentals."
+        )
+    if factor_name == "management_quality":
+        return (
+            "Management quality is supported by the uploaded management-quality assessment."
+            if has_equity_doc
+            else f"{label} has no issuer management-quality requirement; neutral score reflects non-equity applicability."
+        )
+    if factor_name == "valuation_asymmetry":
+        return f"{label} valuation/asymmetry requires current level, carry or roll, curve, positioning, and downside scenario evidence."
+    if factor_name == "portfolio_fit":
+        return f"Portfolio fit uses current cross-asset exposure context for the {label} idea when available."
+    return f"Macro support is scored against the current regime for the {label} idea."
 
 
 def _factor_rationale_from_score(key: str, score: float) -> str:
@@ -1492,7 +1698,11 @@ def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[st
     result["evaluation_schema_version"] = IDEA_EVALUATION_SCHEMA_VERSION
     result["analyzer_context"] = analyzer_context
     data_quality = _as_dict(result.get("data_quality"))
-    result["data_quality"] = {**data_quality, "portfolio_context_used": use_portfolio_context}
+    result["data_quality"] = {
+        **data_quality,
+        "portfolio_context_used": use_portfolio_context,
+        "instrument": _as_dict(context.get("instrument")),
+    }
 
     factor_scores_raw = result.get("factor_scores")
     factor_scores = _ensure_canonical_factor_rows(
@@ -1571,6 +1781,7 @@ def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[st
 def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:
     idea = context["idea"]
     ticker = context["ticker"]
+    equity_security = _is_equity_security_idea(_as_dict(idea))
     notes = str(idea.get("user_notes") or "").strip()
     overview = str(context.get("overview_content") or "").strip()
     thesis = str(context.get("thesis_content") or "").strip()
@@ -1578,7 +1789,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
     tool_errors = list(context.get("tool_errors") or [])
 
     missing: list[dict[str, Any]] = []
-    if not overview:
+    if equity_security and not overview:
         missing.append(
             {
                 "field": "overview",
@@ -1602,7 +1813,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
                 "reason": "No full thesis file is available for this non-position idea.",
             }
         )
-    if not management_quality:
+    if equity_security and not management_quality:
         missing.append(
             {
                 "field": "management_quality",
@@ -1610,7 +1821,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
                 "reason": "No explicit management-quality assessment is available for this idea.",
             }
         )
-    if context.get("industry_monitor", {}).get("ok") is not True:
+    if equity_security and context.get("industry_monitor", {}).get("ok") is not True:
         missing.append(
             {
                 "field": "industry_management_commentary",
@@ -1634,38 +1845,34 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
 
     info_score = 50 + (12 if overview else 0) + (8 if notes else 0) + (6 if thesis else 0)
     factor_scores = {
-        "macro_support": _factor(
-            macro_score, macro_status, "Derived from the internal signal aggregator when available."
-        ),
+        "macro_support": _factor(macro_score, macro_status, _asset_factor_rationale(context, "macro_support")),
         "industry_attractiveness": _factor(
             52 if context.get("industry_monitor", {}).get("ok") else 45,
             "mixed",
-            "Industry evidence requires manual review of monitor context and uploaded materials.",
+            _asset_factor_rationale(context, "industry_attractiveness"),
         ),
         "business_quality": _factor(
             min(info_score, 72),
             "incomplete" if not overview else "reviewable",
-            "Business quality is not fully scoreable without a complete overview and thesis.",
+            _asset_factor_rationale(context, "business_quality", has_equity_doc=bool(overview)),
         ),
         "management_quality": _factor(
-            62 if management_quality else 45,
-            "reviewable" if management_quality else "incomplete",
-            (
-                "Management quality is supported by the uploaded management-quality assessment."
-                if management_quality
-                else "Management quality requires explicit track record, capital allocation, and transcript evidence."
-            ),
+            62 if management_quality else 50 if not equity_security else 45,
+            "reviewable" if management_quality else "not_applicable" if not equity_security else "incomplete",
+            _asset_factor_rationale(context, "management_quality", has_equity_doc=bool(management_quality)),
         ),
         "valuation_asymmetry": _factor(
             45,
             "incomplete",
-            "No dedicated valuation/asymmetry evidence was computed in deterministic fallback mode.",
-            ["valuation", "expected upside/downside"],
+            _asset_factor_rationale(context, "valuation_asymmetry"),
+            ["valuation", "expected upside/downside"]
+            if equity_security
+            else ["current level", "carry/roll", "downside scenario"],
         ),
         "portfolio_fit": _factor(
             55,
             "reviewable",
-            "Portfolio fit uses current holdings context when available; concentration still needs human review.",
+            _asset_factor_rationale(context, "portfolio_fit"),
         ),
     }
     score = round(sum(float(row["score"]) for row in factor_scores.values()) / len(factor_scores), 1)
@@ -1829,6 +2036,10 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
                 "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing. "
                 "The canonical score denominator is exactly six factors. Do not add fundamental_momentum or "
                 "price_momentum as top-level factors; they are analyzer diagnostics only. "
+                "Use the idea asset and instrument_type from context: for non-equity ideas, interpret business_quality "
+                "as thesis/instrument quality, management_quality as not-applicable unless an issuer/manager is central, "
+                "industry_attractiveness as market-structure/regime attractiveness, and valuation_asymmetry as level, "
+                "carry, roll, curve, spread, positioning, and scenario asymmetry. "
                 "Each factor_scores entry must be an object with score, status, rationale, source, and missing. "
                 "Never return a bare numeric factor score. Each missing_information reason must explain why the "
                 "input matters and must not simply repeat the field."
@@ -1877,9 +2088,11 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    idea = _with_default_idea_instrument_fields(idea)
     action = str(result.get("action") or "watch").lower()
     now = str(result.get("evaluated_at") or _now())
     ticker = str(idea.get("ticker") or result.get("ticker") or "").upper()
+    instrument = _idea_instrument_metadata(idea)
     data_quality_raw = result.get("data_quality")
     data_quality: dict[str, Any] = cast(dict[str, Any], data_quality_raw) if isinstance(data_quality_raw, dict) else {}
     missing_raw = result.get("missing_information")
@@ -1906,7 +2119,16 @@ def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, A
         "do_nothing_rationale": result.get("rationale") if action == "do_nothing" else "",
         "action": action,
         "ticker": ticker,
-        "instrument": ticker,
+        "instrument": instrument.get("price_symbol") or ticker,
+        "asset": instrument.get("asset"),
+        "instrument_type": instrument.get("instrument_type"),
+        "price_symbol": instrument.get("price_symbol"),
+        "contract_multiplier": instrument.get("contract_multiplier"),
+        "fx_base_currency": instrument.get("fx_base_currency"),
+        "fx_quote_currency": instrument.get("fx_quote_currency"),
+        "currency": instrument.get("currency"),
+        "country": instrument.get("country"),
+        "exchange": instrument.get("exchange"),
         "horizon": "18-24 months",
         "target_change": "Initial one-third entry review" if action == "buy" else None,
         "rationale": str(result.get("rationale") or ""),
@@ -1954,6 +2176,7 @@ def _cache_key(req: IdeaEvaluationRequest) -> str:
     token = {
         "id": idea.get("id"),
         "ticker": idea.get("ticker"),
+        "instrument": _idea_instrument_metadata(idea),
         "company_name": idea.get("company_name"),
         "user_notes": idea.get("user_notes"),
         "tags": idea.get("tags"),
@@ -2309,9 +2532,12 @@ def _idea_detail(idea_id: str) -> dict[str, Any]:
     idea = _get_idea(idea_id)
     if not idea:
         raise NotFoundError("Investment idea", str(idea_id))
+    equity_security = _is_equity_security_idea(idea)
     overview, overview_error = _read_state_text("investment_overviews", str(idea["ticker"]).upper())
     thesis, thesis_error = _read_state_text("investment_theses", str(idea["ticker"]).upper())
-    management_quality, management_quality_error = _read_management_quality_text(str(idea["ticker"]).upper())
+    management_quality, management_quality_error = (
+        _read_management_quality_text(str(idea["ticker"]).upper()) if equity_security else (None, None)
+    )
     overview_parsed = None
     if overview:
         try:
@@ -2359,7 +2585,11 @@ def list_ideas(status: str | None = None, include_archived: bool = False, limit:
 @router.post("/ideas")
 def create_idea(body: IdeaCreateRequest):
     payload = _with_analyzer_direction_metadata(body.model_dump())
-    payload["company_name"] = _resolve_company_name(payload["ticker"], payload.get("company_name"))
+    payload["company_name"] = (
+        _resolve_company_name(payload["ticker"], payload.get("company_name"))
+        if _is_equity_security_idea(payload)
+        else (str(payload.get("company_name") or "").strip() or None)
+    )
     payload.update({"source_type": "user", "source_id": "ideas.create", "created_at": _now()})
     uid = _idea_uid(f"{payload['ticker']}:{_stable_hash(payload)}")
     idea = _write_runtime_object("InvestmentIdea", uid, payload)
@@ -2431,6 +2661,21 @@ def update_idea(idea_id: str, body: IdeaUpdateRequest):
                 default=_idea_uses_portfolio_context(current),
             )
         current["metadata"] = next_metadata
+    if IDEA_INSTRUMENT_FIELDS.intersection(updates):
+        instrument_updates = dict(updates)
+        if (
+            "ticker" in updates
+            and "price_symbol" not in updates
+            and str(current.get("price_symbol") or current.get("ticker") or "").upper()
+            == str(current.get("ticker") or "").upper()
+        ):
+            instrument_updates["price_symbol"] = updates["ticker"]
+        try:
+            updates.update(_normalized_idea_instrument(instrument_updates, base=current))
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if "company_name" not in updates and _is_equity_security_idea({**current, **updates}):
+            updates["company_name"] = _resolve_company_name(updates["ticker"], current.get("company_name"))
     current.update(updates)
     current["updated_at"] = _now()
     current.pop("_meta", None)
@@ -2554,11 +2799,15 @@ def accept_idea_evaluation(
                 str(row.get("field") or row) for row in missing[:4] if isinstance(row, dict) or row
             )
         try:
+            instrument = _idea_instrument_metadata(idea)
             action_proposal = stage_api_action(
                 "create_action_item",
                 {
                     "recommendation_id": recommendation_id,
                     "ticker": idea.get("ticker"),
+                    "asset": instrument.get("asset"),
+                    "instrument_type": instrument.get("instrument_type"),
+                    "price_symbol": instrument.get("price_symbol"),
                     "description": description,
                     "action_type": action_type,
                     "urgency": "normal" if action in DECISION_ACTIONABLE_ACTIONS else "low",

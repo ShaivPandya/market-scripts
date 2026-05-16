@@ -51,6 +51,13 @@ class SessionListItem(BaseModel):
     key_tickers: list[str] | None
     key_topics: list[str] | None
     summary: str | None
+    title: str | None = None
+    title_source: str | None = None
+    title_updated_at: str | None = None
+
+
+class UpdateSessionRequest(BaseModel):
+    title: str
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +137,20 @@ def get_session(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+@router.patch("/memory/sessions/{session_id}", response_model=SessionListItem)
+def update_session(session_id: str, req: UpdateSessionRequest):
+    """Update user-editable session metadata."""
+    try:
+        title = memory_db.normalize_session_title(req.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    session = memory_db.rename_session(session_id, title)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionListItem(**session)
 
 
 @router.delete("/memory/sessions/{session_id}")

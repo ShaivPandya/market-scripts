@@ -39,6 +39,9 @@ interface UnifiedPerformanceViewProps {
   timeframeLabel: string
   itemLabel: string
   getHref?: (name: string) => string | undefined
+  title?: string
+  description?: string
+  emptyMessage?: string
 }
 
 function isFiniteNumber(value: number | null | undefined): value is number {
@@ -115,6 +118,9 @@ export function UnifiedPerformanceView({
   timeframeLabel,
   itemLabel,
   getHref,
+  title = "Unified Performance",
+  description,
+  emptyMessage = "No comparable price series available.",
 }: UnifiedPerformanceViewProps) {
   const unifiedPerformance = useMemo(
     () => buildUnifiedPerformance(order, seriesByName),
@@ -123,7 +129,7 @@ export function UnifiedPerformanceView({
   const hasUnifiedSeries = unifiedPerformance.sortedSeries.length > 0 && unifiedPerformance.chartData.length > 0
 
   if (!hasUnifiedSeries) {
-    return <Notice tone="info">No comparable price series available.</Notice>
+    return <Notice tone="info">{emptyMessage}</Notice>
   }
 
   return (
@@ -165,8 +171,10 @@ export function UnifiedPerformanceView({
       <div className="theme-surface p-4 sm:p-5">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h2 className="section-title">Unified Performance</h2>
-            <p className="mt-1 text-sm text-muted">{timeframeLabel} raw price return, normalized to 0%.</p>
+            <h2 className="section-title">{title}</h2>
+            <p className="mt-1 text-sm text-muted">
+              {description ?? `${timeframeLabel} raw price return, normalized to 0%.`}
+            </p>
           </div>
           <span className="text-xs font-medium text-subtle">{unifiedPerformance.sortedSeries.length} {itemLabel}</span>
         </div>

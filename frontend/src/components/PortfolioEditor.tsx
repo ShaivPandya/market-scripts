@@ -16,6 +16,17 @@ import {
   type StagedMutationResponse,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
+import {
+  ASSET_OPTIONS,
+  INSTRUMENT_TYPE_OPTIONS,
+  canonicalSpotFxSymbol,
+  effectivePriceSymbol,
+  inferInstrumentType,
+  nextContractMultiplier,
+  normalizedSymbol,
+  spotFxCurrencies,
+  submissionSymbol,
+} from "@/lib/instruments"
 import { groupKey, normalizeGroupConviction, normalizeGroupName } from "@/lib/positionGroups"
 
 interface EditorRow extends PortfolioPosition {
@@ -31,19 +42,6 @@ interface HedgeEditorRow extends HedgePosition {
 
 type EditorTab = "Positions" | "Hedges"
 type InstrumentType = NonNullable<PortfolioPosition["instrument_type"]>
-
-const ASSET_OPTIONS = [
-  { value: "equity", label: "Equity" },
-  { value: "commodity", label: "Commodity" },
-  { value: "fx", label: "FX" },
-  { value: "bond", label: "Bond" },
-]
-
-const INSTRUMENT_TYPE_OPTIONS = [
-  { value: "security", label: "Security" },
-  { value: "future", label: "Future" },
-  { value: "spot_fx", label: "Spot FX" },
-]
 
 const DIRECTION_OPTIONS = [
   { value: "long", label: "Long" },
@@ -69,71 +67,6 @@ function makeId() {
 
 function proposalSubjectLabel(entityType?: string | null): string {
   return String(entityType || "proposal").replace(/_/g, " ")
-}
-
-function canonicalSpotFxSymbol(value?: string | null) {
-  let symbol = (value ?? "").trim().toUpperCase()
-  if (!symbol) return null
-  symbol = symbol.replace(/[/-]/g, "")
-  if (symbol.endsWith("=X")) symbol = symbol.slice(0, -2)
-  if (!/^[A-Z]{6}$/.test(symbol)) return null
-  if (symbol.slice(0, 3) === symbol.slice(3, 6)) return null
-  return `${symbol}=X`
-}
-
-function spotFxCurrencies(value?: string | null) {
-  const symbol = canonicalSpotFxSymbol(value)
-  if (!symbol) return { fx_base_currency: null, fx_quote_currency: null }
-  return {
-    fx_base_currency: symbol.slice(0, 3),
-    fx_quote_currency: symbol.slice(3, 6),
-  }
-}
-
-function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null): InstrumentType {
-  if (instrumentType === "spot_fx") return "spot_fx"
-  if (ticker.trim().toUpperCase().endsWith("=X")) return "spot_fx"
-  if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
-  return instrumentType ?? "security"
-}
-
-function normalizedSymbol(value?: string | null) {
-  return (value ?? "").trim().toUpperCase()
-}
-
-function effectivePriceSymbol(row: { ticker: string; price_symbol?: string | null }) {
-  return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
-}
-
-function submissionSymbol(row: { ticker: string; price_symbol?: string | null; instrument_type?: PortfolioPosition["instrument_type"] | null }) {
-  const instrumentType = inferInstrumentType(row.ticker, row.instrument_type)
-  if (instrumentType === "spot_fx") {
-    return canonicalSpotFxSymbol(row.price_symbol || row.ticker) || normalizedSymbol(row.price_symbol || row.ticker)
-  }
-  return normalizedSymbol(row.ticker)
-}
-
-function nextContractMultiplier(
-  row: {
-    ticker: string
-    price_symbol?: string | null
-    instrument_type?: PortfolioPosition["instrument_type"] | null
-    contract_multiplier?: number | null
-    _contractMultiplierTouched: boolean
-  },
-  nextInstrumentType: InstrumentType,
-  nextPriceSymbol = effectivePriceSymbol(row),
-) {
-  if (nextInstrumentType === "security" || nextInstrumentType === "spot_fx") return 1
-  if (row._contractMultiplierTouched) return row.contract_multiplier ?? null
-
-  const currentInstrumentType = inferInstrumentType(row.ticker, row.instrument_type)
-  const currentPriceSymbol = effectivePriceSymbol(row)
-  const futureSymbolChanged = currentInstrumentType === "future" && nextPriceSymbol !== currentPriceSymbol
-  if (currentInstrumentType !== "future" || futureSymbolChanged || row.contract_multiplier === 1) {
-    return null
-  }
-  return row.contract_multiplier ?? null
 }
 
 function rowQuantity(row: { quantity?: number | null; shares?: number | null }) {

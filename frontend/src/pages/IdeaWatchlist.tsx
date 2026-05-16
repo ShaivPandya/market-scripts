@@ -6,7 +6,7 @@ import { Play, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { ActionPill, AnalyzerRiskBadges, ConfidencePill } from "@/components/idea/EvaluationPanel"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
-import { ActionButton, TextInput, Toggle } from "@/components/shared/FormControls"
+import { ActionButton, SelectInput, TextInput, Toggle } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   createIdea,
@@ -23,7 +23,20 @@ import {
   type IdeaComparisonRun,
   type IdeaListResponse,
   type IdeaStatus,
+  type InstrumentType,
+  type PortfolioAsset,
 } from "@/lib/api"
+import {
+  ASSET_OPTIONS,
+  INSTRUMENT_TYPE_OPTIONS,
+  assetLabel,
+  canonicalSpotFxSymbol,
+  effectivePriceSymbol,
+  inferInstrumentType,
+  instrumentTypeLabel,
+  nextContractMultiplier,
+  normalizedSymbol,
+} from "@/lib/instruments"
 import { AnalyzerWorkbench } from "@/pages/PortfolioAnalyzer"
 import {
   formatDate,
@@ -171,6 +184,11 @@ export function IdeaWatchlist() {
   const [comparisonJobSnapshot, setComparisonJobSnapshot] = useState<IdeaComparisonJobResponse | null>(null)
   const [comparisonJobError, setComparisonJobError] = useState<string | null>(null)
   const [ticker, setTicker] = useState("")
+  const [asset, setAsset] = useState<PortfolioAsset>("equity")
+  const [instrumentType, setInstrumentType] = useState<InstrumentType>("security")
+  const [priceSymbol, setPriceSymbol] = useState("")
+  const [contractMultiplier, setContractMultiplier] = useState("")
+  const [contractMultiplierTouched, setContractMultiplierTouched] = useState(false)
   const [tags, setTags] = useState("")
   const [notes, setNotes] = useState("")
   const [deletingIdeaIds, setDeletingIdeaIds] = useState<Set<string>>(() => new Set())
@@ -268,11 +286,24 @@ export function IdeaWatchlist() {
   const createMutation = useMutation({
     mutationFn: () => createIdea({
       ticker,
+      asset: instrumentType === "spot_fx" ? "fx" : asset,
+      instrument_type: instrumentType,
+      price_symbol: instrumentType === "spot_fx"
+        ? canonicalSpotFxSymbol(priceSymbol || ticker) ?? normalizedSymbol(priceSymbol || ticker)
+        : normalizedSymbol(priceSymbol || ticker),
+      contract_multiplier: instrumentType === "future" && contractMultiplier.trim()
+        ? Number(contractMultiplier)
+        : instrumentType === "future" ? null : 1,
       user_notes: notes || null,
       tags: tags.split(",").map(t => t.trim()).filter(Boolean),
     }),
     onSuccess: data => {
       setTicker("")
+      setAsset("equity")
+      setInstrumentType("security")
+      setPriceSymbol("")
+      setContractMultiplier("")
+      setContractMultiplierTouched(false)
       setTags("")
       setNotes("")
       void qc.invalidateQueries({ queryKey: ["ideas"] })
@@ -352,6 +383,52 @@ export function IdeaWatchlist() {
     writeEvaluateAllUsePortfolioContext(enabled)
   }
 
+  function updateTickerInput(value: string) {
+    const nextTicker = value.toUpperCase()
+    const currentPriceSymbol = priceSymbol.trim().toUpperCase()
+    const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === ticker.toUpperCase()
+      ? nextTicker
+      : priceSymbol
+    const nextType = inferInstrumentType(nextTicker, instrumentType)
+    const nextMultiplier = nextContractMultiplier(
+      {
+        ticker,
+        price_symbol: priceSymbol,
+        instrument_type: instrumentType,
+        contract_multiplier: contractMultiplier.trim() ? Number(contractMultiplier) : null,
+        _contractMultiplierTouched: contractMultiplierTouched,
+      },
+      nextType,
+      normalizedSymbol(nextPriceSymbol),
+    )
+    setTicker(nextTicker)
+    setPriceSymbol(nextPriceSymbol)
+    setInstrumentType(nextType)
+    if (nextType === "spot_fx") setAsset("fx")
+    if (nextType !== "future") setContractMultiplierTouched(false)
+    setContractMultiplier(nextMultiplier == null ? "" : String(nextMultiplier))
+  }
+
+  function updateInstrumentTypeInput(value: string) {
+    const nextType = value as InstrumentType
+    const row = {
+      ticker,
+      price_symbol: priceSymbol,
+      instrument_type: instrumentType,
+      contract_multiplier: contractMultiplier.trim() ? Number(contractMultiplier) : null,
+      _contractMultiplierTouched: contractMultiplierTouched,
+    }
+    const nextPriceSymbol = nextType === "spot_fx"
+      ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? priceSymbol
+      : priceSymbol
+    const nextMultiplier = nextContractMultiplier(row, nextType, normalizedSymbol(nextPriceSymbol))
+    setInstrumentType(nextType)
+    setPriceSymbol(nextPriceSymbol || ticker)
+    if (nextType === "spot_fx") setAsset("fx")
+    setContractMultiplier(nextMultiplier == null ? "" : String(nextMultiplier))
+    setContractMultiplierTouched(nextType !== "future" ? false : contractMultiplierTouched)
+  }
+
   const rows = useMemo(() => ideas.map(idea => {
     const evaluation = latestEvaluation(idea, null)
     const activeJob = activeJobs[String(idea.id)]
@@ -429,13 +506,50 @@ export function IdeaWatchlist() {
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
-          className="grid gap-3 lg:grid-cols-[minmax(8rem,10rem)_minmax(10rem,1fr)_minmax(16rem,2fr)_auto]"
+          className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(8rem,10rem)_minmax(9rem,10rem)_minmax(8rem,9rem)_minmax(8rem,10rem)_minmax(8rem,10rem)_minmax(12rem,1fr)_minmax(16rem,1.5fr)_auto]"
           onSubmit={event => {
             event.preventDefault()
             createMutation.mutate()
           }}
         >
-          <TextInput label="Ticker" value={ticker} onChange={setTicker} uppercase placeholder="AAPL" />
+          <TextInput
+            label="Ticker"
+            value={ticker}
+            onChange={updateTickerInput}
+            uppercase
+            placeholder={instrumentType === "spot_fx" ? "EURUSD=X" : instrumentType === "future" ? "ES=F" : "AAPL"}
+          />
+          <SelectInput
+            label="Asset"
+            value={asset}
+            onChange={value => setAsset(value as PortfolioAsset)}
+            options={ASSET_OPTIONS}
+            disabled={instrumentType === "spot_fx"}
+          />
+          <SelectInput
+            label="Instrument"
+            value={instrumentType}
+            onChange={updateInstrumentTypeInput}
+            options={INSTRUMENT_TYPE_OPTIONS}
+          />
+          <TextInput
+            label="Price"
+            value={priceSymbol}
+            onChange={value => setPriceSymbol(value.toUpperCase())}
+            uppercase
+            placeholder={instrumentType === "spot_fx" ? "EURUSD=X" : instrumentType === "future" ? "ES=F" : ticker || "AAPL"}
+          />
+          <TextInput
+            label="Multiplier"
+            value={instrumentType === "future" ? contractMultiplier : "1"}
+            onChange={value => {
+              setContractMultiplier(value)
+              setContractMultiplierTouched(true)
+            }}
+            type="number"
+            placeholder={instrumentType === "future" ? "Auto" : "1"}
+            disabled={instrumentType !== "future"}
+          />
           <TextInput label="Tags" value={tags} onChange={setTags} placeholder="quality, ai" />
           <TextInput label="Notes" value={notes} onChange={setNotes} placeholder="Reason for review" />
           <div className="flex items-end">
@@ -467,10 +581,10 @@ export function IdeaWatchlist() {
           <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
         ) : (
           <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-            <table className="w-full min-w-[1220px] border-collapse text-sm">
+            <table className="w-full min-w-[1380px] border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-card-muted">
                 <tr>
-                  {["Ticker", "Status", "Analyzer", "Portfolio", "Latest Action", "Risk", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
+                  {["Ticker", "Asset", "Instrument", "Status", "Analyzer", "Portfolio", "Latest Action", "Risk", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
                     <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                       {label}
                     </th>
@@ -491,6 +605,11 @@ export function IdeaWatchlist() {
                         <td className="px-3 py-3">
                           <div className="font-semibold text-app">{idea.ticker}</div>
                           <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
+                        </td>
+                        <td className="px-3 py-3"><StatusBadge tone="neutral">{assetLabel(idea.asset)}</StatusBadge></td>
+                        <td className="px-3 py-3">
+                          <div className="text-sm text-app">{instrumentTypeLabel(idea.instrument_type)}</div>
+                          <div className="font-mono text-xs text-subtle">{idea.price_symbol || idea.ticker}</div>
                         </td>
                         <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
                         <td className="px-3 py-3">

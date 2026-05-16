@@ -1,0 +1,77 @@
+{
+  "case": "Palantir new buy after Q2 2024 AIP commercial inflection",
+  "as_of_date": "2024-08-08",
+  "source_type": "user_provided_pdf_distilled_to_as_of_content",
+  "source_summary": "As-of August 8, 2024, Palantir had just reported Q2 2024 results that challenged skepticism about commercial scalability and the durability of its Artificial Intelligence Platform. The key inflection was U.S. commercial acceleration, AIP bootcamp conversion, sustained GAAP profitability, high Rule of 40 performance, and a strong balance sheet. The main tension was that the stock remained expensive on traditional valuation metrics and still had credible risks from competition, stock-based compensation, insider selling, government revenue lumpiness, and concentration in Western-allied markets.",
+  "q2_2024_financials": {
+    "total_revenue_millions": 678,
+    "total_revenue_yoy_growth": "27%",
+    "total_revenue_qoq_growth": "7%",
+    "us_commercial_revenue_millions": 159,
+    "us_commercial_revenue_yoy_growth": "55%",
+    "us_commercial_customer_count_growth": "83% YoY to 295 organizations",
+    "us_government_revenue_millions": 278,
+    "us_government_revenue_yoy_growth": "24%",
+    "gaap_net_income_millions": 134,
+    "gaap_net_margin": "20%",
+    "gaap_operating_income_millions": 105,
+    "gaap_operating_margin": "16%",
+    "adjusted_operating_income_millions": 254,
+    "adjusted_operating_margin": "37%",
+    "adjusted_free_cash_flow_millions": 149,
+    "rule_of_40_score": "64%",
+    "gaap_profitability_streak": "7 consecutive quarters"
+  },
+  "aip_and_commercial_inflection": {
+    "aip_thesis": "AIP turned Palantir from a perceived services-heavy government contractor into a productized enterprise AI operating system for deploying LLMs safely against real enterprise data.",
+    "bootcamp_model": "The bootcamp go-to-market motion shortened sales cycles by letting prospective customers work with their own data on Palantir's platform over a few days.",
+    "customer_examples": [
+      "An insurance brokerage reportedly closed a seven-figure deal 16 days after a bootcamp.",
+      "Tampa General and Kinder Morgan used AIP as a reason for multi-year expansions.",
+      "Tampa General reported a 30% reduction in patient length of stay."
+    ],
+    "ontology_moat": "Palantir's ontology layer was framed as the system that lets AI operate inside enterprises without creating unauditable or unsafe business actions."
+  },
+  "valuation_and_sentiment": {
+    "trailing_pe": "approximately 150x-155x",
+    "forward_pe": "approximately 95x",
+    "forward_ev_sales": "approximately 25x-28x",
+    "fcf_yield": "approximately 1.5%-2.0%",
+    "bear_case": "Traditional multiples were extreme, leaving little room for execution errors.",
+    "bull_case": "Traditional multiples understated non-linear commercial acceleration, operating leverage, and the value of an enterprise AI operating-system position.",
+    "analyst_consensus": "Wall Street analyst stance was broadly skeptical/hold, with concerns that the stock had run too far relative to revenue."
+  },
+  "ownership_and_technical_context": {
+    "institutional_ownership": "approximately 56.4% in mid-2024",
+    "insider_ownership": "approximately 7.4%",
+    "insider_selling": "Over $43.7 million in net insider sales over the prior 90 days, much of it under 10b5-1 plans.",
+    "short_interest": "Approximately 63.45 million shares short as of July 31, 2024, about 2.9% of float with about 1.4 days to cover.",
+    "options_context": "Options market was pricing a large earnings move, with high implied volatility and bullish call skew into Q2 earnings."
+  },
+  "balance_sheet": {
+    "cash_and_short_term_treasuries": "approximately $4.0B",
+    "long_term_debt": "$0",
+    "dilution_context": "Stock-based compensation remained a concern, but the company had authorized a $1B share repurchase program in August 2023."
+  },
+  "consensus_view": [
+    "Palantir was expensive and priced for flawless execution.",
+    "Government revenue was perceived as lumpy and slow.",
+    "Stock-based compensation could dilute GAAP earnings.",
+    "Hyperscalers or enterprise software incumbents could absorb the AI/data-integration opportunity.",
+    "The addressable market could be capped by Palantir's concentration in Western-allied governments and companies."
+  ],
+  "variant_view": [
+    "U.S. commercial acceleration and AIP bootcamps were creating a non-linear sales-cycle change.",
+    "The sequence of GAAP profitability made index inclusion plausible and validated business maturity.",
+    "The ontology layer made Palantir structurally different from generic AI apps and commodity LLM providers.",
+    "Operating leverage meant revenue acceleration could translate into disproportionate margin and cash-flow gains."
+  ],
+  "disconfirming_evidence": [
+    "Valuation was high on P/E and EV/sales.",
+    "Insiders had been selling stock.",
+    "Free cash flow was flat sequentially from Q1 to Q2 2024.",
+    "Government procurement timing and budget risk remained material.",
+    "AIP success could still prove too services-heavy or insufficiently scalable."
+  ],
+  "human_notes": "Distilled from the user-provided Palantir Stock Analysis August 2024 PDF. Future/outcome sections were intentionally excluded from the solver input."
+}

@@ -132,12 +132,25 @@ function DecisionQualitySummary({ evaluation }: { evaluation: IdeaEvaluation }) 
   )
 }
 
-function FactorScore({ name, factor }: { name: string; factor: IdeaFactorScore }) {
+function factorDisplayLabel(name: string, evaluation: IdeaEvaluation) {
+  const instrument = evaluation.data_quality?.instrument
+  const asset = String(instrument?.asset || "equity")
+  const instrumentType = String(instrument?.instrument_type || "security")
+  const equitySecurity = asset === "equity" && instrumentType === "security"
+  if (equitySecurity) return formatLabel(name)
+  if (name === "industry_attractiveness") return "Market Structure"
+  if (name === "business_quality") return "Thesis Quality"
+  if (name === "management_quality") return "Issuer / Manager"
+  if (name === "valuation_asymmetry") return "Asymmetry"
+  return formatLabel(name)
+}
+
+function FactorScore({ name, factor, evaluation }: { name: string; factor: IdeaFactorScore; evaluation: IdeaEvaluation }) {
   const score = typeof factor?.score === "number" ? factor.score : null
   return (
     <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{formatLabel(name)}</span>
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{factorDisplayLabel(name, evaluation)}</span>
         <span className="font-mono text-sm font-semibold text-app">{scoreText(score)}</span>
       </div>
       {factor?.status && <p className="mt-1 text-xs text-muted">{formatLabel(factor.status)}</p>}
@@ -401,7 +414,7 @@ export function EvaluationPanel({
 
       {factors.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {factors.map(([name, factor]) => <FactorScore key={name} name={name} factor={factor} />)}
+          {factors.map(([name, factor]) => <FactorScore key={name} name={name} factor={factor} evaluation={evaluation} />)}
         </div>
       )}
 
