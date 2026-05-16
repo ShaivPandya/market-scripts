@@ -1,15 +1,65 @@
+import { useMemo, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
+import {
+  dashboardTimeframeStaleTime,
+  useDashboardTimeframePrefetch,
+} from "@/hooks/useDashboardTimeframePrefetch"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
-import { fetchSectorMetrics, analyzeSectorMetrics, refreshMarketSnapshots } from "@/lib/api"
+import { fetchSectorMetrics, fetchSectorMetricsSeries, analyzeSectorMetrics, refreshMarketSnapshots } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { colorPositiveNegative } from "@/lib/colors"
+import { SegmentedControl } from "@/components/shared/FormControls"
+import { ChartTile } from "@/components/shared/ChartTile"
+import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
+import { Notice } from "@/components/shared/Notice"
+import { UnifiedPerformanceView } from "@/components/shared/UnifiedPerformanceView"
+import { UNIFIED_VIEW_MODES, type UnifiedViewMode } from "@/lib/unifiedViewMode"
 
 const fmtPp = (v: unknown) => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}pp` : "N/A"
 const fmtPct = (v: unknown) => v != null ? `${Number(v).toFixed(1)}%` : "N/A"
+const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
+const TIMEFRAME_OPTIONS = TIMEFRAMES.map(tf => ({
+  value: tf,
+  label: tf === "This Week" ? "Past Week" : tf,
+}))
+const PERFORMANCE_MODES = ["ETF Returns", "vs SPY"] as const
+type Timeframe = typeof TIMEFRAMES[number]
+type PerformanceMode = typeof PERFORMANCE_MODES[number]
+
+type SectorMetricsSeriesResponse = {
+  sector_prices?: Record<string, DataPoint[]>
+  sector_relative_prices?: Record<string, DataPoint[]>
+  sector_order?: string[]
+  benchmark?: string
+  timeframe?: string
+  timestamp?: string
+}
+
+function timeframeLabel(timeframe: Timeframe): string {
+  return timeframe === "This Week" ? "Past Week" : timeframe
+}
+
+function isFiniteNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function formatPercent(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`
+}
+
+function normalizeReturnSeries(series: DataPoint[]): DataPoint[] {
+  const base = series.map(point => point.value).find(isFiniteNumber)
+  if (!base || base === 0) return []
+
+  return series.map(point => ({
+    date: point.date,
+    value: isFiniteNumber(point.value) ? (point.value / base - 1) * 100 : null,
+  }))
+}
 
 const columns: ColumnDef[] = [
   { key: "Sector", header: "Sector" },
@@ -25,6 +75,9 @@ const columns: ColumnDef[] = [
 ]
 
 export function SectorMetrics() {
+  const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
+  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>("ETF Returns")
+  const [viewMode, setViewMode] = useState<UnifiedViewMode>("Grid")
   const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:sector-metrics")
   const mutation = useMutation({
     mutationFn: analyzeSectorMetrics,
@@ -39,10 +92,48 @@ export function SectorMetrics() {
     fetchSectorMetrics,
     60 * 60 * 1000,
   )
+  const {
+    data: seriesData,
+    isLoading: isSeriesLoading,
+    error: seriesError,
+    isSuccess: isSeriesSuccess,
+  } = useApiQuery<SectorMetricsSeriesResponse>(
+    ["sector-metrics-series", timeframe],
+    () => fetchSectorMetricsSeries(timeframe),
+    dashboardTimeframeStaleTime(timeframe),
+  )
+  useDashboardTimeframePrefetch({
+    queryKeyRoot: "sector-metrics-series",
+    timeframes: TIMEFRAMES,
+    activeTimeframe: timeframe,
+    isReady: isSeriesSuccess,
+    fetchTimeframe: fetchSectorMetricsSeries,
+  })
+
   const rows = (data?.weights_df ?? []) as Record<string, unknown>[]
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
+  const refreshQueryKeys = useMemo(
+    () => [["sector-metrics"], ["sector-metrics-series", timeframe]],
+    [timeframe],
+  )
+  const sectorPrices = seriesData?.sector_prices ?? {}
+  const sectorRelativePrices = seriesData?.sector_relative_prices ?? {}
+  const order = seriesData?.sector_order ?? Object.keys(sectorPrices)
+  const benchmark = seriesData?.benchmark ?? "SPY"
+  const isRelativeMode = performanceMode === "vs SPY"
+  const activeSeries = isRelativeMode ? sectorRelativePrices : sectorPrices
+  const hasChartSeries = order.some(name => {
+    const series = activeSeries[name]
+    return Array.isArray(series) && series.length > 0
+  })
+  const chartDescription = isRelativeMode
+    ? `${timeframeLabel(timeframe)} sector ETF return versus ${benchmark}, normalized to 0%.`
+    : `${timeframeLabel(timeframe)} sector ETF price return, normalized to 0%.`
+  const chartEmptyMessage = isRelativeMode
+    ? `No ${benchmark}-relative sector series available.`
+    : "No sector ETF price series available."
 
   return (
     <div>
@@ -63,7 +154,7 @@ export function SectorMetrics() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["sector-metrics"]]} beforeRefetch={refreshMarketSnapshots} />
+          <RefreshButton queryKeys={refreshQueryKeys} beforeRefetch={refreshMarketSnapshots} />
         </div>
       </div>
 
@@ -103,6 +194,75 @@ export function SectorMetrics() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          options={TIMEFRAME_OPTIONS}
+          value={timeframe}
+          onChange={setTimeframe}
+        />
+        <SegmentedControl
+          options={PERFORMANCE_MODES.map(mode => ({ value: mode, label: mode }))}
+          value={performanceMode}
+          onChange={setPerformanceMode}
+        />
+        <SegmentedControl
+          options={UNIFIED_VIEW_MODES.map(mode => ({ value: mode, label: mode }))}
+          value={viewMode}
+          onChange={setViewMode}
+        />
+      </div>
+
+      {isSeriesLoading && <LoadingSpinner message="Fetching sector chart data..." />}
+      {!isSeriesLoading && seriesError && <ErrorMessage message={String(seriesError)} />}
+      {seriesData && !isSeriesLoading && !seriesError && !hasChartSeries && (
+        <Notice tone="info">{chartEmptyMessage}</Notice>
+      )}
+      {seriesData && !isSeriesLoading && !seriesError && hasChartSeries && viewMode === "Grid" && (
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {order.map(sector => {
+            const series = activeSeries[sector]
+            if (!series || series.length === 0) return null
+            const ret = calcReturn(series)
+            const chartData = isRelativeMode ? normalizeReturnSeries(series) : series
+            return (
+              <ChartTile
+                key={sector}
+                title={sector}
+                subtitle={isRelativeMode ? `Relative to ${benchmark}` : undefined}
+                meta={ret != null ? (
+                  <span className={`text-xs font-semibold ${ret >= 0 ? "text-positive" : "text-negative"}`}>
+                    {formatPercent(ret)}
+                  </span>
+                ) : undefined}
+              >
+                <TimeSeriesChart
+                  data={chartData}
+                  height={160}
+                  timeframe={timeframe}
+                  zeroLine={isRelativeMode}
+                  yFormatter={isRelativeMode ? formatPercent : undefined}
+                  tooltipFormatter={isRelativeMode ? formatPercent : undefined}
+                />
+              </ChartTile>
+            )
+          })}
+        </div>
+      )}
+      {seriesData && !isSeriesLoading && !seriesError && hasChartSeries && viewMode === "Unified" && (
+        <div className="mb-6">
+          <UnifiedPerformanceView
+            order={order}
+            seriesByName={activeSeries}
+            timeframe={timeframe}
+            timeframeLabel={timeframeLabel(timeframe)}
+            itemLabel="sectors"
+            title={isRelativeMode ? `Unified Performance vs ${benchmark}` : "Unified Sector Performance"}
+            description={chartDescription}
+            emptyMessage={chartEmptyMessage}
+          />
         </div>
       )}
 

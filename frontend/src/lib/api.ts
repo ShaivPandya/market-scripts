@@ -1572,6 +1572,9 @@ export const deletePortfolioNewsDigest = (digestId: string) =>
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
 
+export const fetchSectorMetricsSeries = (timeframe: string) =>
+  client.get(`/sector-metrics/series?timeframe=${encodeURIComponent(timeframe)}`).then(r => r.data)
+
 export const analyzeSectorMetrics = (body: {
   rows: Record<string, unknown>[]
   timestamp?: string | null

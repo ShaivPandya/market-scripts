@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pandas as pd
+import pytest
+
 
 def test_market_breadth_route_uses_snapshot(auth_client, monkeypatch):
     import api.routers.market_technicals as router
@@ -68,6 +71,56 @@ def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, mon
 
     assert resp.status_code == 503
     assert resp.json()["type"] == "SnapshotUnavailableError"
+
+
+def test_sector_metrics_series_route_serializes_prices_and_relative_ratios(auth_client, monkeypatch):
+    import api.routers.sector_metrics as router
+    from equities.sector_metrics import sector_metrics as sector_metrics_mod
+
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
+    monkeypatch.setattr(
+        sector_metrics_mod,
+        "SECTOR_ETFS",
+        {"Information Technology": "XLK", "Energy": "XLE"},
+    )
+    monkeypatch.setattr(sector_metrics_mod, "BENCHMARK_ETF", "SPY")
+
+    calls = []
+
+    def fake_fetch_etf_prices(sector_etfs, benchmark, period="2y", interval="1d"):
+        calls.append({"sector_etfs": sector_etfs, "benchmark": benchmark, "period": period, "interval": interval})
+        return pd.DataFrame(
+            {
+                "XLK": [100.0, 110.0],
+                "XLE": [50.0, 45.0],
+                "SPY": [200.0, 220.0],
+            },
+            index=pd.to_datetime(["2026-05-14", "2026-05-15"]),
+        )
+
+    monkeypatch.setattr(sector_metrics_mod, "fetch_etf_prices", fake_fetch_etf_prices)
+
+    resp = auth_client.get("/api/sector-metrics/series", params={"timeframe": "Invalid"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert calls == [
+        {
+            "sector_etfs": {"Information Technology": "XLK", "Energy": "XLE"},
+            "benchmark": "SPY",
+            "period": "90d",
+            "interval": "1d",
+        }
+    ]
+    assert body["timeframe"] == "Daily"
+    assert body["benchmark"] == "SPY"
+    assert body["sector_order"] == ["Information Technology", "Energy"]
+    assert body["sector_prices"]["Information Technology"][0] == {
+        "date": "2026-05-14T00:00:00",
+        "value": 100.0,
+    }
+    assert body["sector_relative_prices"]["Information Technology"][1]["value"] == pytest.approx(110.0 / 220.0)
+    assert body["sector_relative_prices"]["Energy"][1]["value"] == pytest.approx(45.0 / 220.0)
 
 
 def test_liquidity_route_preserves_payload_and_attaches_quality_warnings(auth_client, monkeypatch):

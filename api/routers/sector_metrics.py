@@ -3,15 +3,17 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_or_set_cached, long_cache
+from api.cache import get_or_set_cached, long_cache, short_cache
 from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
-from api.serializers import serialize_value
+from api.serializers import serialize_series, serialize_value
 from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
 from api.snapshot_store import get_snapshot_response, snapshots_required
 from equities.sector_metrics.payload import normalize_sector_metrics_payload
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
+
+VALID_SERIES_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
 
 
 @router.get("/sector-metrics")
@@ -42,6 +44,39 @@ def get_sector_metrics():
         }
 
     return normalize_sector_metrics_payload(get_or_set_cached(long_cache, key, loader))
+
+
+@router.get("/sector-metrics/series")
+def get_sector_metrics_series(timeframe: str = "Daily"):
+    if timeframe not in VALID_SERIES_TIMEFRAMES:
+        timeframe = "Daily"
+    key = f"sector_metrics_series:{timeframe}"
+
+    def loader():
+        try:
+            from equities.sector_metrics import sector_metrics as sector_metrics_mod
+
+            data = sector_metrics_mod.get_sector_etf_series(timeframe=timeframe)
+        except Exception as e:
+            raise DataFetchError(source="sector_metrics_series", detail=str(e)) from e
+
+        if "error" in data and data["error"]:
+            raise DataFetchError(source="sector_metrics_series", detail=data["error"])
+
+        sector_prices = data.get("sector_prices") or {}
+        sector_relative_prices = data.get("sector_relative_prices") or {}
+        return {
+            "sector_prices": {name: serialize_series(series) for name, series in sector_prices.items()},
+            "sector_relative_prices": {
+                name: serialize_series(series) for name, series in sector_relative_prices.items()
+            },
+            "sector_order": data.get("sector_order", []),
+            "benchmark": data.get("benchmark"),
+            "timeframe": timeframe,
+            "timestamp": serialize_value(data.get("timestamp")),
+        }
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 class SectorMetricsAnalyzeRequest(BaseModel):

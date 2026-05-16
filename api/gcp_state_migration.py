@@ -213,6 +213,20 @@ def _normalize_pending_approval_rows(rows: list[dict[str, Any]]) -> list[dict[st
     return rows
 
 
+def _normalize_investment_idea_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        row["asset"] = row.get("asset") or "equity"
+        row["instrument_type"] = row.get("instrument_type") or "security"
+        row["price_symbol"] = row.get("price_symbol") or row.get("ticker")
+        row["contract_multiplier"] = row.get("contract_multiplier") or 1.0
+        row["fx_base_currency"] = row.get("fx_base_currency")
+        row["fx_quote_currency"] = row.get("fx_quote_currency")
+        row["currency"] = row.get("currency")
+        row["country"] = row.get("country")
+        row["exchange"] = row.get("exchange")
+    return rows
+
+
 def _sqlite_table_exists(db_path: Path, table: str) -> bool:
     with sqlite3.connect(str(db_path)) as conn:
         row = conn.execute(
@@ -1015,6 +1029,8 @@ class StateMigrator:
             rows = _sqlite_rows(db, table)
             if table == "pending_approvals":
                 rows = _normalize_pending_approval_rows(rows)
+            if table == "investment_ideas":
+                rows = _normalize_investment_idea_rows(rows)
             self._upsert_rows(table, columns, conflict, rows)
         for table in [
             t

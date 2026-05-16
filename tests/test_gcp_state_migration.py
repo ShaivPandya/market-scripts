@@ -51,6 +51,70 @@ def test_pending_approval_migration_backfills_application_state():
     assert rows[2]["application_attempts"] == 0
 
 
+def test_core_migration_defaults_legacy_investment_idea_instrument_fields(tmp_path):
+    db = tmp_path / "source" / SOURCE_DBS["core"]
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE investment_ideas (
+                id INTEGER PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                company_name TEXT,
+                status TEXT NOT NULL,
+                user_notes TEXT,
+                tags_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT,
+                latest_evaluation_id INTEGER,
+                latest_job_id TEXT,
+                accepted_recommendation_id INTEGER,
+                metadata_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO investment_ideas (
+                id, ticker, company_name, status, user_notes, tags_json, created_at, updated_at,
+                source_type, source_id, latest_evaluation_id, latest_job_id, accepted_recommendation_id, metadata_json
+            )
+            VALUES (1, 'AAPL', 'Apple Inc.', 'pending', NULL, '[]', 'created', 'updated',
+                'user', NULL, NULL, NULL, NULL, '{}')
+            """
+        )
+
+    class _FakeMigrator(StateMigrator):
+        def __init__(self):
+            super().__init__(snapshot_root=tmp_path / "source", run_id="run")
+            self.upserts = []
+
+        def _source_completed(self, source_name, source_sha256):  # noqa: ANN001, ANN201
+            return False
+
+        def _upsert_rows(self, table, columns, conflict, rows):  # noqa: ANN001, ANN201
+            self.upserts.append((table, columns, list(rows)))
+
+        def _reset_identity(self, table, column="id"):  # noqa: ANN001, ANN201
+            pass
+
+        def _record_source(self, result, status="completed"):  # noqa: ANN001, ANN201
+            self.result = result
+
+    migrator = _FakeMigrator()
+    migrator.migrate_core()
+
+    table, columns, rows = migrator.upserts[0]
+    assert table == "investment_ideas"
+    assert "asset" in columns
+    assert rows[0]["asset"] == "equity"
+    assert rows[0]["instrument_type"] == "security"
+    assert rows[0]["price_symbol"] == "AAPL"
+    assert rows[0]["contract_multiplier"] == 1.0
+
+
 def test_ontology_migration_seeds_schema_definitions_for_pre_registry_sqlite(tmp_path):
     db = tmp_path / "source" / SOURCE_DBS["ontology"]
     db.parent.mkdir(parents=True)
