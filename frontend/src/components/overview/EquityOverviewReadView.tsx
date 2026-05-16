@@ -43,6 +43,15 @@ function formatCoverage(v: unknown): string {
   return `${v.toFixed(2)}x`
 }
 
+function formatMarketCap(v: unknown, currency = "USD"): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
+  const prefix = currencyPrefix(currency)
+  if (Math.abs(v) >= 1e12) return `${prefix}${(v / 1e12).toFixed(2)}T`
+  if (Math.abs(v) >= 1e9) return `${prefix}${(v / 1e9).toFixed(2)}B`
+  if (Math.abs(v) >= 1e6) return `${prefix}${(v / 1e6).toFixed(2)}M`
+  return `${prefix}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
+
 function metricBasisLabel(basis: unknown, periodEnd: unknown): string | undefined {
   if (typeof basis !== "string" || typeof periodEnd !== "string" || !periodEnd) return undefined
   if (basis === "ttm") return `TTM through ${periodEnd}`
@@ -109,7 +118,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const [view, setView] = useState<FinancialViewMode>("annual")
 
   const { data: rawData, isLoading, error } = useApiQuery<Record<string, unknown>>(
-    ["financials-overview-v12", ticker],
+    ["financials-overview-v13", ticker],
     () => runFinancials({ ticker }),
     300_000,
   )
@@ -121,6 +130,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const epsRows = (view === "annual" ? annual.eps : quarterly.eps) as FinancialRow[] | undefined
   const dataSource = typeof rawData?.data_source === "string" ? rawData.data_source : "sec_edgar"
   const financialCurrency = typeof rawData?.financial_currency === "string" ? rawData.financial_currency : "USD"
+  const marketCurrency = typeof metrics.market_cap_currency === "string" ? metrics.market_cap_currency : "USD"
   const revenueFormatter = (v: unknown) => formatRevenue(v, financialCurrency)
 
   return (
@@ -141,6 +151,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
             <MetricCard title="3Y EPS CAGR" value={formatPct(metrics.eps_cagr_3y)} />
             <MetricCard title="Avg YoY Revenue (3Q)" value={formatPct(metrics.avg_yoy_revenue_growth_3q)} />
             <MetricCard title="Avg YoY EPS (3Q)" value={formatPct(metrics.avg_yoy_eps_growth_3q)} />
+            <MetricCard title="Market Cap" value={formatMarketCap(metrics.market_cap, marketCurrency)} />
             <MetricCard
               title="Interest Coverage"
               value={formatCoverage(metrics.interest_coverage)}

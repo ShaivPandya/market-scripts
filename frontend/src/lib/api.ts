@@ -409,6 +409,14 @@ export interface IdeaAnalyzerContext {
 
 export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
   portfolio_context_used?: boolean
+  evaluator?: {
+    status?: "ok" | "repaired" | "fallback" | string
+    provider?: string | null
+    model?: string | null
+    attempts?: number | null
+    web_search_status?: string | null
+    failure_reason?: string | null
+  } | null
   instrument?: {
     ticker?: string | null
     asset?: PortfolioAsset | string | null

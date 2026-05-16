@@ -562,6 +562,11 @@ def _yf_numeric(v: object) -> float | None:
     return x
 
 
+def _yf_positive_numeric(v: object) -> float | None:
+    x = _yf_numeric(v)
+    return x if x is not None and x > 0 else None
+
+
 def _yf_statement(ticker_obj: Any, attrs: tuple[str, ...], *, freq: str = "annual"):
     for attr in attrs:
         try:
@@ -609,6 +614,41 @@ def _yf_info(ticker_obj: Any) -> dict:
         if isinstance(candidate, dict):
             return candidate
     return {}
+
+
+def _market_cap_from_yf_info(info: dict) -> float | None:
+    market_cap = _yf_positive_numeric(info.get("marketCap"))
+    if market_cap is not None:
+        return market_cap
+
+    price = _yf_positive_numeric(info.get("currentPrice") or info.get("regularMarketPrice"))
+    shares = _yf_positive_numeric(info.get("sharesOutstanding") or info.get("impliedSharesOutstanding"))
+    if price is None or shares is None:
+        return None
+    return price * shares
+
+
+def _market_metrics_from_yf_info(info: dict) -> dict[str, object | None]:
+    currency = str(info.get("currency") or info.get("financialCurrency") or "USD").strip().upper() or "USD"
+    market_cap = _market_cap_from_yf_info(info)
+    return {
+        "market_cap": market_cap,
+        "market_cap_currency": currency,
+        "market_cap_source": "yfinance_info" if market_cap is not None else None,
+    }
+
+
+def _fetch_yfinance_market_metrics(ticker: str) -> dict[str, object | None]:
+    try:
+        import yfinance as yf
+    except ImportError:
+        return _market_metrics_from_yf_info({})
+
+    try:
+        return _market_metrics_from_yf_info(_yf_info(yf.Ticker(ticker)))
+    except Exception:
+        LOGGER.debug("%s: yfinance market cap fetch failed", ticker, exc_info=True)
+        return _market_metrics_from_yf_info({})
 
 
 def _yf_index_lookup(statement: Any, names: tuple[str, ...]) -> object | None:
@@ -937,6 +977,7 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
         yf_rows["quarterly_interest_expense"],
     )
     profitability_metrics["interest_coverage_source"] = "yfinance"
+    market_metrics = _market_metrics_from_yf_info(info)
 
     return {
         "ticker": ticker,
@@ -951,6 +992,7 @@ def _build_yfinance_fallback(ticker: str, reason: str) -> dict:
             "avg_yoy_eps_growth_3q": _calc_avg_3q_yoy(quarterly_eps, denom_abs=True),
             "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
             **profitability_metrics,
+            **market_metrics,
         },
         "annual": {
             "revenue": annual_revenue,
@@ -1873,6 +1915,7 @@ def get_data(ticker: str) -> dict:
         "avg_yoy_eps_growth_3q": _calc_avg_3q_yoy(quarterly_eps, denom_abs=True),
         "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
         **profitability_metrics,
+        **_fetch_yfinance_market_metrics(tk),
     }
     metrics = _maybe_refresh_interest_coverage_from_yfinance(
         tk,

@@ -2019,11 +2019,38 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
     return result
 
 
+def _attach_evaluator_diagnostics(result: dict[str, Any], diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    if not diagnostics:
+        return result
+    allowed = {
+        "status",
+        "provider",
+        "model",
+        "attempts",
+        "web_search_status",
+        "failure_reason",
+    }
+    safe = {key: diagnostics.get(key) for key in allowed if diagnostics.get(key) is not None}
+    data_quality = _as_dict(result.get("data_quality"))
+    data_quality["evaluator"] = safe
+    result["data_quality"] = data_quality
+    return result
+
+
 def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
-    from llm_utils import MODEL_HIGH, call_llm_text, has_llm_api_key, parse_json_text
+    from llm_utils import MODEL_HIGH, call_llm_json, has_llm_api_key
 
     if not has_llm_api_key():
-        return _deterministic_evaluation(context, reason="no configured LLM API key")
+        result = _deterministic_evaluation(context, reason="no configured LLM API key")
+        return _attach_evaluator_diagnostics(
+            result,
+            {
+                "status": "fallback",
+                "attempts": 0,
+                "web_search_status": "not_started",
+                "failure_reason": "no configured LLM API key",
+            },
+        )
 
     system = "\n\n---\n\n".join(
         [
@@ -2064,17 +2091,22 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         f"Context JSON:\n{json.dumps(context, default=str, sort_keys=True)}"
     )
     try:
-        text, citations, _response = call_llm_text(
+        parsed, citations, _response, evaluator_diagnostics = call_llm_json(
             prompt=prompt,
             model=MODEL_HIGH,
             max_tokens=6000,
             system=system,
+            enable_web_search=True,
             max_web_search_uses=4,
             json_schema=_idea_evaluator_json_schema(),
             json_schema_name="idea_evaluation_decision_quality",
         )
-        parsed = parse_json_text(text)
+        if not isinstance(parsed, dict):
+            reason = str(evaluator_diagnostics.get("failure_reason") or "model did not return JSON")
+            result = _deterministic_evaluation(context, reason=reason)
+            return _attach_evaluator_diagnostics(result, evaluator_diagnostics)
         result = _normalize_llm_result(context, parsed)
+        result = _attach_evaluator_diagnostics(result, evaluator_diagnostics)
         if citations:
             evidence = result.setdefault("evidence", [])
             if isinstance(evidence, list):
@@ -2084,7 +2116,16 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
                 )
         return result
     except Exception as exc:
-        return _deterministic_evaluation(context, reason=str(exc))
+        result = _deterministic_evaluation(context, reason=str(exc))
+        return _attach_evaluator_diagnostics(
+            result,
+            {
+                "status": "fallback",
+                "attempts": 0,
+                "web_search_status": "error",
+                "failure_reason": str(exc),
+            },
+        )
 
 
 def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

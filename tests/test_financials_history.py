@@ -475,6 +475,8 @@ def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkey
             self.info = {
                 "longName": "Taiwan Semiconductor Manufacturing Company Limited",
                 "financialCurrency": "TWD",
+                "currency": "USD",
+                "marketCap": 1_234_567_890,
             }
             self.income_stmt = income_stmt
             self.financials = income_stmt
@@ -506,6 +508,9 @@ def test_get_data_falls_back_to_yfinance_when_edgar_has_no_revenue_or_eps(monkey
     assert out["metrics"]["operating_margin_basis"] == "annual"
     assert out["metrics"]["operating_margin_period_end"] == "2025-12-31"
     assert out["metrics"]["net_income_margin"] == pytest.approx(24.0 / 160.0)
+    assert out["metrics"]["market_cap"] == 1_234_567_890
+    assert out["metrics"]["market_cap_currency"] == "USD"
+    assert out["metrics"]["market_cap_source"] == "yfinance_info"
     assert out["metrics"]["interest_coverage"] == pytest.approx(32.0 / 8.0)
     assert out["metrics"]["interest_coverage_flag"] is False
     assert out["metrics"]["interest_coverage_warning_threshold"] == fs.INTEREST_COVERAGE_WARNING_THRESHOLD

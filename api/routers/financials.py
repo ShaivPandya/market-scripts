@@ -19,7 +19,7 @@ def run_financials(req: FinancialsRequest):
     if not ticker:
         raise HTTPException(status_code=400, detail="Ticker is required")
 
-    key = f"financials:v12:{ticker}"
+    key = f"financials:v13:{ticker}"
 
     def loader():
         try:

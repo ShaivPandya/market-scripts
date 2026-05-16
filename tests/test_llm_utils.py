@@ -123,6 +123,106 @@ def test_anthropic_text_request_shape_and_citations(monkeypatch):
     assert "thinking" not in fake_messages.kwargs
 
 
+def test_call_llm_json_injects_schema_for_anthropic(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    class FakeMessages:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text='{"name":"ANET"}')],
+                stop_reason="end_turn",
+            )
+
+    fake_messages = FakeMessages()
+
+    class FakeAnthropic:
+        def __init__(self, *args, **kwargs):
+            self.messages = fake_messages
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+
+    parsed, _citations, _response, diagnostics = llm_utils.call_llm_json(
+        prompt="return json",
+        model=llm_utils.MODEL_LOW,
+        max_tokens=128,
+        json_schema=schema,
+        json_schema_name="test_schema",
+    )
+
+    prompt = fake_messages.kwargs["messages"][0]["content"]
+    assert parsed == {"name": "ANET"}
+    assert diagnostics["status"] == "ok"
+    assert "Structured JSON output is required" in prompt
+    assert "test_schema" in prompt
+    assert '"name"' in prompt
+
+
+def test_call_llm_json_repairs_invalid_json_once(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    calls = []
+
+    def fake_call_llm_text(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return "not json", [], SimpleNamespace()
+        return '{"ok": true}', [], SimpleNamespace()
+
+    monkeypatch.setattr(llm_utils, "call_llm_text", fake_call_llm_text)
+
+    parsed, _citations, _response, diagnostics = llm_utils.call_llm_json(
+        prompt="return json",
+        model=llm_utils.MODEL_LOW,
+        max_tokens=128,
+        json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    )
+
+    assert parsed == {"ok": True}
+    assert len(calls) == 2
+    assert calls[1]["enable_web_search"] is False
+    assert diagnostics["status"] == "repaired"
+    assert diagnostics["attempts"] == 2
+
+
+def test_call_llm_json_retries_provider_error_without_search(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    calls = []
+
+    def fake_call_llm_text(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("schema and search are not compatible")
+        return '{"ok": true}', [], SimpleNamespace()
+
+    monkeypatch.setattr(llm_utils, "call_llm_text", fake_call_llm_text)
+
+    parsed, _citations, _response, diagnostics = llm_utils.call_llm_json(
+        prompt="return json",
+        model=llm_utils.MODEL_LOW,
+        max_tokens=128,
+        enable_web_search=True,
+        json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    )
+
+    assert parsed == {"ok": True}
+    assert len(calls) == 2
+    assert calls[0]["enable_web_search"] is True
+    assert calls[1]["enable_web_search"] is False
+    assert diagnostics["status"] == "ok"
+    assert diagnostics["attempts"] == 2
+    assert diagnostics["web_search_status"] == "disabled_after_error"
+
+
 def test_openai_text_request_shape_and_citations(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")

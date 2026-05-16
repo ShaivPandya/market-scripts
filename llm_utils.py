@@ -571,6 +571,115 @@ def call_llm_text(
     return extract_text(response), extract_citations(response), response
 
 
+def call_llm_json(
+    *,
+    prompt: str,
+    model: str,
+    api_key: str | None = None,
+    max_tokens: int = 4096,
+    system: str | None = None,
+    allowed_domains: Sequence[str] | None = None,
+    enable_web_search: bool | None = None,
+    max_web_search_uses: int = 5,
+    provider: str | None = None,
+    reasoning_effort: str | None = None,
+    json_schema: dict[str, Any] | None = None,
+    json_schema_name: str | None = None,
+    require_object: bool = True,
+) -> tuple[Any, list[tuple[str, str]], Any, dict[str, Any]]:
+    """Call an LLM and return parsed JSON with sanitized diagnostics."""
+
+    resolved_provider = _provider_for_model_argument(model, provider)
+    resolved_model = resolve_model(model, resolved_provider)
+    web_search_requested = _web_search_enabled(
+        enable_web_search=enable_web_search,
+        allowed_domains=allowed_domains,
+    )
+    diagnostics: dict[str, Any] = {
+        "status": "fallback",
+        "provider": resolved_provider,
+        "model": resolved_model,
+        "attempts": 0,
+        "web_search_status": "enabled" if web_search_requested else "disabled",
+    }
+    citations: list[tuple[str, str]] = []
+    last_response: Any = None
+    failures: list[str] = []
+
+    def attempt(attempt_prompt: str, *, search_enabled: bool) -> tuple[str, list[tuple[str, str]], Any]:
+        diagnostics["attempts"] = int(diagnostics.get("attempts") or 0) + 1
+        return call_llm_text(
+            prompt=_json_prompt_for_provider(
+                attempt_prompt,
+                provider=resolved_provider,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+            ),
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+            allowed_domains=allowed_domains,
+            enable_web_search=search_enabled,
+            max_web_search_uses=max_web_search_uses,
+            provider=resolved_provider,
+            reasoning_effort=reasoning_effort,
+            json_schema=json_schema,
+            json_schema_name=json_schema_name,
+        )
+
+    def parsed_object(text: str) -> Any:
+        parsed = parse_json_text(text)
+        if require_object and not isinstance(parsed, dict):
+            return None
+        return parsed
+
+    try:
+        text, attempt_citations, last_response = attempt(prompt, search_enabled=web_search_requested)
+        citations.extend(attempt_citations)
+    except Exception as exc:
+        failures.append(f"initial call failed: {_safe_error_message(exc)}")
+        if not web_search_requested:
+            diagnostics["failure_reason"] = _diagnostic_failure_reason(failures)
+            return None, citations, last_response, diagnostics
+        diagnostics["web_search_status"] = "disabled_after_error"
+        try:
+            text, attempt_citations, last_response = attempt(prompt, search_enabled=False)
+            citations.extend(attempt_citations)
+        except Exception as retry_exc:
+            failures.append(f"retry without web search failed: {_safe_error_message(retry_exc)}")
+            diagnostics["failure_reason"] = _diagnostic_failure_reason(failures)
+            return None, citations, last_response, diagnostics
+
+    parsed = parsed_object(text)
+    if parsed is not None:
+        diagnostics["status"] = "ok"
+        return parsed, citations, last_response, diagnostics
+
+    failures.append(_json_parse_failure_reason(text, require_object=require_object))
+    repair_prompt = _json_repair_prompt(
+        text,
+        json_schema=json_schema,
+        json_schema_name=json_schema_name,
+    )
+    try:
+        repair_text, repair_citations, last_response = attempt(repair_prompt, search_enabled=False)
+        citations.extend(repair_citations)
+    except Exception as exc:
+        failures.append(f"repair call failed: {_safe_error_message(exc)}")
+        diagnostics["failure_reason"] = _diagnostic_failure_reason(failures)
+        return None, citations, last_response, diagnostics
+
+    repaired = parsed_object(repair_text)
+    if repaired is not None:
+        diagnostics["status"] = "repaired"
+        return repaired, citations, last_response, diagnostics
+
+    failures.append("repair response did not contain a valid JSON object")
+    diagnostics["failure_reason"] = _diagnostic_failure_reason(failures)
+    return None, citations, last_response, diagnostics
+
+
 def call_llm_pdf_text(
     *,
     pdf_bytes: bytes,
@@ -693,6 +802,74 @@ def parse_json_text(text: str) -> Any:
             return json.loads(cleaned[start : end + 1])
         except Exception:
             return None
+
+
+def _json_prompt_for_provider(
+    prompt: str,
+    *,
+    provider: str,
+    json_schema: dict[str, Any] | None,
+    json_schema_name: str | None,
+) -> str:
+    if provider != PROVIDER_ANTHROPIC or not json_schema:
+        return prompt
+    import json
+
+    schema_label = json_schema_name or "structured_output"
+    schema_text = json.dumps(json_schema, ensure_ascii=True, sort_keys=True)
+    return (
+        f"{prompt}\n\n"
+        "Structured JSON output is required for this response.\n"
+        f"Schema name: {schema_label}\n"
+        "Return exactly one JSON object matching this JSON Schema. Do not include markdown fences, "
+        "commentary, XML tags, or any text before or after the JSON object.\n"
+        f"JSON Schema:\n{schema_text}"
+    )
+
+
+def _json_repair_prompt(
+    text: str,
+    *,
+    json_schema: dict[str, Any] | None,
+    json_schema_name: str | None,
+) -> str:
+    import json
+
+    schema_label = json_schema_name or "structured_output"
+    prior_text = (text or "").strip()
+    if len(prior_text) > 12000:
+        prior_text = prior_text[:12000] + "\n...[truncated]"
+    schema_clause = ""
+    if json_schema:
+        schema_clause = "\nJSON Schema:\n" + json.dumps(json_schema, ensure_ascii=True, sort_keys=True)
+    return (
+        "Convert the prior model response into exactly one valid JSON object. "
+        "Do not add markdown fences, commentary, XML tags, or text outside the JSON object. "
+        f"The object must match schema name {schema_label}."
+        f"{schema_clause}\n\n"
+        f"Prior response:\n<<<MODEL_RESPONSE\n{prior_text}\nMODEL_RESPONSE>>>"
+    )
+
+
+def _json_parse_failure_reason(text: str, *, require_object: bool) -> str:
+    stripped = (text or "").strip()
+    if not stripped:
+        return "model returned an empty response"
+    if "{" not in stripped or "}" not in stripped:
+        return "model response did not contain a JSON object"
+    parsed = parse_json_text(stripped)
+    if require_object and parsed is not None and not isinstance(parsed, dict):
+        return "model response JSON was not an object"
+    return "model response was not valid JSON"
+
+
+def _safe_error_message(exc: BaseException) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    return message[:500]
+
+
+def _diagnostic_failure_reason(failures: list[str]) -> str:
+    return "; ".join(item for item in failures if item)[-1000:]
 
 
 def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:

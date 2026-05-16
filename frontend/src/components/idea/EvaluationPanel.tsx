@@ -109,6 +109,32 @@ function DecisionQualityGatePanel({ evaluation }: { evaluation: IdeaEvaluation }
   )
 }
 
+function EvaluatorDiagnosticNotice({ evaluation }: { evaluation: IdeaEvaluation }) {
+  const diagnostic = evaluation.data_quality?.evaluator
+  if (!diagnostic || typeof diagnostic !== "object") return null
+  const status = String(diagnostic.status || "").toLowerCase()
+  if (!status || status === "ok") return null
+  const tone: StatusTone = status === "repaired" ? "warning" : "error"
+  const attempts = diagnostic.attempts == null ? null : Number(diagnostic.attempts)
+  const detailParts = [
+    diagnostic.provider ? String(diagnostic.provider) : "",
+    diagnostic.model ? String(diagnostic.model) : "",
+    diagnostic.web_search_status ? `search ${formatLabel(String(diagnostic.web_search_status))}` : "",
+    attempts != null && Number.isFinite(attempts) ? `${attempts} attempt${attempts === 1 ? "" : "s"}` : "",
+  ].filter(Boolean)
+  const reason = String(diagnostic.failure_reason || "")
+  return (
+    <div className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Evaluator Diagnostics</span>
+        <StatusBadge tone={tone}>{formatLabel(status)}</StatusBadge>
+        {detailParts.length > 0 && <span className="text-xs text-subtle">{detailParts.join(" / ")}</span>}
+      </div>
+      {reason && <p className="mt-2 leading-6">{reason}</p>}
+    </div>
+  )
+}
+
 function DecisionQualitySummary({ evaluation }: { evaluation: IdeaEvaluation }) {
   const dq = evaluation.decision_quality
   if (!dq) return null
@@ -409,6 +435,8 @@ export function EvaluationPanel({
         <p className="text-base font-medium leading-7 text-app">{evaluation.thesis_statement}</p>
       )}
       {evaluation.rationale && <p className="text-sm leading-6 text-muted">{evaluation.rationale}</p>}
+
+      <EvaluatorDiagnosticNotice evaluation={evaluation} />
 
       <DecisionQualityGatePanel evaluation={evaluation} />
 
