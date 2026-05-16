@@ -1,0 +1,10 @@
+{
+  "ticker": "NFLX",
+  "as_of_date": "2012-10-31",
+  "user_notes": {
+    "requested_case": "Netflix (NFLX), new position",
+    "decision_type": "new buy",
+    "case_focus": "Carl Icahn buying Netflix when the market treated it as a broken DVD-to-streaming transition, while the variant view saw an undervalued strategic streaming platform.",
+    "reason_now": "The 2012-10-31 Icahn 13D disclosed an almost 10% stake and made the undervaluation/strategic-value thesis explicit while market sentiment remained highly negative."
+  }
+}

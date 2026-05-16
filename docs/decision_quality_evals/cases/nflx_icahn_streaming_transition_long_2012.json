@@ -1,0 +1,218 @@
+{
+  "id": "nflx_icahn_streaming_transition_long_2012",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2012-10-31",
+  "user_question": "Using the NFLX setup as of Carl Icahn's 2012-10-31 stake disclosure, should this new position have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json",
+      "sha256": "2132416032ae9252f5a002ed3767933eec7129b8aaf7cafd81b09993ae85bf4b",
+      "description": "User-provided Carl Icahn Netflix analysis distilled to as-of decision facts.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json",
+      "sha256": "e0d852c06ddab57c404f48025347d3f096d3f441ac02867316e0a4c7d42ab7e4",
+      "description": "Market setup, sentiment, valuation, strategic-value framing, and missing price-action inputs for NFLX as of 2012-10-31.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/nflx_icahn_portfolio_context_2012-10-31.json",
+      "sha256": "836a2dd7b7acb282f042d8f3cdd5ea8d2da960638bac2e3182952e4239aac555",
+      "description": "Portfolio context: NFLX was a new buy with high but not max assumed conviction.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/nflx_icahn_initiation_notes_2012-10-31.json",
+      "sha256": "c60ef1ce10ca7034028379ed210449b37c33d37a41073d72ad572431e95d2779",
+      "description": "User-requested framing and initiation rationale for the Icahn Netflix case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The decision date is 2012-10-31, the Icahn 13D disclosure date.",
+    "The decision type is a new buy.",
+    "The user did not provide the standard price-action snapshot, so exact close, moving averages, ROC, relative performance, and volume are treated as missing inputs.",
+    "Conviction is set to 4 because the disclosed stake and variant view were strong, but the case lacks exact portfolio risk budget, price-action snapshot, and detailed sizing constraints.",
+    "The source PDF contains later proof points, but the distilled inputs for this case exclude those later outcomes."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy NFLX because the market was pricing Netflix as a permanently damaged DVD-to-streaming transition, while Icahn's variant view treated it as an undervalued subscription streaming platform with operating leverage, international optionality, and strategic value to larger technology or media buyers.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Long internet video adoption, subscription streaming, consumer media disruption, high-beta growth equities, and strategic M&A scarcity in digital media.",
+    "mispricing": {
+      "consensus_view": "Netflix was a broken former growth stock: Qwikster had damaged the brand, DVD cash flows were declining, streaming content costs were rising, international expansion was losing money, and larger competitors could outbid Netflix for content.",
+      "variant_view": "The market was confusing transitional pain with terminal impairment. Domestic streaming scale, subscription operating leverage, international optionality, and strategic value could support a much higher valuation than the depressed stock implied.",
+      "pricing_evidence": "The source describes a roughly $3.2 billion market cap, about 0.9x trailing revenue and 1.1x trailing EV/revenue, very negative sentiment, and a large prior stock collapse despite Netflix still owning a large subscriber base and a leading streaming position.",
+      "why_consensus_is_wrong": "Consensus treated content spending, international losses, and DVD decline as proof the model was broken, while the variant view translated those same facts as front-loaded investment in a scalable streaming platform."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Icahn disclosed an almost 10% NFLX stake and explicitly framed Netflix as undervalued because of its dominant market position, international growth prospects, and strategic value.",
+      "expected_timeframe": "Immediate initiation on 2012-10-31, with validation over the next two to four quarters through subscriber growth, domestic streaming margins, cash needs, and any strategic or activist developments.",
+      "why_now": "The 13D created a concrete reason to act while the market was still anchored on the failed 2011 transition and 2012 losses. The setup combined depressed sentiment, strategic-value optionality, and evidence that domestic streaming had not been permanently impaired.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json: Icahn stake disclosure, undervaluation thesis, business transition, valuation context, and bear case",
+        "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json: sentiment, consensus pressure, strategic value, and missing market inputs",
+        "docs/decision_quality_evals/inputs/nflx_icahn_initiation_notes_2012-10-31.json: new-buy framing and reason-now"
+      ]
+    },
+    "invalidation": {
+      "observable": "The streaming transition fails to produce scalable domestic economics or requires repeated dilutive financing before the strategic value can matter.",
+      "metric_or_event": "Domestic streaming subscriber growth, domestic streaming contribution margin, churn or brand damage, content obligations versus liquidity, international losses, capital raises, and credible strategic or activist developments.",
+      "threshold": "Review or exit if domestic streaming subscriber growth stalls, contribution margin fails to improve over the next two to four quarters, content liabilities force another dilutive raise, international losses accelerate without evidence of future scale, or strategic/activist value is neutralized while operating metrics deteriorate.",
+      "timeframe": "Next two to four quarters after 2012-10-31.",
+      "implication": "The market was right that Netflix is structurally impaired rather than temporarily mispriced, and the equity/options expression is too risky."
+    },
+    "evidence_for": [
+      {
+        "claim": "Icahn's 13D created a concrete reason-now.",
+        "support": "The disclosed position represented about 9.98% beneficial ownership, including call-option exposure, and the filing explicitly cited undervaluation, dominant market position, international growth prospects, and strategic value.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "The stock was priced for severe disappointment.",
+        "support": "The source describes negative sentiment, a roughly $3.2 billion market cap, and low revenue multiples despite Netflix's leading streaming position.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json",
+          "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "Domestic streaming could still scale.",
+        "support": "The source notes that domestic streaming was already producing positive contribution profit and that management's long-term domestic subscriber target implied meaningful operating leverage if the model worked.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "There were multiple ways to win.",
+        "support": "Standalone execution, activist pressure, and strategic value to larger internet, mobile, or traditional media companies could all re-rate the stock from distressed levels.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json",
+          "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "The 2011 brand and execution damage was real.",
+        "support": "The source describes the price increase, Qwikster reversal, subscriber loss, and severe reputational damage after Netflix tried to force the DVD-to-streaming transition.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "Current earnings power was weak.",
+        "support": "The source notes sharply lower net income, possible near-term losses, and profitability pressure from content investment and international expansion.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "International expansion and content costs could consume cash.",
+        "support": "International streaming losses, geographically specific content rights, and large content liabilities made the global opportunity expensive and uncertain.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_source_case_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "Competition and strategic-value assumptions were uncertain.",
+        "support": "Larger companies could outbid Netflix for content, and strategic interest was possible but not guaranteed.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json"
+        ]
+      },
+      {
+        "claim": "The exact technical setup was missing.",
+        "support": "The case inputs did not include close, moving averages, ROC, volume, short interest, borrow cost, or relative-performance metrics as of 2012-10-31.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/nflx_icahn_market_setup_2012-10-31.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "The source describes very poor prior price action: a major post-Qwikster collapse, renewed 2012 weakness, and depressed sentiment around multi-year lows. The standard close, moving averages, ROC, volume, and relative-performance snapshot was not provided.",
+      "interpretation": "Price action was not confirming in the usual momentum sense. This was a contrarian strategic-value setup where bad price action was part of the opportunity, so the trade required tighter business invalidation and smaller initial sizing than a thesis with clean technical confirmation.",
+      "confirms_thesis": false,
+      "data_needed": [
+        "Exact NFLX close on 2012-10-31",
+        "100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages",
+        "1-month, 3-month, and 12-month ROC",
+        "Relative performance versus Nasdaq, S&P 500, and internet/media peers",
+        "Volume, short interest, and borrow cost as of the decision date"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The trade had a clear mispricing, a concrete activist/13D catalyst, identifiable operating metrics to watch, and multiple ways to win, but the lack of standard price-action and sizing inputs should cap confidence and sizing.",
+      "missing_inputs": [
+        "Exact decision-date price-action snapshot",
+        "Relative performance versus Nasdaq, S&P 500, and internet/media peers",
+        "Short interest and borrow cost",
+        "Exact intended initial size and option exposure",
+        "Portfolio exposure to high-beta internet and consumer discretionary equities",
+        "Detailed content-obligation schedule and liquidity runway"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy NFLX common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [
+        "Use call options or call spreads only with explicit premium-at-risk limits",
+        "Use a smaller starter position until price action and subscriber data confirm",
+        "Pair with a broader internet/media basket only if seeking less single-name execution risk"
+      ],
+      "follow_on": "Add only if domestic streaming subscriber growth and contribution margin improve, cash needs remain manageable, and price action begins to confirm the strategic-value thesis."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Upgrade toward 5 only if domestic streaming economics improve, cash burn and content obligations stay manageable, and price action/relative strength begin confirming that the market is re-rating Netflix as a streaming platform."
+    },
+    "confidence": 0.7,
+    "confidence_reason": "Moderately high because the mispricing, activist catalyst, strategic value, and operating-leverage thesis were clear; capped because exact price action, relative performance, short interest, liquidity, and portfolio sizing inputs were missing and the business still faced real content-cost, dilution, and competition risks.",
+    "sizing_context": {
+      "starting_size": "New high-conviction but incomplete-information buy; no exact target weight selected.",
+      "add_conditions": "Add only after subscriber growth, domestic streaming contribution margin, liquidity runway, and price/relative strength confirm the transition thesis.",
+      "liquidity_constraints": "No ADV, option liquidity, borrow, or exit-cost input selected; do not infer maximum size from this case.",
+      "portfolio_constraints": "Size against high-beta growth, consumer discretionary, internet/media, and single-name turnaround exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initiate a new NFLX long after the Icahn 13D catalyst, but keep initial sizing constrained until price action and operating metrics confirm."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If the market starts re-rating Netflix as a scalable streaming platform, add on confirmation and look for adjacent long opportunities in internet video, connected TV, and strategic media assets benefiting from the same shift.",
+      "if_wrong": "If domestic streaming stalls, content obligations force dilution, or competition proves structurally damaging, reduce or exit rather than averaging down into a failed transition.",
+      "next_review_trigger": "Review on the next quarterly subscriber update, domestic streaming contribution-margin trend, content-obligation/liquidity disclosures, strategic or activist developments, and any decisive price/relative-strength confirmation or breakdown."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Historical new-position example designed to teach contrarian strategic-value reasoning during a business-model transition. Price action is intentionally marked incomplete because the user did not provide the standard technical snapshot."
+}

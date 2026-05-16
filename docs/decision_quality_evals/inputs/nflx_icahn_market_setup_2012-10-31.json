@@ -1,0 +1,18 @@
+{
+  "ticker": "NFLX",
+  "as_of_date": "2012-10-31",
+  "market_setup": {
+    "sentiment": "Extremely negative. Netflix was still associated with the 2011 pricing mistake, Qwikster reversal, subscriber loss, falling DVD economics, content-cost fears, and international losses.",
+    "consensus_pressure": "Bears focused on content-cost inflation, competition from deeper-pocketed technology and media companies, the loss of exclusive content deals, slowing domestic subscriber growth, and the risk that international expansion would consume cash for years.",
+    "valuation_signal": "The stock looked expensive on depressed earnings but cheap relative to strategic value and revenue if domestic streaming scaled. The key question was whether current losses were transition costs or evidence of structural failure.",
+    "strategic_value": "Icahn's filing explicitly highlighted strategic value to larger companies competing in internet, mobile, and traditional media. That created multiple ways to win: standalone re-rating, activist pressure, or strategic interest.",
+    "price_action_context": "The source describes very poor prior price action, including a large 2011 collapse and renewed weakness in 2012. Exact close, moving averages, rate-of-change metrics, volume, and relative performance were not provided in the user-selected inputs."
+  },
+  "missing_market_inputs": [
+    "Exact NFLX close on 2012-10-31",
+    "100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages",
+    "1-month, 3-month, and 12-month ROC",
+    "Relative performance versus Nasdaq, S&P 500, and internet/media peers",
+    "Short interest and borrow cost as of the decision date"
+  ]
+}
