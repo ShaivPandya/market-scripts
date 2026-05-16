@@ -35,12 +35,14 @@ import {
   INSTRUMENT_TYPE_OPTIONS,
   assetLabel,
   canonicalSpotFxSymbol,
-  effectivePriceSymbol,
+  hasSeparatePriceSymbol,
   inferInstrumentType,
   instrumentTypeLabel,
   isEquitySecurity,
   nextContractMultiplier,
   normalizedSymbol,
+  pricingSymbolLabel,
+  visiblePriceSymbol,
 } from "@/lib/instruments"
 import {
   formatDate,
@@ -135,8 +137,16 @@ export function IdeaDetail() {
   const originalTicker = selectedIdea?.ticker || ""
   const originalAsset = (selectedIdea?.asset as PortfolioAsset) || "equity"
   const originalInstrumentType = inferInstrumentType(selectedIdea?.ticker ?? "", selectedIdea?.instrument_type)
-  const originalPriceSymbol = selectedIdea?.price_symbol || selectedIdea?.ticker || ""
-  const originalContractMultiplier = selectedIdea?.contract_multiplier == null ? "" : String(selectedIdea.contract_multiplier)
+  const originalPriceSymbol = selectedIdea
+    ? visiblePriceSymbol({
+      ticker: selectedIdea.ticker,
+      price_symbol: selectedIdea.price_symbol,
+      instrument_type: originalInstrumentType,
+    })
+    : ""
+  const originalContractMultiplier = originalInstrumentType === "future" && selectedIdea?.contract_multiplier != null
+    ? String(selectedIdea.contract_multiplier)
+    : ""
   const originalTagsString = (selectedIdea?.tags || []).join(", ")
   const originalStatus = (selectedIdea?.status as IdeaStatus) || "watching"
   const originalAnalyzerDirection = analyzerDirection(selectedIdea)
@@ -193,8 +203,16 @@ export function IdeaDetail() {
     setEditTicker(selectedIdea.ticker || "")
     setEditAsset((selectedIdea.asset as PortfolioAsset) || "equity")
     setEditInstrumentType(nextInstrumentType)
-    setEditPriceSymbol(selectedIdea.price_symbol || selectedIdea.ticker || "")
-    setEditContractMultiplier(selectedIdea.contract_multiplier == null ? "" : String(selectedIdea.contract_multiplier))
+    setEditPriceSymbol(visiblePriceSymbol({
+      ticker: selectedIdea.ticker,
+      price_symbol: selectedIdea.price_symbol,
+      instrument_type: nextInstrumentType,
+    }))
+    setEditContractMultiplier(
+      nextInstrumentType === "future" && selectedIdea.contract_multiplier != null
+        ? String(selectedIdea.contract_multiplier)
+        : "",
+    )
     setEditContractMultiplierTouched(false)
     setEditNotes(selectedIdea.user_notes || "")
     setEditTags((selectedIdea.tags || []).join(", "))
@@ -405,10 +423,8 @@ export function IdeaDetail() {
 
   function updateEditTicker(value: string) {
     const nextTicker = value.toUpperCase()
-    const currentPriceSymbol = editPriceSymbol.trim().toUpperCase()
-    const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === editTicker.toUpperCase()
-      ? nextTicker
-      : editPriceSymbol
+    const priceWasMirroringTicker = editPriceSymbol.trim().toUpperCase() === editTicker.toUpperCase()
+    const nextPriceSymbol = priceWasMirroringTicker ? "" : editPriceSymbol
     const nextType = inferInstrumentType(nextTicker, editInstrumentType)
     const nextMultiplier = nextContractMultiplier(
       {
@@ -419,7 +435,7 @@ export function IdeaDetail() {
         _contractMultiplierTouched: editContractMultiplierTouched,
       },
       nextType,
-      normalizedSymbol(nextPriceSymbol),
+      normalizedSymbol(nextPriceSymbol || nextTicker),
     )
     setEditTicker(nextTicker)
     setEditPriceSymbol(nextPriceSymbol)
@@ -431,6 +447,7 @@ export function IdeaDetail() {
 
   function updateEditInstrumentType(value: string) {
     const nextType = value as InstrumentType
+    const priceWasMirroringTicker = editPriceSymbol.trim().toUpperCase() === editTicker.toUpperCase()
     const row = {
       ticker: editTicker,
       price_symbol: editPriceSymbol,
@@ -438,16 +455,27 @@ export function IdeaDetail() {
       contract_multiplier: editContractMultiplier.trim() ? Number(editContractMultiplier) : null,
       _contractMultiplierTouched: editContractMultiplierTouched,
     }
-    const nextPriceSymbol = nextType === "spot_fx"
-      ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? editPriceSymbol
-      : editPriceSymbol
-    const nextMultiplier = nextContractMultiplier(row, nextType, normalizedSymbol(nextPriceSymbol))
+    const nextPriceSymbol = nextType === "security" || priceWasMirroringTicker ? "" : editPriceSymbol
+    const nextMultiplier = nextContractMultiplier(row, nextType, normalizedSymbol(nextPriceSymbol || editTicker))
     setEditInstrumentType(nextType)
-    setEditPriceSymbol(nextPriceSymbol || editTicker)
+    setEditPriceSymbol(nextPriceSymbol)
     if (nextType === "spot_fx") setEditAsset("fx")
     setEditContractMultiplier(nextMultiplier == null ? "" : String(nextMultiplier))
     setEditContractMultiplierTouched(nextType !== "future" ? false : editContractMultiplierTouched)
   }
+
+  const showEditPricingSymbolInput = hasSeparatePriceSymbol(editInstrumentType)
+  const showEditMultiplierInput = editInstrumentType === "future"
+  const thesisGridClass = showEditMultiplierInput
+    ? "xl:grid-cols-[10rem_10rem_10rem_10rem_10rem_1fr_11rem_11rem]"
+    : showEditPricingSymbolInput
+      ? "xl:grid-cols-[10rem_10rem_10rem_10rem_1fr_11rem_11rem]"
+      : "xl:grid-cols-[10rem_10rem_10rem_1fr_11rem_11rem]"
+  const selectedIdeaSubtitle = selectedIdea
+    ? selectedIdea.company_name
+      || (hasSeparatePriceSymbol(selectedIdea.instrument_type) ? selectedIdea.price_symbol : null)
+      || "Instrument name not set"
+    : ""
 
   if (!id) {
     return (
@@ -486,7 +514,7 @@ export function IdeaDetail() {
                   <StatusBadge tone="neutral">{assetLabel(selectedIdea.asset)}</StatusBadge>
                   <StatusBadge tone="neutral">{instrumentTypeLabel(selectedIdea.instrument_type)}</StatusBadge>
                 </div>
-                <p className="mt-1 text-sm text-subtle">{selectedIdea.company_name || selectedIdea.price_symbol || "Instrument name not set"}</p>
+                <p className="mt-1 text-sm text-subtle">{selectedIdeaSubtitle}</p>
 	              </div>
 	              <div className="flex flex-wrap gap-2">
 	                <button
@@ -675,7 +703,7 @@ export function IdeaDetail() {
 
             {tab === "Thesis" && (
               <section className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[10rem_10rem_10rem_10rem_10rem_1fr_11rem_11rem]">
+                <div className={cn("grid gap-3 md:grid-cols-2", thesisGridClass)}>
                   <TextInput
                     label="Ticker"
                     value={editTicker}
@@ -696,24 +724,27 @@ export function IdeaDetail() {
                     onChange={updateEditInstrumentType}
                     options={INSTRUMENT_TYPE_OPTIONS}
                   />
-                  <TextInput
-                    label="Price"
-                    value={editPriceSymbol}
-                    onChange={value => setEditPriceSymbol(value.toUpperCase())}
-                    uppercase
-                    placeholder={editInstrumentType === "spot_fx" ? "EURUSD=X" : editInstrumentType === "future" ? "ES=F" : editTicker || "AAPL"}
-                  />
-                  <TextInput
-                    label="Multiplier"
-                    value={editInstrumentType === "future" ? editContractMultiplier : "1"}
-                    onChange={value => {
-                      setEditContractMultiplier(value)
-                      setEditContractMultiplierTouched(true)
-                    }}
-                    type="number"
-                    placeholder={editInstrumentType === "future" ? "Auto" : "1"}
-                    disabled={editInstrumentType !== "future"}
-                  />
+                  {showEditPricingSymbolInput && (
+                    <TextInput
+                      label={pricingSymbolLabel(editInstrumentType)}
+                      value={editPriceSymbol}
+                      onChange={value => setEditPriceSymbol(value.toUpperCase())}
+                      uppercase
+                      placeholder={editInstrumentType === "spot_fx" ? "EURUSD=X" : "ES=F"}
+                    />
+                  )}
+                  {showEditMultiplierInput && (
+                    <TextInput
+                      label="Multiplier"
+                      value={editContractMultiplier}
+                      onChange={value => {
+                        setEditContractMultiplier(value)
+                        setEditContractMultiplierTouched(true)
+                      }}
+                      type="number"
+                      placeholder="Auto"
+                    />
+                  )}
                   <TextInput label="Tags" value={editTags} onChange={setEditTags} placeholder="quality, cyclical" />
                   <SelectInput label="Status" value={editStatus} onChange={value => setEditStatus(value as IdeaStatus)} options={IDEA_STATUSES} />
                   <SelectInput

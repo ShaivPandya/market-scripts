@@ -31,11 +31,12 @@ import {
   INSTRUMENT_TYPE_OPTIONS,
   assetLabel,
   canonicalSpotFxSymbol,
-  effectivePriceSymbol,
+  hasSeparatePriceSymbol,
   inferInstrumentType,
   instrumentTypeLabel,
   nextContractMultiplier,
   normalizedSymbol,
+  pricingSymbolLabel,
 } from "@/lib/instruments"
 import { AnalyzerWorkbench } from "@/pages/PortfolioAnalyzer"
 import {
@@ -385,10 +386,8 @@ export function IdeaWatchlist() {
 
   function updateTickerInput(value: string) {
     const nextTicker = value.toUpperCase()
-    const currentPriceSymbol = priceSymbol.trim().toUpperCase()
-    const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === ticker.toUpperCase()
-      ? nextTicker
-      : priceSymbol
+    const priceWasMirroringTicker = priceSymbol.trim().toUpperCase() === ticker.toUpperCase()
+    const nextPriceSymbol = priceWasMirroringTicker ? "" : priceSymbol
     const nextType = inferInstrumentType(nextTicker, instrumentType)
     const nextMultiplier = nextContractMultiplier(
       {
@@ -399,7 +398,7 @@ export function IdeaWatchlist() {
         _contractMultiplierTouched: contractMultiplierTouched,
       },
       nextType,
-      normalizedSymbol(nextPriceSymbol),
+      normalizedSymbol(nextPriceSymbol || nextTicker),
     )
     setTicker(nextTicker)
     setPriceSymbol(nextPriceSymbol)
@@ -411,6 +410,7 @@ export function IdeaWatchlist() {
 
   function updateInstrumentTypeInput(value: string) {
     const nextType = value as InstrumentType
+    const priceWasMirroringTicker = priceSymbol.trim().toUpperCase() === ticker.toUpperCase()
     const row = {
       ticker,
       price_symbol: priceSymbol,
@@ -418,12 +418,10 @@ export function IdeaWatchlist() {
       contract_multiplier: contractMultiplier.trim() ? Number(contractMultiplier) : null,
       _contractMultiplierTouched: contractMultiplierTouched,
     }
-    const nextPriceSymbol = nextType === "spot_fx"
-      ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? priceSymbol
-      : priceSymbol
-    const nextMultiplier = nextContractMultiplier(row, nextType, normalizedSymbol(nextPriceSymbol))
+    const nextPriceSymbol = nextType === "security" || priceWasMirroringTicker ? "" : priceSymbol
+    const nextMultiplier = nextContractMultiplier(row, nextType, normalizedSymbol(nextPriceSymbol || ticker))
     setInstrumentType(nextType)
-    setPriceSymbol(nextPriceSymbol || ticker)
+    setPriceSymbol(nextPriceSymbol)
     if (nextType === "spot_fx") setAsset("fx")
     setContractMultiplier(nextMultiplier == null ? "" : String(nextMultiplier))
     setContractMultiplierTouched(nextType !== "future" ? false : contractMultiplierTouched)
@@ -438,6 +436,13 @@ export function IdeaWatchlist() {
     () => Object.fromEntries(rows.map(({ idea, evaluation }) => [String(idea.id), evaluation?.analyzer_context ?? null])),
     [rows],
   )
+  const showPricingSymbolInput = hasSeparatePriceSymbol(instrumentType)
+  const showMultiplierInput = instrumentType === "future"
+  const createFormGridClass = showMultiplierInput
+    ? "xl:grid-cols-[minmax(8rem,10rem)_minmax(9rem,10rem)_minmax(8rem,9rem)_minmax(8rem,10rem)_minmax(8rem,10rem)_minmax(12rem,1fr)_minmax(16rem,1.5fr)_auto]"
+    : showPricingSymbolInput
+      ? "xl:grid-cols-[minmax(8rem,10rem)_minmax(9rem,10rem)_minmax(8rem,9rem)_minmax(8rem,10rem)_minmax(12rem,1fr)_minmax(16rem,1.5fr)_auto]"
+      : "xl:grid-cols-[minmax(8rem,10rem)_minmax(9rem,10rem)_minmax(8rem,9rem)_minmax(12rem,1fr)_minmax(16rem,1.5fr)_auto]"
 
   function currentComparisonJobResponse(): { jobId: string; message: string } | null {
     if (!activeComparisonJob) return null
@@ -506,7 +511,7 @@ export function IdeaWatchlist() {
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
-          className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(8rem,10rem)_minmax(9rem,10rem)_minmax(8rem,9rem)_minmax(8rem,10rem)_minmax(8rem,10rem)_minmax(12rem,1fr)_minmax(16rem,1.5fr)_auto]"
+          className={cn("grid gap-3 md:grid-cols-2", createFormGridClass)}
           onSubmit={event => {
             event.preventDefault()
             createMutation.mutate()
@@ -532,24 +537,27 @@ export function IdeaWatchlist() {
             onChange={updateInstrumentTypeInput}
             options={INSTRUMENT_TYPE_OPTIONS}
           />
-          <TextInput
-            label="Price"
-            value={priceSymbol}
-            onChange={value => setPriceSymbol(value.toUpperCase())}
-            uppercase
-            placeholder={instrumentType === "spot_fx" ? "EURUSD=X" : instrumentType === "future" ? "ES=F" : ticker || "AAPL"}
-          />
-          <TextInput
-            label="Multiplier"
-            value={instrumentType === "future" ? contractMultiplier : "1"}
-            onChange={value => {
-              setContractMultiplier(value)
-              setContractMultiplierTouched(true)
-            }}
-            type="number"
-            placeholder={instrumentType === "future" ? "Auto" : "1"}
-            disabled={instrumentType !== "future"}
-          />
+          {showPricingSymbolInput && (
+            <TextInput
+              label={pricingSymbolLabel(instrumentType)}
+              value={priceSymbol}
+              onChange={value => setPriceSymbol(value.toUpperCase())}
+              uppercase
+              placeholder={instrumentType === "spot_fx" ? "EURUSD=X" : "ES=F"}
+            />
+          )}
+          {showMultiplierInput && (
+            <TextInput
+              label="Multiplier"
+              value={contractMultiplier}
+              onChange={value => {
+                setContractMultiplier(value)
+                setContractMultiplierTouched(true)
+              }}
+              type="number"
+              placeholder="Auto"
+            />
+          )}
           <TextInput label="Tags" value={tags} onChange={setTags} placeholder="quality, ai" />
           <TextInput label="Notes" value={notes} onChange={setNotes} placeholder="Reason for review" />
           <div className="flex items-end">
@@ -609,7 +617,9 @@ export function IdeaWatchlist() {
                         <td className="px-3 py-3"><StatusBadge tone="neutral">{assetLabel(idea.asset)}</StatusBadge></td>
                         <td className="px-3 py-3">
                           <div className="text-sm text-app">{instrumentTypeLabel(idea.instrument_type)}</div>
-                          <div className="font-mono text-xs text-subtle">{idea.price_symbol || idea.ticker}</div>
+                          {hasSeparatePriceSymbol(idea.instrument_type) && (
+                            <div className="font-mono text-xs text-subtle">{idea.price_symbol || idea.ticker}</div>
+                          )}
                         </td>
                         <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
                         <td className="px-3 py-3">

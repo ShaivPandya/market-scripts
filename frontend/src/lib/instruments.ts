@@ -47,6 +47,23 @@ export function effectivePriceSymbol(row: { ticker: string; price_symbol?: strin
   return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
 }
 
+export function hasSeparatePriceSymbol(instrumentType?: InstrumentType | string | null) {
+  return instrumentType === "future" || instrumentType === "spot_fx"
+}
+
+export function visiblePriceSymbol(row: {
+  ticker?: string | null
+  price_symbol?: string | null
+  instrument_type?: InstrumentType | string | null
+}) {
+  if (!hasSeparatePriceSymbol(row.instrument_type)) return ""
+  return normalizedSymbol(row.price_symbol)
+}
+
+export function pricingSymbolLabel(instrumentType?: InstrumentType | string | null) {
+  return instrumentType === "spot_fx" ? "FX Pair" : "Price Symbol"
+}
+
 export function submissionSymbol(row: { ticker: string; price_symbol?: string | null; instrument_type?: InstrumentType | string | null }) {
   const instrumentType = inferInstrumentType(row.ticker, row.instrument_type)
   if (instrumentType === "spot_fx") {
