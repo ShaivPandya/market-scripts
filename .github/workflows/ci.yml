@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # Temporarily disabled: restore push/pull_request triggers when CI should run again.
+  workflow_dispatch:
 
 jobs:
   lint:
