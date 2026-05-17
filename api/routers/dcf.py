@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 
 from api.cache import get_or_set_cached, long_cache, stamp_fresh
@@ -13,6 +13,12 @@ from api.serializers import serialize_value
 from ontology.sources.source_registry import attach_source_registry_metadata
 
 router = APIRouter()
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_download_filename(ticker: str) -> str:
+    clean = "".join(ch if ch.isalnum() else "_" for ch in ticker.strip().upper()).strip("_")
+    return f"{clean or 'ticker'}_dcf_model.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -172,3 +178,31 @@ def run_dcf_valuation(req: DCFValuationRequest):
         raise DataFetchError(source="dcf_valuation", detail=str(e)) from e
 
     return attach_source_registry_metadata(stamp_fresh(serialize_value(data)), source_id="dcf_valuation")
+
+
+@router.post("/dcf/valuation/excel")
+def download_dcf_valuation_excel(req: DCFValuationRequest):
+    """Download a formula-driven Excel workbook for a DCF valuation."""
+    ticker = req.ticker.strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker is required")
+
+    try:
+        from equities.valuation.dcf import get_historical_data, run_valuation
+        from equities.valuation.dcf_excel import build_dcf_workbook_bytes
+
+        assumptions = req.model_dump()
+        assumptions["ticker"] = ticker
+        valuation = run_valuation(ticker, assumptions)
+        historical = get_historical_data(ticker)
+        workbook_bytes = build_dcf_workbook_bytes(valuation, historical)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise DataFetchError(source="dcf_excel", detail=str(e)) from e
+
+    return Response(
+        content=workbook_bytes,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{_xlsx_download_filename(ticker)}"'},
+    )

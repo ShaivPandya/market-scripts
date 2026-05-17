@@ -1,6 +1,8 @@
 import math
+from io import BytesIO
 
 import pandas as pd
+from openpyxl import load_workbook
 
 from api.routers.dcf import DCFValuationRequest
 from equities.valuation import dcf
@@ -48,6 +50,24 @@ def _assumptions(years: int) -> dict:
         "terminal_growth_rates": {"bear": 0.02, "base": 0.03, "bull": 0.04},
         "exit_ev_ebitda": {"bear": 8.0, "base": 10.0, "bull": 12.0},
         "exit_ev_revenue": {"bear": 2.0, "base": 3.0, "bull": 4.0},
+    }
+
+
+def _historical_payload(ticker: str = "TEST") -> dict:
+    return {
+        "ticker": ticker,
+        "company_name": "Test Co",
+        "current_price": 10.0,
+        "shares_outstanding": 100.0,
+        "net_debt": 80.0,
+        "base_revenue": 1_000.0,
+        "data_source": "yfinance",
+        "ebitda": [{"fiscal_year": "2025", "revenue": 1_000.0, "ebitda": 200.0, "ebitda_margin": 20.0, "avg": 20.0}],
+        "depreciation": [{"fiscal_year": "2025", "revenue": 1_000.0, "da": 30.0, "da_pct_rev": 3.0, "avg": 3.0}],
+        "capex": [{"fiscal_year": "2025", "revenue": 1_000.0, "capex": 40.0, "capex_pct_rev": 4.0, "avg": 4.0}],
+        "nwc": [{"fiscal_year": "2025", "revenue": 1_000.0, "nwc": 50.0, "nwc_pct_rev": 5.0, "avg": 5.0}],
+        "ev_ebitda": [{"quarter_end": "2025-12-31", "ev": 1_100.0, "ev_ebitda": 10.0, "avg": 10.0}],
+        "rev_multiple": [{"quarter_end": "2025-12-31", "ev": 1_100.0, "ev_revenue": 2.5, "avg": 2.5}],
     }
 
 
@@ -136,3 +156,45 @@ def test_dcf_historical_route_includes_source_registry(monkeypatch):
     result = dcf_router.get_dcf_historical("TEST")
 
     assert result["_meta"]["source_registry"]["source_id"] == "dcf_historical"
+
+
+def test_dcf_excel_download_returns_formula_workbook(auth_client, monkeypatch):
+    monkeypatch.setattr(dcf, "_fetch_yfinance_data", lambda ticker: _mock_yf_data())
+    monkeypatch.setattr(dcf, "get_historical_data", lambda ticker: _historical_payload(ticker))
+
+    payload = {"ticker": "test", **_assumptions(5)}
+    resp = auth_client.post("/api/dcf/valuation/excel", json=payload)
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert 'filename="TEST_dcf_model.xlsx"' in resp.headers["content-disposition"]
+
+    workbook = load_workbook(BytesIO(resp.content), data_only=False)
+    assert {"Summary", "Assumptions", "Historical", "Projection", "Valuation", "Checks", "Sources"}.issubset(
+        workbook.sheetnames
+    )
+    assert workbook["Projection"]["B4"].value.startswith("=")
+    assert workbook["Projection"]["B18"].value.startswith("=")
+    assert workbook["Valuation"]["I10"].value.startswith("=")
+    assert workbook["Checks"]["B6"].value.startswith("=")
+
+
+def test_dcf_excel_download_supports_eight_projection_years(auth_client, monkeypatch):
+    monkeypatch.setattr(dcf, "_fetch_yfinance_data", lambda ticker: _mock_yf_data())
+    monkeypatch.setattr(dcf, "get_historical_data", lambda ticker: _historical_payload(ticker))
+
+    payload = {"ticker": "TEST", **_assumptions(8)}
+    resp = auth_client.post("/api/dcf/valuation/excel", json=payload)
+
+    assert resp.status_code == 200
+    workbook = load_workbook(BytesIO(resp.content), data_only=False)
+    assert workbook["Projection"]["I3"].value == "Year 8"
+    assert workbook["Projection"]["I18"].value.startswith("=")
+
+
+def test_dcf_excel_download_reuses_request_validation(auth_client):
+    payload = {"ticker": "TEST", **_assumptions(5), "wacc": 1.2}
+
+    resp = auth_client.post("/api/dcf/valuation/excel", json=payload)
+
+    assert resp.status_code == 422

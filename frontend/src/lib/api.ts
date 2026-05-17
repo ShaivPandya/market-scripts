@@ -2418,6 +2418,14 @@ export interface DCFValuationRequest {
 export const runDCFValuation = (body: DCFValuationRequest) =>
   client.post("/dcf/valuation", body).then(r => r.data)
 
+export const downloadDCFModel = (body: DCFValuationRequest) =>
+  client
+    .post("/dcf/valuation/excel", body, {
+      responseType: "blob",
+      timeout: 120_000,
+    })
+    .then(r => r.data as Blob)
+
 export const runFxModel = (body: {
   pair: string
   bootstrap: number

@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Plus, Trash2 } from "lucide-react"
+import { Download, Plus, Trash2 } from "lucide-react"
 
-import { fetchDCFHistorical, runDCFValuation, type DCFValuationRequest } from "@/lib/api"
+import { downloadDCFModel, fetchDCFHistorical, runDCFValuation, type DCFValuationRequest } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { SegmentedControl, TextInput, ActionButton } from "@/components/shared/FormControls"
@@ -54,6 +54,11 @@ function fmtX(v: number | null | undefined): string {
 function fmtUpside(v: number | null | undefined): string {
   if (v === null || v === undefined || isNaN(v)) return "N/A"
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`
+}
+
+function dcfFileNameForTicker(ticker: string): string {
+  const clean = ticker.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+  return `${clean || "ticker"}_dcf_model.xlsx`
 }
 
 function parseNumberInput(raw: string): number | null {
@@ -327,6 +332,9 @@ export function DCFModel() {
   const [evrBear, setEvrBear] = useState("3")
   const [evrBase, setEvrBase] = useState("4")
   const [evrBull, setEvrBull] = useState("5")
+  const [lastSuccessfulDCFRequest, setLastSuccessfulDCFRequest] = useState<DCFValuationRequest | null>(null)
+  const [isDownloadingDCF, setIsDownloadingDCF] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   // Pre-populate from historical averages
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -367,6 +375,10 @@ export function DCFModel() {
   // DCF mutation
   const dcfMutation = useMutation({
     mutationFn: runDCFValuation,
+    onSuccess: (_data, variables) => {
+      setLastSuccessfulDCFRequest(variables)
+      setDownloadError(null)
+    },
   })
 
   const resetProjectionAssumptions = () => {
@@ -550,6 +562,8 @@ export function DCFModel() {
     if (submittedTicker !== t) {
       dcfMutation.reset()
       resetProjectionAssumptions()
+      setLastSuccessfulDCFRequest(null)
+      setDownloadError(null)
     }
     setSubmittedTicker(t)
   }
@@ -710,6 +724,36 @@ export function DCFModel() {
     { label: "NWC", values: nwcPct, setter: setNwcPct, step: "0.1" },
     { label: "CapEx", values: capexPct, setter: setCapexPct, step: "0.1" },
   ]
+  const currentDCFRequestKey = assumptionValidation.body ? JSON.stringify(assumptionValidation.body) : null
+  const lastSuccessfulDCFRequestKey = lastSuccessfulDCFRequest ? JSON.stringify(lastSuccessfulDCFRequest) : null
+  const canDownloadDCF = Boolean(
+    activeDCFData &&
+    lastSuccessfulDCFRequest &&
+    currentDCFRequestKey &&
+    currentDCFRequestKey === lastSuccessfulDCFRequestKey,
+  )
+
+  const handleDownloadDCF = async () => {
+    if (!lastSuccessfulDCFRequest || !canDownloadDCF || isDownloadingDCF) return
+
+    setIsDownloadingDCF(true)
+    setDownloadError(null)
+    try {
+      const blob = await downloadDCFModel(lastSuccessfulDCFRequest)
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = dcfFileNameForTicker(lastSuccessfulDCFRequest.ticker)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Failed to download DCF model")
+    } finally {
+      setIsDownloadingDCF(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -980,13 +1024,26 @@ export function DCFModel() {
                   </Notice>
                 )}
 
-                <ActionButton
-                  onClick={handleRunDCF}
-                  loading={dcfMutation.isPending}
-                  disabled={!submittedTicker || !assumptionValidation.body}
-                >
-                  Run DCF
-                </ActionButton>
+                <div className="flex flex-wrap gap-3">
+                  <ActionButton
+                    onClick={handleRunDCF}
+                    loading={dcfMutation.isPending}
+                    disabled={!submittedTicker || !assumptionValidation.body}
+                    className="w-auto px-6"
+                  >
+                    Run DCF
+                  </ActionButton>
+                  <button
+                    type="button"
+                    onClick={handleDownloadDCF}
+                    disabled={!canDownloadDCF || isDownloadingDCF}
+                    title={canDownloadDCF ? "Download DCF model as Excel" : "Run DCF before downloading the latest assumptions"}
+                    className="theme-button-base theme-button-secondary inline-flex min-h-10 items-center gap-2 px-4 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    {isDownloadingDCF ? "Downloading..." : "Download Excel"}
+                  </button>
+                </div>
               </div>
 
               {dcfMutation.isError && (
@@ -994,6 +1051,8 @@ export function DCFModel() {
                   message={(dcfMutation.error as any)?.message ?? "DCF calculation failed"}
                 />
               )}
+
+              {downloadError && <ErrorMessage message={downloadError} />}
 
               {dcfMutation.isPending && <LoadingSpinner message="Running DCF valuation..." />}
 
