@@ -10,6 +10,7 @@ CONVICTION_MIN = 1
 CONVICTION_MAX = 5
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_UNGROUPED_SENTINELS = {"-", "na", "n/a", "none", "null", "ungrouped"}
 
 
 def normalize_group_name(value: Any) -> str | None:
@@ -20,6 +21,8 @@ def normalize_group_name(value: Any) -> str | None:
         return None
     text = unicodedata.normalize("NFC", str(value))
     text = _WHITESPACE_RE.sub(" ", text).strip()
+    if text.casefold() in _UNGROUPED_SENTINELS:
+        return None
     return text or None
 
 

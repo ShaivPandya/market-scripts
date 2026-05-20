@@ -1,11 +1,13 @@
 export const GROUP_CONVICTION_MIN = 1
 export const GROUP_CONVICTION_MAX = 5
+const UNGROUPED_SENTINELS = new Set(["-", "na", "n/a", "none", "null", "ungrouped"])
 
 export function normalizeGroupName(value: unknown): string | null {
   const text = String(value ?? "")
     .normalize("NFC")
     .replace(/\s+/g, " ")
     .trim()
+  if (UNGROUPED_SENTINELS.has(text.toLocaleLowerCase())) return null
   return text || null
 }
 

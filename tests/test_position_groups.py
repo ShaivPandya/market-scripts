@@ -16,6 +16,9 @@ def test_group_name_normalization_and_matching_key():
     assert normalize_group_name("Memory   Cycle") == "Memory Cycle"
     assert normalize_group_name("Cafe\u0301") == "Café"
     assert normalize_group_name(float("nan")) is None
+    assert normalize_group_name("N/A") is None
+    assert normalize_group_name("none") is None
+    assert normalize_group_name("Ungrouped") is None
     assert group_key("Memory") == group_key(" memory ")
 
 

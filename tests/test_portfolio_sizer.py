@@ -238,6 +238,25 @@ def test_grouped_convictions_size_group_then_split_members():
     assert weights.sum() == pytest.approx(group_target)
 
 
+def test_placeholder_group_name_does_not_group_position():
+    meta = pd.DataFrame(
+        {"direction": ["long", "long"]},
+        index=["META", "MU"],
+    )
+    positions = portfolio_sizer._parse_positions(
+        [
+            {"ticker": "META", "conviction": 3, "group_name": "N/A", "group_conviction": 5},
+            {"ticker": "MU", "conviction": 3, "group_name": "Memory", "group_conviction": 5},
+        ]
+    )
+
+    weights = portfolio_sizer._build_conviction_weights(meta, positions)
+
+    assert positions["META"]["group_key"] is None
+    assert weights["META"] == pytest.approx(portfolio_sizer.LONG_MAX * 3 / portfolio_sizer.CONVICTION_MAX)
+    assert weights["MU"] == pytest.approx(portfolio_sizer.LONG_MAX)
+
+
 def test_grouped_convictions_reject_mixed_direction():
     meta = pd.DataFrame(
         {"direction": ["long", "short"]},
