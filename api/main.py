@@ -184,7 +184,11 @@ async def _app_error_handler(request: Request, exc: AppError):
     if isinstance(exc, DataFetchError):
         content["source"] = exc.source
         if exc.detail:
-            content["detail"] = exc.detail
+            if _is_production_runtime():
+                # Redact internal details in production to prevent information leakage
+                content["detail"] = exc.message
+            else:
+                content["detail"] = exc.detail
     return JSONResponse(
         status_code=exc.status_code,
         content=content,
