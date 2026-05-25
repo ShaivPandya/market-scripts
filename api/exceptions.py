@@ -10,9 +10,10 @@ but never leaked to the client.
 class AppError(Exception):
     """Base application error — all custom exceptions inherit from this."""
 
-    def __init__(self, message: str, *, status_code: int = 500):
+    def __init__(self, message: str, *, detail: str = "", status_code: int = 500):
         super().__init__(message)
         self.message = message
+        self.detail = detail
         self.status_code = status_code
 
 
@@ -23,9 +24,8 @@ class DataFetchError(AppError):
         # Avoid returning HTTP 502 from the app itself. When the API is behind
         # Cloudflare, origin 502 responses are presented as gateway failures,
         # which hides the real dependency error from the UI.
-        super().__init__(f"Data fetch failed: {source}", status_code=424)
+        super().__init__(f"Data fetch failed: {source}", detail=detail, status_code=424)
         self.source = source
-        self.detail = detail
 
 
 class SnapshotUnavailableError(AppError):
@@ -48,11 +48,7 @@ class AsyncJobDispatchError(AppError):
     """The API could not enqueue a background job for execution."""
 
     def __init__(self, detail: str = ""):
-        message = "Async job dispatch failed"
-        if detail:
-            message = f"{message}: {detail}"
-        super().__init__(message, status_code=503)
-        self.detail = detail
+        super().__init__("Async job dispatch failed", detail=detail, status_code=503)
 
 
 class AnalysisError(AppError):
