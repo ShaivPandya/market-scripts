@@ -223,11 +223,26 @@ export interface ApprovalSummaryResponse {
   limit: number
 }
 
+export interface ApprovalListResponse {
+  approvals: ApprovalRecord[]
+  count: number
+}
+
 export interface ApprovalSummaryParams {
   status?: string
   ticker?: string
   application_status?: string
   limit?: number
+}
+
+export interface BulkResolveResult {
+  id: string
+  status: string
+  message?: string
+}
+
+export interface BulkResolveResponse {
+  results: BulkResolveResult[]
 }
 
 export interface RecommendationRecord extends DecisionStateFields {
@@ -2504,6 +2519,12 @@ export async function refreshWorkspaceSources(): Promise<unknown> {
 
 // Workspace
 export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
+export const dismissWorkspaceThesisPressure = (body: { ticker: string; pressure_key: string; note?: string }) =>
+  client.post("/workspace/thesis-pressure/dismiss", body).then(r => r.data as {
+    status: "dismissed" | string
+    ticker: string
+    pressure_key: string
+  })
 
 // Continuous Optimization
 export interface OptimizationMission {
@@ -2709,7 +2730,7 @@ export const fetchDossier = (ticker: string) =>
 
 // Approvals
 export const fetchApprovals = (status?: string) =>
-  client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
+  client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data as ApprovalListResponse)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: string, note: string, requirement_id?: string) =>
@@ -2725,9 +2746,9 @@ export const replaceApprovalProposal = (id: string, body: TriggerMutationBody & 
     .post(`/approvals/${encodeURIComponent(id)}/replace`, body)
     .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: string[], note: string) =>
-  client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
+  client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data as BulkResolveResponse)
 export const bulkReject = (ids: string[], note?: string) =>
-  client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)
+  client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data as BulkResolveResponse)
 
 // Action Items
 export const fetchActions = (params?: { status?: string; ticker?: string }) =>

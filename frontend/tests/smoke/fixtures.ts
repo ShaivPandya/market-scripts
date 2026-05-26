@@ -11,6 +11,8 @@ type JsonValue =
 interface ApiMockState {
   unknownRequests: string[]
   agentHistoryTitle: string
+  approvalsDismissed: boolean
+  dismissedPressureKeys: Set<string>
 }
 
 const smokeApproval = {
@@ -151,16 +153,18 @@ const smokeApproval = {
   review_route: "/workspace",
 } satisfies JsonValue
 
-const approvalSummary = {
-  count: 1,
-  items: [smokeApproval],
-  recommendation_approval_count: 0,
-  has_more: false,
-  status: "pending",
-  ticker: null,
-  application_status: null,
-  limit: 50,
-} satisfies JsonValue
+function approvalSummaryResponse(state: ApiMockState) {
+  return {
+    count: state.approvalsDismissed ? 0 : 1,
+    items: state.approvalsDismissed ? [] : [smokeApproval],
+    recommendation_approval_count: 0,
+    has_more: false,
+    status: "pending",
+    ticker: null,
+    application_status: null,
+    limit: 50,
+  } satisfies JsonValue
+}
 
 const portfolioSeries = [
   { date: "2026-05-10T14:30:00Z", value: 100 },
@@ -198,7 +202,9 @@ function portfolioResponse(timeframe: string) {
   } satisfies JsonValue
 }
 
-const workspaceResponse = {
+const smokePressureKey = "MSFT:pressure-smoke"
+
+const baseWorkspaceResponse = {
   regime: {
     regime: "Risk-on",
     composite_score: 0.72,
@@ -239,6 +245,7 @@ const workspaceResponse = {
       confidence: "medium",
       risk_flag: "AI capex concentration",
       evaluated_at: "2026-05-14T14:00:00Z",
+      pressure_key: smokePressureKey,
     },
   ],
   pending_approvals: {
@@ -274,6 +281,19 @@ const workspaceResponse = {
     },
   ],
 } satisfies JsonValue
+
+function workspaceResponse(state: ApiMockState) {
+  return {
+    ...(baseWorkspaceResponse as Record<string, JsonValue>),
+    thesis_pressure: state.dismissedPressureKeys.has(smokePressureKey)
+      ? []
+      : (baseWorkspaceResponse as { thesis_pressure: JsonValue[] }).thesis_pressure,
+    pending_approvals: {
+      count: state.approvalsDismissed ? 0 : 1,
+      items: state.approvalsDismissed ? [] : [smokeApproval],
+    },
+  } satisfies JsonValue
+}
 
 const ontologyResult = {
   run_id: "ontology-smoke-run",
@@ -439,8 +459,30 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
   }
 
   if (method === "GET" && path === "/api/liquidity") return json(route, liquidityResponse)
-  if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse)
-  if (method === "GET" && path === "/api/approvals/summary") return json(route, approvalSummary)
+  if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse(state))
+  if (method === "POST" && path === "/api/workspace/thesis-pressure/dismiss") {
+    const body = JSON.parse(request.postData() || "{}") as { ticker?: string; pressure_key?: string }
+    if (body.pressure_key) state.dismissedPressureKeys.add(body.pressure_key)
+    return json(route, {
+      status: "dismissed",
+      ticker: body.ticker ?? "MSFT",
+      pressure_key: body.pressure_key ?? smokePressureKey,
+    })
+  }
+  if (method === "GET" && path === "/api/approvals") {
+    return json(route, {
+      approvals: state.approvalsDismissed ? [] : [smokeApproval],
+      count: state.approvalsDismissed ? 0 : 1,
+    })
+  }
+  if (method === "GET" && path === "/api/approvals/summary") return json(route, approvalSummaryResponse(state))
+  if (method === "POST" && path === "/api/approvals/bulk-reject") {
+    const body = JSON.parse(request.postData() || "{}") as { ids?: string[] }
+    state.approvalsDismissed = true
+    return json(route, {
+      results: (body.ids ?? []).map(id => ({ id, status: "rejected" })),
+    })
+  }
   if (method === "POST" && path === "/api/approvals/smoke-approval/approve") {
     return json(route, {
       ...(smokeApproval as Record<string, JsonValue>),
@@ -543,6 +585,8 @@ export const test = base.extend<{ apiMocks: ApiMockState }>({
       const state: ApiMockState = {
         unknownRequests: [],
         agentHistoryTitle: "NVDA Earnings Prep",
+        approvalsDismissed: false,
+        dismissedPressureKeys: new Set(),
       }
       await page.route("**/api/**", route => handleApiRoute(route, state))
       await use(state)

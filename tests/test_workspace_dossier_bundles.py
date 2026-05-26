@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 
 def test_workspace_router_uses_runtime_bundle(monkeypatch):
     import api.agent_tools as agent_tools
@@ -48,6 +50,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
             }
 
     monkeypatch.setattr(workspace_router, "OntologyRuntimeReadService", _Reads)
+    monkeypatch.setattr(workspace_router, "get_setting", lambda key: None)
     monkeypatch.setattr(agent_tools, "execute_tool", lambda name, args: {"positions": [{"ticker": "MU"}]})
     monkeypatch.setattr(
         "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
@@ -68,6 +71,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
 
     assert payload["source_health"]["overall_quality"] == "ok"
     assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
+    assert payload["thesis_pressure"][0]["pressure_key"].startswith("MU:")
     assert payload["pending_approvals"]["count"] == 1
     assert payload["recommendations"]["latest_daily"]["id"] == 3
     assert payload["recommendations"]["pending_actionable"]["count"] == 1
@@ -77,6 +81,90 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     assert payload["active_triggers"]["count"] == 7
     assert len(payload["active_triggers"]["items"]) == 7
     assert payload["thesis_claims"]["challenged_count"] == 2
+
+
+def test_workspace_thesis_pressure_dismissal_filters_until_signal_changes(monkeypatch):
+    import api.agent_tools as agent_tools
+    import api.routers.workspace as workspace_router
+
+    dismissed_row = {
+        "ticker": "MU",
+        "action": "trim",
+        "confidence": "medium",
+        "risk_flag": "liquidity pressure",
+        "evaluated_at": "2026-05-05",
+    }
+    dismissed_key = workspace_router._pressure_key(dismissed_row)
+    evaluation = dict(dismissed_row)
+
+    class _Reads:
+        def workspace_bundle(self):
+            return {
+                "latest_evaluations": [dict(evaluation)],
+                "theses": [{"ticker": "MU", "status": "active"}],
+                "pending_approvals": [],
+                "latest_daily_recommendation": None,
+                "latest_weekly_recommendation": None,
+                "pending_actionable_recommendations": [],
+                "open_action_items": [],
+                "optimizer_alerts": [],
+                "active_watch_triggers": [],
+                "recent_workflow_runs": [],
+                "recent_report_runs": [],
+                "challenged_claims": [],
+                "disconfirmed_claims": [],
+            }
+
+    monkeypatch.setattr(workspace_router, "OntologyRuntimeReadService", _Reads)
+    monkeypatch.setattr(
+        workspace_router,
+        "get_setting",
+        lambda key: {
+            "key": key,
+            "value": json.dumps(
+                {
+                    dismissed_key: {
+                        "ticker": "MU",
+                        "pressure_key": dismissed_key,
+                        "dismissed_at": "2026-05-06T00:00:00Z",
+                    }
+                }
+            ),
+            "updated_at": "2026-05-06T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(agent_tools, "execute_tool", lambda name, args: {"positions": [{"ticker": "MU"}]})
+    monkeypatch.setattr(
+        "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: {"regime": {"label": "neutral", "score": 0}},
+    )
+    monkeypatch.setattr(workspace_router, "build_workspace_source_health", lambda **kwargs: None)
+
+    payload = workspace_router.get_workspace()
+    assert payload["thesis_pressure"] == []
+
+    evaluation["evaluated_at"] = "2026-05-07"
+    payload = workspace_router.get_workspace()
+
+    assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
+    assert payload["thesis_pressure"][0]["pressure_key"] != dismissed_key
+
+
+def test_workspace_thesis_pressure_dismiss_endpoint_persists_ack(monkeypatch):
+    import api.routers.workspace as workspace_router
+
+    saved: dict[str, str] = {}
+    monkeypatch.setattr(workspace_router, "get_setting", lambda key: None)
+    monkeypatch.setattr(workspace_router, "set_setting", lambda key, value: saved.update({key: value}))
+
+    response = workspace_router.dismiss_thesis_pressure(
+        workspace_router.DismissThesisPressureRequest(ticker="mu", pressure_key="MU:abc", note="done")
+    )
+
+    assert response == {"status": "dismissed", "ticker": "MU", "pressure_key": "MU:abc"}
+    stored = json.loads(saved[workspace_router.THESIS_PRESSURE_DISMISSALS_KEY])
+    assert stored["MU:abc"]["ticker"] == "MU"
+    assert stored["MU:abc"]["note"] == "done"
 
 
 def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):

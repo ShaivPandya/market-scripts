@@ -50,6 +50,26 @@ test("renders workspace common operating picture and enforces approval note gati
   await expect(approveButton).toBeEnabled()
 })
 
+test("clears workspace pressure rows and bulk dismisses approvals", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByRole("heading", { name: "Positions Under Pressure" })).toBeVisible()
+  await expect(page.getByText("AI capex concentration")).toBeVisible()
+
+  await page.getByRole("button", { name: "Clear MSFT pressure row" }).click()
+  await expect(page.getByText("AI capex concentration")).toBeHidden()
+
+  await page.getByRole("button", { name: "Dismiss all", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Dismiss All Pending Approvals" })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText("rejects every currently pending approval")).toBeVisible()
+
+  await dialog.getByRole("button", { name: "Dismiss All", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0)
+})
+
 test("runs an ontology workbench query with mocked async results", async ({ page }) => {
   await authenticate(page)
   await page.goto("/ontology")

@@ -2,18 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+from api.llm_settings import get_setting, set_setting
 from api.source_health import build_workspace_source_health
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 logger = logging.getLogger("api.workspace")
+THESIS_PRESSURE_DISMISSALS_KEY = "workspace.thesis_pressure.dismissals.v1"
+MAX_THESIS_PRESSURE_DISMISSALS = 1000
+
+
+class DismissThesisPressureRequest(BaseModel):
+    ticker: str
+    pressure_key: str
+    note: str | None = None
 
 
 def _safe_call(fn, *args, **kwargs) -> Any:
@@ -35,6 +48,69 @@ def _portfolio_tickers(portfolio_data: Any) -> set[str]:
         for position in positions
         if isinstance(position, dict) and str(position.get("ticker") or "").strip()
     }
+
+
+def _pressure_field(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _pressure_key(row: dict[str, Any]) -> str:
+    payload = {
+        "ticker": _pressure_field(row.get("ticker")).upper(),
+        "action": _pressure_field(row.get("action")).lower(),
+        "risk_flag": _pressure_field(row.get("risk_flag")),
+        "confidence": _pressure_field(row.get("confidence")),
+        "evaluated_at": _pressure_field(row.get("evaluated_at")),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return f"{payload['ticker']}:{digest[:24]}"
+
+
+def _load_pressure_dismissals() -> dict[str, dict[str, Any]]:
+    try:
+        row = get_setting(THESIS_PRESSURE_DISMISSALS_KEY)
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    try:
+        raw = json.loads(str(row.get("value") or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
+
+
+def _save_pressure_dismissals(dismissals: dict[str, dict[str, Any]]) -> None:
+    trimmed = dict(
+        sorted(
+            dismissals.items(),
+            key=lambda item: str(item[1].get("dismissed_at") or ""),
+            reverse=True,
+        )[:MAX_THESIS_PRESSURE_DISMISSALS]
+    )
+    set_setting(THESIS_PRESSURE_DISMISSALS_KEY, json.dumps(trimmed, separators=(",", ":"), sort_keys=True))
+
+
+@router.post("/workspace/thesis-pressure/dismiss")
+def dismiss_thesis_pressure(body: DismissThesisPressureRequest):
+    ticker = str(body.ticker or "").strip().upper()
+    pressure_key = str(body.pressure_key or "").strip()
+    if not ticker:
+        raise HTTPException(status_code=422, detail="ticker is required")
+    if not pressure_key:
+        raise HTTPException(status_code=422, detail="pressure_key is required")
+
+    dismissals = _load_pressure_dismissals()
+    dismissals[pressure_key] = {
+        "ticker": ticker,
+        "pressure_key": pressure_key,
+        "note": str(body.note or "").strip() or None,
+        "dismissed_at": datetime.now(UTC).isoformat(),
+    }
+    _save_pressure_dismissals(dismissals)
+    return {"status": "dismissed", "ticker": ticker, "pressure_key": pressure_key}
 
 
 @router.get("/workspace")
@@ -152,6 +228,7 @@ def get_workspace():
     ontology_bundle = reads.workspace_bundle()
     thesis_pressure = []
     try:
+        dismissed_pressure_keys = set(_load_pressure_dismissals())
         latest_evals = {
             str(e.get("ticker") or "").strip().upper(): e for e in ontology_bundle.get("latest_evaluations", [])
         }
@@ -165,16 +242,17 @@ def get_workspace():
             action = (ev.get("action") or "").lower()
             risk_flag = ev.get("risk_flag")
             if action not in ("hold", "") or risk_flag:
-                thesis_pressure.append(
-                    {
-                        "ticker": ticker,
-                        "status": meta.get("status"),
-                        "action": action,
-                        "confidence": ev.get("confidence"),
-                        "risk_flag": risk_flag,
-                        "evaluated_at": ev.get("evaluated_at"),
-                    }
-                )
+                row = {
+                    "ticker": ticker,
+                    "status": meta.get("status"),
+                    "action": action,
+                    "confidence": ev.get("confidence"),
+                    "risk_flag": risk_flag,
+                    "evaluated_at": ev.get("evaluated_at"),
+                }
+                row["pressure_key"] = _pressure_key(row)
+                if row["pressure_key"] not in dismissed_pressure_keys:
+                    thesis_pressure.append(row)
     except Exception:
         pass
 

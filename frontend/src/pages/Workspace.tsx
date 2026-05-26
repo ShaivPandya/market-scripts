@@ -1,17 +1,20 @@
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database } from "lucide-react"
+import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, X } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
+  fetchApprovals,
   fetchApprovalSummary,
   approveItem,
   rejectItem,
   rejectAndRestageApproval,
   replaceApprovalProposal,
+  bulkReject,
   completeAction,
   cancelTrigger,
   dismissAction,
+  dismissWorkspaceThesisPressure,
   replaceTrigger,
   refreshWorkspaceSources,
   type ApprovalRecord,
@@ -88,6 +91,7 @@ interface WorkspaceData {
     confidence: string
     risk_flag: string | null
     evaluated_at: string
+    pressure_key: string
   }[]
   pending_approvals: { count: number; items: ApprovalRecord[] }
   recommendations: {
@@ -190,6 +194,7 @@ const URGENCY_COLORS: Record<string, string> = {
 const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "add", "short", "sell", "trim", "reduce", "exit", "hedge", "rebalance"])
 const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
 const WORKSPACE_APPROVAL_LIMIT = 50
+const BULK_DISMISS_APPROVAL_NOTE = "Dismissed from Workspace bulk action."
 type ApprovalDialogAction = "approve" | "reject" | "restage"
 type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
@@ -569,6 +574,10 @@ export function Workspace() {
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [approvalDialogAction, setApprovalDialogAction] = useState<ApprovalDialogAction | null>(null)
+  const [bulkDismissOpen, setBulkDismissOpen] = useState(false)
+  const [bulkDismissSubmitting, setBulkDismissSubmitting] = useState(false)
+  const [bulkDismissError, setBulkDismissError] = useState<string | null>(null)
+  const [pressureDismissError, setPressureDismissError] = useState<string | null>(null)
   const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
@@ -641,6 +650,67 @@ export function Workspace() {
         return next
       })
       setApprovalDialogAction(null)
+    }
+  }
+
+  async function handleBulkDismissApprovals() {
+    setBulkDismissSubmitting(true)
+    setBulkDismissError(null)
+    try {
+      const pending = await fetchApprovals("pending")
+      const ids = pending.approvals.map(approval => approval.id).filter(Boolean)
+      if (ids.length === 0) {
+        setBulkDismissOpen(false)
+        void invalidateApprovalSummaries(qc)
+        void qc.invalidateQueries({ queryKey: ["workspace"] })
+        return
+      }
+
+      const result = await bulkReject(ids, BULK_DISMISS_APPROVAL_NOTE)
+      const failures = result.results.filter(row => row.status !== "rejected")
+      void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+
+      if (failures.length > 0) {
+        const failedLabels = failures.slice(0, 3).map(row => row.message ? `${row.id}: ${row.message}` : row.id).join("; ")
+        const suffix = failures.length > 3 ? `; ${failures.length - 3} more` : ""
+        setBulkDismissError(`Dismissed ${result.results.length - failures.length} of ${ids.length} approvals. Failed: ${failedLabels}${suffix}`)
+        return
+      }
+
+      setBulkDismissOpen(false)
+    } catch (err) {
+      setBulkDismissError(formatApprovalResolutionError(err))
+      void invalidateApprovalSummaries(qc)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+    } finally {
+      setBulkDismissSubmitting(false)
+    }
+  }
+
+  async function handleDismissPressure(tp: WorkspaceData["thesis_pressure"][number]) {
+    const processingKey = `pressure-${tp.pressure_key}`
+    const previous = qc.getQueryData<WorkspaceData>(["workspace"])
+    setPressureDismissError(null)
+    setProcessingIds(prev => new Set(prev).add(processingKey))
+    qc.setQueryData<WorkspaceData>(["workspace"], current => current
+      ? {
+          ...current,
+          thesis_pressure: current.thesis_pressure.filter(row => row.pressure_key !== tp.pressure_key),
+        }
+      : current)
+    try {
+      await dismissWorkspaceThesisPressure({ ticker: tp.ticker, pressure_key: tp.pressure_key })
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+    } catch (err) {
+      if (previous) qc.setQueryData(["workspace"], previous)
+      setPressureDismissError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProcessingIds(prev => {
+        const next = new Set(prev)
+        next.delete(processingKey)
+        return next
+      })
     }
   }
 
@@ -892,32 +962,49 @@ export function Workspace() {
               <AlertTriangle size={14} className="text-amber-500" />
               Positions Under Pressure
             </h2>
+            {pressureDismissError && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                Failed to clear pressure row: {pressureDismissError}
+              </div>
+            )}
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.thesis_pressure.map(tp => (
-                <Link
-                  key={tp.ticker}
-                  to={`/dossier/${encodeURIComponent(tp.ticker)}`}
-                  state={{ from: "workspace" }}
-                  className="grid grid-cols-1 gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[hsl(var(--muted-2))] sm:grid-cols-[3rem_7.25rem_minmax(0,1fr)_4.5rem] sm:items-center"
+                <div
+                  key={tp.pressure_key}
+                  className="grid grid-cols-1 gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[hsl(var(--muted-2))] sm:grid-cols-[3rem_7.25rem_minmax(0,1fr)_4.5rem_2rem] sm:items-center"
                 >
-                  <div className="flex items-center justify-between gap-2 sm:contents">
-                    <span className="font-semibold text-app">{tp.ticker}</span>
-                    <span className={cn(
-                      "w-fit rounded px-1.5 py-0.5 text-xs font-medium leading-4",
-                      tp.action === "exit" || tp.action === "reduce"
-                        ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950"
-                        : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
-                    )}>
-                      Evaluation: {tp.action}
-                    </span>
-                  </div>
+                  <Link
+                    to={`/dossier/${encodeURIComponent(tp.ticker)}`}
+                    state={{ from: "workspace" }}
+                    className="font-semibold text-app hover:underline"
+                  >
+                    {tp.ticker}
+                  </Link>
+                  <span className={cn(
+                    "w-fit rounded px-1.5 py-0.5 text-xs font-medium leading-4",
+                    tp.action === "exit" || tp.action === "reduce"
+                      ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950"
+                      : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
+                  )}>
+                    Evaluation: {tp.action}
+                  </span>
                   {tp.risk_flag ? (
                     <span className="text-xs leading-5 text-red-500">{tp.risk_flag}</span>
                   ) : (
                     <span className="hidden sm:block" />
                   )}
                   <span className="text-xs text-subtle sm:text-right">{tp.confidence}</span>
-                </Link>
+                  <button
+                    type="button"
+                    onClick={() => handleDismissPressure(tp)}
+                    disabled={processingIds.has(`pressure-${tp.pressure_key}`)}
+                    className="theme-icon-button h-8 w-8 justify-self-start disabled:cursor-not-allowed disabled:opacity-50 sm:justify-self-end"
+                    aria-label={`Clear ${tp.ticker} pressure row`}
+                    title="Clear pressure row"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               ))}
             </div>
           </section>
@@ -930,6 +1017,19 @@ export function Workspace() {
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
               <span className="ml-auto text-xs text-subtle">{approvalCountLabel}</span>
+              {approvalCount > 0 && !approvalSummaryInitialLoading && !approvalSummaryError && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkDismissOpen(true)
+                    setBulkDismissError(null)
+                  }}
+                  disabled={bulkDismissSubmitting}
+                  className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-300 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
+                >
+                  Dismiss all
+                </button>
+              )}
             </h2>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {approvalSummaryInitialLoading && (
@@ -1187,6 +1287,49 @@ export function Workspace() {
       )}
 
       {data.source_health && <SourceHealthPanel sourceHealth={data.source_health} />}
+      <Dialog
+        open={bulkDismissOpen}
+        onOpenChange={open => {
+          if (bulkDismissSubmitting) return
+          setBulkDismissOpen(open)
+          if (!open) setBulkDismissError(null)
+        }}
+        title="Dismiss All Pending Approvals"
+        description="This rejects every currently pending approval proposal, including proposals not visible in the Workspace list."
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+            {BULK_DISMISS_APPROVAL_NOTE}
+          </div>
+          {bulkDismissError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {bulkDismissError}
+            </div>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setBulkDismissOpen(false)
+                setBulkDismissError(null)
+              }}
+              disabled={bulkDismissSubmitting}
+              className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <ActionButton
+              onClick={handleBulkDismissApprovals}
+              loading={bulkDismissSubmitting}
+              loadingText="Dismissing..."
+              className="theme-button-destructive w-auto px-4"
+            >
+              Dismiss All
+            </ActionButton>
+          </div>
+        </div>
+      </Dialog>
       <Dialog
         open={approvalReview !== null}
         onOpenChange={open => {
