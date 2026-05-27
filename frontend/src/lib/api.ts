@@ -2006,6 +2006,7 @@ export type PortfolioSizerRequest = {
   book: number
   target_leverage: number
   beta_hedge_mode: BetaHedgeMode
+  hedge_tickers?: string[]
   positions: { ticker: string; conviction: number; group_name?: string | null; group_conviction?: number | null }[]
 }
 

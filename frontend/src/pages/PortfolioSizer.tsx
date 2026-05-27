@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Info } from "lucide-react"
+import { Info, Plus, X } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/components/shared/FormControls"
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
 type SizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
 type WeightsViewMode = "basic" | "advanced"
-type HedgeTicker = "SPY" | "IWM" | "QQQ"
+type PresetHedgeTicker = "SPY" | "IWM" | "QQQ"
 
 interface SizerExposures {
   equity_gross?: number
@@ -62,6 +62,7 @@ interface SizerResponse {
   beta_scope?: string
   beta_asset_classes?: string[]
   beta_tickers?: string[]
+  hedge_tickers?: string[]
   selected_hedges?: string[]
   net_betas?: Record<string, number>
   post_hedge_betas?: Record<string, number>
@@ -88,9 +89,10 @@ interface SizerRow {
   groupConviction: number | null
 }
 
-const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v4"] as const
+const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v5"] as const
 const DEFAULT_BOOK_SIZE = 100_000
 const DEFAULT_BETA_HEDGE_MODE: BetaHedgeMode = "spy_iwm"
+const DEFAULT_HEDGE_TICKERS = ["SPY", "IWM"]
 const MIN_BOOK_SIZE = 10_000
 const MAX_BOOK_SIZE = 10_000_000
 const SIZER_POLL_INTERVAL_MS = 2_000
@@ -102,8 +104,9 @@ const GROSS_LIMITS: Record<ExposureAssetClass, number> = {
   commodity: 1.0,
   bond: 3.0,
 }
-const HEDGE_TICKERS: HedgeTicker[] = ["SPY", "IWM", "QQQ"]
-const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, HedgeTicker[]> = {
+const HEDGE_TICKER_PATTERN = /^[A-Z0-9^][A-Z0-9.^=_-]{0,31}$/
+const HEDGE_TICKERS: PresetHedgeTicker[] = ["SPY", "IWM", "QQQ"]
+const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, string[]> = {
   spy: ["SPY"],
   iwm: ["IWM"],
   qqq: ["QQQ"],
@@ -112,16 +115,6 @@ const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, HedgeTicker[]> = {
   iwm_qqq: ["IWM", "QQQ"],
   spy_iwm_qqq: ["SPY", "IWM", "QQQ"],
 }
-const HEDGE_MODE_LABELS: Record<BetaHedgeMode, string> = {
-  spy: "SPY",
-  iwm: "IWM",
-  qqq: "QQQ",
-  spy_iwm: "SPY + IWM",
-  spy_qqq: "SPY + QQQ",
-  iwm_qqq: "IWM + QQQ",
-  spy_iwm_qqq: "SPY + IWM + QQQ",
-}
-
 const ALWAYS_HIDDEN_COLUMNS = ["direction_intended", "days_since_new_low"] as const
 const BASIC_COLUMNS = new Set([
   "ticker",
@@ -201,6 +194,11 @@ const COLUMN_LABELS: Record<string, string> = {
   type: "Type",
 }
 const TICKER_SOURCE_KEYS = ["ticker", "Ticker", "symbol", "Symbol"] as const
+
+function betaColumnLabel(key: string) {
+  if (!key.startsWith("beta_")) return null
+  return `Equity Beta ${key.slice("beta_".length).toUpperCase()}`
+}
 
 function makeRow(ticker = "", direction = "", conviction = 3, groupName?: string | null, groupConviction?: number | null): SizerRow {
   return {
@@ -286,16 +284,11 @@ function firstNumber(...values: unknown[]) {
   return null
 }
 
-function getHedgeWeightFromRows(rows: Record<string, unknown>[], ticker: string): number | null {
-  const row = rows.find(r => String(r.ticker ?? "").trim().toUpperCase() === ticker)
-  return row ? toNumber(row.weight) : null
-}
-
-function betaHedgeModeToTickers(mode: BetaHedgeMode): HedgeTicker[] {
+function betaHedgeModeToTickers(mode: BetaHedgeMode): string[] {
   return HEDGE_MODE_TO_TICKERS[mode] ?? HEDGE_MODE_TO_TICKERS[DEFAULT_BETA_HEDGE_MODE]
 }
 
-function tickersToBetaHedgeMode(tickers: HedgeTicker[]): BetaHedgeMode {
+function tickersToBetaHedgeMode(tickers: string[]): BetaHedgeMode {
   const selected = [...tickers].sort()
   const match = Object.entries(HEDGE_MODE_TO_TICKERS).find(([, modeTickers]) => {
     const normalized = [...modeTickers].sort()
@@ -303,6 +296,29 @@ function tickersToBetaHedgeMode(tickers: HedgeTicker[]): BetaHedgeMode {
   })
   if (match) return match[0] as BetaHedgeMode
   return DEFAULT_BETA_HEDGE_MODE
+}
+
+function normalizeHedgeTicker(value: string): string | null {
+  const ticker = value.trim().toUpperCase()
+  if (!ticker || !HEDGE_TICKER_PATTERN.test(ticker)) return null
+  return ticker
+}
+
+function normalizeHedgeTickers(values: string[] | undefined | null): string[] {
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const value of values ?? []) {
+    const ticker = normalizeHedgeTicker(String(value ?? ""))
+    if (ticker && !seen.has(ticker)) {
+      seen.add(ticker)
+      normalized.push(ticker)
+    }
+  }
+  return normalized.length > 0 ? normalized : [...DEFAULT_HEDGE_TICKERS]
+}
+
+function isBasicWeightsColumn(key: string) {
+  return BASIC_COLUMNS.has(key) || key.startsWith("beta_")
 }
 
 function clamp01(value: number) {
@@ -370,7 +386,7 @@ function buildCols(rows: Record<string, unknown>[], hiddenKeys?: string[]): Colu
 
   return keys.map(k => ({
     key: k,
-    header: COLUMN_LABELS[k] ?? k,
+    header: COLUMN_LABELS[k] ?? betaColumnLabel(k) ?? k,
     colorFn: isPercentColumn(k) ? colorPositiveNegative : undefined,
     format: (v: unknown) => {
       if (typeof v !== "number") return String(v ?? "N/A")
@@ -399,6 +415,7 @@ export function PortfolioSizer() {
     bookSizeInput: string
     targetLeverage: number
     betaHedgeMode?: BetaHedgeMode
+    hedgeTickers?: string[]
     rows: SizerRow[]
     result: SizerResponse | null
     activeJobId: string | null
@@ -408,10 +425,13 @@ export function PortfolioSizer() {
   const hasCachedBookSize = cachedState?.bookSize != null
   const hasCachedRows = Boolean(cachedState?.rows && cachedState.rows.length > 0)
   const initialBookSize = clampBookSize(cachedState?.bookSize ?? DEFAULT_BOOK_SIZE)
+  const initialHedgeTickers = normalizeHedgeTickers(cachedState?.hedgeTickers ?? betaHedgeModeToTickers(cachedState?.betaHedgeMode ?? DEFAULT_BETA_HEDGE_MODE))
   const [bookSize, setBookSize] = useState(initialBookSize)
   const [bookSizeInput, setBookSizeInput] = useState(cachedState?.bookSizeInput ?? String(initialBookSize))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
-  const [betaHedgeMode, setBetaHedgeMode] = useState<BetaHedgeMode>(cachedState?.betaHedgeMode ?? DEFAULT_BETA_HEDGE_MODE)
+  const [hedgeTickers, setHedgeTickers] = useState<string[]>(initialHedgeTickers)
+  const [customHedgeTicker, setCustomHedgeTicker] = useState("")
+  const [customHedgeError, setCustomHedgeError] = useState<string | null>(null)
   const [rows, setRows] = useState<SizerRow[]>(cachedState?.rows && cachedState.rows.length > 0 ? cachedState.rows : [])
   const [cachedResult, setCachedResult] = useState<SizerResponse | null>(cachedState?.result ?? null)
   const [activeJobId, setActiveJobId] = useState<string | null>(cachedState?.activeJobId ?? null)
@@ -525,13 +545,14 @@ export function PortfolioSizer() {
       bookSize,
       bookSizeInput,
       targetLeverage,
-      betaHedgeMode,
+      betaHedgeMode: tickersToBetaHedgeMode(hedgeTickers),
+      hedgeTickers,
       rows,
       result: cachedResult,
       activeJobId,
       errorMessage,
     })
-  }, [bookSize, bookSizeInput, targetLeverage, betaHedgeMode, rows, cachedResult, activeJobId, errorMessage, queryClient])
+  }, [bookSize, bookSizeInput, targetLeverage, hedgeTickers, rows, cachedResult, activeJobId, errorMessage, queryClient])
 
   useEffect(() => {
     setBookSizeInput(String(bookSize))
@@ -562,15 +583,31 @@ export function PortfolioSizer() {
     setRows(prev => prev.map(row => (groupKey(row.groupName) === key ? { ...row, groupConviction: conviction } : row)))
   }
 
-  function toggleHedgeTicker(ticker: HedgeTicker) {
-    const selected = betaHedgeModeToTickers(betaHedgeMode)
+  function toggleHedgeTicker(ticker: string) {
+    const selected = hedgeTickers
     const isSelected = selected.includes(ticker)
     if (isSelected && selected.length === 1) return
 
     const next = isSelected
       ? selected.filter(t => t !== ticker)
       : [...selected, ticker]
-    setBetaHedgeMode(tickersToBetaHedgeMode(next))
+    setHedgeTickers(normalizeHedgeTickers(next))
+  }
+
+  function removeHedgeTicker(ticker: string) {
+    if (hedgeTickers.length === 1) return
+    setHedgeTickers(prev => normalizeHedgeTickers(prev.filter(t => t !== ticker)))
+  }
+
+  function addCustomHedgeTicker() {
+    const ticker = normalizeHedgeTicker(customHedgeTicker)
+    if (!ticker) {
+      setCustomHedgeError("Enter a valid ticker symbol.")
+      return
+    }
+    setHedgeTickers(prev => normalizeHedgeTickers([...prev, ticker]))
+    setCustomHedgeTicker("")
+    setCustomHedgeError(null)
   }
 
   async function handleRun() {
@@ -605,7 +642,8 @@ export function PortfolioSizer() {
       const started = await startSizerJob({
         book: effectiveBook,
         target_leverage: targetLeverage,
-        beta_hedge_mode: betaHedgeMode,
+        beta_hedge_mode: tickersToBetaHedgeMode(hedgeTickers),
+        hedge_tickers: hedgeTickers,
         positions,
       })
       if (runSeq !== runSeqRef.current) return
@@ -637,7 +675,7 @@ export function PortfolioSizer() {
     ? (weightsRows.length === 0
       ? []
       : Object.keys(weightsRows[0]).filter(
-        k => !BASIC_COLUMNS.has(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
+        k => !isBasicWeightsColumn(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
       ))
     : [...ALWAYS_HIDDEN_COLUMNS]
   const hedgesRows = rowsWithTickerColumn(toRows(data?.hedges_df))
@@ -646,26 +684,14 @@ export function PortfolioSizer() {
   const maxScaled = data?.max_scaled
   const maxScaledRows = rowsWithTickerColumn(toRows(maxScaled?.weights_df))
   const maxScaledExposures = maxScaled?.exposures ?? {}
-  const selectedHedgeTickers = betaHedgeModeToTickers(betaHedgeMode)
-  const hedgeModeLabel = HEDGE_MODE_LABELS[betaHedgeMode] ?? selectedHedgeTickers.join(" + ")
+  const selectedHedgeTickers = hedgeTickers
+  const hedgeModeLabel = selectedHedgeTickers.join(" + ")
 
   const volDaily = firstNumber(data?.vol_daily)
   const grossLeverage = firstNumber(data?.gross_leverage)
   const hedgeGross = firstNumber(exposures.hedge_gross, 0) ?? 0
-  const hedgeSpyWeight = firstNumber(data?.hedge_spy_weight, data?.hedge_weights?.SPY, getHedgeWeightFromRows(hedgesRows, "SPY"))
-  const hedgeIwmWeight = firstNumber(data?.hedge_iwm_weight, data?.hedge_weights?.IWM, getHedgeWeightFromRows(hedgesRows, "IWM"))
-  const hedgeQqqWeight = firstNumber(data?.hedge_qqq_weight, data?.hedge_weights?.QQQ, getHedgeWeightFromRows(hedgesRows, "QQQ"))
   const hedgeDirectionIssues = Array.from(new Set([
     ...(Array.isArray(data?.hedge_direction_issues) ? data.hedge_direction_issues.filter(v => typeof v === "string") : []),
-    ...(hedgeSpyWeight != null && hedgeSpyWeight > 0
-      ? [`SPY hedge is long (${hedgeSpyWeight >= 0 ? "+" : ""}${hedgeSpyWeight.toFixed(4)}). Long exposure should generally be hedged by shorting SPY.`]
-      : []),
-    ...(hedgeIwmWeight != null && hedgeIwmWeight < 0
-      ? [`IWM hedge is short (${hedgeIwmWeight >= 0 ? "+" : ""}${hedgeIwmWeight.toFixed(4)}). Short exposure should generally be hedged by going long IWM.`]
-      : []),
-    ...(hedgeQqqWeight != null && hedgeQqqWeight > 0
-      ? [`QQQ hedge is long (${hedgeQqqWeight >= 0 ? "+" : ""}${hedgeQqqWeight.toFixed(4)}). Long exposure should generally be hedged by shorting QQQ.`]
-      : []),
   ]))
   const hedgeDirectionWarning = typeof data?.hedge_direction_warning === "string" && data.hedge_direction_warning.trim().length > 0
     ? data.hedge_direction_warning
@@ -674,7 +700,8 @@ export function PortfolioSizer() {
       : null
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
   const betaMetricCards = Array.from(new Set([
-    ...HEDGE_TICKERS,
+    ...(Array.isArray(data?.selected_hedges) ? data.selected_hedges : []),
+    ...(Array.isArray(data?.hedge_tickers) ? data.hedge_tickers : []),
     ...Object.keys(data?.net_betas ?? {}),
     ...Object.keys(data?.post_hedge_betas ?? {}),
   ])).flatMap(ticker => {
@@ -824,8 +851,58 @@ export function PortfolioSizer() {
                 )
               })}
             </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedHedgeTickers.map(ticker => {
+                const disabled = selectedHedgeTickers.length === 1
+                return (
+                  <span
+                    key={ticker}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-app bg-card-muted px-2 text-xs font-semibold text-app"
+                  >
+                    {ticker}
+                    <button
+                      type="button"
+                      onClick={() => removeHedgeTicker(ticker)}
+                      disabled={disabled}
+                      title={disabled ? "At least one hedge ticker is required" : `Remove ${ticker}`}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted transition hover:bg-[hsl(var(--muted-3))] hover:text-app disabled:cursor-not-allowed disabled:opacity-35"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={customHedgeTicker}
+                onChange={e => {
+                  setCustomHedgeTicker(e.target.value)
+                  setCustomHedgeError(null)
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    addCustomHedgeTicker()
+                  }
+                }}
+                placeholder="SMH"
+                className="theme-input h-10 flex-1 text-sm"
+                aria-label="Custom hedge ticker"
+              />
+              <button
+                type="button"
+                onClick={addCustomHedgeTicker}
+                title="Add custom hedge ticker"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-app bg-card-muted text-muted transition hover:border-[hsl(var(--accent)/0.45)] hover:text-app"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+            {customHedgeError && <p className="text-xs text-red-600">{customHedgeError}</p>}
             <p className="text-xs text-gray-400">
-              Neutralizes selected benchmark beta; unselected benchmarks remain diagnostics.
+              Neutralizes and reports beta against the selected hedge tickers.
             </p>
           </div>
         </div>

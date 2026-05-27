@@ -553,18 +553,26 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
         sections.append("")
 
     # --- Beta summary ---
-    beta_keys = [
-        "net_beta_spy",
-        "net_beta_iwm",
-        "post_hedge_beta_spy",
-        "post_hedge_beta_iwm",
-    ]
     beta_lines = []
-    for key in beta_keys:
-        val = sizer_result.get(key)
-        if val is not None:
+    selected_hedges = sizer_result.get("hedge_tickers") or sizer_result.get("selected_hedges") or []
+    if not isinstance(selected_hedges, list):
+        selected_hedges = []
+    net_betas = sizer_result.get("net_betas") if isinstance(sizer_result.get("net_betas"), dict) else {}
+    post_hedge_betas = (
+        sizer_result.get("post_hedge_betas") if isinstance(sizer_result.get("post_hedge_betas"), dict) else {}
+    )
+    for ticker in selected_hedges:
+        ticker_key = str(ticker).strip().lower()
+        for label, val in (
+            (f"net_beta_{ticker_key}", net_betas.get(str(ticker))),
+            (f"post_hedge_beta_{ticker_key}", post_hedge_betas.get(str(ticker))),
+        ):
+            if val is None:
+                val = sizer_result.get(label)
+            if val is None:
+                continue
             try:
-                beta_lines.append(f"- **{key}**: {float(val):.4f}")
+                beta_lines.append(f"- **{label}**: {float(val):.4f}")
             except (TypeError, ValueError):
                 pass
     if beta_lines:
@@ -610,16 +618,49 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
                 )
             sections.append("")
 
+        beta_columns = []
+        for ticker in selected_hedges:
+            ticker_label = str(ticker).strip().upper()
+            beta_key = f"beta_{ticker_label.lower()}"
+            if beta_key in weights_df.columns:
+                beta_columns.append((ticker_label, beta_key))
+        if not beta_columns:
+            beta_columns = [
+                (ticker, key) for ticker, key in (("SPY", "beta_spy"), ("IWM", "beta_iwm")) if key in weights_df.columns
+            ]
+
+        headers = [
+            "Ticker",
+            "Group",
+            "Dir",
+            "Conv",
+            "Weight",
+            *[f"Beta {ticker}" for ticker, _ in beta_columns],
+            "Vol",
+            "Shares",
+            "$ Weight",
+        ]
+        separators = [
+            "--------",
+            "-------",
+            "-----",
+            "-----:",
+            "-------:",
+            *["---------:" for _ in beta_columns],
+            "----:",
+            "-------:",
+            "---------:",
+        ]
         sections.append("## Position Details\n")
-        sections.append("| Ticker | Group | Dir | Conv | Weight | Beta SPY | Beta IWM | Vol | Shares | $ Weight |")
-        sections.append("|--------|-------|-----|-----:|-------:|---------:|---------:|----:|-------:|---------:|")
+        sections.append("| " + " | ".join(headers) + " |")
+        sections.append("|" + "|".join(separators) + "|")
         for _, row in weights_df.iterrows():
+            beta_values = "".join(f" | {float(row.get(key, 0) or 0):.3f}" for _, key in beta_columns)
             sections.append(
                 f"| {row['ticker']} | "
                 f"{normalize_group_name(row.get('group_name')) or '-'} | "
                 f"{str(row.get('direction', '')).lower()[:1].upper()} | "
-                f"{row.get('conviction', '')} | {row['weight'] * 100:.2f}% | "
-                f"{row.get('beta_spy', 0):.3f} | {row.get('beta_iwm', 0):.3f} | "
+                f"{row.get('conviction', '')} | {row['weight'] * 100:.2f}%{beta_values} | "
                 f"{row.get('realized_vol', 0) * 100:.2f}% | "
                 f"{row.get('shares', 0):,} | ${row.get('dollar_weight', 0):,.0f} |"
             )

@@ -13,7 +13,7 @@ from ontology.command_service import (
     OntologyCommandValidationError,
 )
 from ontology.object_service import OntologyObjectService
-from ontology.policy import Actor, admin_actor
+from ontology.policy import Actor, PolicyDenied, admin_actor
 from ontology.schemas.identity import document_artifact_id
 from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
 
@@ -261,6 +261,47 @@ def test_propose_and_apply_position_update_writes_only_ontology_objects():
     assert "position:MU" in service.objects.objects  # type: ignore[attr-defined]
     assert any(rel["relation_type"] == "position_references_instrument" for rel in service.objects.relations)  # type: ignore[attr-defined]
     assert any(rel["relation_type"] == "executed_decision_applies_approval" for rel in service.objects.relations)  # type: ignore[attr-defined]
+
+
+def test_approval_create_records_abac_decision_metadata():
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+        context,
+        reason="unit",
+    )
+
+    assert approval["policy_decision_id"].startswith("abac:")
+    assert approval["policy_matched_rule"] == "default.owner.allow"
+    assert approval["policy_explanation"]
+    assert approval["account_id"] == "default"
+    assert approval["portfolio_id"] == "default"
+
+
+def test_approval_read_filters_and_denies_out_of_scope_actor():
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+        context,
+        reason="unit",
+    )
+    scoped_actor = Actor(
+        "scoped-owner",
+        "user",
+        roles=("owner",),
+        source="test",
+        account_ids=("outside",),
+        portfolio_ids=("outside",),
+    )
+
+    assert service.list_approvals(actor=scoped_actor) == []
+    with pytest.raises(PolicyDenied):
+        service.get_approval(approval["id"], actor=scoped_actor)
 
 
 def test_command_service_refreshes_read_model_after_position_approval_apply(monkeypatch):

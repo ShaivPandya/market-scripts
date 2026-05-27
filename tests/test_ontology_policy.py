@@ -7,6 +7,7 @@ import ontology.service as svc
 from api.agent_tools import execute_tool
 from ontology.models import InterpretedQuery
 from ontology.policy import (
+    ABACPolicyEngine,
     Actor,
     DefaultOntologyPolicy,
     EdgeResource,
@@ -14,6 +15,8 @@ from ontology.policy import (
     OntologyAction,
     PolicyDecision,
     PolicyDenied,
+    PolicyRequest,
+    PolicyRule,
     admin_actor,
     agent_actor,
 )
@@ -205,6 +208,85 @@ def _query(policy: _Policy, monkeypatch):
         include_graph=False,
         actor=admin_actor(),
     )
+
+
+def test_abac_policy_allows_matching_role_and_denies_without_rule():
+    engine = ABACPolicyEngine((PolicyRule(rule_id="allow.admin", actions=("read",), roles=("admin",)),))
+
+    allowed = engine.evaluate(PolicyRequest(action="read", actor=Actor("u1", "user", roles=("admin",))))
+    denied = engine.evaluate(PolicyRequest(action="read", actor=Actor("u2", "user", roles=("viewer",))))
+
+    assert allowed.allowed is True
+    assert allowed.matched_rule == "allow.admin"
+    assert allowed.decision_id.startswith("abac:")
+    assert allowed.explanation
+    assert allowed.audit["matched_rule"] == "allow.admin"
+    assert denied.allowed is False
+    assert denied.matched_rule is None
+
+
+def test_abac_policy_enforces_actor_purpose_constraints():
+    engine = ABACPolicyEngine((PolicyRule(rule_id="allow.owner", roles=("owner",)),))
+    actor = Actor("u1", "user", roles=("owner",), purposes=("research",))
+
+    assert engine.evaluate(PolicyRequest(action="query", actor=actor, purpose="research")).allowed is True
+
+    denied = engine.evaluate(PolicyRequest(action="query", actor=actor, purpose="trading"))
+    assert denied.allowed is False
+    assert "purpose" in str(denied.reason).lower()
+
+
+def test_abac_policy_enforces_account_and_portfolio_scope():
+    engine = ABACPolicyEngine((PolicyRule(rule_id="allow.owner", roles=("owner",)),))
+    actor = Actor(
+        "u1",
+        "user",
+        roles=("owner",),
+        account_ids=("account-a",),
+        portfolio_ids=("portfolio-a",),
+    )
+
+    allowed = engine.evaluate(
+        PolicyRequest(action="read", actor=actor, account_id="account-a", portfolio_id="portfolio-a")
+    )
+    denied = engine.evaluate(
+        PolicyRequest(action="read", actor=actor, account_id="account-b", portfolio_id="portfolio-a")
+    )
+
+    assert allowed.allowed is True
+    assert denied.allowed is False
+    assert "account_id" in str(denied.reason)
+
+
+def test_abac_policy_enforces_marking_and_sensitivity_rules():
+    engine = ABACPolicyEngine(
+        (
+            PolicyRule(
+                rule_id="deny.restricted",
+                effect="deny",
+                data_markings=("restricted",),
+                explanation="Restricted data requires a separate profile.",
+            ),
+            PolicyRule(
+                rule_id="deny.account_private",
+                effect="deny",
+                data_sensitivities=("account_private",),
+                explanation="Account-private data is blocked.",
+            ),
+            PolicyRule(rule_id="allow.owner", roles=("owner",)),
+        )
+    )
+    actor = Actor("u1", "user", roles=("owner",))
+
+    marked = engine.evaluate(PolicyRequest(action="read", actor=actor, data_markings=("restricted",)))
+    sensitive = engine.evaluate(PolicyRequest(action="read", actor=actor, data_sensitivity="account_private"))
+    public = engine.evaluate(PolicyRequest(action="read", actor=actor, data_sensitivity="public_market"))
+
+    assert marked.allowed is False
+    assert marked.matched_rule == "deny.restricted"
+    assert sensitive.allowed is False
+    assert sensitive.matched_rule == "deny.account_private"
+    assert public.allowed is True
 
 
 def test_policy_denies_object_and_recomputes_aggregate(monkeypatch):

@@ -1200,6 +1200,9 @@ class Approval(OntologySchemaBase):
     entity_type: NonBlankStr
     entity_id: str | None = None
     ticker: str | None = None
+    account_id: str | None = None
+    portfolio_id: str | None = None
+    data_sensitivity: str | None = None
     target_object_uid: str | None = None
     target_object_type: str | None = None
     action_id: str | None = None
@@ -1229,6 +1232,9 @@ class Approval(OntologySchemaBase):
     policy_gate_result: dict[str, Any] | None = None
     policy_gate_result_id: str | None = None
     policy_gate_decision: str | None = None
+    policy_decision_id: str | None = None
+    policy_matched_rule: str | None = None
+    policy_explanation: str | None = None
     base_state_hash: str | None = None
     supersedes_approval_id: str | None = None
     requested_by_actor_id: str | None = None
@@ -1253,6 +1259,9 @@ class Approval(OntologySchemaBase):
         "action_schema_name",
         "action_input_hash",
         "entity_id",
+        "account_id",
+        "portfolio_id",
+        "data_sensitivity",
         "target_object_uid",
         "target_object_type",
         "reason",
@@ -1267,6 +1276,9 @@ class Approval(OntologySchemaBase):
         "approval_policy_reason",
         "policy_gate_result_id",
         "policy_gate_decision",
+        "policy_decision_id",
+        "policy_matched_rule",
+        "policy_explanation",
         "base_state_hash",
         "supersedes_approval_id",
         "requested_by_actor_id",
