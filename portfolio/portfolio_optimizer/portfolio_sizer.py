@@ -11,6 +11,7 @@ mapping.
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -66,7 +67,7 @@ BetaHedgeMode = Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq", "s
 BETA_HEDGE_MODE_SPY_IWM: BetaHedgeMode = "spy_iwm"
 BETA_HEDGE_MODE_SPY: BetaHedgeMode = "spy"
 MARKET_TICKER_QQQ = "QQQ"
-HEDGE_DIAGNOSTIC_TICKERS = (MARKET_TICKER_LONG, MARKET_TICKER_SHORT, MARKET_TICKER_QQQ)
+HEDGE_TICKER_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9.^=_-]{0,31}$")
 BETA_HEDGE_MODE_TICKERS: dict[str, tuple[str, ...]] = {
     "spy": (MARKET_TICKER_LONG,),
     "iwm": (MARKET_TICKER_SHORT,),
@@ -86,11 +87,6 @@ def _beta_metric_name(prefix: str, ticker: str) -> str:
     return f"{prefix}_{_benchmark_key(ticker)}"
 
 
-def _expected_hedge_sign(ticker: str) -> int:
-    # SPY/QQQ offset long beta with shorts; IWM retains the current short-book hedge convention.
-    return 1 if ticker == MARKET_TICKER_SHORT else -1
-
-
 def _normalize_beta_hedge_mode(value: str | None) -> BetaHedgeMode:
     normalized = (value or BETA_HEDGE_MODE_SPY_IWM).strip().lower()
     if normalized in BETA_HEDGE_MODE_TICKERS:
@@ -101,6 +97,36 @@ def _normalize_beta_hedge_mode(value: str | None) -> BetaHedgeMode:
 
 def _hedge_tickers_for_mode(beta_hedge_mode: BetaHedgeMode) -> tuple[str, ...]:
     return BETA_HEDGE_MODE_TICKERS[beta_hedge_mode]
+
+
+def _normalize_hedge_ticker(ticker: Any) -> str:
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        raise ValueError("hedge_tickers cannot contain empty tickers.")
+    if not HEDGE_TICKER_PATTERN.fullmatch(normalized):
+        raise ValueError(f"Invalid hedge ticker '{ticker}'. Use a yfinance-compatible ticker symbol.")
+    return normalized
+
+
+def _normalize_hedge_tickers(
+    hedge_tickers: Sequence[str] | str | None,
+    beta_hedge_mode: str | None = BETA_HEDGE_MODE_SPY_IWM,
+) -> tuple[str, ...]:
+    if hedge_tickers is None:
+        return _hedge_tickers_for_mode(_normalize_beta_hedge_mode(beta_hedge_mode))
+
+    raw_values: Sequence[str] = [hedge_tickers] if isinstance(hedge_tickers, str) else hedge_tickers
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        ticker = _normalize_hedge_ticker(value)
+        if ticker not in seen:
+            seen.add(ticker)
+            normalized.append(ticker)
+
+    if not normalized:
+        raise ValueError("hedge_tickers must contain at least one ticker.")
+    return tuple(normalized)
 
 
 def _compute_equity_net_betas(
@@ -178,9 +204,9 @@ def _apply_beta_hedges_with_gross_cap(
     long_mask: np.ndarray,
     short_mask: np.ndarray,
     eq_mask: np.ndarray,
-    beta_hedge_mode: BetaHedgeMode,
+    selected_hedges: Sequence[str],
 ) -> tuple[pd.Series, dict[str, Any]]:
-    selected_hedges = _hedge_tickers_for_mode(beta_hedge_mode)
+    selected_hedges = tuple(selected_hedges)
 
     def _solve_for_weights(weights: pd.Series) -> dict[str, Any]:
         beta_summary = _compute_equity_net_betas(weights, beta_by_benchmark, long_mask, short_mask, eq_mask)
@@ -188,7 +214,7 @@ def _apply_beta_hedges_with_gross_cap(
             beta_summary,
             selected_hedges,
             betas_all_by_benchmark,
-            HEDGE_DIAGNOSTIC_TICKERS,
+            selected_hedges,
         )
 
         pre_hedge_gross = float(np.abs(weights).sum())
@@ -201,12 +227,11 @@ def _apply_beta_hedges_with_gross_cap(
                 "pre_hedge_gross": pre_hedge_gross,
                 "hedge_gross": hedge_gross,
                 "gross_with_hedges": gross_with_hedges,
-                "beta_hedge_mode": beta_hedge_mode,
                 "selected_hedges": list(selected_hedges),
                 "hedge_weights": hedge_weights,
             }
         )
-        for benchmark in HEDGE_DIAGNOSTIC_TICKERS:
+        for benchmark in selected_hedges:
             key = _benchmark_key(benchmark)
             out[f"hedge_{key}_weight"] = float(hedge_weights.get(benchmark, 0.0))
             out[f"post_hedge_beta_{key}"] = float(post_betas.get(benchmark, 0.0))
@@ -432,6 +457,7 @@ def size_portfolio(
     book: float | None = 100_000.0,
     target_leverage: float | None = 2.0,
     beta_hedge_mode: str | None = BETA_HEDGE_MODE_SPY_IWM,
+    hedge_tickers: Sequence[str] | str | None = None,
 ) -> dict:
     """
     Size a portfolio from user conviction levels using CVXPY optimization.
@@ -440,14 +466,16 @@ def size_portfolio(
         positions: List of {ticker: str, conviction: int (1–5)} dicts.
         book: Book size in USD.
         target_leverage: Target gross leverage (0.5–4.0).
-        beta_hedge_mode: Hedge basket to use. Valid values are spy, iwm, qqq,
-            spy_iwm, spy_qqq, iwm_qqq, and spy_iwm_qqq.
+        beta_hedge_mode: Legacy hedge basket preset. Used only when
+            hedge_tickers is not provided.
+        hedge_tickers: Custom hedge basket. Tickers are normalized and de-duped.
 
     Returns:
         Same output dict structure as optimize_portfolio().
     """
     try:
         beta_hedge_mode = _normalize_beta_hedge_mode(beta_hedge_mode)
+        selected_hedges = _normalize_hedge_tickers(hedge_tickers, beta_hedge_mode)
         positions_by_ticker = _parse_positions(positions)
 
         # Load portfolio metadata
@@ -473,7 +501,7 @@ def size_portfolio(
         if len(tickers) < 2:
             raise ValueError("Need at least 2 equity tickers to size a portfolio.")
 
-        market_tickers = list(HEDGE_DIAGNOSTIC_TICKERS)
+        market_tickers = list(selected_hedges)
         prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
         all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
 
@@ -641,7 +669,7 @@ def size_portfolio(
             long_mask,
             short_mask,
             eq_mask,
-            beta_hedge_mode,
+            selected_hedges,
         )
 
         # Strict post-hedge leverage cap: ensure final gross (incl. hedges) <= target leverage.
@@ -662,7 +690,7 @@ def size_portfolio(
                     long_mask,
                     short_mask,
                     eq_mask,
-                    beta_hedge_mode,
+                    selected_hedges,
                 )
         vol_final = port_vol(w_final.values)
 
@@ -727,9 +755,10 @@ def size_portfolio(
                 "group_conviction": group_metadata["group_conviction"],
                 "group_raw_target": group_metadata["group_raw_target"],
                 "group_member_share": group_metadata["group_member_share"],
-                "beta_spy": beta_display_by_benchmark[MARKET_TICKER_LONG].values,
-                "beta_iwm": beta_display_by_benchmark[MARKET_TICKER_SHORT].values,
-                "beta_qqq": beta_display_by_benchmark[MARKET_TICKER_QQQ].values,
+                **{
+                    _beta_metric_name("beta", benchmark): beta_display_by_benchmark[benchmark].values
+                    for benchmark in selected_hedges
+                },
                 "realized_vol": meta["realized_vol"].values,
                 "weight": w_final.values,
                 "price": latest_prices.values,
@@ -747,21 +776,19 @@ def size_portfolio(
 
         # Build hedges DataFrame
         hedge_direction_issues: list[str] = []
-        selected_hedges = _hedge_tickers_for_mode(beta_hedge_mode)
         hedge_weights = {
             ticker: float(hedge_summary.get(_beta_metric_name("hedge", ticker) + "_weight", 0.0))
-            for ticker in HEDGE_DIAGNOSTIC_TICKERS
+            for ticker in selected_hedges
         }
         for ticker in selected_hedges:
-            expected_sign = _expected_hedge_sign(ticker)
             weight = hedge_weights[ticker]
-            if expected_sign < 0 and weight > 0:
+            net_beta = float(hedge_summary.get(_beta_metric_name("net_beta", ticker), 0.0))
+            self_beta = float(betas_all_by_benchmark.get(ticker, pd.Series(dtype=float)).get(ticker, BETA_FALLBACK))
+            own_adjustment = self_beta * weight
+            if abs(net_beta) > 1e-8 and abs(own_adjustment) > 1e-8 and net_beta * own_adjustment > 0:
                 hedge_direction_issues.append(
-                    f"{ticker} hedge is long ({weight:+.4f}); long exposure should typically be hedged with a short {ticker}."
-                )
-            if expected_sign > 0 and weight < 0:
-                hedge_direction_issues.append(
-                    f"{ticker} hedge is short ({weight:+.4f}); short exposure should typically be hedged with a long {ticker}."
+                    f"{ticker} hedge leg ({weight:+.4f}) increases selected pre-hedge beta exposure "
+                    f"({net_beta:+.4f}) before cross-hedge effects."
                 )
         hedge_direction_warning = (
             "Potential hedge direction mismatch: " + " ".join(hedge_direction_issues)
@@ -841,7 +868,7 @@ def size_portfolio(
         net_betas: dict[str, float] = {}
         post_hedge_betas: dict[str, float] = {}
         benchmark_vols: dict[str, float] = {}
-        for benchmark in HEDGE_DIAGNOSTIC_TICKERS:
+        for benchmark in selected_hedges:
             key = _benchmark_key(benchmark)
             vol = float(vol_by_benchmark.get(benchmark, np.nan))
             net_beta = float(hedge_summary.get(f"net_beta_{key}", 0.0))
@@ -863,6 +890,7 @@ def size_portfolio(
             "book_size": book,
             "target_leverage": target_leverage,
             "beta_hedge_mode": beta_hedge_mode,
+            "hedge_tickers": list(selected_hedges),
             "selected_hedges": list(selected_hedges),
             "sizing_scope": "equity_only",
             "sizing_asset_classes": ["equity"],
@@ -911,10 +939,12 @@ def get_data(
     book: float = 100_000.0,
     target_leverage: float = 2.0,
     beta_hedge_mode: str = BETA_HEDGE_MODE_SPY_IWM,
+    hedge_tickers: Sequence[str] | str | None = None,
 ) -> dict:
     return size_portfolio(
         positions=positions,
         book=book,
         target_leverage=target_leverage,
         beta_hedge_mode=beta_hedge_mode,
+        hedge_tickers=hedge_tickers,
     )

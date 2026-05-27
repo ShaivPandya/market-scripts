@@ -860,6 +860,7 @@ _NUMBER = {"type": "number"}
 _INTEGER = {"type": "integer"}
 _BOOLEAN = {"type": "boolean"}
 _OBJECT = {"type": "object"}
+_ARRAY_STRINGS = {"type": "array", "items": {"type": "string"}}
 _ARRAY_OBJECTS = {"type": "array", "items": {"type": "object"}}
 
 
@@ -1153,7 +1154,9 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
                 "beta_hedge_mode": {
                     "type": "string",
                     "enum": ["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq", "spy_iwm_qqq"],
+                    "description": "Legacy preset fallback; ignored when hedge_tickers is provided.",
                 },
+                "hedge_tickers": _ARRAY_STRINGS,
                 "positions": _ARRAY_OBJECTS,
             }
         ),

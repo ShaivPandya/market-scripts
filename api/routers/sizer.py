@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 import pandas as pd
@@ -20,6 +21,42 @@ from portfolio.position_groups import (
 )
 
 router = APIRouter()
+
+HEDGE_TICKER_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9.^=_-]{0,31}$")
+BETA_HEDGE_MODE_TICKERS: dict[str, tuple[str, ...]] = {
+    "spy": ("SPY",),
+    "iwm": ("IWM",),
+    "qqq": ("QQQ",),
+    "spy_iwm": ("SPY", "IWM"),
+    "spy_qqq": ("SPY", "QQQ"),
+    "iwm_qqq": ("IWM", "QQQ"),
+    "spy_iwm_qqq": ("SPY", "IWM", "QQQ"),
+}
+
+
+def _normalize_hedge_tickers_input(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        ticker = str(value or "").strip().upper()
+        if not ticker:
+            raise ValueError("hedge_tickers cannot contain empty tickers.")
+        if not HEDGE_TICKER_PATTERN.fullmatch(ticker):
+            raise ValueError(f"Invalid hedge ticker '{value}'. Use a yfinance-compatible ticker symbol.")
+        if ticker not in seen:
+            seen.add(ticker)
+            normalized.append(ticker)
+    if not normalized:
+        raise ValueError("hedge_tickers must contain at least one ticker.")
+    return normalized
+
+
+def _effective_hedge_tickers(req: SizerRequest) -> list[str]:
+    if req.hedge_tickers is not None:
+        return list(req.hedge_tickers)
+    return list(BETA_HEDGE_MODE_TICKERS[req.beta_hedge_mode])
 
 
 class SizerPosition(BaseModel):
@@ -44,12 +81,14 @@ class SizerRequest(BaseModel):
     book: float | None = None
     target_leverage: float = 2.0
     beta_hedge_mode: Literal["spy", "iwm", "qqq", "spy_iwm", "spy_qqq", "iwm_qqq", "spy_iwm_qqq"] = "spy_iwm"
+    hedge_tickers: list[str] | None = None
     positions: list[SizerPosition] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _default_book_size(self) -> SizerRequest:
+    def _normalize_request(self) -> SizerRequest:
         if self.book is None:
             self.book = float(get_portfolio_book_size())
+        self.hedge_tickers = _normalize_hedge_tickers_input(self.hedge_tickers)
         return self
 
 
@@ -102,7 +141,7 @@ def _canonical_positions(req: SizerRequest) -> list[tuple[str, int, str, int]]:
 
 
 def _cache_key(req: SizerRequest) -> str:
-    strategy_version = "v2_conviction_sizing_equity_beta"
+    strategy_version = "v3_conviction_sizing_custom_equity_beta"
     canonical = _canonical_positions(req)
     token = (
         "|".join(
@@ -111,9 +150,11 @@ def _cache_key(req: SizerRequest) -> str:
         )
         or "none"
     )
+    hedge_token = ",".join(_effective_hedge_tickers(req))
     return (
         f"portfolio_sizer:{strategy_version}:book={_effective_book(req):.4f}:"
-        f"lev={float(req.target_leverage):.4f}:beta_hedge_mode={req.beta_hedge_mode}:positions={token}"
+        f"lev={float(req.target_leverage):.4f}:beta_hedge_mode={req.beta_hedge_mode}:"
+        f"hedge_tickers={hedge_token}:positions={token}"
     )
 
 
@@ -127,6 +168,7 @@ def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
             book=_effective_book(req),
             target_leverage=float(req.target_leverage),
             beta_hedge_mode=req.beta_hedge_mode,
+            hedge_tickers=req.hedge_tickers,
         )
     except ValueError:
         raise

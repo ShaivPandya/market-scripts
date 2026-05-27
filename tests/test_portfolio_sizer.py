@@ -139,15 +139,13 @@ def test_spy_only_beta_hedge_uses_no_iwm_leg():
         long_mask=np.array([True, False]),
         short_mask=np.array([False, True]),
         eq_mask=np.array([True, True]),
-        beta_hedge_mode="spy",
+        selected_hedges=["SPY"],
     )
 
     assert hedged_weights.equals(weights)
-    assert summary["beta_hedge_mode"] == "spy"
-    assert summary["hedge_iwm_weight"] == 0.0
-    assert summary["hedge_qqq_weight"] == 0.0
+    assert summary["selected_hedges"] == ["SPY"]
+    assert set(summary["hedge_weights"]) == {"SPY"}
     assert abs(summary["post_hedge_beta_spy"]) < 1e-6
-    assert abs(summary["post_hedge_beta_iwm"]) > 0.1
     assert summary["hedge_gross"] == abs(summary["hedge_spy_weight"])
     assert np.isclose(summary["gross_with_hedges"], float(np.abs(weights).sum() + abs(summary["hedge_spy_weight"])))
 
@@ -172,15 +170,13 @@ def test_spy_qqq_beta_hedge_uses_selected_legs_only():
         long_mask=np.array([True, False]),
         short_mask=np.array([False, True]),
         eq_mask=np.array([True, True]),
-        beta_hedge_mode="spy_qqq",
+        selected_hedges=["SPY", "QQQ"],
     )
 
     assert summary["selected_hedges"] == ["SPY", "QQQ"]
-    assert summary["hedge_iwm_weight"] == 0.0
-    assert summary["hedge_weights"]["IWM"] == 0.0
+    assert set(summary["hedge_weights"]) == {"SPY", "QQQ"}
     assert abs(summary["post_hedge_beta_spy"]) < 1e-4
     assert abs(summary["post_hedge_beta_qqq"]) < 1e-4
-    assert abs(summary["post_hedge_beta_iwm"]) > 0.01
 
 
 def test_all_three_beta_hedge_uses_all_selected_legs():
@@ -203,7 +199,7 @@ def test_all_three_beta_hedge_uses_all_selected_legs():
         long_mask=np.array([True, False]),
         short_mask=np.array([False, True]),
         eq_mask=np.array([True, True]),
-        beta_hedge_mode="spy_iwm_qqq",
+        selected_hedges=["SPY", "IWM", "QQQ"],
     )
 
     assert summary["selected_hedges"] == ["SPY", "IWM", "QQQ"]
@@ -214,6 +210,31 @@ def test_all_three_beta_hedge_uses_all_selected_legs():
     assert abs(summary["post_hedge_beta_spy"]) < 1e-5
     assert abs(summary["post_hedge_beta_iwm"]) < 1e-5
     assert abs(summary["post_hedge_beta_qqq"]) < 1e-5
+
+
+def test_custom_beta_hedge_uses_dynamic_keys():
+    weights = pd.Series({"AAA": 0.30, "BBB": -0.05})
+    beta_by_benchmark = {
+        "SMH": pd.Series({"AAA": 1.6, "BBB": 0.8}),
+    }
+    betas_all_by_benchmark = {
+        "SMH": pd.Series({"SMH": 1.0}),
+    }
+
+    _hedged_weights, summary = portfolio_sizer._apply_beta_hedges_with_gross_cap(
+        weights,
+        beta_by_benchmark,
+        betas_all_by_benchmark,
+        long_mask=np.array([True, False]),
+        short_mask=np.array([False, True]),
+        eq_mask=np.array([True, True]),
+        selected_hedges=["SMH"],
+    )
+
+    assert summary["selected_hedges"] == ["SMH"]
+    assert set(summary["hedge_weights"]) == {"SMH"}
+    assert summary["hedge_smh_weight"] != 0.0
+    assert abs(summary["post_hedge_beta_smh"]) < 1e-6
 
 
 def test_grouped_convictions_size_group_then_split_members():
