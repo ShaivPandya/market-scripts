@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from api.agent_governance import (
     AgentBudgetExceeded,
     AgentBudgetState,
     ModelGatewayDenied,
+    ToolPolicyDenied,
+    evaluate_tool_call,
     prepare_model_egress,
     redact_secrets,
 )
-from ontology.policy import admin_actor, agent_actor
+from api.agent_tools import execute_tool
+from ontology.action_registry import get_tool_exposure
+from ontology.policy import Actor, admin_actor, agent_actor
 
 
 def test_redact_secrets_removes_provider_keys_bearer_tokens_and_credentials():
@@ -150,6 +156,70 @@ def test_prepare_model_egress_public_payload_is_allowed():
     assert manifest["provider_egress"] == "external_allowed"
     assert manifest["decision"] == "allowed"
     assert manifest["data_sensitivity"] == "public_market"
+
+
+def test_tool_policy_allows_default_admin_agent():
+    tool = get_tool_exposure("get_portfolio_positions")
+
+    decision = evaluate_tool_call(tool, actor=agent_actor(admin_actor()), raw_args={})
+
+    assert decision.allowed is True
+    assert decision.matched_rule
+    assert decision.audit["action"] == "agent.tool.call"
+    assert decision.audit["data_sensitivity"] == tool.data_sensitivity
+
+
+def test_tool_policy_denies_non_admin_actor_with_decision_metadata():
+    tool = get_tool_exposure("get_portfolio_positions")
+    actor = Actor("analyst", "user", roles=("analyst",), source="test")
+
+    with pytest.raises(ToolPolicyDenied) as exc_info:
+        evaluate_tool_call(tool, actor=actor, raw_args={})
+
+    decision = exc_info.value.decision
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.decision_id.startswith("abac:")
+    assert decision.audit["actor_id"] == "analyst"
+
+
+def test_tool_policy_denies_out_of_scope_account_args():
+    tool = get_tool_exposure("get_portfolio_positions")
+
+    with pytest.raises(ToolPolicyDenied) as exc_info:
+        evaluate_tool_call(tool, actor=agent_actor(admin_actor()), raw_args={"account_id": "outside"})
+
+    assert exc_info.value.decision is not None
+    assert "account_id" in exc_info.value.decision.reason
+
+
+def test_financial_critical_tool_policy_denial_fails_closed_when_audit_fails(monkeypatch):
+    from api import audit
+
+    def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit offline")
+
+    monkeypatch.setattr(audit, "emit_audit_event", fail_audit)
+    tool = get_tool_exposure("propose_portfolio_positions_update")
+    actor = Actor("analyst", "user", roles=("analyst",), source="test")
+
+    with pytest.raises(RuntimeError, match="audit offline"):
+        evaluate_tool_call(tool, actor=actor, raw_args={})
+
+
+def test_blocked_tool_payload_includes_denied_policy_metadata():
+    payload = json.loads(
+        execute_tool(
+            "get_portfolio_positions",
+            {},
+            actor=Actor("analyst", "user", roles=("analyst",), source="test"),
+        )
+    )
+
+    assert payload["type"] == "tool_policy_denied"
+    assert payload["_meta"]["policy_status"] == "denied"
+    assert payload["_meta"]["policy_decision_id"].startswith("abac:")
+    assert payload["_meta"]["policy_audit"]["actor_id"] == "analyst"
 
 
 def test_explicit_denied_rule_blocks_before_budget(monkeypatch):

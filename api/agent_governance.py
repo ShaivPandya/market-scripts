@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ontology.action_registry import ToolExposure
-from ontology.policy import Actor, admin_actor
+from ontology.policy import DEFAULT_ONTOLOGY_POLICY, Actor, admin_actor
 
 DEFAULT_ACCOUNT_SCOPE = "default-account"
 DEFAULT_PORTFOLIO_SCOPE = "default-portfolio"
@@ -57,8 +57,9 @@ class ModelGatewayDenied(AgentGovernanceError):
 
 
 class ToolPolicyDenied(AgentGovernanceError):
-    def __init__(self, message: str):
+    def __init__(self, message: str, *, decision: ToolPolicyDecision | None = None):
         super().__init__(message, code="tool_policy_denied")
+        self.decision = decision
 
 
 class ToolTimeoutError(AgentGovernanceError):
@@ -98,6 +99,9 @@ class ToolPolicyDecision:
     data_sensitivity: str
     provider_egress: str
     audit_level: str
+    matched_rule: str | None = None
+    explanation: str | None = None
+    audit: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -226,12 +230,19 @@ def execution_context_for_actor(actor: Actor | None) -> ExecutionContext:
     resolved = actor or admin_actor(source="agent_governance")
     actor_id = str(resolved.actor_id or "admin")
     delegated_actor_id = actor_id if resolved.actor_type == "agent" else None
+    account_id = next((str(item).strip() for item in resolved.account_ids if str(item).strip()), DEFAULT_ACCOUNT_SCOPE)
+    portfolio_id = next(
+        (str(item).strip() for item in resolved.portfolio_ids if str(item).strip()),
+        DEFAULT_PORTFOLIO_SCOPE,
+    )
     return ExecutionContext(
         actor_id=actor_id,
         actor_type=str(resolved.actor_type or "user"),
         delegated_actor_id=delegated_actor_id,
         parent_actor_id=resolved.parent_actor_id,
         roles=tuple(resolved.roles or ()),
+        account_id=account_id,
+        portfolio_id=portfolio_id,
     )
 
 
@@ -605,31 +616,71 @@ def evaluate_tool_call(
     context = execution_context_for_actor(actor)
     if tool.lifecycle_state == "disabled":
         raise ToolPolicyDenied(f"Tool {tool.tool_name} is disabled")
-    roles = {role.lower() for role in context.roles}
-    if "admin" not in roles and context.actor_type != "system":
-        raise ToolPolicyDenied("Agent tool calls require the single-admin role")
-    if tool.account_scope and tool.account_scope != context.account_id:
-        raise ToolPolicyDenied(f"Tool requires account scope {tool.account_scope}")
-    if tool.portfolio_scope and tool.portfolio_scope != context.portfolio_id:
-        raise ToolPolicyDenied(f"Tool requires portfolio scope {tool.portfolio_scope}")
     arg_account = raw_args.get("account_id")
     arg_portfolio = raw_args.get("portfolio_id")
-    if arg_account is not None and str(arg_account) != context.account_id:
-        raise ToolPolicyDenied("Requested account_id is outside the delegated scope")
-    if arg_portfolio is not None and str(arg_portfolio) != context.portfolio_id:
-        raise ToolPolicyDenied("Requested portfolio_id is outside the delegated scope")
+    requested_account_id = (
+        str(arg_account).strip() if arg_account is not None else str(tool.account_scope or "").strip()
+    )
+    requested_portfolio_id = (
+        str(arg_portfolio).strip() if arg_portfolio is not None else str(tool.portfolio_scope or "").strip()
+    )
+    policy_context = {
+        "purpose": "agent_tool",
+        "tool_name": tool.tool_name,
+        "access_mode": tool.access_mode,
+        "required_scopes": list(tool.required_scopes),
+        "account_id": requested_account_id or None,
+        "portfolio_id": requested_portfolio_id or None,
+        "data_sensitivity": tool.data_sensitivity,
+        "provider_egress": tool.provider_egress,
+    }
+    policy_decision = DEFAULT_ONTOLOGY_POLICY.check_action(actor, "agent.tool.call", policy_context)
+    decision_scope = {
+        **context.scope,
+        "requested_account_id": requested_account_id or None,
+        "requested_portfolio_id": requested_portfolio_id or None,
+    }
+    if not policy_decision.allowed:
+        decision = ToolPolicyDecision(
+            decision_id=policy_decision.decision_id,
+            allowed=False,
+            reason=policy_decision.reason or "Tool policy denied",
+            scope=decision_scope,
+            required_scopes=tuple(tool.required_scopes),
+            data_sensitivity=tool.data_sensitivity,
+            provider_egress=tool.provider_egress,
+            audit_level=tool.audit_level,
+            matched_rule=policy_decision.matched_rule,
+            explanation=policy_decision.explanation,
+            audit=policy_decision.audit,
+        )
+        _record_audit(
+            "agent.tool_policy",
+            "agent_governance",
+            "denied",
+            actor=actor,
+            object_refs=[{"type": "agent_tool", "id": tool.tool_name}],
+            after_summary=tool_governance_meta(tool, decision),
+            metadata={"decision_id": decision.decision_id},
+            error=decision.reason,
+            fail_closed=tool.audit_level == "financial_critical",
+        )
+        raise ToolPolicyDenied(decision.reason, decision=decision)
     _check_rate_limit(tool, context)
     if budget is not None:
         budget.check_tool_call(tool)
     decision = ToolPolicyDecision(
-        decision_id=_decision_id("tool_policy"),
+        decision_id=policy_decision.decision_id,
         allowed=True,
-        reason="allowed",
-        scope=context.scope,
+        reason=policy_decision.reason or "allowed",
+        scope=decision_scope,
         required_scopes=tuple(tool.required_scopes),
         data_sensitivity=tool.data_sensitivity,
         provider_egress=tool.provider_egress,
         audit_level=tool.audit_level,
+        matched_rule=policy_decision.matched_rule,
+        explanation=policy_decision.explanation,
+        audit=policy_decision.audit,
     )
     _record_audit(
         "agent.tool_policy",
@@ -691,6 +742,10 @@ def tool_governance_meta(tool: ToolExposure, decision: ToolPolicyDecision | None
                 "policy_decision_id": decision.decision_id,
                 "scope": decision.scope,
                 "policy_status": "allowed" if decision.allowed else "denied",
+                "policy_reason": decision.reason,
+                "policy_matched_rule": decision.matched_rule,
+                "policy_explanation": decision.explanation,
+                "policy_audit": dict(decision.audit),
             }
         )
     return meta

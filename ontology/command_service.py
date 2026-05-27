@@ -18,7 +18,7 @@ from ontology.approval_workflow import (
 )
 from ontology.object_service import OntologyObjectService
 from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
-from ontology.policy import Actor, actor_to_dict, admin_actor, require_allowed
+from ontology.policy import Actor, NodeResource, PolicyDecision, actor_to_dict, admin_actor, require_allowed
 from ontology.schemas.identity import (
     action_item_id,
     action_run_id,
@@ -150,6 +150,27 @@ class OntologyCommandService:
     def __init__(self, object_service: OntologyObjectService | None = None):
         self.objects = object_service or OntologyObjectService()
 
+    def _require_policy_allowed(
+        self,
+        decision: PolicyDecision,
+        *,
+        actor: Actor,
+        provenance_id: str,
+        object_refs: list[dict[str, Any]],
+    ) -> None:
+        if decision.allowed:
+            return
+        self._write_audit(
+            "policy.denied",
+            "policy",
+            "denied",
+            actor=actor,
+            provenance_id=provenance_id,
+            object_refs=object_refs,
+            after_summary=dict(decision.audit),
+        )
+        require_allowed(decision)
+
     def list_approvals(
         self,
         *,
@@ -160,7 +181,13 @@ class OntologyCommandService:
         limit: int = 200,
     ) -> list[dict[str, Any]]:
         actor = actor or admin_actor(source="ontology_command")
-        require_allowed(POLICY.check_action(actor, "approval.read"))
+        read_decision = POLICY.check_action(actor, "approval.read", _approval_policy_context())
+        self._require_policy_allowed(
+            read_decision,
+            actor=actor,
+            provenance_id=_provenance_id("policy", "approval.read", actor.actor_id),
+            object_refs=[{"type": "Approval", "id": "*"}],
+        )
         filters: dict[str, Any] = {}
         if status:
             filters["status"] = status
@@ -169,15 +196,45 @@ class OntologyCommandService:
         if application_status:
             filters["application_status"] = application_status
         rows = self.objects.query_objects("Approval", filters=filters, limit=limit)
-        return [_flatten_object(row) for row in rows]
+        approvals: list[dict[str, Any]] = []
+        for row in rows:
+            approval = _flatten_object(row)
+            object_decision = POLICY.check_object(actor, _approval_node_resource(approval), action="read")
+            if object_decision.allowed:
+                approvals.append(approval)
+                continue
+            self._write_audit(
+                "policy.denied",
+                "policy",
+                "denied",
+                actor=actor,
+                provenance_id=_provenance_id("policy", "approval.read", actor.actor_id, approval.get("id")),
+                object_refs=[{"type": "Approval", "id": str(approval.get("id") or "")}],
+                after_summary=dict(object_decision.audit),
+            )
+        return approvals
 
     def get_approval(self, approval_uid: str, *, actor: Actor | None = None) -> dict[str, Any]:
         actor = actor or admin_actor(source="ontology_command")
-        require_allowed(POLICY.check_action(actor, "approval.read"))
+        read_decision = POLICY.check_action(actor, "approval.read", _approval_policy_context(approval_id=approval_uid))
+        self._require_policy_allowed(
+            read_decision,
+            actor=actor,
+            provenance_id=_provenance_id("policy", "approval.read", actor.actor_id, approval_uid),
+            object_refs=[{"type": "Approval", "id": str(approval_uid)}],
+        )
         row = self.objects.get_object(_normalize_approval_uid(approval_uid))
         if not row:
             raise OntologyCommandNotFound("Approval", approval_uid)
-        return _flatten_object(row)
+        approval = _flatten_object(row)
+        object_decision = POLICY.check_object(actor, _approval_node_resource(approval), action="read")
+        self._require_policy_allowed(
+            object_decision,
+            actor=actor,
+            provenance_id=_provenance_id("policy", "approval.read", actor.actor_id, approval_uid),
+            object_refs=[{"type": "Approval", "id": str(approval.get("id") or approval_uid)}],
+        )
+        return approval
 
     def propose_action(
         self,
@@ -189,7 +246,6 @@ class OntologyCommandService:
         entity_id: str | None = None,
         supersedes_approval_id: str | None = None,
     ) -> dict[str, Any]:
-        require_allowed(POLICY.check_action(context.actor, "approval.create"))
         action_id = _non_blank(action_id, "action_id")
         payload_dict = dict(payload)
         _validate_governed_action(action_id, payload_dict)
@@ -204,6 +260,26 @@ class OntologyCommandService:
         is_financial = _is_financial_action_for_payload(action_id, payload_dict)
         now = _now()
         input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
+        approval_scope = _approval_scope_from_payload(payload_dict)
+        policy_decision = POLICY.check_action(
+            context.actor,
+            "approval.create",
+            _approval_policy_context(
+                action_id=action_id,
+                payload=payload_dict,
+                command_context=context,
+                risk_class="financial" if is_financial else "research",
+                policy_gate_result=policy_gate_result,
+                account_id=approval_scope["account_id"],
+                portfolio_id=approval_scope["portfolio_id"],
+            ),
+        )
+        self._require_policy_allowed(
+            policy_decision,
+            actor=context.actor,
+            provenance_id=_provenance_id("policy", "approval.create", context.actor.actor_id, input_hash),
+            object_refs=[{"type": "Approval", "id": action_id}],
+        )
         entity_type = _entity_type_for_action(action_id)
         normalized_supersedes_id = _normalize_approval_uid(supersedes_approval_id) if supersedes_approval_id else None
         uid_hash = input_hash
@@ -224,6 +300,9 @@ class OntologyCommandService:
             "entity_type": entity_type,
             "entity_id": entity_id or target_uid,
             "ticker": ticker,
+            "account_id": approval_scope["account_id"],
+            "portfolio_id": approval_scope["portfolio_id"],
+            "data_sensitivity": "portfolio_private" if is_financial else "research_private",
             "target_object_uid": target_uid,
             "target_object_type": target_type,
             "action_id": action_id,
@@ -250,6 +329,9 @@ class OntologyCommandService:
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
             "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
+            "policy_decision_id": policy_decision.decision_id,
+            "policy_matched_rule": policy_decision.matched_rule,
+            "policy_explanation": policy_decision.explanation,
             "base_state_hash": base_state_hash,
             "requested_by_actor_id": context.actor.actor_id,
             "created_at": now,
@@ -279,6 +361,8 @@ class OntologyCommandService:
                 "target_object_uid": target_uid,
                 "approval_policy_rule_id": props.get("approval_policy_rule_id"),
                 "approval_policy_reason": props.get("approval_policy_reason"),
+                "policy_decision_id": props.get("policy_decision_id"),
+                "policy_matched_rule": props.get("policy_matched_rule"),
             },
         )
         if normalized_supersedes_id:
@@ -297,6 +381,8 @@ class OntologyCommandService:
                     "supersedes_approval_id": normalized_supersedes_id,
                     "approval_policy_rule_id": props.get("approval_policy_rule_id"),
                     "approval_policy_reason": props.get("approval_policy_reason"),
+                    "policy_decision_id": props.get("policy_decision_id"),
+                    "policy_matched_rule": props.get("policy_matched_rule"),
                 },
             )
         approval = _flatten_object(row)
@@ -364,7 +450,6 @@ class OntologyCommandService:
         context: OntologyCommandContext,
         requirement_id: str | None = None,
     ) -> dict[str, Any]:
-        require_allowed(POLICY.check_action(context.actor, "approval.resolve"))
         approval = self.get_approval(approval_uid, actor=context.actor)
         current_status = str(approval.get("status") or "pending").lower()
         if current_status != "pending":
@@ -372,6 +457,22 @@ class OntologyCommandService:
         status = str(status or "").strip().lower()
         if status not in {"approved", "rejected"}:
             raise OntologyCommandValidationError("Approval status must be approved or rejected.")
+        resolve_decision = POLICY.check_action(
+            context.actor,
+            "approval.resolve",
+            _approval_policy_context(
+                approval=approval,
+                approval_id=approval_uid,
+                command_context=context,
+                status=status,
+            ),
+        )
+        self._require_policy_allowed(
+            resolve_decision,
+            actor=context.actor,
+            provenance_id=_provenance_id("policy", "approval.resolve", context.actor.actor_id, approval_uid, status),
+            object_refs=[{"type": "Approval", "id": str(approval.get("id") or approval_uid)}],
+        )
         if status == "approved" and not str(note or "").strip():
             raise OntologyCommandValidationError("Approval note is required.")
 
@@ -2910,6 +3011,79 @@ class OntologyCommandService:
             )
         except Exception:
             logger.warning("Failed to write ontology command audit event %s", action_name, exc_info=True)
+
+
+def _approval_node_resource(approval: Mapping[str, Any]) -> NodeResource:
+    return NodeResource(
+        id=str(approval.get("id") or approval.get("object_uid") or ""),
+        type="Approval",
+        properties={key: value for key, value in dict(approval).items() if not str(key).startswith("_")},
+    )
+
+
+def _approval_scope_from_payload(payload: Mapping[str, Any] | None) -> dict[str, str]:
+    raw = dict(payload or {})
+    candidates: list[Mapping[str, Any]] = [raw]
+    record = raw.get("record")
+    if isinstance(record, Mapping):
+        candidates.append(record)
+    proposed_change = raw.get("proposed_change")
+    if isinstance(proposed_change, Mapping):
+        candidates.append(proposed_change)
+        nested_record = proposed_change.get("record")
+        if isinstance(nested_record, Mapping):
+            candidates.append(nested_record)
+
+    account_id = ""
+    portfolio_id = ""
+    for candidate in candidates:
+        if not account_id:
+            account_id = str(candidate.get("account_id") or candidate.get("owner_account_id") or "").strip()
+        if not portfolio_id:
+            portfolio_id = str(candidate.get("portfolio_id") or "").strip()
+    return {
+        "account_id": account_id or "default",
+        "portfolio_id": portfolio_id or "default",
+    }
+
+
+def _approval_policy_context(
+    *,
+    action_id: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+    approval: Mapping[str, Any] | None = None,
+    approval_id: str | None = None,
+    command_context: OntologyCommandContext | None = None,
+    risk_class: str | None = None,
+    policy_gate_result: Mapping[str, Any] | None = None,
+    account_id: str | None = None,
+    portfolio_id: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    source = dict(approval or payload or {})
+    scope = _approval_scope_from_payload(source)
+    has_scope_source = bool(source) or bool(account_id) or bool(portfolio_id)
+    resolved_risk_class = str(risk_class or source.get("risk_class") or "").strip().lower()
+    data_sensitivity = "portfolio_private" if resolved_risk_class == "financial" else "research_private"
+    gate = dict(policy_gate_result or source.get("policy_gate_result") or {})
+    return {
+        "purpose": "approval",
+        "resource_type": "Approval",
+        "resource_id": approval_id or source.get("id") or source.get("object_uid"),
+        "governed_action_id": action_id or source.get("action_id"),
+        "request_mode": command_context.request_mode if command_context else None,
+        "source_type": command_context.source_type if command_context else source.get("source_type"),
+        "source_id": command_context.source_id if command_context else source.get("source_id"),
+        "status": status or source.get("status"),
+        "risk_class": resolved_risk_class or None,
+        "policy_gate_decision": gate.get("decision") or source.get("policy_gate_decision"),
+        "policy_gate_result_id": gate.get("policy_gate_result_id") or source.get("policy_gate_result_id"),
+        "account_id": account_id or source.get("account_id") or (scope["account_id"] if has_scope_source else None),
+        "portfolio_id": portfolio_id
+        or source.get("portfolio_id")
+        or (scope["portfolio_id"] if has_scope_source else None),
+        "data_sensitivity": source.get("data_sensitivity") or data_sensitivity,
+    }
 
 
 def _flatten_object(row: Mapping[str, Any]) -> dict[str, Any]:

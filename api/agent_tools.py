@@ -2395,7 +2395,7 @@ def execute_tool(
         logger.warning("Tool %s blocked by governance: %s", name, exc)
         status = "timeout" if isinstance(exc, ToolTimeoutError) else "blocked"
         if exposure is not None and not policy_meta:
-            policy_meta = tool_governance_meta(exposure)
+            policy_meta = tool_governance_meta(exposure, getattr(exc, "decision", None))
         payload = blocked_tool_payload(
             name,
             exc,
