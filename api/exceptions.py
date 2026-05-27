@@ -10,10 +10,11 @@ but never leaked to the client.
 class AppError(Exception):
     """Base application error — all custom exceptions inherit from this."""
 
-    def __init__(self, message: str, *, status_code: int = 500):
+    def __init__(self, message: str, *, status_code: int = 500, detail: str = ""):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.detail = detail
 
 
 class DataFetchError(AppError):
@@ -48,11 +49,7 @@ class AsyncJobDispatchError(AppError):
     """The API could not enqueue a background job for execution."""
 
     def __init__(self, detail: str = ""):
-        message = "Async job dispatch failed"
-        if detail:
-            message = f"{message}: {detail}"
-        super().__init__(message, status_code=503)
-        self.detail = detail
+        super().__init__("Async job dispatch failed", status_code=503, detail=detail)
 
 
 class AnalysisError(AppError):
