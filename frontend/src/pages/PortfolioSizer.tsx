@@ -116,28 +116,21 @@ const HEDGE_MODE_TO_TICKERS: Record<BetaHedgeMode, string[]> = {
   spy_iwm_qqq: ["SPY", "IWM", "QQQ"],
 }
 const ALWAYS_HIDDEN_COLUMNS = ["direction_intended", "days_since_new_low"] as const
-const BASIC_COLUMNS = new Set([
+const BASIC_WEIGHT_COLUMN_ORDER = [
   "ticker",
   "asset",
+  "price",
+  "quantity",
+  "weight",
   "direction",
   "group_name",
-  "group_conviction",
-  "group_raw_target",
-  "group_member_share",
-  "beta_spy",
-  "beta_iwm",
-  "beta_qqq",
-  "realized_vol",
-  "weight",
-  "price",
-  "instrument_type",
-  "contract_multiplier",
   "dollar_weight",
   "target_quantity",
-  "quantity",
-  "contracts",
-  "shares",
-])
+  "group_raw_target",
+] as const
+const BASIC_WEIGHT_COLUMN_ALIASES: Partial<Record<typeof BASIC_WEIGHT_COLUMN_ORDER[number], string[]>> = {
+  quantity: ["shares"],
+}
 
 const STATUS_CLASSES: Record<"healthy" | "moderate" | "near", string> = {
   healthy: "bg-emerald-50 text-emerald-700 border border-emerald-200",
@@ -317,10 +310,6 @@ function normalizeHedgeTickers(values: string[] | undefined | null): string[] {
   return normalized.length > 0 ? normalized : [...DEFAULT_HEDGE_TICKERS]
 }
 
-function isBasicWeightsColumn(key: string) {
-  return BASIC_COLUMNS.has(key) || key.startsWith("beta_")
-}
-
 function clamp01(value: number) {
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.min(1, value))
@@ -373,11 +362,23 @@ function formatRatioPercent(value: number, signed = true, precision = 1) {
   return `${sign}${pct.toFixed(precision)}%`
 }
 
-function buildCols(rows: Record<string, unknown>[], hiddenKeys?: string[]): ColumnDef[] {
+function resolveBasicWeightColumns(rows: Record<string, unknown>[]) {
+  const availableKeys = new Set(rows.flatMap(row => Object.keys(row)))
+  return BASIC_WEIGHT_COLUMN_ORDER.flatMap(key => {
+    if (availableKeys.has(key)) return [key]
+    const alias = BASIC_WEIGHT_COLUMN_ALIASES[key]?.find(aliasKey => availableKeys.has(aliasKey))
+    return alias ? [alias] : []
+  })
+}
+
+function buildCols(rows: Record<string, unknown>[], hiddenKeys?: readonly string[], visibleKeys?: readonly string[]): ColumnDef[] {
   if (rows.length === 0) return []
   const hidden = new Set(hiddenKeys ?? [])
-  const keys = Array.from(new Set(rows.flatMap(row => Object.keys(row))))
+  const availableKeys = Array.from(new Set(rows.flatMap(row => Object.keys(row))))
     .filter(k => k !== "index" && k !== "Ticker" && k !== "symbol" && k !== "Symbol" && !hidden.has(k))
+  const keys = visibleKeys
+    ? visibleKeys.filter((key, index) => availableKeys.includes(key) && visibleKeys.indexOf(key) === index)
+    : availableKeys
   const tickerIndex = keys.indexOf("ticker")
   if (tickerIndex > 0) {
     const [tickerKey] = keys.splice(tickerIndex, 1)
@@ -671,13 +672,8 @@ export function PortfolioSizer() {
 
   const data = cachedResult
   const weightsRows = rowsWithTickerColumn(toRows(data?.weights_df))
-  const weightsHiddenKeys = weightsViewMode === "basic"
-    ? (weightsRows.length === 0
-      ? []
-      : Object.keys(weightsRows[0]).filter(
-        k => !isBasicWeightsColumn(k) || ALWAYS_HIDDEN_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_COLUMNS[number]),
-      ))
-    : [...ALWAYS_HIDDEN_COLUMNS]
+  const weightsVisibleKeys = weightsViewMode === "basic" ? resolveBasicWeightColumns(weightsRows) : undefined
+  const weightsHiddenKeys = weightsViewMode === "advanced" ? ALWAYS_HIDDEN_COLUMNS : undefined
   const hedgesRows = rowsWithTickerColumn(toRows(data?.hedges_df))
   const exposures = data?.exposures ?? {}
   const constraints = data?.constraints ?? {}
@@ -1074,7 +1070,7 @@ export function PortfolioSizer() {
               {weightsRows.length > 0 && (
                 <DataTable
                   label="Portfolio Weights"
-                  columns={buildCols(weightsRows, weightsHiddenKeys)}
+                  columns={buildCols(weightsRows, weightsHiddenKeys, weightsVisibleKeys)}
                   rows={weightsRows}
                 />
               )}
