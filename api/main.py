@@ -179,12 +179,22 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 # ---------------------------------------------------------------------------
 @app.exception_handler(AppError)
 async def _app_error_handler(request: Request, exc: AppError):
-    logger.error("AppError [%s]: %s", exc.__class__.__name__, exc.message, exc_info=True)
+    # Log the full detail server-side for troubleshooting
+    log_msg = f"AppError [{exc.__class__.__name__}]: {exc.message}"
+    if exc.detail:
+        log_msg = f"{log_msg} | Detail: {exc.detail}"
+    logger.error(log_msg, exc_info=True)
+
     content = {"error": exc.message, "type": exc.__class__.__name__}
+
+    # Technical 'detail' is only exposed in development mode.
+    # In production, we redact it to prevent information disclosure.
+    if exc.detail and not _is_production_runtime():
+        content["detail"] = exc.detail
+
     if isinstance(exc, DataFetchError):
         content["source"] = exc.source
-        if exc.detail:
-            content["detail"] = exc.detail
+
     return JSONResponse(
         status_code=exc.status_code,
         content=content,
