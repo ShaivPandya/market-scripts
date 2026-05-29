@@ -157,4 +157,6 @@ def test_admin_enqueue_dispatch_error_returns_structured_503(auth_client, monkey
     resp = auth_client.post("/api/admin/jobs/enqueue-market-snapshot-refresh")
 
     assert resp.status_code == 503
-    assert resp.json()["error"] == "Async job dispatch failed: run api unavailable"
+    # Sentinel: The message is now generic to prevent leakage, details are in 'detail' (redacted in prod)
+    assert resp.json()["error"] == "Async job dispatch failed"
+    assert resp.json()["detail"] == "run api unavailable"
