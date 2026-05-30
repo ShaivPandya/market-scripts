@@ -91,7 +91,7 @@ export function getRouteLabel(pathname: string) {
     if (match) return match.label
   }
   if (pathname.startsWith("/dossier/")) return "Position Dossier"
-  return "Market Dashboard"
+  return "Talisman"
 }
 
 export function Sidebar({ isOpen, onClose, onOpenSearch }: SidebarProps) {
@@ -124,7 +124,7 @@ export function Sidebar({ isOpen, onClose, onOpenSearch }: SidebarProps) {
     >
       <div className="border-b border-app px-4 pb-4 pt-[max(1rem,var(--safe-top))]">
         <p className="theme-eyebrow mb-2">Workspace</p>
-        <p className="text-lg font-semibold tracking-[-0.03em] text-app">Market Dashboard</p>
+        <p className="text-lg font-semibold tracking-[-0.03em] text-app">Talisman</p>
         <button
           type="button"
           onClick={onOpenSearch}

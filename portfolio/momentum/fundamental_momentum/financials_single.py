@@ -1389,7 +1389,7 @@ def _extract_breakdown_from_html(
     try:
         resp = requests_get(
             filing_url,
-            headers={"User-Agent": "market-scripts research@example.com"},
+            headers={"User-Agent": "Talisman research@example.com"},
             timeout=25,
         )
         if resp.status_code != 200 or not resp.text:
@@ -1540,7 +1540,7 @@ def _extract_breakdown_via_nlp(
     try:
         resp = requests_get(
             filing_url,
-            headers={"User-Agent": "market-scripts research@example.com"},
+            headers={"User-Agent": "Talisman research@example.com"},
             timeout=25,
         )
         if resp.status_code != 200 or not resp.text:

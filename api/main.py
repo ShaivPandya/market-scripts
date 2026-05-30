@@ -1,5 +1,5 @@
 """
-FastAPI backend for Market Analysis Dashboard.
+FastAPI backend for Talisman.
 
 Run from project root:
     uvicorn api.main:app --reload --port 8000
@@ -134,7 +134,7 @@ for module_path, name, tag in _OPTIONAL_MODULES:
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="Market Analysis API",
+    title="Talisman API",
     description="REST API for portfolio analytics, market data, and macro indicators",
     version="1.0.0",
     docs_url=None if IS_PRODUCTION else "/api/docs",

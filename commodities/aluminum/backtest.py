@@ -441,8 +441,8 @@ def plot_results(equity: pd.DataFrame | None = None) -> None:
             raise RuntimeError("No equity curve CSV exists; run the backtest first")
         equity = pd.read_csv(EQUITY_CURVE_CSV, parse_dates=["date"])
 
-    os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "market_scripts_matplotlib"))
-    os.environ.setdefault("XDG_CACHE_HOME", str(Path("/tmp") / "market_scripts_cache"))
+    os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "talisman_matplotlib"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(Path("/tmp") / "talisman_cache"))
     import matplotlib
 
     matplotlib.use("Agg")

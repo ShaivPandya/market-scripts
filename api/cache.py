@@ -53,7 +53,7 @@ def _candidate_disk_cache_roots() -> list[Path]:
     if env_path:
         roots.append(Path(env_path).expanduser())
     roots.append(_REPO_ROOT / "data_cache" / "api_cache")
-    roots.append(Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "api_cache")
+    roots.append(Path(os.getenv("TMPDIR") or "/tmp") / "talisman" / "data_cache" / "api_cache")
     deduped: list[Path] = []
     for root in roots:
         if root not in deduped:

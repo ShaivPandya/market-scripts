@@ -1,5 +1,5 @@
 """
-Custom exception hierarchy for the Market Analysis API.
+Custom exception hierarchy for the Talisman API.
 
 These exceptions are caught by global handlers in api/main.py and converted
 to structured JSON error responses.  Internal details are logged server-side

@@ -31,7 +31,7 @@ def fetch_shfe_html(url: str, *, cache_name: str, refresh: bool = False, raw_dir
 
     response = requests_get(
         url,
-        headers={"User-Agent": "market-scripts aluminum research backtest"},
+        headers={"User-Agent": "Talisman aluminum research backtest"},
         timeout=45,
     )
     response.raise_for_status()

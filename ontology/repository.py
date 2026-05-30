@@ -83,9 +83,7 @@ def _candidate_db_paths() -> list[Path]:
     if env_path:
         paths.append(Path(env_path).expanduser())
     paths.append(DEFAULT_DB_PATH)
-    paths.append(
-        Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "ontology" / "ontology.sqlite3"
-    )
+    paths.append(Path(os.getenv("TMPDIR") or "/tmp") / "talisman" / "data_cache" / "ontology" / "ontology.sqlite3")
     deduped: list[Path] = []
     for path in paths:
         if path not in deduped:

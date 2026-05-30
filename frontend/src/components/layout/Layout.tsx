@@ -108,7 +108,7 @@ function LayoutInner({
               <Menu size={18} />
             </button>
             <div className="min-w-0 text-center">
-              <p className="text-xs uppercase tracking-[0.14em] text-subtle">Market Dashboard</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-subtle">Talisman</p>
               <p className="truncate text-sm font-semibold text-app">{routeLabel}</p>
             </div>
             <button

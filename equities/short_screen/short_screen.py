@@ -44,7 +44,7 @@ _cik_map_lock = threading.Lock()
 _edgar_facts_cache: dict[str, dict | None] = {}  # cik_str -> raw companyfacts JSON or None
 _edgar_facts_lock = threading.Lock()
 
-SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
+SEC_HEADERS = {"User-Agent": "Talisman research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
 

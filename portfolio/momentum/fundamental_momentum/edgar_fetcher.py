@@ -48,7 +48,7 @@ _edgar_submissions_lock = threading.Lock()
 # collectively exceed the SEC's 10 req/s rate limit.
 _edgar_request_lock = threading.Lock()
 
-SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
+SEC_HEADERS = {"User-Agent": "Talisman research@example.com"}
 _SEC_DELAY = 0.11  # seconds between requests; keeps throughput ≤ 9/s
 
 

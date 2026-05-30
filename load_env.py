@@ -1,5 +1,5 @@
 """
-Simple .env file loader for market-scripts.
+Simple .env file loader for Talisman.
 
 Usage:
     from load_env import load_env

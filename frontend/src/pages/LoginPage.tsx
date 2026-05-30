@@ -405,7 +405,7 @@ export function LoginPage() {
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-16 pb-16 pt-10 md:pt-16">
           <SurfaceCard className="w-full max-w-md p-6 sm:p-8">
             <p className="theme-eyebrow mb-3">Welcome back</p>
-            <h1 className="mb-1 text-[2rem] font-semibold tracking-[-0.04em] text-app">Market Dashboard</h1>
+            <h1 className="mb-1 text-[2rem] font-semibold tracking-[-0.04em] text-app">Talisman</h1>
 
             {mode === "cloudflare" ? (
               <>

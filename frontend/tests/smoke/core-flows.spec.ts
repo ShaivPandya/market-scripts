@@ -4,7 +4,7 @@ test("redirects protected routes to login and signs in with password auth", asyn
   await page.goto("/workspace")
 
   await expect(page).toHaveURL(/\/login$/)
-  await expect(page.getByRole("heading", { name: "Market Dashboard" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Talisman" })).toBeVisible()
   await expect(page.getByText("Enter your password to continue.")).toBeVisible()
 
   await page.getByLabel("Password").fill("smoke-password")
