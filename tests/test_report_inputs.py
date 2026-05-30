@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 from typing import Any
@@ -194,6 +195,141 @@ def test_prepare_prompt_bundle_slims_expanded_macro_sources():
     assert "series" not in slim["bond_dashboard"]["countries"]["US"]["tenors"]["10Y"]
     assert slim["country_dashboard"]["Inflation"]["countries"]["US"] == {"date": "2024-01-01", "value": 3.1}
     assert slim["country_dashboard"]["Inflation"]["countries"]["Japan"] is None
+
+
+def test_weekly_hedge_position_detection_covers_role_type_and_metadata():
+    assert auto_weekly_report._is_hedge_position({"ticker": "SH", "role": "hedge"})
+    assert auto_weekly_report._is_hedge_position({"ticker": "QQQ", "type": "hedge"})
+    assert auto_weekly_report._is_hedge_position({"ticker": "IWM", "position_type": "hedge"})
+    assert auto_weekly_report._is_hedge_position({"ticker": "TLT", "object_type": "HedgePosition"})
+    assert auto_weekly_report._is_hedge_position({"ticker": "GLD", "_meta": {"object_type": "HedgePosition"}})
+    assert not auto_weekly_report._is_hedge_position({"ticker": "AAA", "role": "position"})
+
+
+def test_weekly_thesis_data_excludes_hedges_from_cached_portfolio_state(monkeypatch, tmp_path):
+    state_path = tmp_path / "portfolio_state.json"
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    for ticker in ("AAA", "SH", "QQQ", "IWM", "TLT", "GLD"):
+        (thesis_dir / f"{ticker}.md").write_text(f"{ticker} thesis", encoding="utf-8")
+
+    state_path.write_text(
+        json.dumps(
+            {
+                "positions": [
+                    {
+                        "ticker": "AAA",
+                        "role": "position",
+                        "direction": "long",
+                        "conviction": 3,
+                        "asset": "equity",
+                        "group_name": "Core",
+                        "group_conviction": 3,
+                    },
+                    {"ticker": "SH", "role": "hedge", "direction": "short", "conviction": 1, "asset": "equity"},
+                    {"ticker": "QQQ", "type": "hedge", "direction": "short", "conviction": 1, "asset": "equity"},
+                    {
+                        "ticker": "IWM",
+                        "position_type": "hedge",
+                        "direction": "short",
+                        "conviction": 1,
+                        "asset": "equity",
+                    },
+                    {
+                        "ticker": "TLT",
+                        "object_type": "HedgePosition",
+                        "direction": "long",
+                        "conviction": 1,
+                        "asset": "bond",
+                    },
+                    {
+                        "ticker": "GLD",
+                        "_meta": {"object_type": "HedgePosition"},
+                        "direction": "long",
+                        "conviction": 1,
+                        "asset": "commodity",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ta_tickers: list[str] = []
+
+    def fake_ta(ticker, lookback="2Y"):
+        ta_tickers.append(ticker)
+        return {"summary": [{"Indicator": "Trend", "Value": "ok", "Signal": "neutral", "Bias": "neutral"}]}
+
+    monkeypatch.setenv("AUTO_REPORT_PORTFOLIO_STATE_PATH", str(state_path))
+    monkeypatch.setattr(auto_weekly_report, "THESES_DIR", thesis_dir)
+    monkeypatch.setattr(
+        auto_weekly_report,
+        "collect_news_digest_context",
+        lambda days: {"window_days": days, "digests": [], "counts": {"digests": 0, "stories": 0}},
+    )
+    _module(monkeypatch, "portfolio.technical_analysis.technical_analysis", get_data=fake_ta)
+    _module(
+        monkeypatch,
+        "portfolio.momentum.price_momentum.momentum",
+        get_data=lambda: {
+            "results": [
+                {"ticker": "AAA", "avg20_roc63": 1.0, "rel_roc42": 2.0, "avg10_rel_roc": 3.0},
+                {"ticker": "QQQ", "avg20_roc63": -1.0, "rel_roc42": -2.0, "avg10_rel_roc": -3.0},
+            ]
+        },
+    )
+
+    theses = auto_weekly_report.load_theses()
+    data = auto_weekly_report.collect_thesis_data()
+    _system_msg, user_msg = auto_weekly_report._build_thesis_prompt(data, web_search=False)
+
+    assert theses == {"AAA": "AAA thesis"}
+    assert [row["ticker"] for row in data["portfolio"]] == ["AAA"]
+    assert data["portfolio_groups"][0]["members"] == ["AAA"]
+    assert ta_tickers == ["AAA"]
+    assert "### AAA" in user_msg
+    for hedge_ticker in ("SH", "QQQ", "IWM", "TLT", "GLD"):
+        assert f"### {hedge_ticker}" not in user_msg
+        assert f"{hedge_ticker} thesis" not in user_msg
+
+
+def test_weekly_commentary_finalizer_does_not_append_source_footer():
+    commentary = "## Weekly Commentary\n\nMarket text with inline citations preserved by the model."
+
+    result = auto_weekly_report._finalize_commentary_markdown(
+        commentary,
+        [
+            ("Fed release", "https://example.com/fed"),
+            ("Duplicate Fed release", "https://example.com/fed"),
+        ],
+    )
+
+    assert result == commentary
+    assert "## Sources" not in result
+    assert "https://example.com/fed" not in result
+
+
+def test_weekly_thesis_summary_filter_removes_unexpected_hedge_tickers():
+    summary = {
+        "thesis_evaluations": [{"ticker": "AAA"}, {"ticker": "SH"}],
+        "positions_reviewed": ["AAA", "SH"],
+        "thesis_strengthened": ["AAA"],
+        "thesis_weakened": ["SH"],
+        "positions_needing_reassessment": ["SH"],
+        "missing_theses": ["SH"],
+        "material_developments": [{"ticker": "AAA"}, {"ticker": "SH"}],
+    }
+
+    result = auto_weekly_report._filter_thesis_summary_to_portfolio(summary, [{"ticker": "AAA"}])
+
+    assert result["thesis_evaluations"] == [{"ticker": "AAA"}]
+    assert result["positions_reviewed"] == ["AAA"]
+    assert result["thesis_strengthened"] == ["AAA"]
+    assert result["thesis_weakened"] == []
+    assert result["positions_needing_reassessment"] == []
+    assert result["missing_theses"] == []
+    assert result["material_developments"] == [{"ticker": "AAA"}]
 
 
 def test_weekly_and_daily_prompts_call_out_expanded_macro_sources():

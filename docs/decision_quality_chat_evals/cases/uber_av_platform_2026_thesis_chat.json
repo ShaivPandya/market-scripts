@@ -1,0 +1,64 @@
+{
+  "id": "uber_av_platform_2026_thesis_chat",
+  "status": "review",
+  "as_of_date": "2026-05-28",
+  "user_message": "Here is my Uber thesis? What do you think?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/uber",
+    "ticker": "UBER",
+    "metrics": {
+      "stock_price": "$70.92"
+    },
+    "summary": "User is reviewing an Uber stock pitch deck.",
+    "corresponding_tools": []
+  },
+  "input_refs": [
+    {
+      "type": "deck_excerpt",
+      "description": "Extracted as-of excerpts from the Uber May 2026 pitch deck.",
+      "path": "docs/decision_quality_chat_evals/inputs/uber_av_platform_2026_deck_excerpts.json",
+      "sha256": "9cbab1b11880b7c110d42a16659a37f423ece7b78faab70fb29081e8ee9bbb29",
+      "required": true
+    }
+  ],
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0, "long_count": 0, "short_count": 0}, "positions": []},
+    "get_dossier": {"ticker": "UBER", "summary": "No live dossier in replay. Use deck excerpts."},
+    "get_thesis": {"ticker": "UBER", "content": "Use deck excerpt input ref as the thesis source."},
+    "get_thesis_evaluations": {"ticker": "UBER", "evaluations": []},
+    "get_position_valuation": {"ticker": "UBER", "price": 70.92, "bear_base_bull": {"bear": 75, "base": 103, "bull": 116}},
+    "run_chart": {"ticker": "UBER", "technical_read": "Replay requires Stan to ask for current price-action confirmation rather than invent a chart read."},
+    "get_price_volume_signals": {"status": "not_ticker_specific", "note": "Replay does not include current UBER price/volume signal."},
+    "search_knowledge_base": {"results": []},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "expected_tool_names": ["get_dossier", "get_thesis", "get_position_valuation", "run_chart"],
+  "required_points": [
+    {"label": "av overhang optionality", "all_terms": ["AV"], "any_terms": ["disintermediation", "optionality", "Waymo", "Tesla"]},
+    {"label": "gig worker risk", "any_terms": ["gig", "driver classification", "labor regulation"]},
+    {"label": "low switching costs", "any_terms": ["low switching", "multi-home", "price competition"]},
+    {"label": "current chart needed", "all_terms": ["price", "action"], "any_terms": ["chart", "technical", "volume"]},
+    {"label": "sizing discipline", "any_terms": ["size", "sizing", "starter", "small"]},
+    {"label": "trade after trade", "any_terms": ["if right", "if wrong", "review"]}
+  ],
+  "required_decision_quality_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ],
+  "forbidden_patterns": ["could be a good buy", "depends on your risk tolerance", "good business, good industry, good management, good price"],
+  "expected_stance": {
+    "label": "pressure_test_not_lazy_buy",
+    "any_terms": ["watch", "research", "not ready", "small", "starter"],
+    "forbidden_terms": ["buy now", "add now", "strong buy"]
+  },
+  "judge_min_score": 16
+}

@@ -256,6 +256,38 @@ def _build_system_message(last_week_summary: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _is_hedge_marker(value) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    normalized = re.sub(r"[\s_-]+", "", text)
+    return normalized in {"hedge", "hedgeposition"}
+
+
+def _is_hedge_position(row: dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+
+    markers = [
+        row.get("role"),
+        row.get("type"),
+        row.get("position_type"),
+        row.get("object_type"),
+    ]
+    meta = row.get("_meta")
+    if isinstance(meta, dict):
+        markers.extend([meta.get("role"), meta.get("type"), meta.get("position_type"), meta.get("object_type")])
+    return any(_is_hedge_marker(marker) for marker in markers)
+
+
+def _portfolio_thesis_rows(rows: list[dict]) -> list[dict]:
+    return [row for row in rows if row.get("ticker") and not _is_hedge_position(row)]
+
+
+def _ticker_key(value) -> str:
+    return str(value or "").strip().upper()
+
+
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
     from auto_report.report_state import load_cached_positions
@@ -263,7 +295,7 @@ def load_theses() -> dict[str, str | None]:
     tickers: list[str] = []
     cached_positions = load_cached_positions()
     if cached_positions is not None:
-        for row in cached_positions:
+        for row in _portfolio_thesis_rows(cached_positions):
             t = str(row.get("ticker", "")).strip()
             if t:
                 tickers.append(t)
@@ -271,7 +303,7 @@ def load_theses() -> dict[str, str | None]:
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
         try:
-            for row in OntologyRuntimeReadService().positions():
+            for row in _portfolio_thesis_rows(OntologyRuntimeReadService().positions()):
                 t = str(row.get("ticker", "")).strip()
                 if t:
                     tickers.append(t)
@@ -328,11 +360,11 @@ def collect_thesis_data() -> dict:
 
     cached_positions = load_cached_positions()
     if cached_positions is not None:
-        results["portfolio"] = [r for r in cached_positions if r.get("ticker")]
+        results["portfolio"] = _portfolio_thesis_rows(cached_positions)
     else:
         from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        results["portfolio"] = [r for r in OntologyRuntimeReadService().positions() if r.get("ticker")]
+        results["portfolio"] = _portfolio_thesis_rows(OntologyRuntimeReadService().positions())
     results["portfolio_groups"] = group_summaries(results["portfolio"])
 
     tickers = [p["ticker"] for p in results["portfolio"]]
@@ -944,14 +976,10 @@ def _dedupe_citations(citations: list[tuple[str, str]]) -> list[tuple[str, str]]
     return deduped
 
 
-def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) -> str:
-    unique_citations = _dedupe_citations(citations)
-    if not unique_citations:
-        return report_md
-    sources_lines = ["\n\n---\n\n## Sources\n"]
-    for title, url in unique_citations:
-        sources_lines.append(f"- [{title}]({url})")
-    return report_md + "\n".join(sources_lines)
+def _finalize_commentary_markdown(report_md: str, citations: list[tuple[str, str]]) -> str:
+    if citations:
+        log.info("Collected %d unique citation sources; source footer disabled", len(_dedupe_citations(citations)))
+    return report_md
 
 
 def _build_user_message(bundle: dict, perf_md: str, web_search: bool = True) -> str:
@@ -1379,6 +1407,43 @@ def _fallback_thesis_summary() -> dict:
     }
 
 
+def _filter_thesis_summary_to_portfolio(thesis_summary: dict, portfolio: list[dict]) -> dict:
+    allowed = {_ticker_key(row.get("ticker")) for row in portfolio if _ticker_key(row.get("ticker"))}
+    filtered = dict(thesis_summary)
+
+    def keep_ticker(value) -> bool:
+        return _ticker_key(value) in allowed
+
+    for key in (
+        "positions_reviewed",
+        "thesis_strengthened",
+        "thesis_weakened",
+        "positions_needing_reassessment",
+        "missing_theses",
+    ):
+        values = filtered.get(key)
+        if isinstance(values, list):
+            filtered[key] = [value for value in values if keep_ticker(value)]
+
+    evaluations = filtered.get("thesis_evaluations")
+    if isinstance(evaluations, list):
+        filtered["thesis_evaluations"] = [
+            evaluation
+            for evaluation in evaluations
+            if isinstance(evaluation, dict) and keep_ticker(evaluation.get("ticker"))
+        ]
+
+    developments = filtered.get("material_developments")
+    if isinstance(developments, list):
+        filtered["material_developments"] = [
+            development
+            for development in developments
+            if isinstance(development, dict) and keep_ticker(development.get("ticker"))
+        ]
+
+    return filtered
+
+
 def parse_thesis_response(text: str) -> tuple[str, dict]:
     """Parse thesis monitoring LLM response into (markdown, summary_dict)."""
     if THESIS_SEPARATOR in text:
@@ -1555,6 +1620,10 @@ def main():
             )
             thesis_md, thesis_summary = parse_thesis_response(thesis_text)
             thesis_md = strip_llm_meta(thesis_md)
+            thesis_summary = _filter_thesis_summary_to_portfolio(
+                thesis_summary,
+                thesis_data.get("portfolio", []),
+            )
 
             if thesis_citations:
                 citations.extend(thesis_citations)
@@ -1619,9 +1688,7 @@ def main():
         log.info("No investment_theses/ directory found — skipping thesis monitoring")
         thesis_data = {"status": "not_configured", "message": "No investment_theses directory found"}
 
-    commentary_md = _append_sources_section(commentary_md, citations)
-    if citations:
-        log.info("Appended %d unique citation sources to report", len(_dedupe_citations(citations)))
+    commentary_md = _finalize_commentary_markdown(commentary_md, citations)
 
     # 8. Data quality + recommendations
     raw_recommendation_bundle = {
