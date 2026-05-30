@@ -1,0 +1,52 @@
+{
+  "source": "Uber-05-28-2026-Presentation.pdf",
+  "as_of_date": "2026-05-28",
+  "ticker": "UBER",
+  "excerpts": [
+    {
+      "page": 3,
+      "topic": "overview",
+      "text": "Ticker: UBER. Stock Price: $70.92. FY2025 revenue was $52.0B, up 18.3% YoY. Market capitalization was about $142.4B. Uber operates in more than 70 countries and over 15,000 cities."
+    },
+    {
+      "page": 8,
+      "topic": "market_dynamics",
+      "text": "Q1 2026 gross bookings grew 25% YoY at Uber, while Lyft grew 19% and DoorDash orders grew 27%. Uber One crossed 50M members in April 2026, roughly half of Mobility and Delivery gross bookings, with members spending about three times non-members. Driver reclassification remains a structural risk."
+    },
+    {
+      "page": 12,
+      "topic": "av_catalysts",
+      "text": "AV Mobility trips on Uber grew about 10x YoY in Q1 2026, with service live in 8 cities and a target of up to 15 by year-end 2026. Zoox was expected in Las Vegas in Q3 2026. Uber announced up to 50,000 Rivian robotaxis through 2031 and robotaxis across 28 cities by 2028. Uber Autonomous Solutions launched in Q1 2026."
+    },
+    {
+      "page": 13,
+      "topic": "capital_return_m_and_a",
+      "text": "Uber raised its Delivery Hero stake to 24.99% in May 2026 and was reported to be considering a full bid in the EUR 33-38 range. Uber repurchased $3B in Q1 2026 and had about $16.2B of buyback authorization remaining."
+    },
+    {
+      "page": 15,
+      "topic": "discount",
+      "text": "The deck says Uber trades at a discount because the market is pricing the bear case where Waymo, Tesla, and other AV developers build their own demand apps and cut Uber out. Waymo is reported to be slow-walking partnership economics. Gig-worker classification, tariffs, and consumer-wallet sensitivity also weigh on the multiple."
+    },
+    {
+      "page": 18,
+      "topic": "av_argument",
+      "text": "The deck argues independent AV operators suffer from demand fluctuations, lack Uber's trip data for pricing and matching, and serve only a minority of regions where Uber makes money. The thesis is that a hybrid network has structural value."
+    },
+    {
+      "page": 22,
+      "topic": "valuation",
+      "text": "The 80% confidence range showed bear/base/bull target prices of $75, $103, and $116, implying 5%, 46%, and 64% upside from the deck price."
+    },
+    {
+      "page": 23,
+      "topic": "risks",
+      "text": "Risks included AV disintermediation by Waymo, Tesla, or another operator; driver classification and labor regulation; low switching costs and price competition; consumer-discretionary exposure; and M&A/integration risk."
+    },
+    {
+      "page": 24,
+      "topic": "summary_thesis",
+      "text": "The summary thesis emphasized Uber as the global number-one demand aggregator, a narrow-moat network effect, 18% revenue growth on a $52B base, FY2025 FCF of $9.8B at a 19% margin, three diversified segments, CEO execution, AV optionality through 30+ partners, Waymo live in three cities, Zoox launching Q3 2026, and $16.2B of buyback capacity. It concluded: Uber is a good business, in a good industry, with good management, at a good price."
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "source": "Meta-05-11-2026-Presentation.pdf",
+  "as_of_date": "2026-05-11",
+  "ticker": "META",
+  "excerpts": [
+    {
+      "page": 3,
+      "topic": "overview",
+      "text": "Ticker: META. Stock Price: $598.86. FY2025 revenue of $200.97B, up 22% YoY. Family of Apps was 98.9% of revenue and Reality Labs was 1.1%. Market capitalization was about $1.52T."
+    },
+    {
+      "page": 12,
+      "topic": "catalysts",
+      "text": "Upcoming catalysts included the May 27, 2026 annual meeting, Q2 2026 revenue guidance of $58B-$61B, Q1 2026 revenue of $56.31B, higher ad impressions and average price per ad, a 2026 capex range raised to $125B-$145B, a $25B bond issuance to fund AI infrastructure, and the Muse model family."
+    },
+    {
+      "page": 14,
+      "topic": "discount",
+      "text": "The deck argues Meta trades at a discount because AI investments need to prove attractive returns. AI has improved advertising effectiveness, but monetization is not fully laid out. Management said weekly business-AI conversations grew 10x since the start of the year. AI investments reduce income available to shareholders."
+    },
+    {
+      "page": 15,
+      "topic": "reality_labs_regulation",
+      "text": "Reality Labs has wide losses. The deck says smart glasses are doing well and daily users tripled year over year, but VR sustainability remains a management focus. Legal and regulatory issues warrant a valuation discount because voters and lawmakers have unfavorable views of social media."
+    },
+    {
+      "page": 19,
+      "topic": "valuation",
+      "text": "The 80% confidence range showed bear/base/bull target prices of $616, $739, and $869, implying 3%, 23%, and 45% upside from the deck price."
+    },
+    {
+      "page": 20,
+      "topic": "risks",
+      "text": "Risks included advertising concentration, competition from TikTok, Alphabet, and Amazon, regulatory/litigation/antitrust exposure with high probability, and high-severity capital intensity and AI execution risk after capex guidance increased within one quarter."
+    },
+    {
+      "page": 21,
+      "topic": "summary_thesis",
+      "text": "The summary thesis emphasized 3.56B Family DAP, FY2025 revenue growth, network effects, cash generation, ROIC, operating discipline, smart glasses, Reality Labs pivot, AI improving ads, and a market price that the deck says reflects a bear scenario. It concluded: Meta is a good business, in a good industry, with good management, at a good price."
+    }
+  ]
+}

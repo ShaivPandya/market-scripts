@@ -51,6 +51,13 @@ from api.job_events import append_job_event, list_job_events
 from api.job_queue import cancel_job, get_job
 from api.routers.auth import require_actor
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
+from decision_quality.gates import apply_decision_quality_gates
+from decision_quality.models import (
+    DecisionQuality,
+    DecisionQualityGate,
+    decision_quality_schema,
+    parse_decision_quality,
+)
 from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
@@ -58,6 +65,7 @@ from llm_utils import (
     PROVIDER_OPENAI,
     api_key_env,
     apply_reasoning_config,
+    call_llm_json,
     extract_text,
     get_llm_client,
     reasoning_effort_for_tier,
@@ -490,6 +498,9 @@ SSE_KEEPALIVE_INTERVAL_S = 15.0
 LLM_MAX_TOKENS = 8_192
 LLM_CHAT_MAX_TOKENS = 8_192
 MAX_OUTPUT_CONTINUATION_ROUNDS = 3
+DECISION_QUALITY_CHAT_CONTEXT_CHARS = 28_000
+DECISION_QUALITY_CHAT_STRUCTURED_MAX_TOKENS = 5_000
+DECISION_QUALITY_CHAT_SYNTHESIS_MAX_TOKENS = 3_500
 
 
 class _LazyProviderToolDefinitions:
@@ -803,7 +814,16 @@ def _select_tool_names(user_text: str) -> list[str]:
     if "management quality" in text or "management team" in text or "owner mindset" in text:
         add("get_portfolio", "get_dossier", "search_knowledge_base")
     if re.search(r"\b(thesis|catalyst|kill condition|dossier|conviction)\b", text):
-        add("get_portfolio", "get_dossier", "get_thesis", "get_thesis_evaluations")
+        add(
+            "get_portfolio",
+            "get_dossier",
+            "get_thesis",
+            "get_thesis_evaluations",
+            "get_position_valuation",
+            "run_chart",
+            "get_price_volume_signals",
+            "search_knowledge_base",
+        )
     if re.search(r"\bcatalysts?\b", text):
         add("get_catalysts")
     if re.search(r"\bcatalysts?\b", text) and re.search(
@@ -927,6 +947,271 @@ _WORKFLOW_PATTERNS: list[tuple[re.Pattern, str]] = [
 ]
 
 _TICKER_RX = re.compile(r"\b([A-Z]{1,5})\b")
+_TICKER_STOP_WORDS = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
+_COMPANY_TICKER_ALIASES = {
+    "meta": "META",
+    "facebook": "META",
+    "uber": "UBER",
+    "nvidia": "NVDA",
+    "tesla": "TSLA",
+    "apple": "AAPL",
+    "amazon": "AMZN",
+    "google": "GOOGL",
+    "alphabet": "GOOGL",
+    "microsoft": "MSFT",
+    "netflix": "NFLX",
+}
+_DECISION_QUALITY_CHAT_INTENT_RX = re.compile(
+    r"\b("
+    r"thesis|investment thesis|idea|pitch|pressure[- ]?test|what do you think|"
+    r"poke holes|devil'?s advocate|conviction|mispricing|invalidation|kill condition|"
+    r"should i (?:buy|add|short|sell)|long|short"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+_PASTED_THESIS_TERMS_RX = re.compile(
+    r"\b(revenue|margin|valuation|multiple|target price|upside|catalyst|risk|moat|capex|cash flow|fcf)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _extract_candidate_ticker(user_text: str, screen_context: ScreenContextModel | None = None) -> str | None:
+    screen_ticker = (screen_context.ticker if screen_context else None) or ""
+    if screen_ticker.strip():
+        return screen_ticker.strip().upper()
+    candidates = [m for m in _TICKER_RX.findall(user_text or "") if m not in _TICKER_STOP_WORDS and len(m) >= 2]
+    if candidates:
+        return str(candidates[0]).upper()
+    lowered = (user_text or "").lower()
+    for alias, ticker in sorted(_COMPANY_TICKER_ALIASES.items(), key=lambda item: -len(item[0])):
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            return ticker
+    return None
+
+
+def _looks_like_pasted_thesis(user_text: str) -> bool:
+    text = (user_text or "").strip()
+    return len(text) >= 240 and bool(_PASTED_THESIS_TERMS_RX.search(text))
+
+
+def _should_run_decision_quality_chat(
+    user_text: str,
+    screen_context: ScreenContextModel | None = None,
+) -> bool:
+    if not _env_flag("AGENT_DECISION_QUALITY_CHAT_ENABLED", default=True):
+        return False
+    text = (user_text or "").strip()
+    if not text or not _DECISION_QUALITY_CHAT_INTENT_RX.search(text):
+        return False
+    return bool(
+        _extract_candidate_ticker(text, screen_context)
+        or _looks_like_pasted_thesis(text)
+        or _should_use_retrieval(text)
+    )
+
+
+def _decision_quality_chat_tool_calls(
+    user_text: str,
+    screen_context: ScreenContextModel | None = None,
+) -> list[dict[str, Any]]:
+    ticker = _extract_candidate_ticker(user_text, screen_context)
+    calls: list[dict[str, Any]] = []
+
+    def add(name: str, args: dict[str, Any]) -> None:
+        if name not in _tool_names():
+            return
+        calls.append(
+            {
+                "name": name,
+                "args": args,
+                "call_ids": [f"decision-quality-chat:{name}:{len(calls)}"],
+            }
+        )
+
+    add("get_portfolio", {})
+    if ticker:
+        add("get_dossier", {"ticker": ticker})
+        add("get_thesis", {"ticker": ticker})
+        add("get_thesis_evaluations", {"ticker": ticker, "limit": 5})
+        add("get_position_valuation", {"ticker": ticker})
+        add("run_chart", {"ticker": ticker, "lookback": "1y"})
+        add(
+            "search_knowledge_base",
+            {"query": f"{ticker} thesis catalysts risks invalidation", "tickers": ticker, "top_k": 5},
+        )
+    add("get_price_volume_signals", {})
+    if _wants_fresh_data(user_text) or re.search(
+        r"\b(catalyst|regulatory|approval|litigation|antitrust|launched|launch|latest|news|current)\b",
+        user_text or "",
+        flags=re.IGNORECASE,
+    ):
+        query = f"{ticker or ''} {user_text}".strip()
+        add("search_web", {"query": query[:300]})
+    return calls
+
+
+def _truncate_for_prompt(value: str, *, limit: int) -> str:
+    text = value if len(value) <= limit else value[:limit] + "\n...[truncated]"
+    return text
+
+
+def _json_for_prompt(value: Any, *, limit: int = DECISION_QUALITY_CHAT_CONTEXT_CHARS) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2, default=str)
+    except TypeError:
+        text = str(value)
+    return _truncate_for_prompt(text, limit=limit)
+
+
+def _parse_tool_result_for_prompt(result_str: str) -> Any:
+    try:
+        return json.loads(result_str)
+    except Exception:
+        return result_str
+
+
+def _build_decision_quality_chat_context(
+    *,
+    user_text: str,
+    screen_context: ScreenContextModel | None,
+    raw_conversation: list[dict[str, object]],
+    tool_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    history = raw_conversation[-8:]
+    return {
+        "user_message": user_text,
+        "screen_context": screen_context.model_dump(mode="json") if screen_context else None,
+        "recent_conversation": history,
+        "tool_results": tool_results,
+    }
+
+
+def _build_decision_quality_structured_prompt(context_bundle: dict[str, Any]) -> str:
+    return (
+        "Pressure-test this live Stan chat investment idea using only the supplied context. "
+        "Return exactly one DecisionQuality JSON object, not a wrapper and not markdown. "
+        "If current price action, portfolio sizing, catalyst verification, or source data is missing, "
+        "surface that in actionability.missing_inputs and price_action_read.data_needed instead of inventing it. "
+        "Use watch or research when the evidence is not actionable yet.\n\n"
+        f"Live chat context:\n{_json_for_prompt(context_bundle)}"
+    )
+
+
+def _run_decision_quality_structured_pass(
+    *,
+    context_bundle: dict[str, Any],
+    provider: str,
+    api_key: str,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    parsed, citations, response, diagnostics = call_llm_json(
+        prompt=_build_decision_quality_structured_prompt(context_bundle),
+        model=MODEL_MID,
+        api_key=api_key,
+        max_tokens=DECISION_QUALITY_CHAT_STRUCTURED_MAX_TOKENS,
+        system=_load_required_prompt_file("decision_quality.md"),
+        provider=provider,
+        enable_web_search=False,
+        reasoning_effort=reasoning_effort,
+        json_schema=decision_quality_schema(),
+        json_schema_name="decision_quality_chat",
+    )
+    raw_decision_quality = (
+        parsed.get("decision_quality") if isinstance(parsed, dict) and "decision_quality" in parsed else parsed
+    )
+    decision_quality, parse_errors = parse_decision_quality(raw_decision_quality)
+    gate = apply_decision_quality_gates(
+        decision_quality,
+        current_action=decision_quality.recommended_action if decision_quality else "watch",
+        recommendation_status="clear",
+        parse_errors=parse_errors,
+    )
+    return {
+        "decision_quality": decision_quality,
+        "parse_errors": parse_errors,
+        "gate": gate,
+        "raw": parsed,
+        "citations": [{"title": title, "url": url} for title, url in citations],
+        "usage": _usage_dict(response),
+        "diagnostics": diagnostics,
+    }
+
+
+def _build_decision_quality_chat_synthesis_prompt(
+    *,
+    user_text: str,
+    context_bundle: dict[str, Any],
+    dq_result: dict[str, Any],
+) -> str:
+    decision_quality = dq_result.get("decision_quality")
+    gate = dq_result.get("gate")
+    dq_payload = decision_quality.model_dump(mode="json") if isinstance(decision_quality, DecisionQuality) else None
+    gate_payload = gate.model_dump(mode="json") if isinstance(gate, DecisionQualityGate) else None
+    return (
+        "The user asked Stan to pressure-test an investment idea.\n\n"
+        "The DecisionQuality object and gate result below are private working state. "
+        "The gate result is binding for the final stance: if final_action is watch, research, avoid, or do_nothing, "
+        "the answer must not sound like a confident buy/add/short.\n\n"
+        f"User request:\n{user_text.strip()}\n\n"
+        f"Context bundle:\n{_json_for_prompt(context_bundle)}\n\n"
+        f"DecisionQuality:\n{_json_for_prompt(dq_payload)}\n\n"
+        f"Gate:\n{_json_for_prompt(gate_payload)}\n\n"
+        f"Parse errors, if any:\n{_json_for_prompt(dq_result.get('parse_errors') or [])}"
+    )
+
+
+def _decision_quality_chat_done_meta(dq_result: dict[str, Any] | None) -> dict[str, Any]:
+    if not dq_result:
+        return {"ran": False}
+    decision_quality = dq_result.get("decision_quality")
+    gate = dq_result.get("gate")
+    missing_inputs_count = 0
+    confidence = None
+    if isinstance(decision_quality, DecisionQuality):
+        missing_inputs_count = len(decision_quality.actionability.missing_inputs)
+        missing_inputs_count += len(decision_quality.price_action_read.data_needed)
+        confidence = decision_quality.confidence
+    return {
+        "ran": True,
+        "gate_status": gate.status if isinstance(gate, DecisionQualityGate) else "invalid",
+        "final_action": gate.final_action if isinstance(gate, DecisionQualityGate) else "watch",
+        "confidence": confidence,
+        "missing_inputs_count": missing_inputs_count,
+    }
+
+
+def _decision_quality_chat_fallback(dq_result: dict[str, Any]) -> str:
+    decision_quality = dq_result.get("decision_quality")
+    gate = dq_result.get("gate")
+    if not isinstance(decision_quality, DecisionQuality):
+        return (
+            "I cannot pressure-test this cleanly yet. The thesis pass did not produce a valid decision-quality "
+            "object, so the right next step is research: get the current thesis source, price action, catalyst "
+            "status, invalidation threshold, and portfolio sizing context before making it actionable."
+        )
+    final_action = gate.final_action if isinstance(gate, DecisionQualityGate) else decision_quality.recommended_action
+    missing = decision_quality.actionability.missing_inputs + decision_quality.price_action_read.data_needed
+    missing_text = "; ".join(missing[:4]) if missing else "none flagged"
+    return (
+        f"Bottom line: I would treat this as {final_action}, not a lazy buy call. "
+        f"The thesis is: {decision_quality.simple_thesis} "
+        f"The biggest issue is {decision_quality.evidence_against[0].claim if decision_quality.evidence_against else decision_quality.confidence_reason}. "
+        f"Reason-now: {decision_quality.catalyst_or_reason_now.event_or_condition} over "
+        f"{decision_quality.catalyst_or_reason_now.expected_timeframe}. "
+        f"Price action: {decision_quality.price_action_read.observed_behavior or 'needs a current chart read'}. "
+        f"Invalidation: {decision_quality.invalidation.metric_or_event} at {decision_quality.invalidation.threshold} "
+        f"within {decision_quality.invalidation.timeframe}. Missing inputs: {missing_text}. "
+        f"Size only within the stated risk budget: {decision_quality.sizing_context.add_conditions}. "
+        f"If right: {decision_quality.trade_after_trade.if_right} If wrong: {decision_quality.trade_after_trade.if_wrong} "
+        f"Review on: {decision_quality.trade_after_trade.next_review_trigger}."
+    )
 
 
 def _detect_workflow(user_text: str) -> tuple[str | None, str | None]:
@@ -2334,6 +2619,346 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 ),
             )
             return
+
+        if not workflow_name and _should_run_decision_quality_chat(req.message, req.screen_context):
+            dq_tool_calls = _decision_quality_chat_tool_calls(req.message, req.screen_context)
+            tool_payloads: list[dict[str, Any]] = []
+            dq_tool_results: list[dict[str, Any]] = []
+            dq_result: dict[str, Any] | None = None
+            final_message: object | None = None
+            try:
+                if dq_tool_calls:
+                    yield _phase_sse(
+                        "tool_running",
+                        turn_started,
+                        label="Pressure-testing thesis...",
+                        tool_names=[str(call.get("name")) for call in dq_tool_calls],
+                        round_index=0,
+                    )
+                    budgeted_calls: list[dict[str, Any]] = []
+                    for call_info in dq_tool_calls:
+                        call_id = str((call_info.get("call_ids") or [call_info["name"]])[0])
+                        yield _sse("tool_call", {"name": call_info["name"], "id": call_id})
+                        try:
+                            budget.check_tool_call(get_tool_exposure(call_info["name"]))
+                            budgeted_calls.append(call_info)
+                            yield _sse(
+                                "tool_progress",
+                                {"name": call_info["name"], "id": call_id, "status": "running"},
+                            )
+                        except AgentBudgetExceeded as exc:
+                            result_str = _blocked_tool_result(call_info["name"], exc)
+                            status = _tool_result_status(result_str)
+                            payload = {"name": call_info["name"], "id": call_id, "status": status, "message": str(exc)}
+                            yield _sse("policy_failure", payload)
+                            yield _sse("blocked", payload)
+                            yield _sse("tool_result", payload)
+                            tool_payloads.append(payload)
+                            dq_tool_results.append(
+                                {
+                                    "name": call_info["name"],
+                                    "args": call_info.get("args") or {},
+                                    "status": status,
+                                    "result": _parse_tool_result_for_prompt(result_str),
+                                }
+                            )
+                    yield _sse("budget_update", budget.to_meta())
+                    _attach_tool_provenance_context(
+                        budgeted_calls,
+                        parent_event_id=agent_turn_event_id,
+                        session_id=session_id,
+                        workflow_run_id=None,
+                        source="agent.chat.decision_quality",
+                    )
+                    for tool_item in _execute_tools_parallel_keepalive(
+                        budgeted_calls,
+                        actor=tool_actor,
+                        domain_classification=domain_classification,
+                    ):
+                        if tool_item is None:
+                            yield _sse_ping()
+                            continue
+                        call_info, result_str, elapsed_ms = tool_item
+                        call_id = str((call_info.get("call_ids") or [call_info["name"]])[0])
+                        err_msg = _tool_error_message(result_str)
+                        meta = _tool_meta(result_str)
+                        result_status = _tool_result_status(result_str)
+                        cache_status = str(meta.get("cache", "unknown"))
+                        timings["tools"].append(
+                            {
+                                "name": call_info["name"],
+                                "duration_ms": elapsed_ms,
+                                "cache": cache_status,
+                                "status": result_status,
+                            }
+                        )
+                        logger.info(
+                            "agent_chat_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
+                            call_info["name"],
+                            elapsed_ms,
+                            cache_status,
+                            result_status,
+                        )
+                        payload = {"name": call_info["name"], "id": call_id, "status": result_status}
+                        if meta.get("policy_decision_id"):
+                            payload["policy_decision_id"] = meta.get("policy_decision_id")
+                        if meta.get("duration_ms") is not None:
+                            payload["elapsed_ms"] = meta.get("duration_ms")
+                        if err_msg:
+                            payload["message"] = err_msg
+                        yield _sse("tool_result", payload)
+                        if result_status == "blocked":
+                            yield _sse("policy_failure", payload)
+                            yield _sse("blocked", payload)
+                        elif result_status == "timeout":
+                            yield _sse("timeout", payload)
+                        tool_payloads.append(payload)
+                        dq_tool_results.append(
+                            {
+                                "name": call_info["name"],
+                                "args": call_info.get("args") or {},
+                                "status": result_status,
+                                "result": _parse_tool_result_for_prompt(result_str),
+                            }
+                        )
+
+                context_bundle = _build_decision_quality_chat_context(
+                    user_text=req.message,
+                    screen_context=req.screen_context,
+                    raw_conversation=raw_conversation,
+                    tool_results=dq_tool_results,
+                )
+
+                for attempt in range(MAX_API_RETRIES):
+                    model_timing = {
+                        "phase": "model_thinking",
+                        "purpose": "decision_quality_chat_structured",
+                        "attempt": attempt,
+                        "round_index": 0,
+                        "first_token_ms": None,
+                    }
+                    model_started = time.perf_counter()
+                    try:
+                        yield _phase_sse(
+                            "model_thinking",
+                            turn_started,
+                            model_purpose="decision_quality_chat_structured",
+                            attempt=attempt,
+                            round_index=0,
+                        )
+                        budget.check_model_call(
+                            estimated_input_tokens=max(1, len(_json_for_prompt(context_bundle)) // 4),
+                            estimated_cost_usd=0.0,
+                        )
+                        yield _sse("budget_update", budget.to_meta())
+                        dq_result = _run_decision_quality_structured_pass(
+                            context_bundle=context_bundle,
+                            provider=provider,
+                            api_key=api_key,
+                            reasoning_effort=reasoning_effort,
+                        )
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="ok",
+                            provider=provider,
+                            model=resolve_model(MODEL_MID, provider),
+                        )
+                        budget.record_model_usage(dq_result.get("usage") or {})
+                        yield _sse("budget_update", budget.to_meta())
+                        break
+                    except Exception as retry_exc:
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="error",
+                            provider=provider,
+                            model=resolve_model(MODEL_MID, provider),
+                        )
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                            continue
+                        raise
+
+                synthesis_chunks: list[str] = []
+                for attempt in range(MAX_API_RETRIES):
+                    model_timing = {
+                        "phase": "model_writing",
+                        "purpose": "decision_quality_chat_synthesis",
+                        "attempt": attempt,
+                        "round_index": 0,
+                        "first_token_ms": None,
+                    }
+                    model_started = time.perf_counter()
+                    model_event_id: str | None = None
+                    try:
+                        yield _phase_sse(
+                            "model_writing",
+                            turn_started,
+                            model_purpose="decision_quality_chat_synthesis",
+                            attempt=attempt,
+                            round_index=0,
+                        )
+                        synthesis_instructions = (
+                            instructions
+                            + "\n\n---\n\n"
+                            + _load_required_prompt_file("decision_quality_chat_synthesis.md")
+                        )
+                        synthesis_conversation = _user_prompt_for_provider(
+                            provider,
+                            _build_decision_quality_chat_synthesis_prompt(
+                                user_text=req.message,
+                                context_bundle=context_bundle,
+                                dq_result=dq_result or {},
+                            ),
+                        )
+                        stream_kwargs = _model_stream_kwargs(
+                            provider=provider,
+                            instructions=synthesis_instructions,
+                            conversation=synthesis_conversation,
+                            max_tokens=DECISION_QUALITY_CHAT_SYNTHESIS_MAX_TOKENS,
+                            reasoning_effort=reasoning_effort,
+                        )
+                        stream_kwargs, egress_meta = prepare_model_egress(
+                            provider=provider,
+                            purpose="decision_quality_chat_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            budget=budget,
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=None,
+                        )
+                        yield _sse("egress_recorded", egress_meta)
+                        yield _sse("budget_update", budget.to_meta())
+                        model_event_id = _start_model_call_provenance(
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=None,
+                            provider=provider,
+                            purpose="decision_quality_chat_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            attempt=attempt,
+                            round_index=0,
+                        )
+                        final_message = yield from _stream_llm_response(
+                            client,
+                            provider,
+                            stream_kwargs,
+                            synthesis_chunks,
+                            model_timing=model_timing,
+                            turn_timings=timings,
+                            turn_started=turn_started,
+                        )
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="ok",
+                            provider=provider,
+                            model=stream_kwargs.get("model"),
+                        )
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="succeeded",
+                            final_message=final_message,
+                            output_text="".join(synthesis_chunks),
+                        )
+                        budget.record_model_usage(_usage_dict(final_message))
+                        yield _sse("budget_update", budget.to_meta())
+                        break
+                    except ModelGatewayDenied as exc:
+                        yield _sse("egress_recorded", exc.manifest)
+                        yield _sse("blocked", _blocked_model_egress_payload(exc))
+                        raise
+                    except Exception as retry_exc:
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="error",
+                            provider=provider,
+                            model=locals().get("stream_kwargs", {}).get("model")
+                            if isinstance(locals().get("stream_kwargs"), dict)
+                            else None,
+                        )
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="failed",
+                            error=str(retry_exc) or retry_exc.__class__.__name__,
+                        )
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                            continue
+                        raise
+
+                synthesis_text = "".join(synthesis_chunks)
+                if not synthesis_text.strip():
+                    logger.warning("Decision-quality chat synthesis returned empty text; using deterministic fallback")
+                    synthesis_text = _decision_quality_chat_fallback(dq_result or {})
+                    yield _sse("delta", {"text": synthesis_text})
+
+                usage = _usage_dict(final_message)
+                dq_meta = _decision_quality_chat_done_meta(dq_result)
+                turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+                user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": synthesis_text,
+                    "timestamp": time.time(),
+                    "toolCalls": tool_payloads,
+                    **turn_meta,
+                }
+                yield _phase_sse("finalizing", turn_started)
+                finalize_turn_fn(session_id, user_msg, assistant_msg)
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="succeeded",
+                    output_value=synthesis_text,
+                    usage=usage,
+                )
+                yield _sse(
+                    "done",
+                    _done_payload(
+                        {
+                            "usage": usage,
+                            "session_id": session_id,
+                            "tool_calls": tool_payloads,
+                            "tools_used": [call["name"] for call in tool_payloads],
+                            "decision_quality_chat": dq_meta,
+                        },
+                        timings,
+                        turn_started,
+                    ),
+                )
+                return
+            except Exception as exc:
+                logger.exception("Decision-quality chat path failed")
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="failed",
+                    usage={},
+                    error=str(exc) or exc.__class__.__name__,
+                )
+                yield _sse("error", {"message": _format_stream_error(exc)})
+                yield _sse(
+                    "done",
+                    _done_payload(
+                        {
+                            "usage": {},
+                            "session_id": session_id,
+                            "tool_calls": tool_payloads,
+                            "tools_used": [call["name"] for call in tool_payloads],
+                            "decision_quality_chat": _decision_quality_chat_done_meta(dq_result),
+                        },
+                        timings,
+                        turn_started,
+                    ),
+                )
+                return
 
         # --- Workflow path ---
         if workflow_name:

@@ -1,0 +1,51 @@
+{
+  "id": "example_thesis_chat",
+  "status": "draft",
+  "as_of_date": "YYYY-MM-DD",
+  "user_message": "Here is my XYZ thesis. What do you think?",
+  "screen_context": null,
+  "input_refs": [
+    {
+      "type": "deck_excerpt",
+      "description": "As-of excerpts supplied to mocked tools.",
+      "path": "docs/decision_quality_chat_evals/inputs/example_input.json",
+      "sha256": "replace-with-sha256",
+      "required": true
+    }
+  ],
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}},
+    "get_dossier": {"ticker": "XYZ", "summary": "replace"},
+    "get_thesis": {"ticker": "XYZ", "content": "replace"},
+    "get_thesis_evaluations": {"ticker": "XYZ", "evaluations": []},
+    "get_position_valuation": {"ticker": "XYZ", "valuation": "replace"},
+    "run_chart": {"ticker": "XYZ", "technical_read": "replace"},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "required_points": [
+    {
+      "label": "specific risk",
+      "any_terms": ["risk phrase one", "risk phrase two"]
+    }
+  ],
+  "required_decision_quality_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ],
+  "forbidden_patterns": ["could be a good buy", "depends on your risk tolerance"],
+  "expected_stance": {
+    "label": "watch_or_research",
+    "any_terms": ["watch", "research", "not ready to add"],
+    "forbidden_terms": ["buy now", "add now"]
+  },
+  "judge_min_score": 16
+}
