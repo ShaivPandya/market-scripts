@@ -75,7 +75,7 @@ DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER = {
 ANTHROPIC_DEFAULT_MODELS = {
     MODEL_LOW: "claude-haiku-4-5",
     MODEL_MID: "claude-sonnet-4-6",
-    MODEL_HIGH: "claude-opus-4-7",
+    MODEL_HIGH: "claude-opus-4-8",
 }
 OPENAI_DEFAULT_MODELS = {
     MODEL_LOW: "gpt-5.4-mini",
