@@ -133,7 +133,7 @@ packaging==24.0
 pandas==2.2.2
 pandas-datareader==0.10.0
 pandaSDMX==1.6.0
-parso==0.8.5
+parso==0.8.7
 passlib==1.7.4
 pathspec==1.0.4
 patsy==1.0.1
