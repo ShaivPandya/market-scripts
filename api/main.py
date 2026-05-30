@@ -181,10 +181,15 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 async def _app_error_handler(request: Request, exc: AppError):
     logger.error("AppError [%s]: %s", exc.__class__.__name__, exc.message, exc_info=True)
     content = {"error": exc.message, "type": exc.__class__.__name__}
+
     if isinstance(exc, DataFetchError):
         content["source"] = exc.source
-        if exc.detail:
-            content["detail"] = exc.detail
+
+    # Redact technical details in production
+    if hasattr(exc, "detail") and exc.detail:  # type: ignore
+        if not _is_production_runtime():
+            content["detail"] = exc.detail  # type: ignore
+
     return JSONResponse(
         status_code=exc.status_code,
         content=content,
