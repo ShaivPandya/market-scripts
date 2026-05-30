@@ -48,10 +48,7 @@ class AsyncJobDispatchError(AppError):
     """The API could not enqueue a background job for execution."""
 
     def __init__(self, detail: str = ""):
-        message = "Async job dispatch failed"
-        if detail:
-            message = f"{message}: {detail}"
-        super().__init__(message, status_code=503)
+        super().__init__("Async job dispatch failed", status_code=503)
         self.detail = detail
 
 

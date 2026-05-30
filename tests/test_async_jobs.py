@@ -585,8 +585,9 @@ def test_cloud_run_dispatch_failure_marks_job_failed(monkeypatch):
 
     monkeypatch.setattr(async_job_runner, "_enqueue_cloud_run_job", fail_dispatch)
 
-    with pytest.raises(AsyncJobDispatchError, match="run api unavailable"):
+    with pytest.raises(AsyncJobDispatchError) as excinfo:
         async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-fail")
+    assert excinfo.value.detail == "run api unavailable"
 
     failed = get_job(attempted[0])
     assert failed is not None
@@ -1059,4 +1060,6 @@ def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client,
     )
 
     assert resp.status_code == 503
-    assert resp.json()["error"] == "Async job dispatch failed: run api unavailable"
+    # Message is redacted in JSON if we were in production, but here we check message vs detail
+    assert resp.json()["error"] == "Async job dispatch failed"
+    assert resp.json()["detail"] == "run api unavailable"
