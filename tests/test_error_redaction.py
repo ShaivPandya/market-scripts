@@ -3,8 +3,10 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from api.exceptions import DataFetchError, AsyncJobDispatchError, AppError
+
+from api.exceptions import AppError, AsyncJobDispatchError, DataFetchError
 from api.main import app
+
 
 def test_app_error_detail_redaction_in_production(monkeypatch):
     """
@@ -31,6 +33,7 @@ def test_app_error_detail_redaction_in_production(monkeypatch):
     assert "detail" not in data
     assert data["error"] == "A technical error occurred"
 
+
 def test_data_fetch_error_redaction_in_production(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
 
@@ -47,6 +50,7 @@ def test_data_fetch_error_redaction_in_production(monkeypatch):
     assert "detail" not in data
     assert data["source"] == "external-api"
 
+
 def test_async_job_error_redaction_in_production(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
 
@@ -62,6 +66,7 @@ def test_async_job_error_redaction_in_production(monkeypatch):
     assert "redis://" not in data["error"]
     assert "detail" not in data
     assert data["error"] == "Async job dispatch failed"
+
 
 def test_detail_available_in_development(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
