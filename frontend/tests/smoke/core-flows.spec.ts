@@ -30,10 +30,17 @@ test("renders workspace common operating picture and enforces approval note gati
   await authenticate(page)
   await page.goto("/workspace")
 
-  await expect(page.getByRole("heading", { name: "Workspace" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+  await expect(page.getByText("What changed, what matters, and what needs review.")).toBeVisible()
   await expect(page.getByText("Market Regime", { exact: true })).toBeVisible()
   await expect(page.getByText("Risk-on")).toBeVisible()
   await expect(page.getByText("Portfolio Risk")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Optimizer Alerts/ })).toBeVisible()
+  await expect(page.getByText("Recommended action shifted from hold to trim after risk review.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Thesis Claim Issues/ })).toBeVisible()
+  await expect(page.getByText("AI infrastructure demand remains durable through 2026.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Recent Activity/ })).toBeVisible()
+  await expect(page.getByText("Report Runs")).toBeVisible()
   await expect(page.getByRole("heading", { name: /Pending Approvals/ })).toBeVisible()
   await expect(page.getByText("1/2 approvals recorded")).toBeVisible()
   await expect(page.getByText("Portfolio manager (portfolio:default)")).toBeVisible()
@@ -55,6 +62,15 @@ test("renders workspace common operating picture and enforces approval note gati
 
   await page.getByLabel("Decision note").fill("Reviewed staged research follow-up for smoke coverage.")
   await expect(approveButton).toBeEnabled()
+})
+
+test("opens approval review from workspace approval_id deep link", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace?approval_id=smoke-approval")
+
+  await expect(page).toHaveURL(/\/workspace(?:\?approval_id=smoke-approval)?$/)
+  await expect(page.getByRole("dialog", { name: "Review Approval" })).toBeVisible()
+  await expect(page.getByText("Create internal action item")).toBeVisible()
 })
 
 test("clears workspace pressure rows and bulk dismisses approvals", async ({ page }) => {

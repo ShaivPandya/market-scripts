@@ -1,10 +1,11 @@
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, X } from "lucide-react"
+import { Bell, CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, FileText, X } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
   fetchApprovals,
+  fetchApproval,
   fetchApprovalSummary,
   approveItem,
   rejectItem,
@@ -15,11 +16,14 @@ import {
   cancelTrigger,
   dismissAction,
   dismissWorkspaceThesisPressure,
+  dismissOptimizationAlert,
   replaceTrigger,
   refreshWorkspaceSources,
   type ApprovalRecord,
   type CourseOfActionComparisonRecord,
   type CourseOfActionRecord,
+  type OptimizationAlert,
+  type ThesisClaim,
   type PolicyGateReason,
   type PolicyGateResult,
   type ProvenanceSelector,
@@ -57,7 +61,7 @@ import {
 } from "@/components/shared/DecisionStateBadge"
 import { approvalDecisionState, courseOfActionDecisionState, recommendationDecisionState } from "@/lib/decisionState"
 import { cn } from "@/lib/utils"
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 interface WorkspaceData {
   regime: {
@@ -121,6 +125,15 @@ interface WorkspaceData {
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   recent_workflow_runs: WorkflowRun[]
+  continuous_optimization?: {
+    open_alert_count: number
+    open_alerts: OptimizationAlert[]
+  }
+  thesis_claims?: {
+    challenged_count: number
+    items: ThesisClaim[]
+  }
+  recent_report_runs: ReportRun[]
 }
 
 interface ActionItem {
@@ -156,6 +169,19 @@ interface WorkflowRun {
   artifacts?: Record<string, unknown> | null
 }
 
+interface ReportRun {
+  id?: string | number
+  report_id?: string
+  report_type?: string
+  as_of?: string
+  status?: string
+  source?: string | null
+  synced_at?: string | null
+  created_at?: string | null
+  error?: string | null
+  issue_url?: string | null
+}
+
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
   bullish: { signal: "success", label: "Bullish" },
   neutral: { signal: "warning", label: "Neutral" },
@@ -163,6 +189,18 @@ const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error
   bearish: { signal: "error", label: "Bearish" },
   "risk-off": { signal: "error", label: "Risk-Off" },
   "risk-on": { signal: "success", label: "Risk-On" },
+}
+
+const CLAIM_STATUS_COLORS: Record<string, string> = {
+  challenged: "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
+  disconfirmed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
+}
+
+const ALERT_SEVERITY_COLORS: Record<string, string> = {
+  urgent: "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950",
+  high: "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-950",
+  normal: "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950",
+  low: "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
 }
 
 const URGENCY_COLORS: Record<string, string> = {
@@ -248,6 +286,213 @@ function workflowStatusClass(status: string | null | undefined): string {
 
 function workflowRunTime(run: WorkflowRun): string {
   return formatTime(run.started_at ?? run.completed_at)
+}
+
+function reportRunLabel(run: ReportRun): string {
+  const reportType = cleanText(run.report_type) ?? "report"
+  return titleCase(reportType)
+}
+
+function reportRunTime(run: ReportRun): string {
+  return formatTime(run.as_of ?? run.synced_at ?? run.created_at)
+}
+
+function reportRunKey(run: ReportRun, index: number): string {
+  return String(run.report_id ?? run.id ?? `report-run-${index}`)
+}
+
+function claimStatusClass(status: string | null | undefined): string {
+  return CLAIM_STATUS_COLORS[String(status || "").toLowerCase()] ?? "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800"
+}
+
+function alertSeverityClass(severity: string | null | undefined): string {
+  return ALERT_SEVERITY_COLORS[String(severity || "normal").toLowerCase()] ?? ALERT_SEVERITY_COLORS.normal
+}
+
+function OptimizationAlertsPanel({
+  alerts,
+  alertCount,
+  processingIds,
+  onDismiss,
+  dismissError,
+}: {
+  alerts: OptimizationAlert[]
+  alertCount: number
+  processingIds: Set<number | string>
+  onDismiss: (alert: OptimizationAlert) => void
+  dismissError: string | null
+}) {
+  if (alertCount <= 0) return null
+  return (
+    <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <Bell size={14} className="text-purple-500" />
+        Optimizer Alerts
+        <Link to="/analyzer" className="ml-auto text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+          Open analyzer
+        </Link>
+      </h2>
+      <p className="mb-3 text-xs text-subtle">{alertCount} open alert{alertCount !== 1 ? "s" : ""} with material action or risk changes.</p>
+      {dismissError && (
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Failed to dismiss alert: {dismissError}
+        </div>
+      )}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {alerts.map(alert => (
+          <div key={alert.id} className="rounded-lg border border-app px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {alert.ticker ? (
+                    <Link to={`/dossier/${encodeURIComponent(alert.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                      {alert.ticker}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold text-app">PORTFOLIO</span>
+                  )}
+                  <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", alertSeverityClass(alert.severity))}>
+                    {alert.severity}
+                  </span>
+                  <span className="text-xs text-subtle">{alert.alert_type.replace(/_/g, " ")}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted line-clamp-2">{alert.change_summary}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onDismiss(alert)}
+                disabled={processingIds.has(`optimizer-alert-${alert.id}`)}
+                className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ThesisClaimsPanel({ claims, claimCount }: { claims: ThesisClaim[]; claimCount: number }) {
+  if (claimCount <= 0) return null
+  return (
+    <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <AlertTriangle size={14} className="text-amber-500" />
+        Thesis Claim Issues
+        <span className="ml-auto text-xs text-subtle">{claimCount} challenged or disconfirmed</span>
+      </h2>
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {claims.map(claim => (
+          <div key={claim.id} className="rounded-lg border border-app px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to={`/dossier/${encodeURIComponent(claim.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                {claim.ticker}
+              </Link>
+              <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", claimStatusClass(claim.status))}>
+                {claim.status}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted line-clamp-2">{claim.claim}</p>
+            {claim.disconfirming_evidence && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400 line-clamp-2">{claim.disconfirming_evidence}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function RecentActivityPanel({
+  workflowRuns,
+  reportRuns,
+  onViewWorkflowLineage,
+}: {
+  workflowRuns: WorkflowRun[]
+  reportRuns: ReportRun[]
+  onViewWorkflowLineage?: (runId: string) => void
+}) {
+  if (workflowRuns.length === 0 && reportRuns.length === 0) return null
+  return (
+    <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <Clock size={14} className="text-gray-500" />
+        Recent Activity
+      </h2>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {workflowRuns.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Workflow Runs</h3>
+            <div className="space-y-2">
+              {workflowRuns.map((run, index) => {
+                const ticker = workflowRunTicker(run)
+                const runId = String(run.run_id ?? "").trim()
+                return (
+                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
+                    <div className="flex items-center gap-3">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
+                      {ticker && (
+                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
+                          {ticker}
+                        </Link>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
+                      {runId && onViewWorkflowLineage && (
+                        <button
+                          type="button"
+                          onClick={() => onViewWorkflowLineage(runId)}
+                          className="theme-icon-button h-8 w-8"
+                          aria-label={`View workflow ${runId} lineage`}
+                          title="Lineage"
+                        >
+                          <GitBranch size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        {reportRuns.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Report Runs</h3>
+            <div className="space-y-2">
+              {reportRuns.map((run, index) => (
+                <div key={reportRunKey(run, index)} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <FileText size={14} className="shrink-0 text-blue-500" />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-app">{reportRunLabel(run)}</span>
+                        <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                        <span className="text-xs text-subtle">{run.status ?? "unknown"}</span>
+                      </div>
+                      {run.error && <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{run.error}</p>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-subtle">{reportRunTime(run)}</span>
+                    {run.issue_url && (
+                      <a href={run.issue_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        Issue
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
 }
 
 function sourceHealthLabel(value: string | null | undefined): string {
@@ -626,6 +871,9 @@ function RiskBindingLine({ record }: { record: RecommendationRecord | Record<str
 
 export function Workspace() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkApprovalId = String(searchParams.get("approval_id") ?? "").trim()
+  const deepLinkAttemptRef = useRef<string | null>(null)
   const { data, isPending, error } = useApiQuery<WorkspaceData>(
     ["workspace"],
     fetchWorkspace,
@@ -652,6 +900,21 @@ export function Workspace() {
   const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
+  const [optimizerDismissError, setOptimizerDismissError] = useState<string | null>(null)
+
+  const clearApprovalDeepLink = useCallback(() => {
+    if (!searchParams.has("approval_id")) return
+    const next = new URLSearchParams(searchParams)
+    next.delete("approval_id")
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  function openApprovalReview(approval: ApprovalRecord) {
+    setApprovalReview(approval)
+    setApprovalNote("")
+    setApprovalError(null)
+    setApprovalDialogAction(null)
+  }
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -660,13 +923,6 @@ export function Workspace() {
       else next.add(key)
       return next
     })
-  }
-
-  function openApprovalReview(approval: ApprovalRecord) {
-    setApprovalReview(approval)
-    setApprovalNote("")
-    setApprovalError(null)
-    setApprovalDialogAction(null)
   }
 
   async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
@@ -839,7 +1095,68 @@ export function Workspace() {
     }
   }
 
-  if (isPending) return <LoadingSpinner message="Loading workspace..." />
+  async function handleDismissOptimizerAlert(alert: OptimizationAlert) {
+    const processingKey = `optimizer-alert-${alert.id}`
+    setOptimizerDismissError(null)
+    setProcessingIds(prev => new Set(prev).add(processingKey))
+    try {
+      await dismissOptimizationAlert(alert.id)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+    } catch (err) {
+      setOptimizerDismissError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProcessingIds(prev => {
+        const next = new Set(prev)
+        next.delete(processingKey)
+        return next
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (!deepLinkApprovalId || approvalReview?.id === deepLinkApprovalId) return
+    if (deepLinkAttemptRef.current === deepLinkApprovalId) return
+
+    const embeddedItems = [
+      ...(approvalSummary.data?.items ?? []),
+      ...(data?.pending_approvals.items ?? []),
+    ]
+    const fromList = embeddedItems.find(item => String(item.id) === deepLinkApprovalId)
+    if (fromList) {
+      deepLinkAttemptRef.current = deepLinkApprovalId
+      openApprovalReview(fromList)
+      clearApprovalDeepLink()
+      return
+    }
+
+    if (isPending || (approvalSummary.isPending && !approvalSummary.data)) return
+
+    let cancelled = false
+    deepLinkAttemptRef.current = deepLinkApprovalId
+    void fetchApproval(deepLinkApprovalId)
+      .then(approval => {
+        if (cancelled) return
+        openApprovalReview(approval)
+        clearApprovalDeepLink()
+      })
+      .catch(() => {
+        if (!cancelled) deepLinkAttemptRef.current = null
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    approvalReview?.id,
+    approvalSummary.data,
+    approvalSummary.isPending,
+    clearApprovalDeepLink,
+    data?.pending_approvals.items,
+    deepLinkApprovalId,
+    isPending,
+  ])
+
+  if (isPending) return <LoadingSpinner message="Loading portfolio commander..." />
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
@@ -871,11 +1188,19 @@ export function Workspace() {
     regime?.snapshot?.refresh_status && regime.snapshot.refresh_status !== "ok" ? `Refresh ${regime.snapshot.refresh_status}` : null,
     regime?.snapshot?.stale ? "Stale" : null,
   ].filter(Boolean).join(" · ")
+  const optimizerAlerts = data.continuous_optimization?.open_alerts ?? []
+  const optimizerAlertCount = data.continuous_optimization?.open_alert_count ?? optimizerAlerts.length
+  const thesisClaimItems = data.thesis_claims?.items ?? []
+  const thesisClaimCount = data.thesis_claims?.challenged_count ?? thesisClaimItems.length
+  const recentReportRuns = data.recent_report_runs ?? []
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-app">Workspace</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-app">Portfolio Commander</h1>
+          <p className="mt-1 text-sm text-subtle">What changed, what matters, and what needs review.</p>
+        </div>
         <RefreshButton
           queryKeys={[["workspace"]]}
           beforeRefetch={refreshWorkspaceSources}
@@ -917,9 +1242,18 @@ export function Workspace() {
         <MetricCard
           title="Courses Of Action"
           value={courseOfActions.pending.count}
-          subtitle={`${courseOfActions.pending_approval_count || approvalRecommendationCount} approval${(courseOfActions.pending_approval_count || approvalRecommendationCount) !== 1 ? "s" : ""}`}
-          signal={data.recommendations.blocked_warnings.length > 0 ? "warning" : null}
-          signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
+          subtitle={[
+            `${courseOfActions.pending_approval_count || approvalRecommendationCount} approval${(courseOfActions.pending_approval_count || approvalRecommendationCount) !== 1 ? "s" : ""}`,
+            optimizerAlertCount > 0 ? `${optimizerAlertCount} optimizer alert${optimizerAlertCount !== 1 ? "s" : ""}` : null,
+          ].filter(Boolean).join(" · ") || undefined}
+          signal={data.recommendations.blocked_warnings.length > 0 || optimizerAlertCount > 0 ? "warning" : null}
+          signalLabel={
+            data.recommendations.blocked_warnings.length > 0
+              ? "Blocked"
+              : optimizerAlertCount > 0
+                ? "Monitor Hits"
+                : undefined
+          }
         />
       </div>
 
@@ -1005,6 +1339,16 @@ export function Workspace() {
             </div>
           </section>
         )}
+
+        <OptimizationAlertsPanel
+          alerts={optimizerAlerts}
+          alertCount={optimizerAlertCount}
+          processingIds={processingIds}
+          onDismiss={handleDismissOptimizerAlert}
+          dismissError={optimizerDismissError}
+        />
+
+        <ThesisClaimsPanel claims={thesisClaimItems} claimCount={thesisClaimCount} />
 
         {/* Recommendation Summary */}
         {(data.recommendations.latest_daily || data.recommendations.latest_weekly || data.recommendations.blocked_warnings.length > 0) && (
@@ -1344,49 +1688,11 @@ export function Workspace() {
           </section>
         )}
 
-        {/* Recent Workflow Runs */}
-        {data.recent_workflow_runs.length > 0 && (
-          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
-            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <Clock size={14} className="text-gray-500" />
-              Recent Workflow Runs
-            </h2>
-            <div className="space-y-2">
-              {data.recent_workflow_runs.map((run, index) => {
-                const ticker = workflowRunTicker(run)
-                const runId = String(run.run_id ?? "").trim()
-                return (
-                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
-                    <div className="flex items-center gap-3">
-                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
-                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
-                      {ticker && (
-                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
-                          {ticker}
-                        </Link>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (runId) setProvenanceSelector({ workflow_run_id: runId })
-                        }}
-                        disabled={!runId}
-                        className="theme-icon-button h-8 w-8 disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={runId ? `View workflow ${runId} lineage` : "Workflow lineage unavailable"}
-                        title={runId ? "Lineage" : "Lineage unavailable"}
-                      >
-                        <GitBranch size={14} />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        )}
+        <RecentActivityPanel
+          workflowRuns={data.recent_workflow_runs}
+          reportRuns={recentReportRuns}
+          onViewWorkflowLineage={runId => setProvenanceSelector({ workflow_run_id: runId })}
+        />
       </div>
 
       {/* Empty state */}
@@ -1403,7 +1709,10 @@ export function Workspace() {
         !approvalCount &&
         !data.open_actions.count &&
         !data.active_triggers.count &&
-        !data.recent_workflow_runs.length && (
+        !data.recent_workflow_runs.length &&
+        !recentReportRuns.length &&
+        optimizerAlertCount === 0 &&
+        thesisClaimCount === 0 && (
         <div className="theme-surface rounded-xl p-8 text-center text-muted text-sm mt-4">
           No pending items. Run a workflow or chat with the agent to get started.
         </div>
@@ -1461,6 +1770,7 @@ export function Workspace() {
             setApprovalNote("")
             setApprovalError(null)
             setApprovalDialogAction(null)
+            clearApprovalDeepLink()
           }
         }}
         title="Review Approval"

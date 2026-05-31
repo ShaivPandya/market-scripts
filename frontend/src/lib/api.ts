@@ -2911,6 +2911,8 @@ export const fetchDossier = (ticker: string) =>
 // Approvals
 export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data as ApprovalListResponse)
+export const fetchApproval = (id: string) =>
+  client.get(`/approvals/${encodeURIComponent(id)}`).then(r => r.data as ApprovalRecord)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: string, note: string, requirement_id?: string) =>

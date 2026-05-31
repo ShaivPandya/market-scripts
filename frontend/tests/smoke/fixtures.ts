@@ -419,6 +419,54 @@ const baseWorkspaceResponse = {
       summary: { result: "No immediate rebalance required." },
     },
   ],
+  continuous_optimization: {
+    open_alert_count: 1,
+    open_alerts: [
+      {
+        id: "optimizer-alert-smoke",
+        mission_id: "balanced",
+        run_id: "optimizer-run-smoke",
+        ticker: "NVDA",
+        alert_type: "action_change",
+        severity: "high",
+        status: "open",
+        change_summary: "Recommended action shifted from hold to trim after risk review.",
+        created_at: "2026-05-14T14:15:00Z",
+      },
+    ],
+  },
+  thesis_claims: {
+    challenged_count: 1,
+    items: [
+      {
+        id: 42,
+        ticker: "MSFT",
+        claim: "AI infrastructure demand remains durable through 2026.",
+        expected_evidence: "Cloud capex commentary and backlog trends.",
+        disconfirming_evidence: "Hyperscaler capex guidance softened in the latest print.",
+        source_requirements: [],
+        cadence: "weekly",
+        confidence: 0.7,
+        status: "challenged",
+        linked_catalyst_ids: [],
+        linked_kill_condition_ids: [],
+        source_type: "manual",
+        source_id: null,
+        created_at: "2026-05-14T12:00:00Z",
+        updated_at: "2026-05-14T14:00:00Z",
+      },
+    ],
+  },
+  recent_report_runs: [
+    {
+      id: "report_run:1",
+      report_id: "daily:2026-05-14",
+      report_type: "daily",
+      as_of: "2026-05-14",
+      status: "completed",
+      synced_at: "2026-05-14T14:20:00Z",
+    },
+  ],
 } satisfies JsonValue
 
 function workspaceResponse(state: ApiMockState) {
@@ -686,6 +734,20 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     })
   }
   if (method === "GET" && path === "/api/approvals/summary") return json(route, approvalSummaryResponse(state))
+  if (method === "GET" && path === "/api/approvals/smoke-approval") return json(route, smokeApproval)
+  if (method === "PUT" && path.startsWith("/api/optimization/alerts/") && path.endsWith("/dismiss")) {
+    return json(route, {
+      id: "optimizer-alert-smoke",
+      mission_id: "balanced",
+      run_id: "optimizer-run-smoke",
+      ticker: "NVDA",
+      alert_type: "action_change",
+      severity: "high",
+      status: "dismissed",
+      change_summary: "Recommended action shifted from hold to trim after risk review.",
+      created_at: "2026-05-14T14:15:00Z",
+    })
+  }
   if (method === "POST" && path === "/api/approvals/bulk-reject") {
     const body = JSON.parse(request.postData() || "{}") as { ids?: string[] }
     state.approvalsDismissed = true
