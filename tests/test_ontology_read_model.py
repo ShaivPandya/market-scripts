@@ -91,6 +91,13 @@ def test_operational_read_model_migration_contract():
         assert column in migration
 
 
+def test_latest_operational_read_model_migration_includes_decision_outcomes():
+    migration = Path("migrations/versions/20260531_0002_opportunity_candidate_read_model.py").read_text(encoding="utf-8")
+
+    assert 'DECISION_OUTCOME_OPERATIONAL_OBJECT_TYPES = ("DecisionOutcome",)' in migration
+    assert "*DECISION_OUTCOME_OPERATIONAL_OBJECT_TYPES" in migration
+
+
 class _Rows:
     def __init__(self, rows):
         self.rows = rows
