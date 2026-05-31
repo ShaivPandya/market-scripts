@@ -79,8 +79,11 @@ def simulate_investment_options(
         policy_gate = _evaluate_policy_gate(policy_gate_payload, context=context)
         source_refs = _unique([*base_source_refs, *_source_refs([candidate["raw"]])])
         candidate_hash = _hash_value({"candidate": candidate["raw"], "target": target}, length=16)
+        course_key = f"{simulation_id}:{candidate['candidate_id']}:{candidate['action']}"
+        course_uid = _course_of_action_uid(course_key)
         outcome = {
             "candidate_id": candidate["candidate_id"],
+            "course_of_action_id": course_uid,
             "action": candidate["action"],
             "rationale": candidate.get("rationale"),
             "target_position": target,
@@ -111,6 +114,7 @@ def simulate_investment_options(
             {
                 "rank": index + 1,
                 "candidate_id": item["candidate_id"],
+                "course_of_action_id": item.get("course_of_action_id"),
                 "action": item["action"],
                 "ranking_score": item["ranking_score"],
                 "policy_gate_decision": (item.get("policy_gate") or {}).get("decision"),
@@ -721,6 +725,14 @@ def _unique(values: Sequence[Any]) -> list[str]:
 def _hash_value(value: Any, *, length: int = 16) -> str:
     raw = json.dumps(_jsonable(value), sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+def _course_of_action_uid(course_key: str) -> str:
+    text = str(course_key or "").strip().lower()
+    slug = "".join(char if char.isalnum() else "-" for char in text).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return f"course_of_action:{slug}"
 
 
 def _jsonable(value: Any) -> Any:

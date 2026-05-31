@@ -17,6 +17,7 @@ const THESIS_FACING_ACTIONS = new Set([
   "update_kill_condition_status",
   "create_thesis_claim",
   "update_thesis_claim",
+  "create_course_of_action",
   "create_recommendation",
 ])
 
@@ -44,7 +45,7 @@ function approvalApplicationStatus(approval: ApprovalRecord): string {
 }
 
 function hasRecommendationApproval(approval: ApprovalRecord | undefined): boolean {
-  return approval?.proposed_change?.recommendation_id != null
+  return approval?.proposed_change?.recommendation_id != null || approval?.entity_type === "course_of_action"
 }
 
 function approvalMatchesSummary(summary: ApprovalSummaryResponse, approval: ApprovalRecord): boolean {

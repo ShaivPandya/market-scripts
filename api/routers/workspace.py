@@ -12,7 +12,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+from api.decision_state import (
+    normalize_action_item,
+    normalize_approval,
+    normalize_course_of_action,
+    normalize_recommendation,
+)
 from api.llm_settings import get_setting, set_setting
 from api.source_health import build_approval_source_health_review, build_workspace_source_health
 from ontology.change_summary import ChangeSummaryInputError, build_workspace_change_summary
@@ -270,6 +275,22 @@ def get_workspace(since: str | None = None):
         for a in pending_approvals
         if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
     ]
+    course_of_action_approvals = [
+        a
+        for a in pending_approvals
+        if a.get("entity_type") == "course_of_action"
+        or a.get("target_object_type") == "CourseOfAction"
+        or (
+            isinstance(a.get("proposed_change"), dict)
+            and (
+                a["proposed_change"].get("course_of_action_id") is not None
+                or (
+                    isinstance(a["proposed_change"].get("record"), dict)
+                    and a["proposed_change"]["record"].get("course_of_action_id") is not None
+                )
+            )
+        )
+    ]
 
     latest_daily_recommendation = normalize_recommendation(ontology_bundle.get("latest_daily_recommendation"))
     latest_weekly_recommendation = normalize_recommendation(ontology_bundle.get("latest_weekly_recommendation"))
@@ -277,6 +298,25 @@ def get_workspace(since: str | None = None):
     pending_actionable_recommendations = [
         normalize_recommendation(rec) for rec in pending_actionable_recommendations if isinstance(rec, dict)
     ]
+    pending_course_of_actions = [
+        item
+        for item in (
+            normalize_course_of_action(coa)
+            for coa in ontology_bundle.get("pending_course_of_actions", [])
+            if isinstance(coa, dict)
+        )
+        if item is not None
+    ]
+    recent_course_of_actions = [
+        item
+        for item in (
+            normalize_course_of_action(coa)
+            for coa in ontology_bundle.get("recent_course_of_actions", [])
+            if isinstance(coa, dict)
+        )
+        if item is not None
+    ]
+    open_course_of_action_comparisons = ontology_bundle.get("open_course_of_action_comparisons", [])
     blocked_recommendation_warnings = []
     for rec in (latest_daily_recommendation, latest_weekly_recommendation):
         if not isinstance(rec, dict):
@@ -328,6 +368,21 @@ def get_workspace(since: str | None = None):
             },
             "blocked_warnings": blocked_recommendation_warnings,
             "pending_approval_count": len(recommendation_approvals),
+        },
+        "course_of_actions": {
+            "pending": {
+                "count": len(pending_course_of_actions),
+                "items": pending_course_of_actions[:5],
+            },
+            "recent": {
+                "count": len(recent_course_of_actions),
+                "items": recent_course_of_actions[:5],
+            },
+            "comparisons": {
+                "count": len(open_course_of_action_comparisons),
+                "items": open_course_of_action_comparisons[:5],
+            },
+            "pending_approval_count": len(course_of_action_approvals),
         },
         "open_actions": {
             "count": len(open_actions),

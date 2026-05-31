@@ -123,8 +123,10 @@ function actionTitle(actionId: string | null | undefined, entityType: string): s
       return "Dismiss internal action item"
     case "change_thesis_status":
       return "Change thesis status"
+    case "create_course_of_action":
+      return "Create course of action"
     case "create_recommendation":
-      return "Create recommendation"
+      return "Create course of action"
     default:
       return sentenceCase(actionId || entityType || "Proposed change")
   }
@@ -337,11 +339,14 @@ function actionItemSummary(change: Record<string, unknown>, actionId?: string | 
 function recommendationSummary(change: Record<string, unknown>): { summary: string; rows: DetailRow[] } {
   const record = asRecord(change.record)
   const rows: DetailRow[] = []
-  for (const key of ["ticker", "action", "conviction", "confidence", "risk_flag", "reason", "summary"]) {
+  for (const key of ["ticker", "action", "actionability", "conviction", "confidence", "horizon", "risk_flag", "rationale", "reason", "summary"]) {
     if (record[key] != null && record[key] !== "") rows.push({ label: humanizeKey(key), value: formatValue(record[key]) })
   }
+  const gate = asRecord(record.policy_gate_result)
+  if (gate.decision) rows.push({ label: "Policy gate", value: formatValue(gate.decision) })
+  if (record.course_of_action_id) rows.push({ label: "Course of action", value: formatValue(record.course_of_action_id) })
   return {
-    summary: "This stores a recommendation record after approval.",
+    summary: "This stages a governed course of action after approval.",
     rows: rows.length ? rows : genericRows(record),
   }
 }
@@ -375,6 +380,7 @@ function proposedChangeSummary(approval: ApprovalRecord): { title: string; summa
     case "complete_action_item":
     case "dismiss_action_item":
       return { title, ...actionItemSummary(change, actionId) }
+    case "create_course_of_action":
     case "create_recommendation":
       return { title, ...recommendationSummary(change) }
     default:

@@ -24,6 +24,15 @@ ACTIONABLE_RECOMMENDATION_ACTIONS = {
     "hedge",
     "rebalance",
 }
+ACTIONABLE_COURSE_OF_ACTIONS = {
+    "buy",
+    "add",
+    "short",
+    "sell",
+    "trim",
+    "exit",
+    "rebalance",
+}
 STALE_APPROVAL_MESSAGE = (
     "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
 )
@@ -363,6 +372,24 @@ def _recommendation_decision_state(record: dict[str, Any]) -> str:
     return "recommendation"
 
 
+def _course_of_action_decision_state(record: dict[str, Any]) -> str:
+    stored = str(record.get("decision_state") or "").strip().lower()
+    if stored in {"under_review", "proposed"}:
+        return "pending_approval"
+    if stored == "applied":
+        return "applied"
+    if stored in {"approved", "rejected", "draft", "generated", "closed", "superseded"}:
+        return "recommendation" if stored == "generated" else stored
+    approval_status = str(record.get("approval_status") or "none").strip().lower()
+    if approval_status == "pending":
+        return "pending_approval"
+    if approval_status == "approved":
+        return "approved"
+    if approval_status == "rejected":
+        return "rejected"
+    return "recommendation"
+
+
 def normalize_approval(
     record: dict[str, Any] | None,
     *,
@@ -439,6 +466,29 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
     out["policy_gate"] = gate
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("critical_data_quality"))
+    out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
+    return out
+
+
+def normalize_course_of_action(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a CourseOfAction with additive normalized decision fields."""
+
+    if record is None:
+        return None
+    out = deepcopy(record)
+    _filter_top_level_policy_fields(out)
+    gate = _filter_policy_gate(_nested_policy_gate(out), policy_context=out)
+    action = str(out.get("action") or "").strip().lower()
+    approval_required = bool(out.get("approval_required")) or action in ACTIONABLE_COURSE_OF_ACTIONS
+    out["decision_state"] = _course_of_action_decision_state(out)
+    out["decision_kind"] = "course_of_action"
+    out["effect_scope"] = "internal_state" if approval_required else "read_only"
+    out["execution_capability"] = "none"
+    out["approval_state"] = out.get("approval_status") or "none"
+    out["outcome_state"] = out.get("status") or "pending"
+    out["policy_gate"] = gate
+    out["policy_state"] = _policy_state_from_fields(out, gate)
+    out["quality_state"] = _quality_state(out.get("source_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
     return out
 

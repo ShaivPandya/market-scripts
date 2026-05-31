@@ -45,6 +45,7 @@ def test_scenario_simulator_preview_default_does_not_persist(auth_client, monkey
     body = response.json()
     assert body["persisted"] is False
     assert body["outcomes"][0]["artifact_ids"] == {}
+    assert body["outcomes"][0]["course_of_action_id"].startswith("course_of_action:")
 
 
 def test_scenario_simulator_rejects_hedge(auth_client):

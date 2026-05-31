@@ -48,6 +48,8 @@ class FakeObjectService:
                 "account:",
                 "approval:",
                 "audit_event:",
+                "course_of_action:",
+                "course_of_action_rationale:",
                 "executed_decision_record:",
                 "document_artifact:",
                 "instrument:",
@@ -674,9 +676,16 @@ def test_create_recommendation_approval_applies_with_real_schema_normalization()
     applied = service.resolve_approval(approval["id"], "approved", "approved", context)
 
     assert applied["application_status"] == "applied"
+    assert approval["entity_type"] == "course_of_action"
+    assert approval["target_object_type"] == "CourseOfAction"
+    assert "course_of_action:daily_2026_05_06_hedge_overlay" in repo.objects
     assert "recommendation:daily_2026_05_06_hedge_overlay" in repo.objects
     assert any(row["object_type"] == "ActionRun" for row in repo.objects.values())
     assert any(row["object_type"] == "ExecutedDecisionRecord" for row in repo.objects.values())
+    relation_types = {row["relation_type"] for row in repo.relations}
+    assert "approval_targets_course_of_action" in relation_types
+    assert "course_of_action_links_recommendation" in relation_types
+    assert "action_run_applies_course_of_action" in relation_types
 
 
 def test_sparse_actionable_recommendation_is_downgraded_and_persisted_without_approval():

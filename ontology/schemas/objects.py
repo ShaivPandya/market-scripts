@@ -522,6 +522,7 @@ class PolicyGateResult(OntologySchemaBase):
 class TradeProposal(OntologySchemaBase):
     proposal_id: NonBlankStr
     recommendation_id: str | None = None
+    course_of_action_id: str | None = None
     account_id: str | None = None
     portfolio_id: str | None = None
     action: NonBlankStr
@@ -548,6 +549,7 @@ class TradeProposal(OntologySchemaBase):
 
     @field_validator(
         "recommendation_id",
+        "course_of_action_id",
         "account_id",
         "portfolio_id",
         "policy_gate_result_id",

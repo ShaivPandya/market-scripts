@@ -264,6 +264,26 @@ class TemporalReadModelRepository:
                 limit=5,
                 order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            pending_course_of_actions = _fetch_operational_objects(
+                conn,
+                "CourseOfAction",
+                filters={"approval_status": "pending"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_course_of_actions = _fetch_operational_objects(
+                conn,
+                "CourseOfAction",
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            open_course_of_action_comparisons = _fetch_operational_objects(
+                conn,
+                "CourseOfActionComparison",
+                filters={"status": "open"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
             open_action_items = _fetch_operational_objects(
                 conn,
                 "ActionItem",
@@ -320,6 +340,9 @@ class TemporalReadModelRepository:
             "latest_daily_recommendation": latest_daily_recommendation,
             "latest_weekly_recommendation": latest_weekly_recommendation,
             "pending_actionable_recommendations": pending_actionable_recommendations,
+            "pending_course_of_actions": pending_course_of_actions,
+            "recent_course_of_actions": recent_course_of_actions,
+            "open_course_of_action_comparisons": open_course_of_action_comparisons,
             "open_action_items": open_action_items,
             "optimizer_alerts": optimizer_alerts,
             "active_watch_triggers": active_watch_triggers,

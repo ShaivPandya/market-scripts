@@ -192,7 +192,10 @@ export interface ApprovalRecord extends DecisionStateFields {
   id: string
   status?: string | null
   entity_type: string
+  entity_id?: string | null
   action_id?: string | null
+  target_object_uid?: string | null
+  target_object_type?: string | null
   ticker: string | null
   reason: string | null
   created_at: string
@@ -297,6 +300,54 @@ export interface RecommendationRecord extends DecisionStateFields {
   risk_bindings?: Record<string, unknown> | null
   decision_quality?: DecisionQuality | null
   decision_quality_gate?: DecisionQualityGate | null
+}
+
+export interface CourseOfActionRecord extends DecisionStateFields {
+  id: string
+  course_of_action_id?: string | null
+  source_kind?: string | null
+  source_type?: string | null
+  source_id?: string | null
+  decision_type?: string | null
+  action: string
+  actionability?: string | null
+  status?: string | null
+  ticker: string | null
+  instrument_id?: string | null
+  account_id?: string | null
+  portfolio_id?: string | null
+  policy_gate_result_id?: string | null
+  policy_gate_decision?: string | null
+  approval_id?: string | number | null
+  approval_required?: boolean | null
+  approval_status?: string | null
+  comparison_id?: string | null
+  confidence?: number | null
+  horizon?: string | null
+  rationale_summary?: string | null
+  source_quality?: string | null
+  sizing_summary?: Record<string, unknown> | null
+  effect_summary?: Record<string, unknown> | null
+  risk_summary?: Record<string, unknown> | null
+  policy_summary?: Record<string, unknown> | null
+  policy_gate?: PolicyGateResult | null
+  decision_quality?: DecisionQuality | null
+  decision_quality_gate?: DecisionQualityGate | null
+  payload?: Record<string, unknown> | null
+}
+
+export interface CourseOfActionComparisonRecord {
+  id: string
+  comparison_id?: string | null
+  objective?: string | null
+  scope_type?: string | null
+  scope_id?: string | null
+  selected_course_of_action_id?: string | null
+  decision_state?: string | null
+  status?: string | null
+  ranking_summary?: Record<string, unknown> | null
+  selection_reason?: string | null
+  as_of?: string | null
 }
 
 export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "accepted" | "rejected" | "archived"
@@ -2778,6 +2829,11 @@ export const fetchActions = (params?: { status?: string; ticker?: string }) =>
   client.get("/actions", { params }).then(r => r.data)
 export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string } & StagedMutationOptions) =>
   client.post("/actions", body).then(r => r.data as StagedMutationResponse)
+export const createDomainActionProposal = (
+  actionId: string,
+  body: { payload: Record<string, unknown>; reason: string },
+) =>
+  client.post(`/domain-actions/${encodeURIComponent(actionId)}/proposals`, body).then(r => r.data as StagedMutationResponse)
 export const completeAction = (id: number | string, resolution_note?: string, options?: StagedMutationOptions) =>
   client.put(`/actions/${encodeURIComponent(String(id))}/complete`, { resolution_note: resolution_note ?? "", ...options }).then(r => r.data as StagedMutationResponse)
 export const dismissAction = (id: number | string, options?: StagedMutationOptions) =>

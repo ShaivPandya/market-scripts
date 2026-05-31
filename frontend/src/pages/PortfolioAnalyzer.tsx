@@ -18,7 +18,7 @@ import {
   generatePortfolioAnalyzerBrief,
   generatePortfolioAnalyzerRecommendedScenarioBrief,
   fetchPortfolioAnalyzerRecommendedScenario,
-  createAction,
+  createDomainActionProposal,
   dismissOptimizationAlert,
   cancelPortfolioAnalyzerJob,
   fetchPortfolioAnalyzerJob,
@@ -709,12 +709,40 @@ function analyzerJobErrorMessage(error: unknown, fallback: string) {
   return message.replace(/^AxiosError:\s*/i, "") || fallback
 }
 
-function toWorkspaceActionRequest(action: AnalyzerCourseAction) {
+function toCourseOfActionProposal(action: AnalyzerCourseAction) {
   return {
-    ticker: action.ticker,
-    action_type: workspaceActionType(action),
-    urgency: workspaceActionUrgency(action),
-    description: workspaceActionDescription(action),
+    payload: {
+      record: {
+        course_of_action_id: `portfolio_analyzer:${action.ticker}:${action.action}`,
+        report_type: "portfolio_analyzer",
+        as_of: new Date().toISOString(),
+        source_kind: "portfolio_analyzer",
+        source_type: "frontend",
+        source_id: "portfolio_analyzer.action_queue",
+        action: action.action,
+        actionability: workspaceActionType(action) === "review" ? "watch_only" : "actionable",
+        ticker: action.ticker,
+        instrument: action.ticker,
+        confidence: action.confidence,
+        rationale: action.deterministic_rationale || workspaceActionDescription(action),
+        source_quality: action.data_coverage?.ratio === 1 ? "ok" : "degraded",
+        critical_data_quality: action.data_coverage?.ratio === 1 ? "ok" : "degraded",
+        sizing_summary: action.sizing_implication ?? {},
+        risk_summary: {
+          priority_score: action.priority_score,
+          scenario_score: action.scenario_score,
+          score_delta: action.score_delta,
+          gate_status: action.gate_status,
+          gate_reasons: action.gate_reasons ?? [],
+          warnings: action.warnings ?? [],
+        },
+        policy_gate_result: {
+          decision: action.gate_status === "pass" ? "pass" : "review_required",
+          review_required: action.gate_status !== "pass",
+          warnings: (action.gate_reasons ?? []).map(message => ({ code: "ANALYZER_GATE", message })),
+        },
+      },
+    },
     reason: `Stage portfolio analyzer result for ${action.ticker}: ${action.action}`,
   }
 }
@@ -966,10 +994,10 @@ function ActionDetail({
               className="mt-3 w-auto px-3 text-xs"
             >
               <Send className="h-4 w-4" />
-              Stage Workspace Action
+              Stage Course of Action
             </ActionButton>
             {!canStageWorkspaceAction && (
-              <p className="mt-2 text-xs text-subtle">Hold and watch rows are not staged as action items.</p>
+              <p className="mt-2 text-xs text-subtle">Hold and watch rows are not staged as approval-backed courses of action.</p>
             )}
             {workspaceError && <p className="mt-2 text-sm text-negative">{workspaceError}</p>}
             {workspaceProposal && (
@@ -1285,14 +1313,14 @@ export function AnalyzerWorkbench({
   })
 
   const workspaceActionMutation = useMutation({
-    mutationFn: (action: AnalyzerCourseAction) => createAction(toWorkspaceActionRequest(action)),
+    mutationFn: (action: AnalyzerCourseAction) => createDomainActionProposal("create_course_of_action", toCourseOfActionProposal(action)),
     onMutate: action => {
       setWorkspaceProposal(prev => prev?.ticker === action.ticker ? null : prev)
     },
     onSuccess: (response, action) => {
       setWorkspaceProposal({ ticker: action.ticker, response })
       void invalidateApprovalSummaries(queryClient)
-      void queryClient.invalidateQueries({ queryKey: ["actions"] })
+      void queryClient.invalidateQueries({ queryKey: ["workspace"] })
     },
   })
 

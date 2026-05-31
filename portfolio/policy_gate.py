@@ -17,7 +17,12 @@ from portfolio.policy_matrix import FinancialPolicyFacts, evaluate_financial_pol
 POLICY_GATE_DECISIONS = ("pass", "warn", "review_required", "blocked", "error")
 ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "add", "short", "sell", "trim", "reduce", "exit", "hedge", "rebalance"}
 FINANCIAL_ACTION_ITEM_TYPES = {"enter", "exit", "resize", "hedge"}
-FINANCIAL_ACTION_IDS = {"create_recommendation", "update_portfolio_positions", "update_hedge_positions"}
+FINANCIAL_ACTION_IDS = {
+    "create_course_of_action",
+    "create_recommendation",
+    "update_portfolio_positions",
+    "update_hedge_positions",
+}
 
 FAILURE_REASON_CODES = {
     "data_missing",
@@ -77,7 +82,7 @@ def is_financial_action(action_id: str, payload: Mapping[str, Any] | None = None
     action = str(action_id or "").strip()
     if action in {"update_portfolio_positions", "update_hedge_positions"}:
         return True
-    if action == "create_recommendation":
+    if action in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         return str(record.get("action") or "").lower() in ACTIONABLE_RECOMMENDATION_ACTIONS
     if action == "create_action_item":
@@ -862,7 +867,7 @@ def _financial_action_kind(action_id: str, payload: Mapping[str, Any]) -> str:
         return "hedge_positions"
     if action == "create_action_item":
         return str(payload.get("action_type") or "action_item").strip().lower() or "action_item"
-    if action == "create_recommendation":
+    if action in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         return str(record.get("action") or "recommendation").strip().lower() or "recommendation"
     return action
@@ -911,7 +916,7 @@ def _risk_level_for_policy(record: Mapping[str, Any], payload: Mapping[str, Any]
 
 
 def _existing_gate_result(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    if action_id == "create_recommendation":
+    if action_id in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         existing = record.get("policy_gate_result")
         return dict(existing) if isinstance(existing, Mapping) else None
@@ -920,7 +925,7 @@ def _existing_gate_result(action_id: str, payload: Mapping[str, Any]) -> dict[st
 
 
 def _attach_gate_to_payload(action_id: str, payload: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
-    if action_id == "create_recommendation":
+    if action_id in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         _apply_gate_fields(record, gate)
         payload["record"] = record

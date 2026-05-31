@@ -112,6 +112,8 @@ def test_scenario_math_liquidity_uncertainty_and_policy_gate_payload(monkeypatch
     result = simulate_investment_options(payload, context={"actor_id": "unit"})
     outcome = result["outcomes"][0]
 
+    assert outcome["course_of_action_id"].startswith("course_of_action:")
+    assert result["comparison"]["ranking"][0]["course_of_action_id"] == outcome["course_of_action_id"]
     assert outcome["scenario_outcomes"][0]["target_pnl_base"] == 150
     assert outcome["scenario_outcomes"][0]["target_return_pct_of_book"] == 1.5
     assert outcome["liquidity"]["estimated_exit_days"] == 2
@@ -175,7 +177,14 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     repo = _FakeTemporalRepo()
     service = OntologyObjectService(repository=repo)
     payload = _base_payload("long")
-    payload["candidates"] = [{"action": "add", "delta": {"notional_base": 500}, "evidence_refs": ["evidence:mu_hbm"]}]
+    payload["candidates"] = [
+        {
+            "action": "add",
+            "delta": {"notional_base": 500},
+            "evidence_refs": ["evidence:mu_hbm"],
+            "rationale": "Add MU because HBM demand improves the upside scenario.",
+        }
+    ]
     payload["assumptions"] = [{"name": "Liquidity", "value": "ADV supports two-day resize", "confidence": 0.7}]
     simulation = simulate_investment_options(payload)
 
@@ -191,6 +200,7 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     assert {
         "CourseOfActionComparison",
         "CourseOfAction",
+        "CourseOfActionRationale",
         "Scenario",
         "ScenarioAssumption",
         "SimulatedOutcome",
@@ -198,6 +208,7 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     }.issubset(object_types)
     assert {
         "comparison_includes_course_of_action",
+        "course_of_action_has_rationale",
         "course_of_action_has_simulated_outcome",
         "course_of_action_uses_scenario",
         "scenario_has_assumption",

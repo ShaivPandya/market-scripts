@@ -823,6 +823,10 @@ class CreateRecommendationInput(BaseModel):
         return record
 
 
+class CreateCourseOfActionInput(CreateRecommendationInput):
+    """COA-first financial decision proposal using the legacy record payload shape."""
+
+
 class ResolveApprovalInput(BaseModel):
     approval_id: int
     status: Literal["approved", "rejected"]
@@ -1536,6 +1540,9 @@ def _action_result_refs(
     elif action_id == "create_recommendation":
         if ref_id := _id("id"):
             refs.append(("recommendation", ref_id, produced))
+    elif action_id == "create_course_of_action":
+        if ref_id := _id("id"):
+            refs.append(("course_of_action", ref_id, produced))
     elif action_id == "resolve_approval":
         if ref_id := _id("approval_id"):
             refs.append(("approval", ref_id, resolved))
@@ -1731,6 +1738,7 @@ _create_analyst_feedback = _disabled_action_handler
 _delete_portfolio_news_digest = _disabled_action_handler
 _create_portfolio_news_digest = _disabled_action_handler
 _create_recommendation = _disabled_action_handler
+_create_course_of_action = _disabled_action_handler
 _resolve_approval = _disabled_action_handler
 
 
@@ -1980,7 +1988,15 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="create_recommendation",
         input_model=CreateRecommendationInput,
         handler=_create_recommendation,
-        approval_entity_type="recommendation",
+        approval_entity_type="course_of_action",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
+    "create_course_of_action": DomainAction(
+        action_id="create_course_of_action",
+        input_model=CreateCourseOfActionInput,
+        handler=_create_course_of_action,
+        approval_entity_type="course_of_action",
         approval_payload=_model_payload,
         effect_kind="approval_gated",
     ),

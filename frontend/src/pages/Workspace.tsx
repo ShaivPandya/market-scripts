@@ -18,6 +18,8 @@ import {
   replaceTrigger,
   refreshWorkspaceSources,
   type ApprovalRecord,
+  type CourseOfActionComparisonRecord,
+  type CourseOfActionRecord,
   type PolicyGateReason,
   type PolicyGateResult,
   type ProvenanceSelector,
@@ -51,7 +53,7 @@ import {
   PolicyStateBadge,
   QualityStateBadge,
 } from "@/components/shared/DecisionStateBadge"
-import { approvalDecisionState, recommendationDecisionState } from "@/lib/decisionState"
+import { approvalDecisionState, courseOfActionDecisionState, recommendationDecisionState } from "@/lib/decisionState"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 
@@ -106,6 +108,12 @@ interface WorkspaceData {
       critical_data_quality: string
       blocked_reasons: string[]
     }[]
+    pending_approval_count: number
+  }
+  course_of_actions?: {
+    pending: { count: number; items: CourseOfActionRecord[] }
+    recent: { count: number; items: CourseOfActionRecord[] }
+    comparisons: { count: number; items: CourseOfActionComparisonRecord[] }
     pending_approval_count: number
   }
   open_actions: { count: number; items: ActionItem[] }
@@ -850,6 +858,12 @@ export function Workspace() {
       : `${approvalCount} total`
   const approvalRecommendationCount =
     approvalSummaryData?.recommendation_approval_count ?? data.recommendations.pending_approval_count
+  const courseOfActions = data.course_of_actions ?? {
+    pending: { count: 0, items: [] },
+    recent: { count: 0, items: [] },
+    comparisons: { count: 0, items: [] },
+    pending_approval_count: 0,
+  }
   const approvalSummaryError = approvalSummary.error
   const regime = data.regime
   const portfolioRisk = data.portfolio?.risk
@@ -904,9 +918,9 @@ export function Workspace() {
           signalLabel={approvalCount > 0 ? "Needs Review" : undefined}
         />
         <MetricCard
-          title="Recommendations"
-          value={data.recommendations.pending_actionable.count}
-          subtitle={`${approvalRecommendationCount} approval${approvalRecommendationCount !== 1 ? "s" : ""}`}
+          title="Courses Of Action"
+          value={courseOfActions.pending.count}
+          subtitle={`${courseOfActions.pending_approval_count || approvalRecommendationCount} approval${(courseOfActions.pending_approval_count || approvalRecommendationCount) !== 1 ? "s" : ""}`}
           signal={data.recommendations.blocked_warnings.length > 0 ? "warning" : null}
           signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
         />
@@ -952,6 +966,46 @@ export function Workspace() {
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {/* Course of Action Review */}
+        {(courseOfActions.pending.count > 0 || courseOfActions.recent.count > 0 || courseOfActions.comparisons.count > 0) && (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <GitBranch size={14} className="text-blue-500" />
+              Course of Action Review
+              <span className="ml-auto text-xs text-subtle">
+                {courseOfActions.pending.count} pending · {courseOfActions.comparisons.count} comparison{courseOfActions.comparisons.count !== 1 ? "s" : ""}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(courseOfActions.pending.items.length ? courseOfActions.pending.items : courseOfActions.recent.items).slice(0, 6).map(coa => (
+                <div key={`coa-${coa.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <DecisionStateBadge state={courseOfActionDecisionState(coa)} />
+                    <span className="font-semibold text-app">{coa.action.replace(/_/g, " ")}</span>
+                    {coa.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(coa.ticker)}`} state={{ from: "workspace" }} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
+                        {coa.ticker}
+                      </Link>
+                    )}
+                    <span className="ml-auto text-xs text-subtle">{coa.actionability?.replace(/_/g, " ") ?? "course"}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <EffectScopeBadge scope={coa.effect_scope ?? "internal_state"} />
+                    <QualityStateBadge state={coa.quality_state ?? coa.source_quality ?? "missing"} />
+                    <PolicyStateBadge state={coa.policy_state ?? coa.policy_gate_decision ?? "missing"} />
+                  </div>
+                  <p className="mt-2 text-xs text-muted line-clamp-2">
+                    {coa.rationale_summary || "No rationale summary captured yet."}
+                  </p>
+                  {coa.comparison_id && (
+                    <p className="mt-1 text-[11px] text-subtle">Comparison: {coa.comparison_id}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </section>
         )}
 
@@ -1344,6 +1398,9 @@ export function Workspace() {
         !data.recommendations.latest_weekly &&
         !data.recommendations.pending_actionable.count &&
         !data.recommendations.blocked_warnings.length &&
+        !courseOfActions.pending.count &&
+        !courseOfActions.recent.count &&
+        !courseOfActions.comparisons.count &&
         !approvalSummaryInitialLoading &&
         !approvalSummaryError &&
         !approvalCount &&

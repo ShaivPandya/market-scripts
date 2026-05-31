@@ -187,6 +187,27 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
                     "Recommendation", "recommendation:pending", {"approval_status": "pending", "as_of": "2026-05-05"}
                 )
             ],
+            [
+                _op_row(
+                    "CourseOfAction",
+                    "course_of_action:pending",
+                    {"approval_status": "pending", "action": "add", "ticker": "MU", "as_of": "2026-05-05"},
+                )
+            ],
+            [
+                _op_row(
+                    "CourseOfAction",
+                    "course_of_action:recent",
+                    {"approval_status": "none", "action": "watch", "ticker": "MU", "as_of": "2026-05-04"},
+                )
+            ],
+            [
+                _op_row(
+                    "CourseOfActionComparison",
+                    "course_of_action_comparison:1",
+                    {"status": "open", "objective": "Compare MU actions", "as_of": "2026-05-05"},
+                )
+            ],
             [_op_row("ActionItem", "action_item:1", {"ticker": "MU", "status": "open"})],
             [alert],
             [_op_row("OptimizationActionSnapshot", "optimization_snapshot:1", {"ticker": "MU", "action": "Trim Long"})],
@@ -211,6 +232,9 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
     assert all(OPERATIONAL_READ_MODEL_VIEW in sql for sql, _params in conn.execute_calls)
     assert [row["object_uid"] for row in bundle["latest_evaluations"]] == ["evaluation:new"]
     assert bundle["latest_daily_recommendation"]["object_uid"] == "recommendation:daily"
+    assert bundle["pending_course_of_actions"][0]["object_uid"] == "course_of_action:pending"
+    assert bundle["recent_course_of_actions"][0]["object_uid"] == "course_of_action:recent"
+    assert bundle["open_course_of_action_comparisons"][0]["object_uid"] == "course_of_action_comparison:1"
     assert bundle["optimizer_alerts"][0]["current_snapshot"]["object_uid"] == "optimization_snapshot:1"
     assert bundle["optimizer_alerts"][0]["source_freshness"]["risk"]["status"] == "ok"
     assert bundle["challenged_claims"][0]["object_uid"] == "claim:1"

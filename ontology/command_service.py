@@ -24,12 +24,15 @@ from ontology.object_service import OntologyObjectService
 from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
 from ontology.policy import Actor, NodeResource, PolicyDecision, actor_to_dict, admin_actor, require_allowed
 from ontology.schemas.identity import (
+    account_id,
     action_item_id,
     action_run_id,
     approval_id,
     audit_event_id,
     citation_id,
     company_financial_profile_id,
+    course_of_action_id,
+    course_of_action_rationale_id,
     document_artifact_id,
     equity_overview_id,
     evidence_id,
@@ -56,11 +59,13 @@ from ontology.schemas.identity import (
     trade_proposal_id,
     watch_trigger_id,
 )
+from ontology.schemas.objects import normalize_course_of_action_action
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
 logger = logging.getLogger(__name__)
 ACTIONABLE_ACTIONS = set(DECISION_ACTIONABLE_ACTIONS)
-FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
+COURSE_OF_ACTION_CREATE_ACTION_IDS = {"create_course_of_action", "create_recommendation"}
+FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", *COURSE_OF_ACTION_CREATE_ACTION_IDS}
 RESEARCH_ACTION_IDS = {
     "change_thesis_status",
     "create_catalyst",
@@ -373,6 +378,19 @@ class OntologyCommandService:
                 "policy_matched_rule": props.get("policy_matched_rule"),
             },
         )
+        if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
+            record = _dict(payload_dict.get("record") or payload_dict)
+            self._write_course_of_action_bundle(
+                record,
+                approval_object_id=approval_uid,
+                action_run_id=None,
+                actor=actor_to_dict(context.actor),
+                provenance_id=provenance_id,
+                input_hash=input_hash,
+                now=now,
+                decision_state="under_review",
+                approval_status="pending",
+            )
         if normalized_supersedes_id:
             self._write_audit(
                 "approval.replacement.created",
@@ -443,7 +461,7 @@ class OntologyCommandService:
                     "actor_roles": list(context.actor.roles),
                 },
                 object_service=self.objects,
-                raise_on_blocked=action_id != "create_recommendation",
+                raise_on_blocked=action_id not in COURSE_OF_ACTION_CREATE_ACTION_IDS,
             )
         except PolicyGateBlockedError as exc:
             raise OntologyCommandValidationError(str(exc)) from exc
@@ -1763,10 +1781,24 @@ class OntologyCommandService:
             )
             refs.append(_version_ref_from_row(replacement))
             return refs
-        if action_id == "create_recommendation":
+        if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
             record = _dict(payload.get("record") or payload)
             rec_key = str(record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record))
             rec_uid = recommendation_id(rec_key)
+            course_refs = self._write_course_of_action_bundle(
+                record,
+                approval_object_id=approval_object_id,
+                action_run_id=action_run_id,
+                recommendation_uid_value=rec_uid,
+                recommendation_key=rec_key,
+                actor=actor,
+                provenance_id=provenance_id,
+                input_hash=input_hash,
+                now=now,
+                decision_state="applied" if approval_object_id and action_run_id else "generated",
+                approval_status="approved" if approval_object_id else "none",
+            )
+            refs.extend(course_refs)
             row = self.objects.write_object(
                 "Recommendation",
                 rec_key,
@@ -1812,6 +1844,8 @@ class OntologyCommandService:
                     rec_key,
                     record,
                     approval_object_id=approval_object_id,
+                    course_of_action_uid_value=course_of_action_id(_course_of_action_key(record)),
+                    course_of_action_key=_course_of_action_key(record),
                     actor=actor,
                     provenance_id=provenance_id,
                     input_hash=input_hash,
@@ -1833,6 +1867,187 @@ class OntologyCommandService:
             return refs
         raise OntologyCommandValidationError(f"Ontology-primary action is not implemented: {action_id}")
 
+    def _write_course_of_action_bundle(
+        self,
+        record: Mapping[str, Any],
+        *,
+        approval_object_id: str | None,
+        action_run_id: str | None,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+        now: str,
+        decision_state: str,
+        approval_status: str,
+        recommendation_uid_value: str | None = None,
+        recommendation_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        refs: list[dict[str, Any]] = []
+        course_key = _course_of_action_key(record)
+        course_uid = course_of_action_id(course_key)
+        action = _course_of_action_action(record.get("action"))
+        actionability = _course_of_action_actionability(record)
+        rationale = str(record.get("rationale") or record.get("rationale_summary") or "").strip()
+        gate = _dict(record.get("policy_gate_result"))
+        gate_id = str(record.get("policy_gate_result_id") or gate.get("policy_gate_result_id") or "").strip()
+        if gate_id.startswith("policy_gate_result:"):
+            gate_id = gate_id.split(":", 1)[1]
+        row = self.objects.write_object(
+            "CourseOfAction",
+            course_key,
+            {
+                "course_of_action_id": course_key,
+                "idempotency_key": record.get("idempotency_key") or course_key,
+                "source_kind": str(record.get("source_kind") or record.get("report_type") or "agent"),
+                "source_type": record.get("source_type") or record.get("report_type") or "agent",
+                "source_id": record.get("source_id") or record.get("report_id") or record.get("idempotency_key"),
+                "decision_type": record.get("decision_type") or "investment_decision",
+                "action": action,
+                "actionability": actionability,
+                "decision_state": decision_state,
+                "status": record.get("status") or record.get("recommendation_status"),
+                "ticker": _optional_ticker(record),
+                "instrument_id": instrument_id(record.get("instrument") or record.get("ticker") or course_key),
+                "position_uid": record.get("position_uid"),
+                "account_id": record.get("account_id"),
+                "portfolio_id": record.get("portfolio_id"),
+                "policy_id": record.get("policy_id"),
+                "policy_gate_result_id": gate_id or None,
+                "policy_gate_decision": gate.get("decision") or record.get("policy_gate_decision"),
+                "approval_id": approval_object_id,
+                "approval_required": approval_object_id is not None or bool(record.get("approval_required")),
+                "approval_status": approval_status,
+                "action_run_id": action_run_id,
+                "confidence": record.get("confidence"),
+                "horizon": record.get("horizon"),
+                "rationale_summary": rationale or None,
+                "rationale_hash": _stable_hash(rationale) if rationale else None,
+                "source_quality": record.get("critical_data_quality") or record.get("source_quality"),
+                "sizing_summary": _dict(record.get("sizing_summary") or record.get("sizing")),
+                "effect_summary": _dict(record.get("effect_summary") or record.get("trade_proposal")),
+                "risk_summary": _dict(record.get("risk_summary") or record.get("risk")),
+                "policy_summary": _dict(record.get("policy_summary") or gate),
+                "decision_quality": record.get("decision_quality"),
+                "decision_quality_gate": record.get("decision_quality_gate"),
+                "payload": dict(record),
+                "as_of": record.get("as_of") or now,
+                "created_at": record.get("created_at") or now,
+                "updated_at": now,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        refs.append(_version_ref_from_row(row))
+        if rationale:
+            rationale_key = f"{course_key}:rationale:{_stable_hash(rationale)}"
+            rationale_row = self.objects.write_object(
+                "CourseOfActionRationale",
+                rationale_key,
+                {
+                    "rationale_id": rationale_key,
+                    "course_of_action_id": course_uid,
+                    "summary": rationale,
+                    "evidence_summary": record.get("evidence_summary"),
+                    "rationale_hash": _stable_hash(rationale),
+                    "created_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(rationale_row))
+            self.objects.write_relation(
+                course_uid,
+                course_of_action_rationale_id(rationale_key),
+                "course_of_action_has_rationale",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+        relation_writes: list[tuple[str, str, str, dict[str, Any]]] = []
+        if record.get("account_id"):
+            relation_writes.append(
+                (
+                    course_uid,
+                    account_id(record["account_id"]),
+                    "course_of_action_targets_account",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                )
+            )
+        if record.get("portfolio_id"):
+            relation_writes.append(
+                (
+                    course_uid,
+                    portfolio_id(record["portfolio_id"]),
+                    "course_of_action_targets_portfolio",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                )
+            )
+        ticker_or_instrument = record.get("instrument") or record.get("ticker")
+        if ticker_or_instrument:
+            relation_writes.append(
+                (
+                    course_uid,
+                    instrument_id(ticker_or_instrument),
+                    "course_of_action_targets_instrument",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                )
+            )
+        if recommendation_uid_value:
+            relation_writes.append(
+                (
+                    course_uid,
+                    recommendation_uid_value,
+                    "course_of_action_links_recommendation",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                )
+            )
+        if approval_object_id:
+            relation_writes.extend(
+                [
+                    (
+                        course_uid,
+                        approval_object_id,
+                        "course_of_action_requires_approval",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "approval_id": approval_object_id},
+                    ),
+                    (
+                        approval_object_id,
+                        course_uid,
+                        "approval_targets_course_of_action",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "target_object_type": "CourseOfAction"},
+                    ),
+                ]
+            )
+        if action_run_id:
+            relation_writes.append(
+                (
+                    action_run_id,
+                    course_uid,
+                    "action_run_applies_course_of_action",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                )
+            )
+        for source, target, relation_type, properties in relation_writes:
+            self.objects.write_relation(
+                source,
+                target,
+                relation_type,
+                properties,
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+        return refs
+
     def _write_recommendation_lineage(
         self,
         recommendation_uid_value: str,
@@ -1840,6 +2055,8 @@ class OntologyCommandService:
         record: Mapping[str, Any],
         *,
         approval_object_id: str | None,
+        course_of_action_uid_value: str | None,
+        course_of_action_key: str | None,
         actor: Mapping[str, Any],
         provenance_id: str,
         input_hash: str,
@@ -1921,6 +2138,17 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
+            if course_of_action_uid_value:
+                self.objects.write_relation(
+                    course_of_action_uid_value,
+                    position_risk_snapshot_id(snapshot_id),
+                    "course_of_action_uses_position_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
         if record.get("portfolio_risk_snapshot_id"):
             snapshot_id = str(record["portfolio_risk_snapshot_id"])
             risk_row = self.objects.write_object(
@@ -1951,6 +2179,17 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
+            if course_of_action_uid_value:
+                self.objects.write_relation(
+                    course_of_action_uid_value,
+                    portfolio_risk_snapshot_id(snapshot_id),
+                    "course_of_action_uses_portfolio_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
 
         for relation_type, evidence_items in (
             ("recommendation_supported_by_evidence", _list(record.get("evidence"))),
@@ -1989,6 +2228,19 @@ class OntologyCommandService:
                     provenance=provenance_id,
                     input_hash=input_hash,
                 )
+                if course_of_action_uid_value:
+                    self.objects.write_relation(
+                        course_of_action_uid_value,
+                        evidence_uid_value,
+                        "course_of_action_supported_by_evidence"
+                        if relation_type == "recommendation_supported_by_evidence"
+                        else "course_of_action_contradicted_by_evidence",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "relation_role": role},
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=input_hash,
+                    )
                 citation = _dict(item).get("citation") if isinstance(item, Mapping) else None
                 citation_payload = _dict(citation)
                 if citation_payload:
@@ -2031,6 +2283,7 @@ class OntologyCommandService:
                 {
                     "proposal_id": proposal_key,
                     "recommendation_id": recommendation_key,
+                    "course_of_action_id": course_of_action_key,
                     "account_id": record.get("account_id"),
                     "portfolio_id": record.get("portfolio_id"),
                     "action": str(record.get("action") or "review"),
@@ -3262,8 +3515,8 @@ def _entity_type_for_action(action_id: str) -> str:
         return "watch_trigger_check"
     if action_id == "update_watch_trigger_definition":
         return "watch_trigger_definition"
-    if action_id == "create_recommendation":
-        return "recommendation"
+    if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
+        return "course_of_action"
     if action_id == "create_portfolio_news_digest":
         return "news_digest_create"
     if action_id == "delete_portfolio_news_digest":
@@ -3285,7 +3538,7 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         trigger_id = payload.get("trigger_id") or payload.get("id")
         if trigger_id:
             return _normalize_watch_trigger_uid(trigger_id), "WatchTrigger"
-    if action_id == "create_recommendation":
+    if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         record = _dict(payload.get("record") or payload)
         ticker = _ticker_from_payload(record)
     if ticker and action_id == "save_management_quality_content":
@@ -3296,9 +3549,9 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         return thesis_id(ticker), "Thesis"
     if ticker and action_id in {"update_portfolio_positions", "update_hedge_positions"}:
         return portfolio_id(payload.get("portfolio_id") or "default"), "Portfolio"
-    if action_id == "create_recommendation":
+    if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         rec = _dict(payload.get("record") or payload)
-        return instrument_id(rec.get("instrument") or rec.get("ticker") or _stable_hash(rec)), "Instrument"
+        return course_of_action_id(_course_of_action_key(rec)), "CourseOfAction"
     if action_id == "delete_portfolio_news_digest":
         digest_id = str(payload.get("digest_id") or "").strip()
         if digest_id:
@@ -3319,7 +3572,7 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
     if action_id in {"save_management_quality_content", "save_overview_content", "save_thesis_content"}:
         _non_blank(payload.get("ticker"), "ticker")
         _non_blank(payload.get("content"), "content")
-    if action_id == "create_recommendation":
+    if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         record = _dict(payload.get("record") or payload)
         _non_blank(record.get("action"), "action")
     if action_id == "create_analyst_feedback":
@@ -3329,7 +3582,7 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
 
 
 def _normalize_create_recommendation_payload(action_id: str, payload: dict[str, Any]) -> None:
-    if action_id != "create_recommendation":
+    if action_id not in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         return
     record = _dict(payload.get("record") or payload)
     action = normalize_action(record.get("action"))
@@ -3362,6 +3615,42 @@ def _normalize_create_recommendation_payload(action_id: str, payload: dict[str, 
             _apply_recommendation_gate(record, gate, decision_quality)
             record["approval_required"] = False
     payload["record"] = record
+
+
+def _course_of_action_key(record: Mapping[str, Any]) -> str:
+    return str(
+        record.get("course_of_action_id")
+        or record.get("recommendation_id")
+        or record.get("idempotency_key")
+        or _stable_hash(record)
+    )
+
+
+def _course_of_action_action(value: Any) -> str:
+    normalized = normalize_course_of_action_action(normalize_action(value))
+    if normalized == "reduce":
+        return "trim"
+    if normalized == "hedge":
+        return "rebalance"
+    if normalized in {"avoid", "do_nothing"}:
+        return "watch" if normalized == "avoid" else "hold"
+    if normalized not in {"hold", "watch", "buy", "add", "sell", "trim", "exit", "short", "cover", "rebalance"}:
+        return "watch"
+    return normalized
+
+
+def _course_of_action_actionability(record: Mapping[str, Any]) -> str:
+    action = normalize_action(record.get("action"))
+    status = str(record.get("recommendation_status") or record.get("status") or "").strip().lower()
+    if status == "blocked":
+        return "blocked_by_policy"
+    if action in ACTIONABLE_ACTIONS:
+        return "actionable"
+    if action in {"hold", "do_nothing"}:
+        return "do_nothing"
+    if action in {"watch", "avoid"}:
+        return "watch_only"
+    return "missing_inputs"
 
 
 def _recommendation_status_value(value: Any) -> str:
@@ -3474,7 +3763,7 @@ def _recommendation_fallback_action(original_action: str) -> str:
 
 
 def _recommendation_should_persist_without_approval(action_id: str, payload: Mapping[str, Any]) -> bool:
-    if action_id != "create_recommendation":
+    if action_id not in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         return False
     record = _dict(payload.get("record") or payload)
     return normalize_action(record.get("action")) not in ACTIONABLE_ACTIONS
