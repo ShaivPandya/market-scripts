@@ -92,8 +92,12 @@ def test_source_health_stale_required_affects_overall_quality():
 
     sources = _sources(payload)
     assert sources["market_breadth:sp500:1y"]["status"] == "stale"
+    assert sources["market_breadth:sp500:1y"]["reliability_tier"] == "critical"
+    assert sources["market_breadth:sp500:1y"]["sla_breach"] is True
     assert payload["overall_quality"] == "stale"
     assert payload["counts"]["required_stale"] == 1
+    assert payload["counts"]["critical_stale"] == 1
+    assert payload["tier_counts"]["critical"] >= 1
 
 
 def test_source_health_missing_required_source_does_not_throw():
@@ -174,7 +178,7 @@ def test_approval_source_health_blocks_required_missing_source():
     assert any(row["status"] == "missing" and row["required"] is True for row in review["blockers"])
 
 
-def test_approval_source_health_warns_on_required_stale_source():
+def test_approval_source_health_blocks_critical_stale_source():
     now = datetime(2026, 5, 14, 18, 0)
     payload = build_workspace_source_health(
         now=now,
@@ -187,9 +191,29 @@ def test_approval_source_health_warns_on_required_stale_source():
 
     review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
 
+    assert review["status"] == "blocked"
+    assert review["blockers"]
+    assert review["blockers"][0]["id"] == "market_breadth:sp500:1y"
+    assert review["blockers"][0]["reliability_tier"] == "critical"
+
+
+def test_approval_source_health_warns_on_standard_stale_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=now - timedelta(hours=1)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(days=3)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
     assert review["status"] == "warning"
     assert review["blockers"] == []
-    assert any(row["id"] == "market_breadth:sp500:1y" for row in review["warnings"])
+    assert any(row["id"] == "signal_aggregator:current:v1" for row in review["warnings"])
+    assert review["warnings"][0]["reliability_tier"] == "standard"
 
 
 def test_approval_source_health_blocks_explicit_stale_dependency():

@@ -521,7 +521,7 @@ def test_workspace_source_health_panel_is_wired():
 
     assert "SourceHealthPanel" in workspace
     assert "Source Health" in workspace
-    assert "stale required" in workspace
+    assert "critical stale" in workspace
     assert "optional degraded" in workspace
     assert "theme-badge-error" in workspace
 

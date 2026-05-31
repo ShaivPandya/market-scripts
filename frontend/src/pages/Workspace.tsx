@@ -24,6 +24,8 @@ import {
   type PolicyGateResult,
   type ProvenanceSelector,
   type RecommendationRecord,
+  type SourceHealth,
+  type SourceHealthSource,
   type TriggerMutationBody,
 } from "@/lib/api"
 import {
@@ -119,37 +121,6 @@ interface WorkspaceData {
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   recent_workflow_runs: WorkflowRun[]
-}
-
-interface SourceHealth {
-  generated_at: string
-  overall_quality: string
-  counts: Record<string, number>
-  domains: SourceHealthDomain[]
-}
-
-interface SourceHealthDomain {
-  domain: string
-  label: string
-  overall_quality: string
-  counts: Record<string, number>
-  sources: SourceHealthSource[]
-}
-
-interface SourceHealthSource {
-  id: string
-  domain: string
-  source_name: string
-  snapshot_key?: string | null
-  status: string
-  quality_state: string
-  required: boolean
-  as_of?: string | null
-  fetched_at?: string | null
-  freshness_timestamp?: string | null
-  stale?: boolean
-  error?: string | null
-  detail?: string | null
 }
 
 interface ActionItem {
@@ -305,8 +276,22 @@ function sourceHealthTimestamp(source: SourceHealthSource): string {
   return formatTime(source.freshness_timestamp ?? source.as_of ?? source.fetched_at)
 }
 
+function reliabilityTierLabel(tier: string | null | undefined): string {
+  const value = String(tier || "standard").replace(/_/g, " ")
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function reliabilityTierBadgeClass(tier: string | null | undefined): string {
+  const value = String(tier || "standard").toLowerCase()
+  if (value === "critical") return "theme-badge-error"
+  if (value === "standard") return "theme-badge-warning"
+  if (value === "supplemental") return "theme-badge-neutral"
+  return "theme-badge-neutral"
+}
+
 function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
   const counts = sourceHealth.counts ?? {}
+  const tierCounts = sourceHealth.tier_counts ?? {}
   const domains = sourceHealth.domains ?? []
   return (
     <section className="theme-surface mt-6 rounded-xl p-4">
@@ -323,9 +308,11 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
       <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted">
         <span>{counts.total ?? 0} sources</span>
         <span>{counts.ok ?? 0} ok</span>
-        <span>{counts.required_stale ?? 0} stale required</span>
-        <span>{counts.required_failed ?? 0} required failed</span>
+        <span>{counts.critical_stale ?? 0} critical stale</span>
+        <span>{counts.critical_failed ?? 0} critical failed</span>
+        <span>{counts.sla_breach ?? 0} SLA breach</span>
         <span>{counts.optional_degraded ?? 0} optional degraded</span>
+        {(tierCounts.critical ?? 0) > 0 && <span>{tierCounts.critical} critical tier</span>}
       </div>
       {domains.length === 0 ? (
         <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
@@ -355,7 +342,11 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-app">{source.source_name.replace(/_/g, " ")}</span>
+                        <span className={cn("theme-badge", reliabilityTierBadgeClass(source.reliability_tier))}>
+                          {reliabilityTierLabel(source.reliability_tier)}
+                        </span>
                         <span className="text-subtle">{source.required ? "required" : "optional"}</span>
+                        {source.sla_breach && <span className="text-red-600 dark:text-red-400">SLA breach</span>}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-subtle">
                         <span>{sourceHealthTimestamp(source)}</span>
@@ -430,6 +421,12 @@ function ApprovalSourceHealthPanel({ review }: { review?: ApprovalRecord["source
             </div>
             <div className="flex flex-wrap gap-2 text-current/75 sm:justify-end">
               <span>{sourceHealthLabel(issue.status)}</span>
+              {issue.reliability_tier && (
+                <span className={cn("theme-badge", reliabilityTierBadgeClass(issue.reliability_tier))}>
+                  {reliabilityTierLabel(issue.reliability_tier)}
+                </span>
+              )}
+              {issue.sla_breach && <span>SLA breach</span>}
               <span>{issue.required ? "required" : "optional"}</span>
               <span>{formatTime(issue.freshness_timestamp ?? issue.as_of ?? issue.fetched_at)}</span>
             </div>

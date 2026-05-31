@@ -31,19 +31,26 @@ test("renders workspace common operating picture and enforces approval note gati
   await page.goto("/workspace")
 
   await expect(page.getByRole("heading", { name: "Workspace" })).toBeVisible()
-  await expect(page.getByText("Market Regime")).toBeVisible()
+  await expect(page.getByText("Market Regime", { exact: true })).toBeVisible()
   await expect(page.getByText("Risk-on")).toBeVisible()
   await expect(page.getByText("Portfolio Risk")).toBeVisible()
   await expect(page.getByRole("heading", { name: /Pending Approvals/ })).toBeVisible()
   await expect(page.getByText("1/2 approvals recorded")).toBeVisible()
   await expect(page.getByText("Portfolio manager (portfolio:default)")).toBeVisible()
 
+  await expect(page.getByRole("heading", { name: "Source Health" })).toBeVisible()
+  await expect(page.getByText("1 critical stale")).toBeVisible()
+  await expect(page.getByText("SLA breach").first()).toBeVisible()
+  await expect(page.getByText("Critical").first()).toBeVisible()
+
   await page.getByRole("button", { name: "Review" }).click()
 
-  await expect(page.getByRole("dialog", { name: "Review Approval" })).toBeVisible()
-  await expect(page.getByText("Create internal action item")).toBeVisible()
+  const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })
+  await expect(reviewDialog).toBeVisible()
+  await expect(reviewDialog.getByText("Create internal action item")).toBeVisible()
+  await expect(reviewDialog.getByText("standard source needs review")).toBeVisible()
 
-  const approveButton = page.getByRole("button", { name: "Approve & Apply" })
+  const approveButton = reviewDialog.getByRole("button", { name: "Approve & Apply" })
   await expect(approveButton).toBeDisabled()
 
   await page.getByLabel("Decision note").fill("Reviewed staged research follow-up for smoke coverage.")

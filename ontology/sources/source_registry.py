@@ -48,12 +48,17 @@ class SourceRegistryEntry:
     freshness_sla_seconds: int | None
     required: bool
     fallback_source_id: str | None = None
+    reliability_tier: str | None = None
     snapshot_key: str | None = None
     raw_module: str | None = None
     raw_function: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from ontology.sources.reliability import derive_reliability_tier
+
+        data = asdict(self)
+        data["reliability_tier"] = derive_reliability_tier(self)
+        return data
 
 
 def _entry(
@@ -65,6 +70,7 @@ def _entry(
     required: bool,
     *,
     fallback_source_id: str | None = None,
+    reliability_tier: str | None = None,
     snapshot_key: str | None = None,
     raw_module: str | None = None,
     raw_function: str | None = None,
@@ -77,6 +83,7 @@ def _entry(
         freshness_sla_seconds=freshness_sla_seconds,
         required=required,
         fallback_source_id=fallback_source_id,
+        reliability_tier=reliability_tier,
         snapshot_key=snapshot_key,
         raw_module=raw_module,
         raw_function=raw_function,
@@ -382,6 +389,12 @@ def validate_source_registry(entries: Mapping[str, SourceRegistryEntry] | None =
             errors.append(f"{source_id}: fallback_source_id cannot point to itself")
         if entry.fallback_source_id and entry.fallback_source_id not in registry:
             errors.append(f"{source_id}: fallback_source_id {entry.fallback_source_id} is not registered")
+        if entry.reliability_tier is not None:
+            from ontology.sources.reliability import RELIABILITY_TIERS
+
+            tier = str(entry.reliability_tier).strip().lower()
+            if tier not in RELIABILITY_TIERS:
+                errors.append(f"{source_id}: reliability_tier must be one of {sorted(RELIABILITY_TIERS)}")
     if errors:
         raise ValueError("; ".join(errors))
 

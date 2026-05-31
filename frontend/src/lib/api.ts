@@ -174,11 +174,51 @@ export interface ApprovalSourceHealthIssue {
   status?: string | null
   quality_state?: string | null
   required?: boolean
+  reliability_tier?: string | null
+  sla_breach?: boolean
+  gate_action?: string | null
   as_of?: string | null
   fetched_at?: string | null
   freshness_timestamp?: string | null
   detail?: string | null
   reason?: string | null
+}
+
+export interface SourceHealthSource {
+  id: string
+  domain: string
+  source_name: string
+  snapshot_key?: string | null
+  status: string
+  quality_state: string
+  required: boolean
+  reliability_tier?: string | null
+  sla_seconds?: number | null
+  sla_breach?: boolean
+  gate_action?: string | null
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness_timestamp?: string | null
+  stale?: boolean
+  error?: string | null
+  detail?: string | null
+  source_registry?: Record<string, unknown> | null
+}
+
+export interface SourceHealthDomain {
+  domain: string
+  label: string
+  overall_quality: string
+  counts: Record<string, number>
+  sources: SourceHealthSource[]
+}
+
+export interface SourceHealth {
+  generated_at: string
+  overall_quality: string
+  counts: Record<string, number>
+  tier_counts?: Record<string, number>
+  domains: SourceHealthDomain[]
 }
 
 export interface ApprovalSourceHealthReview {
