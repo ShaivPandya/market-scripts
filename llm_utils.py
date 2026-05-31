@@ -4,6 +4,7 @@ import base64
 import copy
 import importlib
 import os
+import re
 import threading
 from collections.abc import Sequence
 from typing import Any
@@ -1213,32 +1214,30 @@ def _gemini_reasoning_efforts_for_model(model: str | None = None) -> tuple[str, 
 def _anthropic_reasoning_efforts_for_model(model: str | None = None) -> tuple[str, ...]:
     normalized = (model or "").strip().lower()
     efforts = [REASONING_NONE, REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH]
-    if "claude-opus-4-7" in normalized:
+    family_minor = _anthropic_claude_4_family_minor(normalized)
+    if family_minor and family_minor[0] == "opus" and family_minor[1] >= 7:
         efforts.append(REASONING_XHIGH)
-    if any(
-        marker in normalized
-        for marker in (
-            "claude-mythos-preview",
-            "claude-opus-4-7",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-        )
-    ):
+    if "claude-mythos-preview" in normalized or _anthropic_supports_adaptive_thinking(normalized):
         efforts.append(REASONING_MAX)
     return tuple(efforts)
 
 
+def _anthropic_claude_4_family_minor(model: str) -> tuple[str, int] | None:
+    match = re.search(r"\bclaude-(opus|sonnet)-4-(\d+)\b", model)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
+
 def _anthropic_supports_adaptive_thinking(model: str) -> bool:
     normalized = (model or "").strip().lower()
-    return any(
-        marker in normalized
-        for marker in (
-            "claude-mythos-preview",
-            "claude-opus-4-7",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-        )
-    )
+    if "claude-mythos-preview" in normalized:
+        return True
+    family_minor = _anthropic_claude_4_family_minor(normalized)
+    if not family_minor:
+        return False
+    family, minor = family_minor
+    return family in {"opus", "sonnet"} and minor >= 6
 
 
 def _anthropic_manual_thinking_budget(*, max_tokens: int, effort: str) -> int:
