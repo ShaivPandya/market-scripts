@@ -2,7 +2,6 @@
 
 ## Branch policy
 
-All work goes directly on the `upgrade` branch. Do NOT create feature branches.
-Do NOT use the `cursor/<name>-0dfb` branch naming template.
-Do NOT open separate pull requests per task — commit directly to `upgrade`.
-`upgrade` is the active development branch. `main` is stable/released only.
+Commit directly to the branch that is currently checked out. Do not create new branches unless explicitly asked.
+Do not use the `cursor/<name>-0dfb` branch naming template.
+Do not open separate pull requests per task unless explicitly asked — push to the active branch.
