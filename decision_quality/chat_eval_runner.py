@@ -357,6 +357,114 @@ def _workflow_tool_calls(done_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [call for call in tool_calls if isinstance(call, dict)] if isinstance(tool_calls, list) else []
 
 
+def _routing_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+) -> None:
+    expectations = case.data.get("routing_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    router_meta = run.done_payload.get("intent_router") if isinstance(run.done_payload, dict) else None
+    applied = router_meta.get("applied") if isinstance(router_meta, dict) else None
+    if not isinstance(applied, dict):
+        checks.append(_check("intent_router_meta_present", False, "done payload missing intent_router.applied"))
+        return
+
+    checks.append(_check("intent_router_meta_present", True, "intent_router metadata present"))
+
+    expected_intent = expectations.get("intent_class")
+    if expected_intent is not None:
+        actual_intent = str(applied.get("intent_class") or "")
+        checks.append(
+            _check(
+                "routing_intent_class",
+                actual_intent == str(expected_intent),
+                f"expected={expected_intent!r}, actual={actual_intent!r}",
+            )
+        )
+
+    if expectations.get("run_hidden_dq") is not None:
+        expected = bool(expectations.get("run_hidden_dq"))
+        actual = bool(applied.get("run_hidden_dq"))
+        checks.append(
+            _check(
+                "routing_run_hidden_dq",
+                actual == expected,
+                f"expected={expected}, actual={actual}",
+            )
+        )
+
+    if expectations.get("run_opportunity_preflight") is not None:
+        expected = bool(expectations.get("run_opportunity_preflight"))
+        actual = bool(applied.get("run_opportunity_preflight"))
+        checks.append(
+            _check(
+                "routing_run_opportunity_preflight",
+                actual == expected,
+                f"expected={expected}, actual={actual}",
+            )
+        )
+
+    expected_workflow = expectations.get("workflow_name")
+    if expected_workflow is not None:
+        actual_workflow = applied.get("workflow_name")
+        checks.append(
+            _check(
+                "routing_workflow_name",
+                str(actual_workflow or "") == str(expected_workflow),
+                f"expected={expected_workflow!r}, actual={actual_workflow!r}",
+            )
+        )
+
+    required_tools = [str(item) for item in expectations.get("required_tool_names") or []]
+    if required_tools:
+        applied_tools = [str(item) for item in applied.get("tool_names") or []]
+        missing = [name for name in required_tools if name not in applied_tools]
+        checks.append(
+            _check(
+                "routing_required_tool_names",
+                not missing,
+                f"missing={missing}; applied={applied_tools}",
+            )
+        )
+
+    allowed_fallback_reasons = expectations.get("allowed_fallback_reasons")
+    if allowed_fallback_reasons is not None:
+        fallback_reason = applied.get("fallback_reason")
+        allowed = {str(item) for item in allowed_fallback_reasons}
+        if fallback_reason is None:
+            checks.append(_check("routing_fallback_reason", True, "no fallback applied"))
+        else:
+            checks.append(
+                _check(
+                    "routing_fallback_reason",
+                    str(fallback_reason) in allowed,
+                    f"fallback_reason={fallback_reason!r}, allowed={sorted(allowed)}",
+                )
+            )
+
+    min_confidence = expectations.get("min_confidence")
+    if min_confidence is not None:
+        try:
+            threshold = float(min_confidence)
+        except (TypeError, ValueError):
+            threshold = 0.0
+        try:
+            confidence = float(applied.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        checks.append(
+            _check(
+                "routing_min_confidence",
+                confidence >= threshold,
+                f"confidence={confidence}, min={threshold}",
+            )
+        )
+
+
 def _append_workflow_expectation_checks(
     checks: list[dict[str, Any]],
     *,
@@ -503,6 +611,7 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
             )
 
     _append_workflow_expectation_checks(checks, case=case, run=run, text=text)
+    _routing_expectation_checks(checks, case=case, run=run)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0

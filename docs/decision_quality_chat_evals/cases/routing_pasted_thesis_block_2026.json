@@ -1,0 +1,27 @@
+{
+  "id": "routing_pasted_thesis_block_2026",
+  "status": "review",
+  "as_of_date": "2026-05-31",
+  "user_message": "What do you think of this idea?\n\nRevenue is growing 18% with expanding margins. The stock trades at 22x forward earnings versus peers at 28x. Our target price is $145 with upside if the catalyst on regulatory approval clears in Q3. Key risk is capex overspend and weaker cash flow. The moat is distribution scale and switching costs. FCF conversion should improve next year.",
+  "screen_context": null,
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
+    "get_dossier": {"ticker": "STUB", "summary": "Pasted thesis routing eval."},
+    "get_thesis": {"ticker": "STUB", "content": "Pasted block"},
+    "get_thesis_evaluations": {"ticker": "STUB", "evaluations": []},
+    "get_position_valuation": {"ticker": "STUB", "valuation": "stub"},
+    "run_chart": {"ticker": "STUB", "technical_read": "stub"},
+    "get_price_volume_signals": {},
+    "search_knowledge_base": {"results": []},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": ["get_thesis"]
+  },
+  "expected_tool_names": ["get_thesis"],
+  "required_points": [{"label": "thesis framing", "any_terms": ["thesis", "idea", "risk", "catalyst", "watch", "research"]}],
+  "judge_min_score": 12
+}

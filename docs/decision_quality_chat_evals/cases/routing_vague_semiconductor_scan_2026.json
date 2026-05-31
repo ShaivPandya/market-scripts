@@ -1,0 +1,23 @@
+{
+  "id": "routing_vague_semiconductor_scan_2026",
+  "status": "review",
+  "as_of_date": "2026-05-31",
+  "user_message": "Scan semiconductors for anything interesting right now?",
+  "screen_context": null,
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
+    "get_price_volume_signals": {},
+    "search_knowledge_base": {"results": []},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "routing_expectations": {
+    "intent_class": "opportunity_discovery",
+    "run_hidden_dq": false,
+    "run_opportunity_preflight": true,
+    "required_tool_names": []
+  },
+  "expected_tool_names": [],
+  "required_points": [{"label": "triage tone", "any_terms": ["research", "watch", "scan", "semiconductor", "idea"]}],
+  "forbidden_patterns": ["buy now", "add now"],
+  "judge_min_score": 12
+}

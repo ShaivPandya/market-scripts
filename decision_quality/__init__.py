@@ -8,6 +8,12 @@ from decision_quality.actions import (
 )
 from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
+from decision_quality.intent_router import (
+    RouteDecision,
+    build_regex_route_decision,
+    build_route_context,
+    resolve_agent_route,
+)
 from decision_quality.models import (
     DecisionQuality,
     DecisionQualityGate,
@@ -29,10 +35,14 @@ __all__ = [
     "DecisionQuality",
     "DecisionQualityGate",
     "DecisionQualityGateReason",
+    "RouteDecision",
     "OpportunityCandidate",
     "OpportunityCandidateGate",
     "apply_decision_quality_gates",
     "apply_opportunity_candidate_gates",
+    "build_regex_route_decision",
+    "build_route_context",
+    "resolve_agent_route",
     "decision_quality_schema",
     "normalize_action",
     "opportunity_candidate_schema",

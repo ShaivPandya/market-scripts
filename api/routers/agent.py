@@ -53,6 +53,12 @@ from api.routers.auth import require_actor
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
+from decision_quality.intent_router import (
+    RouteDecision,
+    build_regex_route_decision,
+    build_route_context,
+    resolve_agent_route,
+)
 from decision_quality.models import (
     DecisionQuality,
     DecisionQualityGate,
@@ -878,6 +884,11 @@ def _select_tool_names(user_text: str) -> list[str]:
 
     stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
     ticker_candidates = [m for m in _TICKER_RX.findall(user_text or "") if m not in stop and len(m) >= 2]
+    if not ticker_candidates:
+        for alias, ticker in sorted(_COMPANY_TICKER_ALIASES.items(), key=lambda item: -len(item[0])):
+            if re.search(rf"\b{re.escape(alias)}\b", text):
+                ticker_candidates = [ticker]
+                break
     if ticker_candidates:
         add(
             "get_portfolio",
@@ -1423,6 +1434,47 @@ def _detect_workflow(
                 ticker = candidates[0] if candidates else screen_ticker.strip().upper() or None
             return wf_name, ticker
     return None, None
+
+
+def _resolve_chat_route(
+    *,
+    user_text: str,
+    screen_context: ScreenContextModel | None,
+    recent_conversation: list[dict[str, Any]] | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
+    llm_credentials: tuple[str, str] | None = None,
+    reasoning_effort: str | None = None,
+) -> tuple[RouteDecision, dict[str, Any]]:
+    regex_baseline = build_regex_route_decision(
+        user_text=user_text,
+        select_tool_names=_select_tool_names,
+        detect_workflow=_detect_workflow,
+        should_run_hidden_dq=_should_run_decision_quality_chat,
+        should_run_opportunity_preflight=_should_run_opportunity_candidate_preflight,
+        screen_context=screen_context,
+    )
+    context = build_route_context(
+        user_text=user_text,
+        screen_context=screen_context,
+        recent_conversation=recent_conversation,
+        opportunity_candidate_metadata=opportunity_candidate_metadata,
+        allowed_tool_names=_tool_names(),
+        workflow_hints=list(AVAILABLE_WORKFLOWS.keys()),
+    )
+    system_prompt: str | None = None
+    try:
+        system_prompt = _load_required_prompt_file("intent_router.md")
+    except ConfigurationError:
+        system_prompt = None
+    provider, api_key = llm_credentials if llm_credentials else (None, None)
+    return resolve_agent_route(
+        context=context,
+        regex_baseline=regex_baseline,
+        provider=provider,
+        api_key=api_key,
+        system_prompt=system_prompt,
+        reasoning_effort=reasoning_effort,
+    )
 
 
 def _tool_call_signature(name: str, args: dict) -> str:
@@ -2489,8 +2541,22 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         )
 
     casual = _is_casual(req.message)
-    workflow_name, workflow_ticker = _detect_workflow(req.message, req.screen_context)
     llm_credentials: tuple[str, str] | None = None
+    route_decision = build_regex_route_decision(
+        user_text=req.message,
+        select_tool_names=_select_tool_names,
+        detect_workflow=_detect_workflow,
+        should_run_hidden_dq=_should_run_decision_quality_chat,
+        should_run_opportunity_preflight=_should_run_opportunity_candidate_preflight,
+        screen_context=req.screen_context,
+    )
+    route_meta: dict[str, Any] = {
+        "enabled": False,
+        "applied_source": "regex",
+        "regex_baseline": route_decision.to_meta(),
+    }
+    workflow_name = route_decision.workflow_name
+    workflow_ticker = route_decision.workflow_ticker
     if workflow_name and req.allow_workflow_handoff:
         provider_label = "deferred"
         active_tool_names: list[str] = []
@@ -2501,14 +2567,26 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         except ValueError as exc:
             raise ConfigurationError(str(exc)) from exc
         provider_label = provider
-        active_tool_names = [] if casual else _select_tool_names(req.message)
+        active_tool_names = [] if casual else list(route_decision.tool_names)
         tool_defs = _tool_definitions_from_names(provider, active_tool_names)
         if not casual:
             llm_credentials = _read_llm_api_key()
+            route_decision, route_meta = _resolve_chat_route(
+                user_text=req.message,
+                screen_context=req.screen_context,
+                llm_credentials=llm_credentials,
+                reasoning_effort=_chat_reasoning_effort(provider, req.response_preferences),
+            )
+            workflow_name = route_decision.workflow_name
+            workflow_ticker = route_decision.workflow_ticker
+            if not (workflow_name and req.allow_workflow_handoff):
+                active_tool_names = list(route_decision.tool_names)
+                tool_defs = _tool_definitions_from_names(provider, active_tool_names)
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
-        "agent_chat provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
+        "agent_chat provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s "
+        "route_source=%s route_intent=%s route_confidence=%.2f",
         provider_label,
         casual,
         workflow_name,
@@ -2517,6 +2595,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         force_refresh,
         enable_retrieval,
         req.session_id,
+        route_meta.get("applied_source", route_decision.source),
+        route_decision.intent_class,
+        route_decision.confidence,
     )
 
     def generate():  # noqa: C901
@@ -2798,12 +2879,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             )
             return
 
-        run_opportunity_preflight = not workflow_name and _should_run_opportunity_candidate_preflight(
-            req.message, req.screen_context
-        )
-        run_decision_quality_chat = not workflow_name and _should_run_decision_quality_chat(
-            req.message, req.screen_context
-        )
+        run_opportunity_preflight = not workflow_name and route_decision.run_opportunity_preflight
+        run_decision_quality_chat = not workflow_name and route_decision.run_hidden_dq
         if run_opportunity_preflight or run_decision_quality_chat:
             dq_tool_calls = _decision_quality_chat_tool_calls(req.message, req.screen_context)
             tool_payloads: list[dict[str, Any]] = []
@@ -3281,6 +3358,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     "tool_calls": tool_payloads,
                     "tools_used": [call["name"] for call in tool_payloads],
                     "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
+                    "intent_router": {
+                        "applied": route_decision.to_meta(),
+                        "telemetry": route_meta,
+                    },
                 }
                 if should_run_full_dq:
                     done_payload_data["decision_quality_chat"] = _decision_quality_chat_done_meta(dq_result)
@@ -3329,6 +3410,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             "tools_used": [call["name"] for call in tool_payloads],
                             "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
                             "decision_quality_chat": _decision_quality_chat_done_meta(dq_result),
+                            "intent_router": {
+                                "applied": route_decision.to_meta(),
+                                "telemetry": route_meta,
+                            },
                         },
                         timings,
                         turn_started,
@@ -3897,7 +3982,21 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=full_text,
                     usage=usage,
                 )
-                yield _sse("done", _done_payload({"usage": usage, "session_id": session_id}, timings, turn_started))
+                yield _sse(
+                    "done",
+                    _done_payload(
+                        {
+                            "usage": usage,
+                            "session_id": session_id,
+                            "intent_router": {
+                                "applied": route_decision.to_meta(),
+                                "telemetry": route_meta,
+                            },
+                        },
+                        timings,
+                        turn_started,
+                    ),
+                )
                 return
 
         except Exception as exc:

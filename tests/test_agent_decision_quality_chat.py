@@ -352,3 +352,35 @@ def test_opportunity_discovery_intent_detection():
         "Scan semiconductors for anything interesting right now?"
     )
     assert not agent_router._should_run_decision_quality_chat("Scan semiconductors for anything interesting right now?")
+
+
+def test_agent_done_payload_includes_intent_router_metadata(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result())
+    monkeypatch.setattr(agent_router, "_run_decision_quality_structured_pass", lambda **_kwargs: _dq_result())
+    _install_fake_anthropic(monkeypatch, "Bottom line: watch it until chart confirmation.")
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda name, args, **_kwargs: json.dumps({"name": name, "args": args, "_meta": {"cache": "test"}}),
+    )
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={
+            "message": "Here is my Meta thesis? What do you think?",
+            "screen_context": {"page_name": "Research", "route": "/research/meta", "ticker": "META"},
+            "finalize_synchronously": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    done = [payload for event, payload in _parse_sse(resp.text) if event == "done"][-1]
+    router = done.get("intent_router")
+    assert isinstance(router, dict)
+    applied = router.get("applied")
+    assert isinstance(applied, dict)
+    assert applied.get("run_hidden_dq") is True
+    assert applied.get("intent_class") == "thesis_review"
+    assert router.get("telemetry", {}).get("applied_source") == "regex"
