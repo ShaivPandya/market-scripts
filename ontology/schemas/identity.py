@@ -261,6 +261,13 @@ def monitor_hit_id(identifier: object) -> str:
     return f"monitor_hit:{slug(text)}"
 
 
+def opportunity_candidate_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("opportunity_candidate:"):
+        text = text.split(":", 1)[1]
+    return f"opportunity_candidate:{slug(text)}"
+
+
 def approval_id(identifier: object) -> str:
     return f"approval:{slug(identifier)}"
 

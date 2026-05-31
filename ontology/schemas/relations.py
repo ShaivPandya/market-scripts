@@ -136,6 +136,7 @@ DECISION_OUTCOME_CONTRASTS_SIMULATED_OUTCOME: RelationType = "decision_outcome_c
 COURSE_OF_ACTION_HAS_RATIONALE: RelationType = "course_of_action_has_rationale"
 COURSE_OF_ACTION_SUPPORTED_BY_EVIDENCE: RelationType = "course_of_action_supported_by_evidence"
 COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE: RelationType = "course_of_action_contradicted_by_evidence"
+OPPORTUNITY_CANDIDATE_SUPPORTED_BY_EVIDENCE: RelationType = "opportunity_candidate_supported_by_evidence"
 COURSE_OF_ACTION_HAS_DISSENT: RelationType = "course_of_action_has_dissent"
 COURSE_OF_ACTION_REQUIRES_APPROVAL: RelationType = "course_of_action_requires_approval"
 APPROVAL_TARGETS_COURSE_OF_ACTION: RelationType = "approval_targets_course_of_action"
@@ -1173,6 +1174,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
     COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE: RelationDefinition(
         name=COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE,
         source_type="CourseOfAction",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPPORTUNITY_CANDIDATE_SUPPORTED_BY_EVIDENCE: RelationDefinition(
+        name=OPPORTUNITY_CANDIDATE_SUPPORTED_BY_EVIDENCE,
+        source_type="OpportunityCandidate",
         target_type="Evidence",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id"}),

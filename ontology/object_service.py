@@ -49,6 +49,7 @@ from ontology.schemas.identity import (
     industry_force_assessment_id,
     instrument_id,
     investment_idea_id,
+    opportunity_candidate_id,
     investment_policy_id,
     investor_id,
     issuer_id,
@@ -154,6 +155,7 @@ _GOVERNED_OBJECT_TYPES = {
     "DecisionOutcome",
     "CourseOfActionRationale",
     "CourseOfActionDissent",
+    "OpportunityCandidate",
     "Recommendation",
     "RegimeEpisode",
     "SignalFactorScore",
@@ -849,6 +851,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return provenance_event_id(props.get("event_id") or props.get("id") or key)
     if object_type == "InvestmentIdea":
         return investment_idea_id(props.get("idea_id") or props.get("id") or key)
+    if object_type == "OpportunityCandidate":
+        if key.startswith("opportunity_candidate:"):
+            return key
+        return opportunity_candidate_id(props.get("candidate_id") or props.get("idempotency_key") or key)
     if object_type == "IdeaEvaluation":
         return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
     if object_type == "IdeaComparisonRun":
@@ -1087,6 +1093,8 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("section_id", out.get("id") or key)
     elif object_type == "InvestmentIdea":
         out.setdefault("idea_id", out.get("id") or key)
+    elif object_type == "OpportunityCandidate":
+        out.setdefault("candidate_id", out.get("id") or key)
     elif object_type == "IdeaEvaluation":
         out.setdefault("evaluation_id", out.get("id") or key)
     elif object_type == "IdeaComparisonRun":

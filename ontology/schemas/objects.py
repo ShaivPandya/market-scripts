@@ -2771,6 +2771,72 @@ class ThesisSection(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class OpportunityCandidate(OntologySchemaBase):
+    candidate_id: NonBlankStr
+    idempotency_key: str | None = None
+    source_kind: NonBlankStr = "agent_chat"
+    source_type: str | None = None
+    source_id: str | None = None
+    ticker: str | None = None
+    trigger: NonBlankStr
+    opportunity_type: NonBlankStr = "unclear"
+    consensus: str | None = None
+    variant_view: str | None = None
+    why_now: str | None = None
+    price_confirmation: str | None = None
+    crowding: str | None = None
+    payoff_asymmetry: str | None = None
+    missing_inputs: list[str] = Field(default_factory=list)
+    next_action: NonBlankStr = "research"
+    summary: str | None = None
+    decision_state: NonBlankStr = "generated"
+    status: str | None = None
+    opportunity_candidate: dict[str, Any] | None = None
+    opportunity_candidate_gate: dict[str, Any] | None = None
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("candidate_id", "trigger", "next_action", "decision_state", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("source_kind", "opportunity_type", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_default_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = clean_optional_text(value)
+        return canonical_ticker(text) if text else None
+
+    @field_validator(
+        "idempotency_key",
+        "source_type",
+        "source_id",
+        "consensus",
+        "variant_view",
+        "why_now",
+        "price_confirmation",
+        "crowding",
+        "payoff_asymmetry",
+        "summary",
+        "status",
+        "created_at",
+        "updated_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class InvestmentIdea(OntologySchemaBase):
     idea_id: NonBlankStr
     id: str | int | None = None

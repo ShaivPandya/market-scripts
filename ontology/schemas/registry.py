@@ -64,6 +64,7 @@ from ontology.schemas.identity import (
     object_version_ref_id,
     observation_id,
     ontology_run_ref_id,
+    opportunity_candidate_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
@@ -158,6 +159,7 @@ from ontology.schemas.objects import (
     Observation,
     OntologyObject,
     OntologyRunRef,
+    OpportunityCandidate,
     OptimizationActionSnapshot,
     OptimizationAlert,
     OptimizationMission,
@@ -289,6 +291,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "ThesisDocument": ThesisDocument,
     "ThesisSection": ThesisSection,
     "InvestmentIdea": InvestmentIdea,
+    "OpportunityCandidate": OpportunityCandidate,
     "IdeaEvaluation": IdeaEvaluation,
     "IdeaComparisonRun": IdeaComparisonRun,
     "IdeaComparisonRanking": IdeaComparisonRanking,
@@ -358,6 +361,7 @@ OPTIONAL_NODE_TYPES = {
     "ThesisDocument",
     "ThesisSection",
     "InvestmentIdea",
+    "OpportunityCandidate",
     "IdeaEvaluation",
     "IdeaComparisonRun",
     "IdeaComparisonRanking",
@@ -786,6 +790,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return thesis_section_id(model.section_id)
     if isinstance(model, InvestmentIdea):
         return investment_idea_id(model.idea_id)
+    if isinstance(model, OpportunityCandidate):
+        return opportunity_candidate_id(model.candidate_id or model.idempotency_key)
     if isinstance(model, IdeaEvaluation):
         return idea_evaluation_id(model.evaluation_id)
     if isinstance(model, IdeaComparisonRun):
@@ -1000,6 +1006,10 @@ def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
         return model.name
     if isinstance(model, InvestmentIdea):
         return model.ticker
+    if isinstance(model, OpportunityCandidate):
+        label = model.summary or model.trigger
+        ticker = model.ticker or "unknown"
+        return f"{ticker}: {label[:80]}"
     if isinstance(model, IdeaComparisonRanking):
         return f"{model.ticker} rank {model.rank}"
     if isinstance(model, CourseOfAction):

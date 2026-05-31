@@ -20,6 +20,7 @@ from ontology.schemas.identity import (
     evidence_id,
     instrument_id,
     object_version_ref_id,
+    opportunity_candidate_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
@@ -1601,6 +1602,117 @@ class DecisionOntologyWriteback:
             )
         return rows
 
+    def record_opportunity_candidate(
+        self,
+        *,
+        record: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        valid_from: str | None = None,
+        approval_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        valid_from_value = valid_from or datetime.now(UTC).isoformat()
+        candidate_key = str(
+            record.get("candidate_id")
+            or record.get("idempotency_key")
+            or _hash_value(
+                {
+                    "ticker": record.get("ticker"),
+                    "trigger": record.get("trigger"),
+                    "source_kind": record.get("source_kind"),
+                    "next_action": record.get("next_action"),
+                }
+            )
+        )
+        candidate_uid = opportunity_candidate_id(candidate_key)
+        properties = {
+            "candidate_id": candidate_key,
+            "idempotency_key": record.get("idempotency_key"),
+            "source_kind": record.get("source_kind") or record.get("source") or "agent_chat",
+            "source_type": record.get("source_type"),
+            "source_id": record.get("source_id"),
+            "ticker": record.get("ticker"),
+            "trigger": record.get("trigger"),
+            "opportunity_type": record.get("opportunity_type") or "unclear",
+            "consensus": record.get("consensus"),
+            "variant_view": record.get("variant_view"),
+            "why_now": record.get("why_now"),
+            "price_confirmation": record.get("price_confirmation"),
+            "crowding": record.get("crowding"),
+            "payoff_asymmetry": record.get("payoff_asymmetry"),
+            "missing_inputs": _as_list(record.get("missing_inputs")),
+            "next_action": record.get("next_action") or "research",
+            "summary": record.get("summary"),
+            "decision_state": record.get("decision_state") or "generated",
+            "status": record.get("status") or record.get("decision_state") or "generated",
+            "opportunity_candidate": _as_dict(record.get("opportunity_candidate") or record),
+            "opportunity_candidate_gate": _as_dict(record.get("opportunity_candidate_gate")),
+            "source_refs": _as_list(record.get("source_refs")),
+            "created_at": record.get("created_at") or valid_from_value,
+            "updated_at": record.get("updated_at") or valid_from_value,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        rows = [
+            self.object_service.write_object(
+                "OpportunityCandidate",
+                candidate_uid,
+                properties,
+                valid_from_value,
+                actor=actor,
+                provenance=provenance_id,
+                approval_id=approval_id,
+            )
+        ]
+        rows.extend(
+            self._record_opportunity_candidate_evidence(
+                candidate_object_uid=candidate_uid,
+                candidate_key=candidate_key,
+                record=record,
+                actor=actor,
+                provenance_id=provenance_id,
+                valid_from=valid_from_value,
+                approval_id=approval_id,
+            )
+        )
+        return rows
+
+    def _record_opportunity_candidate_evidence(
+        self,
+        *,
+        candidate_object_uid: str,
+        candidate_key: str,
+        record: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        valid_from: str,
+        approval_id: int | None,
+    ) -> list[dict[str, Any]]:
+        from ontology.evidence_ledger import write_parent_evidence_graph
+
+        evidence_items = []
+        for item in _as_list(record.get("source_refs") or record.get("evidence")):
+            if isinstance(item, dict):
+                summary = item.get("summary") or item.get("label") or item.get("source_path") or item.get("claim")
+                if summary:
+                    evidence_items.append({**item, "summary": summary})
+            elif item:
+                evidence_items.append(item)
+        if not evidence_items:
+            return []
+        return write_parent_evidence_graph(
+            self.object_service,
+            parent_uid=candidate_object_uid,
+            parent_key=candidate_key,
+            evidence_items=evidence_items,
+            relation_type="opportunity_candidate_supported_by_evidence",
+            role="supporting",
+            valid_from=valid_from,
+            actor=actor,
+            provenance_id=provenance_id,
+            approval_id=approval_id,
+            observed_at=record.get("created_at"),
+        )
+
 
 def record_report_output(**kwargs: Any) -> list[dict[str, Any]]:
     return DecisionOntologyWriteback().record_report_output(**kwargs)
@@ -1616,6 +1728,10 @@ def apply_approved_decision(**kwargs: Any) -> list[dict[str, Any]]:
 
 def record_scenario_simulation(**kwargs: Any) -> dict[str, Any]:
     return DecisionOntologyWriteback().record_scenario_simulation(**kwargs)
+
+
+def record_opportunity_candidate(**kwargs: Any) -> list[dict[str, Any]]:
+    return DecisionOntologyWriteback().record_opportunity_candidate(**kwargs)
 
 
 def _recommendation_key(record: Mapping[str, Any]) -> str:
