@@ -1,0 +1,8 @@
+# Cursor Cloud Agent Rules
+
+## Branch policy
+
+All work goes directly on the `upgrade` branch. Do NOT create feature branches.
+Do NOT use the `cursor/<name>-0dfb` branch naming template.
+Do NOT open separate pull requests per task — commit directly to `upgrade`.
+`upgrade` is the active development branch. `main` is stable/released only.
