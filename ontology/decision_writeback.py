@@ -742,6 +742,8 @@ class DecisionOntologyWriteback:
                                     "liquidity": _as_dict(outcome.get("liquidity")),
                                     "thesis_pressure": _as_dict(outcome.get("thesis_pressure")),
                                     "uncertainty": uncertainty,
+                                    "execution_friction": _as_dict(outcome.get("execution_friction")),
+                                    "execution_assumptions": _as_dict(outcome.get("execution_assumptions")),
                                 },
                                 "expected_return_pct": _ratio_from_pct(
                                     scenario_outcome.get("target_return_pct_of_book")
@@ -805,6 +807,18 @@ class DecisionOntologyWriteback:
                     "simulated_outcome_ids": simulated_outcome_ids,
                     **({"policy_gate_result_id": gate_uid} if gate_uid else {}),
                 }
+                rows.extend(
+                    self._record_scenario_simulation_risk_snapshots(
+                        course_uid=course_uid,
+                        course_key=course_key,
+                        request_payload=request_payload,
+                        simulation=simulation,
+                        request_position=request_position,
+                        actor=actor,
+                        provenance_id=provenance_id,
+                        valid_from=now,
+                    )
+                )
         except Exception as exc:
             _handle_writeback_error("record_scenario_simulation", exc)
 
@@ -1347,6 +1361,93 @@ class DecisionOntologyWriteback:
                     provenance_id=provenance_id,
                     approval_id=approval_id,
                     observed_at=record.get("as_of"),
+                )
+            )
+        return rows
+
+    def _record_scenario_simulation_risk_snapshots(
+        self,
+        *,
+        course_uid: str,
+        course_key: str,
+        request_payload: Mapping[str, Any],
+        simulation: Mapping[str, Any],
+        request_position: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        valid_from: str,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        risk_provenance = _as_dict(request_payload.get("risk_provenance"))
+        risk_provenance.update(_as_dict(simulation.get("risk_provenance")))
+        position_snapshot_id = str(
+            request_payload.get("position_risk_snapshot_id")
+            or risk_provenance.get("position_risk_snapshot_id")
+            or ""
+        ).strip()
+        portfolio_snapshot_id = str(
+            request_payload.get("portfolio_risk_snapshot_id")
+            or risk_provenance.get("portfolio_risk_snapshot_id")
+            or ""
+        ).strip()
+        if position_snapshot_id:
+            props = _position_risk_snapshot_props(
+                {
+                    "ticker": request_position.get("ticker"),
+                    "risk_score": risk_provenance.get("risk_score"),
+                    "as_of": simulation.get("generated_at") or valid_from,
+                },
+                snapshot_id=position_snapshot_id,
+            )
+            rows.append(
+                self.object_service.write_object(
+                    "PositionRiskSnapshot",
+                    position_snapshot_id,
+                    props,
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=_hash_value(props),
+                )
+            )
+            rows.append(
+                self.object_service.write_relation(
+                    course_uid,
+                    position_risk_snapshot_id(position_snapshot_id),
+                    "course_of_action_uses_position_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=course_key,
+                )
+            )
+        if portfolio_snapshot_id:
+            props = _portfolio_risk_snapshot_props(
+                {"as_of": simulation.get("generated_at") or valid_from},
+                snapshot_id=portfolio_snapshot_id,
+            )
+            rows.append(
+                self.object_service.write_object(
+                    "PortfolioRiskSnapshot",
+                    portfolio_snapshot_id,
+                    props,
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=_hash_value(props),
+                )
+            )
+            rows.append(
+                self.object_service.write_relation(
+                    course_uid,
+                    portfolio_risk_snapshot_id(portfolio_snapshot_id),
+                    "course_of_action_uses_portfolio_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=course_key,
                 )
             )
         return rows

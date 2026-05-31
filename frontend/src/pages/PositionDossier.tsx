@@ -61,6 +61,7 @@ import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDial
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
+import { PositionScenarioSimulatorTab } from "@/components/scenario/PositionScenarioSimulatorTab"
 import type {
   ManagementQualityAssessment,
   ManagementQualityBullet,
@@ -182,7 +183,7 @@ interface MonitorHit {
   approval_id?: string | null
 }
 
-const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Evidence", "Learning", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Scenarios", "Evidence", "Learning", "Workflows"] as const
 type Tab = "Overview" | "Management Quality" | "Valuation" | typeof BASE_TABS[number]
 type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
@@ -630,6 +631,9 @@ export function PositionDossier() {
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} monitorHits={monitorHits} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
+        {activeTab === "Scenarios" && (
+          <PositionScenarioSimulatorTab ticker={data.ticker} position={data.position} />
+        )}
         {activeTab === "Evidence" && (
           <EvidenceLedgerPanel ledger={data.evidence_ledger} ticker={data.ticker} />
         )}

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Dialog } from "@/components/shared/Dialog"
-import { ActionButton } from "@/components/shared/ActionButton"
+import { ActionButton } from "@/components/shared/FormControls"
 import { finalizeDecisionOutcome, type DecisionOutcomeRecord } from "@/lib/api"
 
 interface PostMortemReviewDialogProps {

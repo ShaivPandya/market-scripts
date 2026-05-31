@@ -1,6 +1,6 @@
 {
   "id": "scenario_simulator_uncertainty_disclosure_2026",
-  "status": "draft",
+  "status": "review",
   "decision_type": "scenario_simulation",
   "as_of_date": "2026-05-15",
   "user_question": "For an existing MU long, compare hold, add, trim, and exit under a downside scenario when liquidity and thesis-pressure inputs are incomplete.",

@@ -2053,7 +2053,7 @@ export function Workspace() {
         }}
         outcome={postMortemReview}
         onFinalized={() => {
-          void queryClient.invalidateQueries({ queryKey: ["workspace"] })
+          void qc.invalidateQueries({ queryKey: ["workspace"] })
         }}
       />
     </div>

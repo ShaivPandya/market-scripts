@@ -1514,6 +1514,81 @@ export const refreshPortfolioRisk = () =>
     .post("/risk/portfolio/refresh", undefined, { timeout: 180_000 })
     .then(r => r.data as PortfolioRiskSnapshot)
 
+export interface ScenarioSimulatorAssumptionInput {
+  name: string
+  value?: Record<string, unknown> | string | number | boolean | null
+  unit?: string | null
+  confidence?: number | null
+  source_refs?: string[]
+}
+
+export interface ScenarioSimulatorEvaluateRequest {
+  portfolio: {
+    portfolio_id?: string | null
+    account_id?: string | null
+    base_currency?: string
+    book_value?: number | null
+    positions?: Record<string, unknown>[]
+  }
+  position: Record<string, unknown>
+  candidates: Array<{
+    action: string
+    candidate_id?: string
+    delta?: Record<string, unknown>
+    rationale?: string | null
+  }>
+  scenarios: Array<Record<string, unknown>>
+  assumptions?: ScenarioSimulatorAssumptionInput[]
+  execution_assumptions?: Record<string, unknown>
+  enrich_from_risk_snapshot?: boolean
+  position_risk_snapshot_id?: string | null
+  portfolio_risk_snapshot_id?: string | null
+  persist?: boolean
+}
+
+export interface ScenarioSimulatorOutcome {
+  candidate_id: string
+  course_of_action_id?: string
+  action: string
+  rationale?: string | null
+  ranking_score?: number
+  target_position?: Record<string, unknown>
+  exposure?: Record<string, unknown>
+  scenario_outcomes?: Array<Record<string, unknown>>
+  execution_assumptions?: Record<string, unknown>
+  execution_friction?: Record<string, unknown>
+  risk?: Record<string, unknown>
+  liquidity?: Record<string, unknown>
+  thesis_pressure?: Record<string, unknown>
+  uncertainty?: {
+    level?: string
+    missing_input_count?: number
+    notes?: string[]
+  }
+  policy_gate?: PolicyGateResult | null
+  provenance?: Record<string, unknown>
+}
+
+export interface ScenarioSimulatorEvaluateResponse {
+  simulation_id: string
+  calculation_version?: string
+  generated_at?: string
+  persisted?: boolean
+  execution_assumptions?: Record<string, unknown>
+  risk_provenance?: Record<string, unknown>
+  comparison?: {
+    ranking?: Array<Record<string, unknown>>
+    selection_policy?: string
+    summary_metrics?: Record<string, unknown>
+  }
+  outcomes?: ScenarioSimulatorOutcome[]
+}
+
+export const evaluateScenarioSimulator = (body: ScenarioSimulatorEvaluateRequest) =>
+  client
+    .post("/scenario-simulator/evaluate", body, { timeout: 120_000 })
+    .then(r => r.data as ScenarioSimulatorEvaluateResponse)
+
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running"; timeout_s?: number }
   | { job_id: string; status: "error"; error?: string; timeout_s?: number }

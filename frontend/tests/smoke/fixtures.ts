@@ -696,6 +696,52 @@ const dossierResponse = {
   pending_approvals: [],
 } satisfies JsonValue
 
+const scenarioSimulatorResponse = {
+  simulation_id: "scenario_simulation:smoke",
+  calculation_version: "scenario_simulator_v2",
+  generated_at: "2026-05-31T12:00:00Z",
+  persisted: false,
+  execution_assumptions: {
+    disclosure: "Scenario simulation is decision support only. Rankings do not authorize execution.",
+    transaction_cost_bps: 5,
+    slippage_bps: 10,
+    market_impact_bps: 5,
+    max_adv_participation: 0.2,
+  },
+  comparison: {
+    selection_policy: "No automatic trade recommendation or execution is produced by the simulator.",
+    ranking: [
+      { rank: 1, candidate_id: "hold", action: "hold", uncertainty_level: "medium" },
+      { rank: 2, candidate_id: "trim", action: "trim", uncertainty_level: "medium" },
+    ],
+  },
+  outcomes: [
+    {
+      candidate_id: "hold",
+      action: "hold",
+      ranking_score: 0.12,
+      execution_friction: { total_friction_base: 0 },
+      risk: { expected_pnl_base: 0, worst_loss_base: 120 },
+      liquidity: { status: "missing", notes: ["Liquidity inputs missing; policy gate may understate exit risk."] },
+      uncertainty: {
+        level: "medium",
+        missing_input_count: 2,
+        notes: ["Liquidity inputs missing; policy gate may understate exit risk.", "Thesis pressure inputs missing across scenarios."],
+      },
+      policy_gate: { decision: "review_required", review_required: true },
+      scenario_outcomes: [
+        {
+          scenario_id: "downside",
+          name: "Downside",
+          target_pnl_gross_base: -120,
+          target_pnl_net_base: -120,
+          incremental_pnl_net_base: 0,
+        },
+      ],
+    },
+  ],
+} satisfies JsonValue
+
 function agentHistorySessions(state: ApiMockState) {
   const now = new Date().toISOString()
   return [
@@ -740,6 +786,7 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
 
   if (method === "GET" && path === "/api/liquidity") return json(route, liquidityResponse)
   if (method === "GET" && path === "/api/dossier/MSFT") return json(route, dossierResponse)
+  if (method === "POST" && path === "/api/scenario-simulator/evaluate") return json(route, scenarioSimulatorResponse)
   if (method === "GET" && path === "/api/thesis/status") return json(route, { MSFT: "uploaded" })
   if (method === "GET" && path === "/api/valuation/MSFT") {
     return json(route, { ticker: "MSFT", status: "unavailable", valuation: null })

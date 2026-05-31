@@ -187,6 +187,21 @@ test("opens the agent chat shell with workflow and preference fixtures", async (
   await expect(page.getByText("Renamed NVDA Chat").first()).toBeVisible()
 })
 
+test("renders position dossier scenario comparison disclosure", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/dossier/MSFT")
+
+  await expect(page.getByRole("heading", { name: "MSFT" })).toBeVisible()
+  await page.getByRole("button", { name: "Scenarios", exact: true }).click()
+
+  await expect(page.getByRole("heading", { name: "Action Scenario Comparison" })).toBeVisible()
+  await expect(page.getByText("Scenario simulation is decision support only")).toBeVisible()
+  await page.getByRole("button", { name: "Run comparison" }).click()
+  await expect(page.getByText("medium uncertainty")).toBeVisible()
+  await expect(page.getByText("Liquidity missing")).toBeVisible()
+  await expect(page.getByText("No automatic trade recommendation or execution is produced by the simulator.")).toBeVisible()
+})
+
 test("renders position dossier evidence ledger tab", async ({ page }) => {
   await authenticate(page)
   await page.goto("/dossier/MSFT")
