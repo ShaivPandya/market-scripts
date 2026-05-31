@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from api import workflows
-from api.routers import agent as agent_router
 from api.agent_models import ScreenContextModel
+from api.routers import agent as agent_router
 
 
 def test_position_dossier_pressure_test_prompt_includes_guardrail_and_tools(monkeypatch):
