@@ -445,10 +445,7 @@ def _normalize_execution_assumptions(
         "source": "request_assumptions" if assumptions or inline else "defaults",
     }
     normalized["total_friction_bps"] = _round(
-        transaction_cost_bps
-        + slippage_bps
-        + market_impact_bps
-        + funding_bps_per_day * holding_days
+        transaction_cost_bps + slippage_bps + market_impact_bps + funding_bps_per_day * holding_days
     )
     if normalized["source"] == "defaults":
         normalized["disclosure"] = (
