@@ -320,6 +320,13 @@ def simulated_outcome_id(identifier: object) -> str:
     return f"simulated_outcome:{slug(text)}"
 
 
+def decision_outcome_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("decision_outcome:"):
+        text = text.split(":", 1)[1]
+    return f"decision_outcome:{slug(text)}"
+
+
 def course_of_action_rationale_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("course_of_action_rationale:"):

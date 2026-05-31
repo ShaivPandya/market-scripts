@@ -1574,6 +1574,7 @@ class CourseOfAction(OntologySchemaBase):
     approval_id: str | int | None = None
     approval_required: bool = False
     approval_status: str | None = None
+    outcome_status: str | None = None
     action_run_id: str | int | None = None
     executed_action_id: str | int | None = None
     supersedes_course_of_action_id: str | None = None
@@ -1626,6 +1627,7 @@ class CourseOfAction(OntologySchemaBase):
         "policy_gate_result_id",
         "policy_gate_decision",
         "approval_status",
+        "outcome_status",
         "supersedes_course_of_action_id",
         "comparison_id",
         "horizon",
@@ -1731,6 +1733,65 @@ class SimulatedOutcome(OntologySchemaBase):
         "generated_by_action",
         "generated_by_run_id",
         "as_of",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+DecisionOutcomeFinalLabelStatus = Literal["draft", "confirmed", "corrected", "rejected"]
+
+
+class DecisionOutcome(OntologySchemaBase):
+    decision_outcome_id: NonBlankStr
+    source_kind: NonBlankStr
+    recommendation_id: str | None = None
+    course_of_action_id: str | None = None
+    executed_decision_record_id: str | None = None
+    action_run_id: str | None = None
+    simulated_outcome_id: str | None = None
+    ticker: str | None = None
+    as_of: str | None = None
+    horizon: str | None = None
+    outcome_status: NonBlankStr = "pending"
+    final_label_status: DecisionOutcomeFinalLabelStatus = "draft"
+    evaluation_authority: str | None = "ai_draft_user_final"
+    process_label: str | None = None
+    draft_postmortem: str | None = None
+    final_postmortem: str | None = None
+    lessons_learned: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    decision_quality_snapshot: dict[str, Any] | None = None
+    finalized_by: str | None = None
+    finalized_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("decision_outcome_id", "source_kind", "outcome_status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator(
+        "recommendation_id",
+        "course_of_action_id",
+        "executed_decision_record_id",
+        "action_run_id",
+        "simulated_outcome_id",
+        "as_of",
+        "horizon",
+        "evaluation_authority",
+        "process_label",
+        "draft_postmortem",
+        "final_postmortem",
+        "lessons_learned",
+        "finalized_by",
+        "finalized_at",
         mode="before",
     )
     @classmethod
@@ -3352,6 +3413,7 @@ OntologyObject = (
     | CourseOfActionComparison
     | ScenarioAssumption
     | SimulatedOutcome
+    | DecisionOutcome
     | CourseOfActionRationale
     | CourseOfActionDissent
     | ReportRun

@@ -323,6 +323,12 @@ export interface RecommendationRecord extends DecisionStateFields {
   rationale: string
   confidence: number | null
   approval_status: string
+  outcome_status?: string | null
+  draft_postmortem?: string | null
+  final_postmortem?: string | null
+  final_label_status?: string | null
+  process_label?: string | null
+  lessons_learned?: string | null
   blocked_reasons_json?: string[]
   policy_gate?: PolicyGateResult | null
   policy_gate_decision?: string | null
@@ -2837,6 +2843,49 @@ export const fetchLatestRecommendations = () =>
   client.get("/recommendations/latest").then(r => r.data)
 export const fetchRecommendation = (id: number) =>
   client.get(`/recommendations/${id}`).then(r => r.data)
+
+export interface DecisionOutcomeRecord extends DecisionStateFields {
+  id?: string | number
+  object_uid?: string
+  decision_outcome_id?: string
+  source_kind?: string
+  recommendation_id?: string | null
+  course_of_action_id?: string | null
+  ticker?: string | null
+  as_of?: string | null
+  horizon?: string | null
+  outcome_status?: string
+  final_label_status?: string
+  process_label?: string | null
+  draft_postmortem?: string | null
+  final_postmortem?: string | null
+  lessons_learned?: string | null
+  learning_state?: string
+  requires_review?: boolean
+  metrics?: Record<string, unknown>
+  finalized_by?: string | null
+  finalized_at?: string | null
+}
+
+export const fetchDecisionOutcomes = (params?: {
+  ticker?: string
+  outcome_status?: string
+  final_label_status?: string
+  limit?: number
+}) => client.get("/decision-outcomes", { params }).then(r => r.data as {
+  decision_outcomes: DecisionOutcomeRecord[]
+  count: number
+})
+
+export const finalizeDecisionOutcome = (
+  decisionOutcomeId: string,
+  body: {
+    decision: "confirm" | "correct" | "reject"
+    note?: string
+    corrected_postmortem?: string
+    lessons_learned?: string
+  },
+) => client.post(`/decision-outcomes/${encodeURIComponent(decisionOutcomeId)}/finalize`, body).then(r => r.data)
 
 // Dossier
 export interface EvidenceLedgerCitation {

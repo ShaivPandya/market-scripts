@@ -87,6 +87,7 @@ from ontology.schemas.identity import (
     signal_factor_score_id,
     signal_id,
     simulated_outcome_id,
+    decision_outcome_id,
     source_freshness_id,
     source_manifest_id,
     source_record_object_id,
@@ -121,6 +122,7 @@ from ontology.schemas.objects import (
     CourseOfActionComparison,
     CourseOfActionDissent,
     CourseOfActionRationale,
+    DecisionOutcome,
     DocumentArtifact,
     EquityOverview,
     Evaluation,
@@ -266,6 +268,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "CourseOfActionComparison": CourseOfActionComparison,
     "ScenarioAssumption": ScenarioAssumption,
     "SimulatedOutcome": SimulatedOutcome,
+    "DecisionOutcome": DecisionOutcome,
     "CourseOfActionRationale": CourseOfActionRationale,
     "CourseOfActionDissent": CourseOfActionDissent,
     "ReportRun": ReportRun,
@@ -320,6 +323,7 @@ OPTIONAL_NODE_TYPES = {
     "CourseOfActionComparison",
     "ScenarioAssumption",
     "SimulatedOutcome",
+    "DecisionOutcome",
     "CourseOfActionRationale",
     "CourseOfActionDissent",
     "ReportRun",
@@ -740,6 +744,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return scenario_assumption_id(model.assumption_id)
     if isinstance(model, SimulatedOutcome):
         return simulated_outcome_id(model.outcome_id)
+    if isinstance(model, DecisionOutcome):
+        return decision_outcome_id(model.decision_outcome_id)
     if isinstance(model, CourseOfActionRationale):
         return course_of_action_rationale_id(model.rationale_id)
     if isinstance(model, CourseOfActionDissent):
@@ -1004,6 +1010,9 @@ def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
         return model.name
     if isinstance(model, SimulatedOutcome):
         return f"Simulated outcome: {model.outcome_id}"
+    if isinstance(model, DecisionOutcome):
+        process = model.process_label or model.outcome_status
+        return f"Decision outcome: {process}"
     if isinstance(model, CourseOfActionRationale):
         return model.summary[:80]
     if isinstance(model, CourseOfActionDissent):

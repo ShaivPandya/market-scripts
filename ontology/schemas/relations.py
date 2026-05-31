@@ -130,6 +130,9 @@ COURSE_OF_ACTION_USES_SCENARIO: RelationType = "course_of_action_uses_scenario"
 COURSE_OF_ACTION_LINKS_RECOMMENDATION: RelationType = "course_of_action_links_recommendation"
 SCENARIO_HAS_ASSUMPTION: RelationType = "scenario_has_assumption"
 COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME: RelationType = "course_of_action_has_simulated_outcome"
+RECOMMENDATION_HAS_DECISION_OUTCOME: RelationType = "recommendation_has_decision_outcome"
+COURSE_OF_ACTION_HAS_DECISION_OUTCOME: RelationType = "course_of_action_has_decision_outcome"
+DECISION_OUTCOME_CONTRASTS_SIMULATED_OUTCOME: RelationType = "decision_outcome_contrasts_simulated_outcome"
 COURSE_OF_ACTION_HAS_RATIONALE: RelationType = "course_of_action_has_rationale"
 COURSE_OF_ACTION_SUPPORTED_BY_EVIDENCE: RelationType = "course_of_action_supported_by_evidence"
 COURSE_OF_ACTION_CONTRADICTED_BY_EVIDENCE: RelationType = "course_of_action_contradicted_by_evidence"
@@ -1122,6 +1125,30 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
     COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME: RelationDefinition(
         name=COURSE_OF_ACTION_HAS_SIMULATED_OUTCOME,
         source_type="CourseOfAction",
+        target_type="SimulatedOutcome",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_HAS_DECISION_OUTCOME: RelationDefinition(
+        name=RECOMMENDATION_HAS_DECISION_OUTCOME,
+        source_type="Recommendation",
+        target_type="DecisionOutcome",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COURSE_OF_ACTION_HAS_DECISION_OUTCOME: RelationDefinition(
+        name=COURSE_OF_ACTION_HAS_DECISION_OUTCOME,
+        source_type="CourseOfAction",
+        target_type="DecisionOutcome",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    DECISION_OUTCOME_CONTRASTS_SIMULATED_OUTCOME: RelationDefinition(
+        name=DECISION_OUTCOME_CONTRASTS_SIMULATED_OUTCOME,
+        source_type="DecisionOutcome",
         target_type="SimulatedOutcome",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id"}),

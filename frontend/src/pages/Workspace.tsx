@@ -22,6 +22,7 @@ import {
   type ApprovalRecord,
   type CourseOfActionComparisonRecord,
   type CourseOfActionRecord,
+  type DecisionOutcomeRecord,
   type OptimizationAlert,
   type ThesisClaim,
   type PolicyGateReason,
@@ -44,6 +45,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
 import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSummary"
@@ -133,6 +135,10 @@ interface WorkspaceData {
   thesis_claims?: {
     challenged_count: number
     items: ThesisClaim[]
+  }
+  decision_learning?: {
+    pending_review: { count: number; items: DecisionOutcomeRecord[] }
+    recent_finalized: { count: number; items: DecisionOutcomeRecord[] }
   }
   recent_report_runs: ReportRun[]
 }
@@ -905,6 +911,7 @@ export function Workspace() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
   const [approvalReview, setApprovalReview] = useState<ApprovalRecord | null>(null)
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
@@ -1433,6 +1440,77 @@ export function Workspace() {
             )}
           </section>
         )}
+
+        {(data.decision_learning?.pending_review.count || data.decision_learning?.recent_finalized.count) ? (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <GitBranch size={14} className="text-violet-500" />
+              Decision Learning
+              <span className="ml-auto text-xs text-subtle">
+                {data.decision_learning?.pending_review.count ?? 0} draft review
+                {(data.decision_learning?.pending_review.count ?? 0) !== 1 ? "s" : ""}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(data.decision_learning?.pending_review.items ?? []).map(outcome => (
+                <div key={`pending-outcome-${outcome.decision_outcome_id || outcome.object_uid || outcome.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {outcome.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(outcome.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                        {outcome.ticker}
+                      </Link>
+                    )}
+                    <span className="text-xs text-subtle">{outcome.as_of}</span>
+                    {outcome.process_label && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">
+                        {outcome.process_label.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-muted line-clamp-3">{outcome.draft_postmortem}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPostMortemReview(outcome)}
+                      className="rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-app hover:bg-[hsl(var(--muted-2))]"
+                    >
+                      Review post-mortem
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProvenanceSelector({
+                          recommendation_id: outcome.recommendation_id ?? undefined,
+                          ref_type: "DecisionOutcome",
+                          ref_id: String(outcome.decision_outcome_id || outcome.object_uid || outcome.id || ""),
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-muted hover:text-app"
+                    >
+                      <GitBranch size={12} />
+                      Lineage
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(data.decision_learning?.recent_finalized.items ?? []).length > 0 && (
+              <div className="mt-4 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle">Recent finalized</h3>
+                {(data.decision_learning?.recent_finalized.items ?? []).slice(0, 3).map(outcome => (
+                  <div key={`final-outcome-${outcome.decision_outcome_id || outcome.object_uid || outcome.id}`} className="rounded-lg border border-app px-3 py-2 text-xs text-muted">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {outcome.ticker && <span className="font-medium text-app">{outcome.ticker}</span>}
+                      <span>{outcome.final_label_status}</span>
+                      {outcome.finalized_at && <span>{outcome.finalized_at.slice(0, 10)}</span>}
+                    </div>
+                    <p className="mt-1 line-clamp-2">{outcome.final_postmortem || outcome.lessons_learned}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
@@ -1967,6 +2045,16 @@ export function Workspace() {
           if (!open) setProvenanceSelector(null)
         }}
         selector={provenanceSelector}
+      />
+      <PostMortemReviewDialog
+        open={postMortemReview !== null}
+        onOpenChange={open => {
+          if (!open) setPostMortemReview(null)
+        }}
+        outcome={postMortemReview}
+        onFinalized={() => {
+          void queryClient.invalidateQueries({ queryKey: ["workspace"] })
+        }}
       />
     </div>
   )

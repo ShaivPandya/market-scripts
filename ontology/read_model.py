@@ -339,6 +339,19 @@ class TemporalReadModelRepository:
                 limit=5,
                 order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
             )
+            pending_draft_decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                filters={"final_label_status": "draft", "outcome_status": "evaluated"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_finalized_decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                limit=10,
+                order_by="updated_sort DESC, as_of_sort DESC, object_uid ASC",
+            )
 
         return {
             "latest_evaluations": latest_evaluations,
@@ -358,6 +371,8 @@ class TemporalReadModelRepository:
             "recent_report_runs": recent_report_runs,
             "challenged_claims": challenged_claims,
             "disconfirmed_claims": disconfirmed_claims,
+            "pending_draft_decision_outcomes": pending_draft_decision_outcomes,
+            "recent_finalized_decision_outcomes": recent_finalized_decision_outcomes,
         }
 
     def fetch_dossier_bundle(self, ticker: str) -> dict[str, Any]:
@@ -451,6 +466,13 @@ class TemporalReadModelRepository:
                 limit=200,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                filters={"ticker": normalized},
+                limit=20,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
 
         return {
             "position": position,
@@ -465,6 +487,7 @@ class TemporalReadModelRepository:
             "watch_triggers": watch_triggers,
             "monitor_hits": monitor_hits,
             "pending_approvals": pending_approvals,
+            "decision_outcomes": decision_outcomes,
         }
 
     def source_status_summary(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -502,6 +525,7 @@ _OPERATIONAL_FILTER_COLUMNS = {
     "application_status",
     "approval_status",
     "outcome_status",
+    "final_label_status",
     "report_type",
     "parent_uid",
     "assessment_id",
@@ -527,7 +551,7 @@ def _fetch_operational_objects(
         value = str(raw_value)
         if column == "ticker":
             value = value.upper()
-        elif column in {"status", "application_status", "approval_status", "outcome_status", "report_type"}:
+        elif column in {"status", "application_status", "approval_status", "outcome_status", "final_label_status", "report_type"}:
             value = value.lower()
         where_parts.append(f"{column} = %s")
         params.append(value)

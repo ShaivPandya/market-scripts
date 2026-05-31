@@ -818,6 +818,30 @@ class CreateAnalystFeedbackInput(BaseModel):
         return self
 
 
+class FinalizeDecisionOutcomeInput(BaseModel):
+    decision_outcome_id: str
+    decision: Literal["confirm", "correct", "reject"]
+    note: str | None = None
+    corrected_postmortem: str | None = None
+    lessons_learned: str | None = None
+
+    @field_validator("decision_outcome_id")
+    @classmethod
+    def _required_outcome_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("decision_outcome_id is required.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_finalize_content(self) -> FinalizeDecisionOutcomeInput:
+        if self.decision in {"correct", "reject"} and not str(self.note or "").strip():
+            raise ValueError("note is required for correct and reject decisions.")
+        if self.decision == "correct" and not str(self.corrected_postmortem or "").strip():
+            raise ValueError("corrected_postmortem is required for correct decisions.")
+        return self
+
+
 class DeletePortfolioNewsDigestInput(BaseModel):
     digest_id: str
 
@@ -1776,6 +1800,7 @@ _save_management_quality_content = _disabled_action_handler
 _save_evaluation = _disabled_action_handler
 _create_research_note = _disabled_action_handler
 _create_analyst_feedback = _disabled_action_handler
+_finalize_decision_outcome = _disabled_action_handler
 _delete_portfolio_news_digest = _disabled_action_handler
 _create_portfolio_news_digest = _disabled_action_handler
 _create_recommendation = _disabled_action_handler
@@ -2023,6 +2048,14 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=CreateAnalystFeedbackInput,
         handler=_create_analyst_feedback,
         approval_entity_type="analyst_feedback",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
+    "finalize_decision_outcome": DomainAction(
+        action_id="finalize_decision_outcome",
+        input_model=FinalizeDecisionOutcomeInput,
+        handler=_finalize_decision_outcome,
+        approval_entity_type="decision_outcome",
         approval_payload=_model_payload,
         effect_kind="approval_gated",
     ),

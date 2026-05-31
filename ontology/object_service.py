@@ -88,6 +88,7 @@ from ontology.schemas.identity import (
     signal_factor_score_id,
     signal_id,
     simulated_outcome_id,
+    decision_outcome_id,
     source_freshness_id,
     source_manifest_id,
     source_record_object_id,
@@ -150,6 +151,7 @@ _GOVERNED_OBJECT_TYPES = {
     "CourseOfActionComparison",
     "ScenarioAssumption",
     "SimulatedOutcome",
+    "DecisionOutcome",
     "CourseOfActionRationale",
     "CourseOfActionDissent",
     "Recommendation",
@@ -219,6 +221,9 @@ _GOVERNED_RELATION_TYPES = {
     "course_of_action_links_recommendation",
     "scenario_has_assumption",
     "course_of_action_has_simulated_outcome",
+    "recommendation_has_decision_outcome",
+    "course_of_action_has_decision_outcome",
+    "decision_outcome_contrasts_simulated_outcome",
     "course_of_action_has_rationale",
     "course_of_action_supported_by_evidence",
     "course_of_action_contradicted_by_evidence",
@@ -760,6 +765,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("simulated_outcome:"):
             return key
         return simulated_outcome_id(props.get("outcome_id") or key)
+    if object_type == "DecisionOutcome":
+        if key.startswith("decision_outcome:"):
+            return key
+        return decision_outcome_id(props.get("decision_outcome_id") or key)
     if object_type == "CourseOfActionRationale":
         if key.startswith("course_of_action_rationale:"):
             return key

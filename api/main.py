@@ -392,6 +392,7 @@ from api.routers import (
     action_items,
     admin_jobs,
     approvals,
+    decision_outcomes,
     domain_actions,
     dossier,
     ideas,
@@ -417,6 +418,7 @@ app.include_router(triggers.router, prefix=_API_PREFIX, dependencies=_auth_dep, 
 app.include_router(process_entities.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["process"])
 app.include_router(provenance.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["provenance"])
 app.include_router(recommendations.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["recommendations"])
+app.include_router(decision_outcomes.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["decision-outcomes"])
 app.include_router(optimization.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["optimization"])
 app.include_router(policy_gate.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["policy-gate"])
 app.include_router(scenario_simulator.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["scenario-simulator"])

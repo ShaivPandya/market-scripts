@@ -36,6 +36,7 @@ import {
   type ThesisStatus,
   type ThesisStatusValue,
   type EvidenceLedgerSummary,
+  type DecisionOutcomeRecord,
 } from "@/lib/api"
 import {
   approvalSummaryQueryKey,
@@ -56,6 +57,7 @@ import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
 import { EvidenceLedgerPanel } from "@/components/shared/EvidenceLedgerPanel"
+import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
@@ -107,6 +109,7 @@ interface DossierData {
   watch_triggers: Trigger[]
   monitor_hits: MonitorHit[]
   pending_approvals: ApprovalRecord[]
+  decision_outcomes?: DecisionOutcomeRecord[]
 }
 
 interface ThesisMeta {
@@ -179,7 +182,7 @@ interface MonitorHit {
   approval_id?: string | null
 }
 
-const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Evidence", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Evidence", "Learning", "Workflows"] as const
 type Tab = "Overview" | "Management Quality" | "Valuation" | typeof BASE_TABS[number]
 type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
@@ -328,6 +331,7 @@ export function PositionDossier() {
   const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
+  const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
 
   const { data, isLoading, error } = useApiQuery<DossierData>(
     ["dossier", ticker],
@@ -504,6 +508,7 @@ export function PositionDossier() {
   const monitorHits = Array.isArray(data.monitor_hits) ? data.monitor_hits : []
   const evaluations = Array.isArray(data.evaluations) ? data.evaluations : []
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
+  const decisionOutcomes = Array.isArray(data.decision_outcomes) ? data.decision_outcomes : []
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
   const hasPositionSummary = Boolean(
@@ -603,6 +608,7 @@ export function PositionDossier() {
             {t === "Catalysts" && catalysts.length > 0 && <span className="ml-1 text-xs text-subtle">({catalysts.length})</span>}
             {t === "Kill Conditions" && killConditions.length > 0 && <span className="ml-1 text-xs text-subtle">({killConditions.length})</span>}
             {t === "Evaluations" && evaluations.length > 0 && <span className="ml-1 text-xs text-subtle">({evaluations.length})</span>}
+            {t === "Learning" && decisionOutcomes.length > 0 && <span className="ml-1 text-xs text-subtle">({decisionOutcomes.length})</span>}
           </button>
         ))}
       </div>
@@ -626,6 +632,12 @@ export function PositionDossier() {
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
         {activeTab === "Evidence" && (
           <EvidenceLedgerPanel ledger={data.evidence_ledger} ticker={data.ticker} />
+        )}
+        {activeTab === "Learning" && (
+          <DecisionLearningTab
+            outcomes={decisionOutcomes}
+            onReview={setPostMortemReview}
+          />
         )}
         {activeTab === "Workflows" && (
           <WorkflowsTab
@@ -992,6 +1004,16 @@ export function PositionDossier() {
           </ActionButton>
         </div>
       </Dialog>
+      <PostMortemReviewDialog
+        open={postMortemReview !== null}
+        onOpenChange={open => {
+          if (!open) setPostMortemReview(null)
+        }}
+        outcome={postMortemReview}
+        onFinalized={() => {
+          void qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+        }}
+      />
     </div>
   )
 }
@@ -2231,6 +2253,57 @@ function RiskTab({ ticker }: { ticker: string }) {
           </pre>
         </details>
       )}
+    </div>
+  )
+}
+
+function DecisionLearningTab({
+  outcomes,
+  onReview,
+}: {
+  outcomes: DecisionOutcomeRecord[]
+  onReview: (outcome: DecisionOutcomeRecord) => void
+}) {
+  if (!outcomes.length) {
+    return <p className="text-sm text-muted">No decision outcomes recorded for this position yet.</p>
+  }
+
+  return (
+    <div className="space-y-3">
+      {outcomes.map(outcome => (
+        <div
+          key={String(outcome.decision_outcome_id || outcome.object_uid || outcome.id)}
+          className="rounded-lg border border-app px-4 py-3 text-sm"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-app">{outcome.as_of || "Unknown date"}</span>
+            <span className="text-xs text-subtle">{outcome.source_kind?.replace(/_/g, " ")}</span>
+            {outcome.process_label && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">
+                {outcome.process_label.replace(/_/g, " ")}
+              </span>
+            )}
+            <span className="ml-auto text-xs text-subtle">{outcome.final_label_status || outcome.learning_state}</span>
+          </div>
+          <p className="mt-2 text-xs text-muted whitespace-pre-wrap">
+            {outcome.final_postmortem || outcome.draft_postmortem || "No post-mortem text."}
+          </p>
+          {outcome.lessons_learned && (
+            <p className="mt-2 text-xs text-app">
+              <span className="font-medium">Lessons:</span> {outcome.lessons_learned}
+            </p>
+          )}
+          {outcome.requires_review && (
+            <button
+              type="button"
+              onClick={() => onReview(outcome)}
+              className="mt-3 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-app hover:bg-[hsl(var(--muted-2))]"
+            >
+              Review draft post-mortem
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

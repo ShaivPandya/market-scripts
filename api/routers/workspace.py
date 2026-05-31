@@ -16,6 +16,7 @@ from api.decision_state import (
     normalize_action_item,
     normalize_approval,
     normalize_course_of_action,
+    normalize_decision_outcome,
     normalize_recommendation,
 )
 from api.llm_settings import get_setting, set_setting
@@ -345,6 +346,16 @@ def get_workspace(since: str | None = None):
     recent_runs = ontology_bundle.get("recent_workflow_runs", [])
     recent_report_runs = ontology_bundle.get("recent_report_runs", [])
     challenged_claims = ontology_bundle.get("challenged_claims", []) + ontology_bundle.get("disconfirmed_claims", [])
+    pending_draft_decision_outcomes = [
+        normalize_decision_outcome(item)
+        for item in ontology_bundle.get("pending_draft_decision_outcomes", [])
+        if isinstance(item, dict)
+    ]
+    recent_finalized_decision_outcomes = [
+        normalize_decision_outcome(item)
+        for item in ontology_bundle.get("recent_finalized_decision_outcomes", [])
+        if isinstance(item, dict)
+    ]
     try:
         what_changed = build_workspace_change_summary(ontology_bundle, since=since)
     except ChangeSummaryInputError as exc:
@@ -406,5 +417,15 @@ def get_workspace(since: str | None = None):
         "thesis_claims": {
             "challenged_count": len(challenged_claims),
             "items": challenged_claims[:5],
+        },
+        "decision_learning": {
+            "pending_review": {
+                "count": len(pending_draft_decision_outcomes),
+                "items": pending_draft_decision_outcomes[:5],
+            },
+            "recent_finalized": {
+                "count": len(recent_finalized_decision_outcomes),
+                "items": recent_finalized_decision_outcomes[:5],
+            },
         },
     }

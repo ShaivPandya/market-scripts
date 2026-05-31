@@ -93,6 +93,20 @@ test("clears workspace pressure rows and bulk dismisses approvals", async ({ pag
   await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0)
 })
 
+test("shows decision learning review queue on workspace", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByRole("heading", { name: "Decision Learning" })).toBeVisible()
+  await expect(page.getByText("Smoke draft post-mortem for review.")).toBeVisible()
+
+  await page.getByRole("button", { name: "Review post-mortem" }).click()
+  const dialog = page.getByRole("dialog", { name: "Review Post-Mortem" })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole("button", { name: "Finalize" }).click()
+  await expect(dialog).toBeHidden()
+})
+
 test("runs an ontology workbench query with mocked async results", async ({ page }) => {
   await authenticate(page)
   await page.goto("/ontology")

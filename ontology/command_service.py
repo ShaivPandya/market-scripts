@@ -83,6 +83,7 @@ RESEARCH_ACTION_IDS = {
     "create_portfolio_news_digest",
     "delete_portfolio_news_digest",
     "create_analyst_feedback",
+    "finalize_decision_outcome",
     "create_action_item",
     "complete_action_item",
     "dismiss_action_item",
@@ -1628,6 +1629,21 @@ class OntologyCommandService:
                 actor=actor,
                 provenance=provenance_id,
                 input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "finalize_decision_outcome":
+            from ontology.decision_outcome_service import finalize_decision_outcome as finalize_outcome
+
+            outcome_uid = _non_blank(payload.get("decision_outcome_id"), "decision_outcome_id")
+            row = finalize_outcome(
+                outcome_uid,
+                decision=_non_blank(payload.get("decision"), "decision"),
+                note=payload.get("note"),
+                corrected_postmortem=payload.get("corrected_postmortem"),
+                lessons_learned=payload.get("lessons_learned"),
+                actor_id=context.actor.actor_id,
+                objects=self.objects,
             )
             refs.append(_version_ref_from_row(row))
             return refs
@@ -3637,6 +3653,8 @@ def _entity_type_for_action(action_id: str) -> str:
         return "news_digest_delete"
     if action_id == "create_analyst_feedback":
         return "analyst_feedback"
+    if action_id == "finalize_decision_outcome":
+        return "decision_outcome"
     if action_id in RESEARCH_ACTION_IDS:
         return "research_object"
     return "ontology_action"
@@ -3675,6 +3693,12 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         target_type = str(payload.get("target_object_type") or "").strip()
         if target_uid and target_type:
             return target_uid, target_type
+    if action_id == "finalize_decision_outcome":
+        outcome_uid = str(payload.get("decision_outcome_id") or "").strip()
+        if outcome_uid:
+            from ontology.schemas.identity import decision_outcome_id as outcome_uid_for
+
+            return outcome_uid_for(outcome_uid), "DecisionOutcome"
     if action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
         entity_id = payload.get("entity_id") or payload.get("hit_id")
         entity_type = str(payload.get("entity_type") or "").strip().lower()

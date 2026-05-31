@@ -461,6 +461,29 @@ const baseWorkspaceResponse = {
       },
     ],
   },
+  decision_learning: {
+    pending_review: {
+      count: 1,
+      items: [
+        {
+          decision_outcome_id: "rec:smoke-1",
+          ticker: "MSFT",
+          as_of: "2026-05-01",
+          process_label: "good_process_bad_outcome",
+          draft_postmortem: "Smoke draft post-mortem for review.",
+          final_label_status: "draft",
+          outcome_status: "evaluated",
+          requires_review: true,
+          source_kind: "recommendation",
+          recommendation_id: "smoke-rec-1",
+        },
+      ],
+    },
+    recent_finalized: {
+      count: 0,
+      items: [],
+    },
+  },
   recent_report_runs: [
     {
       id: "report_run:1",
@@ -729,6 +752,16 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       status: "dismissed",
       ticker: body.ticker ?? "MSFT",
       pressure_key: body.pressure_key ?? smokePressureKey,
+    })
+  }
+  if (method === "POST" && path.startsWith("/api/decision-outcomes/") && path.endsWith("/finalize")) {
+    return json(route, {
+      decision_outcome_id: "rec:smoke-1",
+      ticker: "MSFT",
+      final_label_status: "confirmed",
+      final_postmortem: "Smoke draft post-mortem for review.",
+      decision_state: "finalized",
+      requires_review: false,
     })
   }
   if (method === "GET" && path === "/api/approvals") {

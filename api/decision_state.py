@@ -467,6 +467,14 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("critical_data_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
+    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
+    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+    if outcome:
+        out["draft_postmortem"] = outcome.get("draft_postmortem")
+        out["final_postmortem"] = outcome.get("final_postmortem")
+        out["final_label_status"] = outcome.get("final_label_status")
+        out["process_label"] = outcome.get("process_label")
+        out["lessons_learned"] = outcome.get("lessons_learned")
     return out
 
 
@@ -485,11 +493,36 @@ def normalize_course_of_action(record: dict[str, Any] | None) -> dict[str, Any] 
     out["effect_scope"] = "internal_state" if approval_required else "read_only"
     out["execution_capability"] = "none"
     out["approval_state"] = out.get("approval_status") or "none"
-    out["outcome_state"] = out.get("status") or "pending"
+    out["outcome_state"] = out.get("outcome_status") or "pending"
     out["policy_gate"] = gate
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("source_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
+    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
+    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+    if outcome:
+        out["draft_postmortem"] = outcome.get("draft_postmortem")
+        out["final_postmortem"] = outcome.get("final_postmortem")
+        out["final_label_status"] = outcome.get("final_label_status")
+        out["process_label"] = outcome.get("process_label")
+        out["lessons_learned"] = outcome.get("lessons_learned")
+    return out
+
+
+def normalize_decision_outcome(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a DecisionOutcome with additive normalized decision fields."""
+
+    if record is None:
+        return None
+    out = deepcopy(record)
+    final_status = str(out.get("final_label_status") or "draft").strip().lower()
+    out["decision_kind"] = "decision_outcome"
+    out["decision_state"] = "draft" if final_status == "draft" else "finalized"
+    out["effect_scope"] = "read_only"
+    out["execution_capability"] = "none"
+    out["outcome_state"] = out.get("outcome_status") or "pending"
+    out["learning_state"] = final_status
+    out["requires_review"] = final_status == "draft" and out.get("outcome_status") == "evaluated"
     return out
 
 
