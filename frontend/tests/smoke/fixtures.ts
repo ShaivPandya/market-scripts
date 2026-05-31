@@ -429,6 +429,60 @@ const responsePreferences = {
   custom_instructions: "",
 } satisfies JsonValue
 
+const dossierResponse = {
+  ticker: "MSFT",
+  position: { ticker: "MSFT", asset: "equity", instrument_type: "security", direction: "long" },
+  overview_content: null,
+  overview_parsed: null,
+  management_quality: { content: null, parsed: null },
+  what_changed: { counts: { total: 0 }, items: [] },
+  evidence_ledger: {
+    ticker: "MSFT",
+    generated_at: "2026-05-31T00:00:00Z",
+    claims: [
+      {
+        claim_id: "thesis_claim:MSFT:ai-capex",
+        claim: "AI capex remains durable",
+        status: "active",
+        expected_evidence_text: "Azure growth re-accelerated",
+        disconfirming_evidence_text: null,
+        supporting_evidence: [
+          {
+            evidence: {
+              evidence_id: "ev-1",
+              title: "Azure earnings",
+              summary: "Azure growth re-accelerated in latest quarter",
+              source_record_id: "report:weekly:2026-05-10",
+              observed_at: "2026-05-10T00:00:00Z",
+            },
+            citations: [{ citation_id: "cit-1", title: "Weekly report", url: "https://example.com/report" }],
+            source_record: {
+              source_record_id: "report:weekly:2026-05-10",
+              source_name: "weekly_report_sync",
+              vendor: "github_actions",
+              quality: "ok",
+              as_of: "2026-05-10T00:00:00Z",
+            },
+          },
+        ],
+        disconfirming_evidence: [],
+      },
+    ],
+    recommendations: [],
+    counts: { claims: 1, recommendations: 0, evidence_items: 1 },
+  },
+  thesis: { meta: { ticker: "MSFT", status: "active", last_evaluated: null }, content: null, status_history: [] },
+  evaluations: [],
+  thesis_claims: [],
+  catalysts: [],
+  kill_conditions: [],
+  ontology_risk: null,
+  workflow_runs: [],
+  action_items: [],
+  watch_triggers: [],
+  pending_approvals: [],
+} satisfies JsonValue
+
 function agentHistorySessions(state: ApiMockState) {
   const now = new Date().toISOString()
   return [
@@ -472,6 +526,11 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
   }
 
   if (method === "GET" && path === "/api/liquidity") return json(route, liquidityResponse)
+  if (method === "GET" && path === "/api/dossier/MSFT") return json(route, dossierResponse)
+  if (method === "GET" && path === "/api/thesis/status") return json(route, { MSFT: "uploaded" })
+  if (method === "GET" && path === "/api/valuation/MSFT") {
+    return json(route, { ticker: "MSFT", status: "unavailable", valuation: null })
+  }
   if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse(state))
   if (method === "POST" && path === "/api/workspace/thesis-pressure/dismiss") {
     const body = JSON.parse(request.postData() || "{}") as { ticker?: string; pressure_key?: string }

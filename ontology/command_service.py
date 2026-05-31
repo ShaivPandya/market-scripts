@@ -1449,7 +1449,24 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
-            refs.append(_version_ref_from_row(row))
+            claim_ref = _version_ref_from_row(row)
+            refs.append(claim_ref)
+            claim_uid = str(claim_ref.get("object_uid") or "")
+            if claim_uid:
+                from ontology.evidence_ledger import write_claim_evidence_graph
+
+                write_claim_evidence_graph(
+                    self.objects,
+                    claim_uid=claim_uid,
+                    claim_key=claim_object_key or f"{ticker}:{claim}",
+                    expected_evidence=payload.get("expected_evidence"),
+                    disconfirming_evidence=payload.get("disconfirming_evidence"),
+                    valid_from=now,
+                    actor=actor,
+                    provenance_id=provenance_id,
+                    approval_id=approval_object_id,
+                    input_hash=input_hash,
+                )
             return refs
         if action_id == "create_research_note":
             content = str(
@@ -3049,6 +3066,19 @@ class OntologyCommandService:
                         provenance=provenance_id,
                         input_hash=input_hash,
                     )
+            from ontology.evidence_ledger import write_claim_evidence_graph
+
+            write_claim_evidence_graph(
+                self.objects,
+                claim_uid=claim_uid,
+                claim_key=f"{ticker}:{claim}",
+                expected_evidence=record.get("expected_evidence"),
+                disconfirming_evidence=record.get("disconfirming_evidence"),
+                valid_from=now,
+                actor=actor,
+                provenance_id=provenance_id,
+                input_hash=input_hash,
+            )
 
         return refs
 

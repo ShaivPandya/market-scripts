@@ -35,6 +35,7 @@ import {
   type ThesisClaimStatus,
   type ThesisStatus,
   type ThesisStatusValue,
+  type EvidenceLedgerSummary,
 } from "@/lib/api"
 import {
   approvalSummaryQueryKey,
@@ -54,6 +55,7 @@ import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSum
 import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
+import { EvidenceLedgerPanel } from "@/components/shared/EvidenceLedgerPanel"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
@@ -89,6 +91,7 @@ interface DossierData {
     assessment?: ManagementQualityAssessment | null
   }
   what_changed?: WhatChangedSummary | null
+  evidence_ledger?: EvidenceLedgerSummary | null
   thesis: {
     meta: ThesisMeta | null
     content: string | null
@@ -161,7 +164,7 @@ interface Trigger {
   last_evidence: string | null
 }
 
-const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Evidence", "Workflows"] as const
 type Tab = "Overview" | "Management Quality" | "Valuation" | typeof BASE_TABS[number]
 type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
@@ -605,6 +608,9 @@ export function PositionDossier() {
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
+        {activeTab === "Evidence" && (
+          <EvidenceLedgerPanel ledger={data.evidence_ledger} ticker={data.ticker} />
+        )}
         {activeTab === "Workflows" && (
           <WorkflowsTab
             runs={workflowRuns}

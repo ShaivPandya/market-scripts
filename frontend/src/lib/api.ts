@@ -2799,6 +2799,72 @@ export const fetchRecommendation = (id: number) =>
   client.get(`/recommendations/${id}`).then(r => r.data)
 
 // Dossier
+export interface EvidenceLedgerCitation {
+  citation_id?: string | null
+  title?: string | null
+  url?: string | null
+  source_path?: string | null
+  source_record_id?: string | null
+}
+
+export interface EvidenceLedgerSourceRecord {
+  source_record_id?: string | null
+  source_name?: string | null
+  vendor?: string | null
+  quality?: string | null
+  status?: string | null
+  as_of?: string | null
+  load_time?: string | null
+}
+
+export interface EvidenceLedgerEvidence {
+  evidence_id?: string | null
+  evidence_type?: string | null
+  title?: string | null
+  summary?: string | null
+  source_record_id?: string | null
+  observed_at?: string | null
+  confidence?: number | null
+}
+
+export interface EvidenceLedgerBundle {
+  evidence: EvidenceLedgerEvidence
+  citations: EvidenceLedgerCitation[]
+  source_record?: EvidenceLedgerSourceRecord | null
+  relation_role?: string | null
+}
+
+export interface EvidenceLedgerClaimEntry {
+  claim_id?: string | null
+  claim?: string | null
+  status?: string | null
+  expected_evidence_text?: string | null
+  disconfirming_evidence_text?: string | null
+  supporting_evidence: EvidenceLedgerBundle[]
+  disconfirming_evidence: EvidenceLedgerBundle[]
+}
+
+export interface EvidenceLedgerRecommendationEntry {
+  recommendation_id?: string | null
+  action?: string | null
+  as_of?: string | null
+  status?: string | null
+  supporting_evidence: EvidenceLedgerBundle[]
+  disconfirming_evidence: EvidenceLedgerBundle[]
+}
+
+export interface EvidenceLedgerSummary {
+  ticker: string
+  generated_at?: string | null
+  claims: EvidenceLedgerClaimEntry[]
+  recommendations: EvidenceLedgerRecommendationEntry[]
+  counts?: {
+    claims?: number
+    recommendations?: number
+    evidence_items?: number
+  }
+}
+
 export const fetchDossier = (ticker: string) =>
   client.get(`/dossier/${encodeURIComponent(ticker)}`).then(r => r.data)
 

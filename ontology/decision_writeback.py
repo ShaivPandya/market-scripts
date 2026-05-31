@@ -1323,107 +1323,32 @@ class DecisionOntologyWriteback:
         valid_from: str,
         approval_id: int | None,
     ) -> list[dict[str, Any]]:
+        from ontology.evidence_ledger import write_parent_evidence_graph
+
         rows: list[dict[str, Any]] = []
-        for relation_type, evidence_items in (
-            ("recommendation_supported_by_evidence", _as_list(record.get("evidence"))),
-            ("recommendation_contradicted_by_evidence", _as_list(record.get("disconfirming_evidence"))),
+        for relation_type, evidence_items, role in (
+            ("recommendation_supported_by_evidence", _as_list(record.get("evidence")), "supporting"),
+            (
+                "recommendation_contradicted_by_evidence",
+                _as_list(record.get("disconfirming_evidence")),
+                "disconfirming",
+            ),
         ):
-            for index, item in enumerate(evidence_items):
-                if item is None or item == "":
-                    continue
-                evidence_payload = _as_dict(item) if isinstance(item, (Mapping, str)) else {}
-                summary = (
-                    evidence_payload.get("summary")
-                    or evidence_payload.get("text")
-                    or evidence_payload.get("evidence")
-                    or evidence_payload.get("description")
-                    or (item if isinstance(item, str) else None)
-                )
-                if not str(summary or "").strip():
-                    continue
-                role = "supporting" if relation_type == "recommendation_supported_by_evidence" else "disconfirming"
-                evidence_key = str(
-                    evidence_payload.get("evidence_id") or f"{recommendation_key}:{role}:{index}:{_hash_value(item)}"
-                )
-                evidence_row = self.object_service.write_object(
-                    "Evidence",
-                    evidence_key,
-                    {
-                        "evidence_id": evidence_key,
-                        "evidence_type": str(evidence_payload.get("evidence_type") or role),
-                        "title": evidence_payload.get("title") or evidence_payload.get("source"),
-                        "summary": _truncate(summary, 2000),
-                        "source_record_id": evidence_payload.get("source_record_id"),
-                        "document_artifact_id": evidence_payload.get("document_artifact_id"),
-                        "confidence": _optional_float(evidence_payload.get("confidence")),
-                        "observed_at": evidence_payload.get("observed_at") or record.get("as_of"),
-                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-                    },
-                    valid_from,
+            rows.extend(
+                write_parent_evidence_graph(
+                    self.object_service,
+                    parent_uid=recommendation_object_uid,
+                    parent_key=recommendation_key,
+                    evidence_items=evidence_items,
+                    relation_type=relation_type,
+                    role=role,
+                    valid_from=valid_from,
                     actor=actor,
-                    provenance=provenance_id,
+                    provenance_id=provenance_id,
                     approval_id=approval_id,
-                    input_hash=_hash_value(item),
+                    observed_at=record.get("as_of"),
                 )
-                rows.append(evidence_row)
-                evidence_uid_value = evidence_id(evidence_key)
-                rows.append(
-                    self.object_service.write_relation(
-                        recommendation_object_uid,
-                        evidence_uid_value,
-                        relation_type,
-                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "relation_role": role},
-                        valid_from,
-                        actor=actor,
-                        provenance=provenance_id,
-                        approval_id=approval_id,
-                        input_hash=_hash_value(item),
-                    )
-                )
-                citation_payload = _citation_payload(evidence_payload)
-                if citation_payload:
-                    citation_key = str(
-                        citation_payload.get("citation_id")
-                        or f"{recommendation_key}:{role}:{index}:citation:{_hash_value(citation_payload)}"
-                    )
-                    citation_row = self.object_service.write_object(
-                        "Citation",
-                        citation_key,
-                        {
-                            "citation_id": citation_key,
-                            "source_record_id": citation_payload.get("source_record_id")
-                            or evidence_payload.get("source_record_id"),
-                            "document_artifact_id": citation_payload.get("document_artifact_id")
-                            or evidence_payload.get("document_artifact_id"),
-                            "title": citation_payload.get("title") or evidence_payload.get("title"),
-                            "url": citation_payload.get("url"),
-                            "source_path": citation_payload.get("source_path"),
-                            "quote_hash": citation_payload.get("quote_hash")
-                            or _hash_text(str(citation_payload.get("quote") or summary), length=32),
-                            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-                        },
-                        valid_from,
-                        actor=actor,
-                        provenance=provenance_id,
-                        approval_id=approval_id,
-                        input_hash=_hash_value(citation_payload),
-                    )
-                    rows.append(citation_row)
-                    citation_uid_value = citation_id(citation_key)
-                    for citation_relation in ("evidence_has_citation", "evidence_cites_citation"):
-                        rows.append(
-                            self.object_service.write_relation(
-                                evidence_uid_value,
-                                citation_uid_value,
-                                citation_relation,
-                                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
-                                valid_from,
-                                actor=actor,
-                                provenance=provenance_id,
-                                approval_id=approval_id,
-                                input_hash=_hash_value(citation_payload),
-                            )
-                        )
+            )
         return rows
 
     def _record_recommendation_risk_snapshots(

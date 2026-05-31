@@ -96,6 +96,8 @@ def get_dossier(ticker: str, since: str | None = None):
     except ChangeSummaryInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    evidence_ledger = reads.evidence_ledger(ticker)
+
     # Ontology risk is loaded lazily by the frontend Risk tab to avoid
     # expensive macro ingestion during dossier navigation.
     ontology_risk = None
@@ -113,6 +115,7 @@ def get_dossier(ticker: str, since: str | None = None):
             "assessment": management_quality_assessment,
         },
         "what_changed": what_changed,
+        "evidence_ledger": evidence_ledger,
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,

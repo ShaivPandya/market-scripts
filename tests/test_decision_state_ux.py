@@ -526,6 +526,19 @@ def test_workspace_source_health_panel_is_wired():
     assert "theme-badge-error" in workspace
 
 
+def test_dossier_evidence_ledger_panel_is_wired():
+    dossier = (ROOT / "frontend/src/pages/PositionDossier.tsx").read_text()
+    panel = (ROOT / "frontend/src/components/shared/EvidenceLedgerPanel.tsx").read_text()
+    api_types = (ROOT / "frontend/src/lib/api.ts").read_text()
+
+    assert "EvidenceLedgerPanel" in dossier
+    assert '"Evidence"' in dossier or "'Evidence'" in dossier
+    assert "Evidence Ledger" in panel
+    assert "ProvenanceTraceDialog" in panel
+    assert "evidence_ledger" in dossier
+    assert "EvidenceLedgerSummary" in api_types
+
+
 def test_workspace_approval_source_health_review_is_wired():
     workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
     api_types = (ROOT / "frontend/src/lib/api.ts").read_text()

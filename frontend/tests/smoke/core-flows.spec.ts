@@ -149,3 +149,17 @@ test("opens the agent chat shell with workflow and preference fixtures", async (
   await page.keyboard.press("Enter")
   await expect(page.getByText("Renamed NVDA Chat").first()).toBeVisible()
 })
+
+test("renders position dossier evidence ledger tab", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/dossier/MSFT")
+
+  await expect(page.getByRole("heading", { name: "MSFT" })).toBeVisible()
+  await page.getByRole("button", { name: "Evidence", exact: true }).click()
+
+  await expect(page.getByRole("heading", { name: "Evidence Ledger" })).toBeVisible()
+  await expect(page.getByText("AI capex remains durable")).toBeVisible()
+  await expect(page.getByText("Azure growth re-accelerated in latest quarter")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Lineage" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Weekly report" })).toBeVisible()
+})

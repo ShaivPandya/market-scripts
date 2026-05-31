@@ -193,6 +193,16 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
         def positions(self):
             raise AssertionError("dossier route should not scan all positions")
 
+        def evidence_ledger(self, ticker: str):
+            assert ticker == "MU"
+            return {
+                "ticker": "MU",
+                "generated_at": "2026-05-31T00:00:00Z",
+                "claims": [],
+                "recommendations": [],
+                "counts": {"claims": 0, "recommendations": 0, "evidence_items": 0},
+            }
+
     monkeypatch.setattr(dossier_router, "OntologyRuntimeReadService", _Reads)
     monkeypatch.setattr(state_storage, "exists_text", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(management_quality_content, "management_quality_exists", lambda *_args, **_kwargs: False)
@@ -206,3 +216,4 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
     assert payload["evaluations"][0]["ticker"] == "MU"
     assert payload["action_items"][0]["decision_state"] == "open"
     assert payload["pending_approvals"][0]["decision_state"] == "pending_approval"
+    assert payload["evidence_ledger"]["ticker"] == "MU"

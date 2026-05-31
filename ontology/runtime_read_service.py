@@ -228,6 +228,11 @@ class OntologyRuntimeReadService:
     ) -> list[dict[str, Any]]:
         return self.list_objects("ThesisClaim", filters=_ticker_status_filter(ticker, status), limit=limit)
 
+    def evidence_ledger(self, ticker: str) -> dict[str, Any]:
+        from ontology.evidence_ledger import build_ticker_evidence_ledger
+
+        return build_ticker_evidence_ledger(self, ticker)
+
     def action_items(
         self,
         *,
