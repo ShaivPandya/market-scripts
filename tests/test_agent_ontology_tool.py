@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from api.agent_tools import TOOL_DEFINITIONS, execute_tool
-from ontology.action_registry import get_tool_exposure
+from ontology.action_registry import get_tool_exposure, validate_tool_input
 from ontology.policy import PolicyDenied, admin_actor, agent_actor
 
 
@@ -381,3 +381,103 @@ def test_signal_aggregator_tool_dispatch(monkeypatch):
     payload = json.loads(raw)
     assert payload["status"] == "ok"
     assert payload["regime"]["label"] == "transitional"
+
+
+def test_query_ontology_tool_exposes_temporal_params():
+    qo = next(tool for tool in TOOL_DEFINITIONS if tool.get("name") == "query_ontology")
+    advertised = set(qo["parameters"]["properties"])
+    assert {"as_of", "tx_as_of", "include_history"} <= advertised
+
+    # The exposure input_schema is the source of truth for both the LLM-facing
+    # definition and the validation model; keep them in lockstep.
+    exposure_props = set(get_tool_exposure("query_ontology").input_schema["properties"])
+    assert {"as_of", "tx_as_of", "include_history"} <= exposure_props
+
+
+def test_query_ontology_validation_accepts_temporal_params():
+    # Guards against the extra="forbid" regression: a temporal payload must validate.
+    typed = validate_tool_input(
+        "query_ontology",
+        {
+            "query": "portfolio risk",
+            "as_of": "2026-03-08T00:00:00Z",
+            "tx_as_of": "2026-02-28T00:00:00Z",
+            "include_history": True,
+        },
+    )
+    dumped = typed.model_dump(exclude_none=True)
+    assert dumped["as_of"] == "2026-03-08T00:00:00Z"
+    assert dumped["tx_as_of"] == "2026-02-28T00:00:00Z"
+    assert dumped["include_history"] is True
+
+
+def test_query_ontology_tool_forwards_temporal_params(monkeypatch):
+    monkeypatch.setattr("api.agent_tools.get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.agent_tools.set_cached", lambda *args, **kwargs: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_query(
+        self,
+        query,
+        intent,
+        filters,
+        timeframe,
+        include_graph,
+        run_id,
+        refresh_snapshot=False,
+        page=1,
+        page_size=25,
+        schema_mode="upgraded",
+        as_of=None,
+        tx_as_of=None,
+        include_history=False,
+        actor=None,
+    ):
+        captured["as_of"] = as_of
+        captured["tx_as_of"] = tx_as_of
+        captured["include_history"] = include_history
+        return {
+            "run_id": run_id or "run-1",
+            "intent": intent or "portfolio_risk_exposure",
+            "source_status": {"portfolio": {"status": "ok"}},
+            "results": [],
+            "aggregate": {
+                "position_count": 0,
+                "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                "asset_exposure_counts": {},
+                "average_risk_score": 0.0,
+                "confidence": 1.0,
+            },
+            "_meta": {
+                "temporal": {
+                    "as_of": as_of,
+                    "tx_as_of": tx_as_of,
+                    "include_history": include_history,
+                    "mode": "temporal_read_model",
+                }
+            },
+        }
+
+    monkeypatch.setattr("ontology.service.OntologyQueryService.query", fake_query)
+
+    raw = execute_tool(
+        "query_ontology",
+        {
+            "query": "What did our portfolio risk look like as of March 8 2026?",
+            "as_of": "2026-03-08T00:00:00Z",
+            "tx_as_of": "2026-02-28T00:00:00Z",
+            "include_history": True,
+        },
+    )
+
+    payload = json.loads(raw)
+    assert captured == {
+        "as_of": "2026-03-08T00:00:00Z",
+        "tx_as_of": "2026-02-28T00:00:00Z",
+        "include_history": True,
+    }
+    temporal = payload["_meta"]["temporal"]
+    assert temporal["as_of"] == "2026-03-08T00:00:00Z"
+    assert temporal["tx_as_of"] == "2026-02-28T00:00:00Z"
+    assert temporal["include_history"] is True
