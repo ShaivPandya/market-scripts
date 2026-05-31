@@ -11,6 +11,7 @@ import {
 } from "@/lib/api"
 import { deleteSession, fetchSessionHistory, renameSessionTitle, useAgentChat, type SessionSummary } from "@/hooks/useAgentChat"
 import type { ScreenContext } from "@/contexts/ScreenContext"
+import type { StanOpenDetail } from "@/lib/stanLauncher"
 import { AgentChatComposer } from "./AgentChatComposer"
 import { AgentChatHeader } from "./AgentChatHeader"
 import { AgentContextPane } from "./AgentContextPane"
@@ -41,6 +42,8 @@ interface AgentChatProps {
   open: boolean
   onClose: () => void
   screenContext?: ScreenContext
+  pendingCommand?: StanOpenDetail | null
+  onPendingCommandConsumed?: () => void
 }
 
 interface WorkflowInvalidationTarget {
@@ -89,7 +92,13 @@ function invalidateWorkflowRunQueries(
   }
 }
 
-export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
+export function AgentChat({
+  open,
+  onClose,
+  screenContext,
+  pendingCommand,
+  onPendingCommandConsumed,
+}: AgentChatProps) {
   const {
     messages,
     isStreaming,
@@ -123,6 +132,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const wasOpenRef = useRef(open)
   const wasStreamingRef = useRef(isStreaming)
   const pendingWorkflowInvalidationRef = useRef<WorkflowInvalidationTarget | null>(null)
+  const lastConsumedCommandRef = useRef<string | null>(null)
 
   const workflowsQuery = useQuery({
     queryKey: ["agent-workflows"],
@@ -223,6 +233,31 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
       localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(normalizePreferences(preferencesQuery.data)))
     }
   }, [preferencesQuery.data])
+
+  useEffect(() => {
+    if (!pendingCommand) {
+      lastConsumedCommandRef.current = null
+    }
+  }, [pendingCommand])
+
+  useEffect(() => {
+    if (!open || !pendingCommand?.command?.trim() || isStreaming) return
+    const command = pendingCommand.command.trim()
+    if (lastConsumedCommandRef.current === command) return
+    lastConsumedCommandRef.current = command
+    pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(command)
+    setActivePanel("chat")
+    sendMessage(command, screenContext, activePreferences, { durable: pendingCommand.durable ?? true })
+    onPendingCommandConsumed?.()
+  }, [
+    open,
+    pendingCommand,
+    isStreaming,
+    screenContext,
+    activePreferences,
+    sendMessage,
+    onPendingCommandConsumed,
+  ])
 
   function updateDraftPreferences(updater: (prev: AgentResponsePreferences) => AgentResponsePreferences) {
     setDraftPreferences(updater)

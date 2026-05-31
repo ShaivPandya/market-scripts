@@ -8,6 +8,7 @@ import { AgentChat } from "../agent/AgentChat"
 import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
 import { fetchApprovalSummary, type ApprovalRecord } from "@/lib/api"
 import { approvalSummaryQueryKey } from "@/lib/approvalQueries"
+import { STAN_OPEN_EVENT, type StanOpenDetail } from "@/lib/stanLauncher"
 
 const ACTION_ITEM_ALERT_LIMIT = 50
 
@@ -52,6 +53,18 @@ function LayoutInner({
   const effectiveContext = screenContext ?? autoContext
   const location = useLocation()
   const routeLabel = getRouteLabel(location.pathname)
+  const [pendingStanCommand, setPendingStanCommand] = useState<StanOpenDetail | null>(null)
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<StanOpenDetail>).detail
+      if (!detail?.command?.trim()) return
+      setPendingStanCommand(detail)
+      setAgentOpen(true)
+    }
+    window.addEventListener(STAN_OPEN_EVENT, handler)
+    return () => window.removeEventListener(STAN_OPEN_EVENT, handler)
+  }, [setAgentOpen])
 
   const openPageSearch = useCallback(() => {
     setPageSearchOpen(true)
@@ -138,7 +151,13 @@ function LayoutInner({
         <MessageCircle size={20} />
       </button>
 
-      <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} screenContext={effectiveContext} />
+      <AgentChat
+        open={agentOpen}
+        onClose={() => setAgentOpen(false)}
+        screenContext={effectiveContext}
+        pendingCommand={pendingStanCommand}
+        onPendingCommandConsumed={() => setPendingStanCommand(null)}
+      />
       <SidebarSearchDialog
         open={pageSearchOpen}
         onOpenChange={setPageSearchOpen}
