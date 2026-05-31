@@ -22,6 +22,16 @@ def test_source_registry_entries_validate_and_include_core_domains():
     assert entries["source_ingestion_document"].vendor_name == "user_upload"
 
 
+def test_source_registry_derives_reliability_tiers():
+    entries = all_source_registry_entries()
+
+    assert source_registry_metadata("market_breadth")["reliability_tier"] == "critical"
+    assert source_registry_metadata("momentum")["reliability_tier"] == "supplemental"
+    assert source_registry_metadata("market_regime")["reliability_tier"] == "standard"
+    assert source_registry_metadata("portfolio_news_digest")["reliability_tier"] == "ad_hoc"
+    assert entries["market_breadth"].reliability_tier is None
+
+
 def test_source_registry_rejects_invalid_fallbacks():
     bad = {
         "primary": SourceRegistryEntry(
@@ -32,6 +42,7 @@ def test_source_registry_rejects_invalid_fallbacks():
             freshness_sla_seconds=0,
             required=True,
             fallback_source_id="missing",
+            reliability_tier=None,
         )
     }
 

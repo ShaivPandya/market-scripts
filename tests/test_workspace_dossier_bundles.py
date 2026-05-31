@@ -43,6 +43,17 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
                 "active_watch_triggers": [
                     {"id": trigger_id, "status": "active", "ticker": "MU"} for trigger_id in range(1, 8)
                 ],
+                "recent_monitor_hits": [
+                    {
+                        "id": "monitor_hit:1",
+                        "ticker": "MU",
+                        "entity_type": "kill_condition",
+                        "entity_id": "kill_condition:1",
+                        "hit_type": "approaching",
+                        "status": "open",
+                        "evidence": "Price within 5% of threshold",
+                    }
+                ],
                 "recent_workflow_runs": [{"id": "workflow_run:1"}],
                 "recent_report_runs": [{"id": "report_run:1"}],
                 "challenged_claims": [{"id": 9, "status": "challenged"}],
@@ -70,6 +81,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     payload = workspace_router.get_workspace()
 
     assert payload["source_health"]["overall_quality"] == "ok"
+    assert payload["what_changed"]["counts"]["total"] == 0
     assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
     assert payload["thesis_pressure"][0]["pressure_key"].startswith("MU:")
     assert payload["pending_approvals"]["count"] == 1
@@ -80,6 +92,8 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     assert payload["continuous_optimization"]["open_alert_count"] == 1
     assert payload["active_triggers"]["count"] == 7
     assert len(payload["active_triggers"]["items"]) == 7
+    assert payload["monitor_hits"]["count"] == 1
+    assert payload["monitor_hits"]["items"][0]["hit_type"] == "approaching"
     assert payload["thesis_claims"]["challenged_count"] == 2
 
 
@@ -186,11 +200,22 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
                 "workflow_runs": [{"ticker": "MU"}],
                 "action_items": [{"ticker": "MU", "status": "open"}],
                 "watch_triggers": [{"ticker": "MU"}],
+                "monitor_hits": [{"ticker": "MU", "entity_type": "kill_condition", "hit_type": "approaching"}],
                 "pending_approvals": [{"id": 11, "ticker": "MU", "status": "pending"}],
             }
 
         def positions(self):
             raise AssertionError("dossier route should not scan all positions")
+
+        def evidence_ledger(self, ticker: str):
+            assert ticker == "MU"
+            return {
+                "ticker": "MU",
+                "generated_at": "2026-05-31T00:00:00Z",
+                "claims": [],
+                "recommendations": [],
+                "counts": {"claims": 0, "recommendations": 0, "evidence_items": 0},
+            }
 
     monkeypatch.setattr(dossier_router, "OntologyRuntimeReadService", _Reads)
     monkeypatch.setattr(state_storage, "exists_text", lambda *_args, **_kwargs: False)
@@ -199,8 +224,11 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
     payload = dossier_router.get_dossier("mu")
 
     assert payload["ticker"] == "MU"
+    assert payload["what_changed"]["counts"]["total"] == 0
     assert payload["position"]["ticker"] == "MU"
     assert payload["thesis"]["meta"]["ticker"] == "MU"
     assert payload["evaluations"][0]["ticker"] == "MU"
     assert payload["action_items"][0]["decision_state"] == "open"
     assert payload["pending_approvals"][0]["decision_state"] == "pending_approval"
+    assert payload["evidence_ledger"]["ticker"] == "MU"
+    assert payload["monitor_hits"][0]["hit_type"] == "approaching"

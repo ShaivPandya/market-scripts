@@ -23,6 +23,20 @@
     "search_agent_capabilities": {"capabilities": []}
   },
   "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "workflow_name": null,
+    "required_tool_names": ["get_thesis", "run_chart"],
+    "min_confidence": 0.7,
+    "allowed_fallback_reasons": [null, "confidence_below_threshold", "llm_parse_or_call_failed"]
+  },
+  "workflow_expectations": {
+    "requires_workflow_run_id": false,
+    "expected_artifact_keys": [],
+    "requires_pending_approval_language": false
+  },
   "required_points": [
     {
       "label": "specific risk",

@@ -1,0 +1,53 @@
+{
+  "id": "opportunity_candidate_watch_semiconductors_2026",
+  "status": "review",
+  "decision_type": "opportunity_candidate",
+  "as_of_date": "2026-05-15",
+  "user_question": "Scan semiconductors for anything interesting right now.",
+  "input_refs": [
+    {
+      "type": "other",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic scan prompt with sector context but no ticker-specific thesis.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This fixture grades triage-only output, not a full DecisionQuality pass.",
+    "The candidate should remain on the watch/research queue without graduation."
+  ],
+  "gold_output": {
+    "ticker": null,
+    "source": "agent_chat",
+    "trigger": "User asked for a sector scan rather than a single-name thesis.",
+    "opportunity_type": "unclear",
+    "consensus": "Semiconductor names are still being debated on AI memory versus cycle risk.",
+    "variant_view": "A selective memory or equipment name may be mispriced, but no single ticker is established yet.",
+    "why_now": "The user wants a current scan, not a fully formed thesis.",
+    "price_confirmation": "No ticker-specific price confirmation is available in the prompt.",
+    "crowding": "",
+    "payoff_asymmetry": "",
+    "missing_inputs": [
+      "Ticker shortlist",
+      "Current price action by name",
+      "Catalyst calendar",
+      "Portfolio fit"
+    ],
+    "source_refs": [
+      {
+        "label": "Synthetic sector scan prompt",
+        "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_watch_semiconductors_2026.json"
+      }
+    ],
+    "next_action": "research",
+    "summary": "Sector scan is worth research, but no single opportunity is ready for a full pressure-test yet."
+  },
+  "expected_graduation": false,
+  "rubric_scores": {
+    "trigger_clarity": 4,
+    "why_now": 3,
+    "missing_inputs": 4,
+    "triage_discipline": 4
+  }
+}

@@ -142,6 +142,17 @@ def enqueue_watch_trigger_monitor(_sub: str = Depends(require_scheduler_or_job_a
     return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-catalyst-kill-monitor")
+def enqueue_catalyst_kill_monitor(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "catalyst_kill_monitor",
+        {"source": "scheduler"},
+        cache_key="maintenance:catalyst_kill_monitor:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
+
+
 @router.post("/admin/jobs/enqueue-continuous-optimizer")
 def enqueue_continuous_optimizer(_sub: str = Depends(require_scheduler_or_job_admin)):
     row, _disposition = enqueue_registered_job(

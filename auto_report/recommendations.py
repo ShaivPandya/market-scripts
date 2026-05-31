@@ -1226,7 +1226,28 @@ def persist_recommendations(
             context,
             reason=reason,
         )
-        persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
+        proposed_change = approval.get("proposed_change")
+        proposed_change_dict = proposed_change if isinstance(proposed_change, dict) else {}
+        raw_record = proposed_change_dict.get("record")
+        persisted_record = raw_record if isinstance(raw_record, dict) else record
+        if str(approval.get("id") or "").startswith("recommendation:"):
+            persisted.append(
+                {
+                    "status": "recommendation_persisted",
+                    "id": approval["id"],
+                    "recommendation_id": approval["id"],
+                    "record": persisted_record,
+                }
+            )
+        else:
+            persisted.append(
+                {
+                    "status": "pending_approval_created",
+                    "id": approval["id"],
+                    "approval_id": approval["id"],
+                    "record": record,
+                }
+            )
     return persisted
 
 
@@ -1336,174 +1357,6 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
 
 
 def evaluate_due_recommendations(limit: int = 50) -> dict:
-    from ontology.object_service import OntologyObjectService
-    from ontology.policy import actor_to_dict, system_actor
-    from ontology.runtime_read_service import OntologyRuntimeReadService
+    from ontology.decision_outcome_service import evaluate_due_decisions
 
-    today = datetime.now(UTC).date()
-    reads = OntologyRuntimeReadService()
-    objects = OntologyObjectService()
-    actor = system_actor("recommendation_evaluator")
-
-    def update_recommendation_outcome(rec: dict[str, Any], status: str, outcome: dict[str, Any]) -> None:
-        rec_uid = str(rec.get("object_uid") or rec.get("id") or rec.get("recommendation_id") or "")
-        payload = dict(rec.get("payload") or {})
-        payload["outcome"] = outcome
-        props = {
-            "recommendation_id": rec.get("recommendation_id") or rec_uid,
-            "idempotency_key": rec.get("idempotency_key"),
-            "source_kind": rec.get("source_kind") or "report",
-            "report_type": rec.get("report_type"),
-            "as_of": rec.get("as_of"),
-            "action": rec.get("action") or "watch",
-            "ticker": rec.get("ticker"),
-            "instrument": rec.get("instrument") or rec.get("ticker") or "portfolio",
-            "decision_state": rec.get("decision_state") or "generated",
-            "status": rec.get("status"),
-            "approval_id": str(rec.get("approval_id")) if rec.get("approval_id") is not None else None,
-            "approval_required": bool(rec.get("approval_required")),
-            "approval_status": rec.get("approval_status"),
-            "outcome_status": status,
-            "supersedes_recommendation_id": rec.get("supersedes_recommendation_id"),
-            "account_id": rec.get("account_id"),
-            "portfolio_id": rec.get("portfolio_id"),
-            "policy_id": rec.get("policy_id"),
-            "policy_gate_result_id": rec.get("policy_gate_result_id"),
-            "policy_gate_decision": rec.get("policy_gate_decision") or rec.get("policy_gate_status"),
-            "policy_gate_review_required": bool(rec.get("policy_gate_review_required")),
-            "confidence": _as_float(rec.get("confidence"), 0.0),
-            "horizon": rec.get("horizon"),
-            "rationale_summary": str(rec.get("rationale") or "")[:500] or None,
-            "rationale_hash": stable_hash(str(rec.get("rationale") or "")) if rec.get("rationale") else None,
-            "source_quality": rec.get("source_quality"),
-            "payload": payload,
-            "ontology_run_id": "operational",
-        }
-        objects.write_object(
-            "Recommendation",
-            rec_uid,
-            props,
-            datetime.now(UTC).isoformat(),
-            actor=actor_to_dict(actor),
-            provenance=f"pv:recommendation_outcome:{rec_uid}",
-        )
-
-    checked = 0
-    updated = 0
-    unavailable = 0
-    for rec in reads.recommendations(outcome_status="pending", limit=limit):
-        checked += 1
-        as_of = _parse_date(rec.get("as_of"))
-        if as_of is None:
-            update_recommendation_outcome(rec, "unavailable", {"reason": "missing as_of date"})
-            unavailable += 1
-            continue
-        if today < as_of + timedelta(days=_horizon_days(rec.get("horizon"))):
-            continue
-        action = rec.get("action")
-        if action == "do_nothing":
-            update_recommendation_outcome(
-                rec,
-                "evaluated",
-                {
-                    "evaluation_authority": "ai_draft_user_final",
-                    "final_label_status": "draft",
-                    "process_label": "inconclusive",
-                    "timing_vs_expected_onset": _timing_label(
-                        as_of,
-                        today,
-                        rec.get("horizon"),
-                        rec.get("expected_onset_window"),
-                    ),
-                    "opportunity_cost": rec.get("opportunity_cost_json", []),
-                    "draft_postmortem": "No-action recommendation reached its review horizon. User should confirm whether inaction preserved optionality or missed an actionable opportunity.",
-                    "objective_score_available": False,
-                },
-            )
-            updated += 1
-            continue
-        ticker = rec.get("ticker")
-        direction = _expected_direction(str(action))
-        if not ticker or direction is None:
-            update_recommendation_outcome(
-                rec,
-                "unavailable",
-                {
-                    "reason": "broad or non-directional recommendation; manual review required",
-                    "process_label": "inconclusive",
-                    "opportunity_cost": rec.get("opportunity_cost_json", []),
-                },
-            )
-            unavailable += 1
-            continue
-        try:
-            close = _download_close_series(ticker, as_of, today)
-            benchmark_close = _download_close_series("SPY", as_of, today)
-            start = float(close.iloc[0])
-            end = float(close.iloc[-1])
-            forward_return = _series_return_pct(close)
-            benchmark_return = _series_return_pct(benchmark_close)
-            relative_return = forward_return - benchmark_return
-            max_adverse, max_favorable = _excursions_pct(close, direction)
-            directionally_right = forward_return > 0 if direction == "up" else forward_return < 0
-            relative_right = relative_return > 0 if direction == "up" else relative_return < 0
-            source_quality = str(rec.get("source_quality") or "")
-            confidence = _as_float(rec.get("confidence"), 0.0)
-            process_quality = (
-                "good"
-                if source_quality in {"ok", "degraded"}
-                and confidence >= 0.5
-                and rec.get("recommendation_status") == "clear"
-                else "bad"
-            )
-            outcome_quality = "good" if directionally_right and relative_right else "bad"
-            thesis_context = _thesis_and_kill_context(ticker)
-            update_recommendation_outcome(
-                rec,
-                "evaluated",
-                {
-                    "evaluation_authority": "ai_draft_user_final",
-                    "final_label_status": "draft",
-                    "start_price": start,
-                    "end_price": end,
-                    "forward_return_pct": round(forward_return, 2),
-                    "benchmark": "SPY",
-                    "benchmark_return_pct": round(benchmark_return, 2),
-                    "benchmark_relative_return_pct": round(relative_return, 2),
-                    "max_adverse_move_pct": round(max_adverse, 2),
-                    "max_favorable_move_pct": round(max_favorable, 2),
-                    "expected_direction": direction,
-                    "directionally_right": directionally_right,
-                    "relative_directionally_right": relative_right,
-                    "alternative_trade_performance": {
-                        "cash_return_pct": 0.0,
-                        "benchmark_return_pct": round(benchmark_return, 2),
-                    },
-                    "sizing_quality": {
-                        "target_change": rec.get("target_change"),
-                        "approval_status": rec.get("approval_status"),
-                        "label": "unverified_execution"
-                        if rec.get("approval_status") != "approved"
-                        else "requires_trade_fill_review",
-                    },
-                    "timing_vs_expected_onset": _timing_label(
-                        as_of,
-                        today,
-                        rec.get("horizon"),
-                        rec.get("expected_onset_window"),
-                    ),
-                    "catalyst_result": {
-                        "catalyst": rec.get("catalyst"),
-                        "label": "requires_review" if rec.get("catalyst") else "none_specified",
-                    },
-                    "opportunity_cost": rec.get("opportunity_cost_json", []),
-                    "process_label": _process_label(process_quality, outcome_quality),
-                    **thesis_context,
-                    "draft_postmortem": "Objective price and process-attribution fields computed. User should confirm execution, catalyst, and thesis labels.",
-                },
-            )
-            updated += 1
-        except Exception as exc:
-            update_recommendation_outcome(rec, "unavailable", {"reason": str(exc)})
-            unavailable += 1
-    return {"checked": checked, "updated": updated, "unavailable": unavailable}
+    return evaluate_due_decisions(limit=limit)

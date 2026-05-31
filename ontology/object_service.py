@@ -31,6 +31,7 @@ from ontology.schemas.identity import (
     course_of_action_dissent_id,
     course_of_action_id,
     course_of_action_rationale_id,
+    decision_outcome_id,
     document_artifact_id,
     equity_overview_id,
     evaluation_id,
@@ -64,6 +65,7 @@ from ontology.schemas.identity import (
     object_version_ref_id,
     observation_id,
     ontology_run_ref_id,
+    opportunity_candidate_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
@@ -150,8 +152,10 @@ _GOVERNED_OBJECT_TYPES = {
     "CourseOfActionComparison",
     "ScenarioAssumption",
     "SimulatedOutcome",
+    "DecisionOutcome",
     "CourseOfActionRationale",
     "CourseOfActionDissent",
+    "OpportunityCandidate",
     "Recommendation",
     "RegimeEpisode",
     "SignalFactorScore",
@@ -219,6 +223,9 @@ _GOVERNED_RELATION_TYPES = {
     "course_of_action_links_recommendation",
     "scenario_has_assumption",
     "course_of_action_has_simulated_outcome",
+    "recommendation_has_decision_outcome",
+    "course_of_action_has_decision_outcome",
+    "decision_outcome_contrasts_simulated_outcome",
     "course_of_action_has_rationale",
     "course_of_action_supported_by_evidence",
     "course_of_action_contradicted_by_evidence",
@@ -306,7 +313,7 @@ class OntologyObjectService:
         actor: Any = None,
         provenance: Mapping[str, Any] | str | None = None,
         action_run_id: int | None = None,
-        approval_id: int | None = None,
+        approval_id: str | int | None = None,
         source_record_id: str | None = None,
         input_hash: str | None = None,
         temporal_confidence: str = "native",
@@ -359,7 +366,7 @@ class OntologyObjectService:
         actor: Any = None,
         provenance: Mapping[str, Any] | str | None = None,
         action_run_id: int | None = None,
-        approval_id: int | None = None,
+        approval_id: str | int | None = None,
         source_record_id: str | None = None,
         input_hash: str | None = None,
         temporal_confidence: str = "native",
@@ -760,6 +767,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("simulated_outcome:"):
             return key
         return simulated_outcome_id(props.get("outcome_id") or key)
+    if object_type == "DecisionOutcome":
+        if key.startswith("decision_outcome:"):
+            return key
+        return decision_outcome_id(props.get("decision_outcome_id") or key)
     if object_type == "CourseOfActionRationale":
         if key.startswith("course_of_action_rationale:"):
             return key
@@ -840,6 +851,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return provenance_event_id(props.get("event_id") or props.get("id") or key)
     if object_type == "InvestmentIdea":
         return investment_idea_id(props.get("idea_id") or props.get("id") or key)
+    if object_type == "OpportunityCandidate":
+        if key.startswith("opportunity_candidate:"):
+            return key
+        return opportunity_candidate_id(props.get("candidate_id") or props.get("idempotency_key") or key)
     if object_type == "IdeaEvaluation":
         return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
     if object_type == "IdeaComparisonRun":
@@ -952,7 +967,7 @@ def _require_governed_lineage(
     *,
     provenance_event_id: str | None,
     action_run_id: int | None,
-    approval_id: int | None,
+    approval_id: str | int | None,
     source_record_id: str | None,
 ) -> None:
     governed = name in _GOVERNED_OBJECT_TYPES if surface == "object" else name in _GOVERNED_RELATION_TYPES
@@ -1078,6 +1093,8 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("section_id", out.get("id") or key)
     elif object_type == "InvestmentIdea":
         out.setdefault("idea_id", out.get("id") or key)
+    elif object_type == "OpportunityCandidate":
+        out.setdefault("candidate_id", out.get("id") or key)
     elif object_type == "IdeaEvaluation":
         out.setdefault("evaluation_id", out.get("id") or key)
     elif object_type == "IdeaComparisonRun":

@@ -7,7 +7,11 @@ import pytest
 from ontology.decision_writeback import DecisionOntologyWriteback
 from ontology.object_service import OntologyObjectService
 from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
-from portfolio.scenario_simulator import ScenarioSimulatorValidationError, simulate_investment_options
+from portfolio.scenario_simulator import (
+    CALCULATION_VERSION,
+    ScenarioSimulatorValidationError,
+    simulate_investment_options,
+)
 
 
 def _base_payload(direction: str = "long") -> dict:
@@ -112,6 +116,8 @@ def test_scenario_math_liquidity_uncertainty_and_policy_gate_payload(monkeypatch
     result = simulate_investment_options(payload, context={"actor_id": "unit"})
     outcome = result["outcomes"][0]
 
+    assert outcome["course_of_action_id"].startswith("course_of_action:")
+    assert result["comparison"]["ranking"][0]["course_of_action_id"] == outcome["course_of_action_id"]
     assert outcome["scenario_outcomes"][0]["target_pnl_base"] == 150
     assert outcome["scenario_outcomes"][0]["target_return_pct_of_book"] == 1.5
     assert outcome["liquidity"]["estimated_exit_days"] == 2
@@ -175,7 +181,14 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     repo = _FakeTemporalRepo()
     service = OntologyObjectService(repository=repo)
     payload = _base_payload("long")
-    payload["candidates"] = [{"action": "add", "delta": {"notional_base": 500}, "evidence_refs": ["evidence:mu_hbm"]}]
+    payload["candidates"] = [
+        {
+            "action": "add",
+            "delta": {"notional_base": 500},
+            "evidence_refs": ["evidence:mu_hbm"],
+            "rationale": "Add MU because HBM demand improves the upside scenario.",
+        }
+    ]
     payload["assumptions"] = [{"name": "Liquidity", "value": "ADV supports two-day resize", "confidence": 0.7}]
     simulation = simulate_investment_options(payload)
 
@@ -191,6 +204,7 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     assert {
         "CourseOfActionComparison",
         "CourseOfAction",
+        "CourseOfActionRationale",
         "Scenario",
         "ScenarioAssumption",
         "SimulatedOutcome",
@@ -198,6 +212,7 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     }.issubset(object_types)
     assert {
         "comparison_includes_course_of_action",
+        "course_of_action_has_rationale",
         "course_of_action_has_simulated_outcome",
         "course_of_action_uses_scenario",
         "scenario_has_assumption",
@@ -205,3 +220,84 @@ def test_scenario_simulation_persistence_writes_coa_artifacts():
     candidate_artifacts = artifacts["outcome_artifact_ids"]["candidate:1"]
     assert candidate_artifacts["course_of_action_id"].startswith("course_of_action:")
     assert candidate_artifacts["simulated_outcome_ids"][0].startswith("simulated_outcome:")
+
+
+def test_execution_friction_reduces_net_pnl():
+    payload = _base_payload("long")
+    payload["candidates"] = [{"action": "add", "delta": {"notional_base": 500}}]
+    payload["assumptions"] = [
+        {
+            "name": "execution_friction",
+            "value": {
+                "transaction_cost_bps": 10,
+                "slippage_bps": 10,
+                "market_impact_bps": 10,
+            },
+        }
+    ]
+
+    result = simulate_investment_options(payload)
+    outcome = _outcome_by_action(result, "add")
+    scenario = outcome["scenario_outcomes"][0]
+
+    assert result["calculation_version"] == CALCULATION_VERSION
+    assert CALCULATION_VERSION == "scenario_simulator_v2"
+    assert outcome["execution_friction"]["total_friction_base"] == 1.5
+    assert scenario["target_pnl_gross_base"] == 150
+    assert scenario["target_pnl_net_base"] == 148.5
+    assert outcome["risk"]["expected_loss_base"] is not None
+    assert outcome["risk"]["uses_net_pnl"] is True
+
+
+def test_liquidity_participation_cap_marks_constrained_status():
+    payload = _base_payload("long")
+    payload["candidates"] = [{"action": "add", "delta": {"notional_base": 500}}]
+    payload["execution_assumptions"] = {"max_adv_participation": 0.2}
+
+    result = simulate_investment_options(payload)
+    liquidity = _outcome_by_action(result, "add")["liquidity"]
+
+    assert liquidity["status"] == "constrained"
+    assert liquidity["estimated_exit_days"] == 10
+    assert liquidity["unconstrained_exit_days"] == 2
+
+
+def test_missing_liquidity_raises_uncertainty():
+    payload = _base_payload("long")
+    payload["position"].pop("average_daily_volume_notional", None)
+    payload["candidates"] = [{"action": "exit"}]
+    payload["scenarios"] = [
+        {"scenario_id": "down", "name": "Down", "price_move_pct": -10, "probability": 1},
+    ]
+
+    result = simulate_investment_options(payload)
+    outcome = result["outcomes"][0]
+
+    assert outcome["liquidity"]["status"] == "missing"
+    assert outcome["uncertainty"]["level"] in {"medium", "high"}
+    assert any("Liquidity" in note for note in outcome["uncertainty"]["notes"])
+
+
+def test_scenario_simulation_persistence_links_risk_snapshots():
+    repo = _FakeTemporalRepo()
+    service = OntologyObjectService(repository=repo)
+    payload = _base_payload("long")
+    payload["candidates"] = [{"action": "hold"}]
+    payload["position_risk_snapshot_id"] = "position-risk:MU:smoke"
+    payload["portfolio_risk_snapshot_id"] = "portfolio-risk:smoke"
+    payload["risk_provenance"] = {
+        "position_risk_snapshot_id": "position-risk:MU:smoke",
+        "portfolio_risk_snapshot_id": "portfolio-risk:smoke",
+    }
+    simulation = simulate_investment_options(payload)
+
+    DecisionOntologyWriteback(service).record_scenario_simulation(
+        simulation=simulation,
+        request_payload=payload,
+        actor={"actor_type": "system", "actor_id": "unit"},
+        provenance="pv:unit_scenario_simulation",
+    )
+
+    relation_types = {write.relation_type for write in repo.relation_writes}
+    assert "course_of_action_uses_position_risk_snapshot" in relation_types
+    assert "course_of_action_uses_portfolio_risk_snapshot" in relation_types

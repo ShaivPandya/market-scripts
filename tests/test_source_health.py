@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from api.snapshot_store import SnapshotRecord
-from api.source_health import build_workspace_source_health
+from api.source_health import build_approval_source_health_review, build_workspace_source_health
 
 
 def _snapshot(
     key: str,
     *,
     fetched_at: datetime,
+    as_of_date: str | None = None,
     status: str = "ok",
     quality: str = "ok",
     error: str | None = None,
@@ -17,7 +19,7 @@ def _snapshot(
     return SnapshotRecord(
         snapshot_key=key,
         payload={"value": 1},
-        as_of_date=fetched_at.date().isoformat(),
+        as_of_date=as_of_date if as_of_date is not None else fetched_at.date().isoformat(),
         fetched_at=fetched_at.isoformat(),
         status=status,
         error=error,
@@ -92,8 +94,81 @@ def test_source_health_stale_required_affects_overall_quality():
 
     sources = _sources(payload)
     assert sources["market_breadth:sp500:1y"]["status"] == "stale"
+    assert sources["market_breadth:sp500:1y"]["reliability_tier"] == "critical"
+    assert sources["market_breadth:sp500:1y"]["sla_breach"] is True
     assert payload["overall_quality"] == "stale"
     assert payload["counts"]["required_stale"] == 1
+    assert payload["counts"]["critical_stale"] == 1
+    assert payload["tier_counts"]["critical"] >= 1
+
+
+def test_source_health_market_snapshot_fresh_on_sunday_after_friday_close():
+    eastern = ZoneInfo("America/New_York")
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=eastern)
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    sources = _sources(payload)
+    assert sources["market_breadth:sp500:1y"]["status"] == "ok"
+    assert sources["market_breadth:sp500:1y"]["stale"] is False
+    assert sources["market_breadth:sp500:1y"]["expected_as_of_date"] == "2026-05-29"
+
+
+def test_source_health_market_snapshot_fresh_monday_before_close_and_stale_after_close():
+    eastern = ZoneInfo("America/New_York")
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+
+    before_close = build_workspace_source_health(
+        now=datetime(2026, 6, 1, 15, 30, tzinfo=eastern),
+        portfolio_risk=_portfolio_risk(datetime(2026, 6, 1, 15, 30, tzinfo=eastern)),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+    after_close = build_workspace_source_health(
+        now=datetime(2026, 6, 1, 16, 30, tzinfo=eastern),
+        portfolio_risk=_portfolio_risk(datetime(2026, 6, 1, 16, 30, tzinfo=eastern)),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    assert _sources(before_close)["market_breadth:sp500:1y"]["status"] == "ok"
+    assert _sources(after_close)["market_breadth:sp500:1y"]["status"] == "stale"
+    assert _sources(after_close)["market_breadth:sp500:1y"]["expected_as_of_date"] == "2026-06-01"
+
+
+def test_source_health_macro_cadence_windows_do_not_use_wall_clock_sla():
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("liquidity:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("labor_market:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("positioning_summary:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("housing:current:v1", fetched_at=fetched, as_of_date="2026-04-20"),
+            _snapshot("economic_growth:current:v1", fetched_at=fetched, as_of_date="2026-04-20"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    sources = _sources(payload)
+    assert sources["liquidity:current:v1"]["status"] == "ok"
+    assert sources["labor_market:current:v1"]["status"] == "ok"
+    assert sources["positioning_summary:current:v1"]["status"] == "ok"
+    assert sources["housing:current:v1"]["status"] == "ok"
+    assert sources["economic_growth:current:v1"]["status"] == "ok"
 
 
 def test_source_health_missing_required_source_does_not_throw():
@@ -162,3 +237,92 @@ def test_source_health_degraded_optional_is_not_required_failure():
     assert sources["housing:current:v1"]["required"] is False
     assert sources["housing:current:v1"]["status"] == "degraded"
     assert payload["counts"]["optional_degraded"] == 1
+
+
+def test_approval_source_health_blocks_required_missing_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(now=now, snapshot_records=[])
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "blocked"
+    assert any(row["status"] == "missing" and row["required"] is True for row in review["blockers"])
+
+
+def test_approval_source_health_blocks_critical_stale_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=now - timedelta(days=3)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "blocked"
+    assert review["blockers"]
+    assert review["blockers"][0]["id"] == "market_breadth:sp500:1y"
+    assert review["blockers"][0]["reliability_tier"] == "critical"
+
+
+def test_approval_source_health_warns_on_standard_stale_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=now - timedelta(hours=1)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(days=3)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "warning"
+    assert review["blockers"] == []
+    assert any(row["id"] == "signal_aggregator:current:v1" for row in review["warnings"])
+    assert review["warnings"][0]["reliability_tier"] == "standard"
+
+
+def test_approval_source_health_blocks_explicit_stale_dependency():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("housing:current:v1", fetched_at=now - timedelta(days=60)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review(
+        {
+            "id": "approval:1",
+            "proposed_change": {"source_dependencies": ["housing:current:v1"]},
+        },
+        payload,
+    )
+
+    assert review["status"] == "blocked"
+    assert review["blockers"][0]["id"] == "housing:current:v1"
+
+
+def test_approval_source_health_warns_on_optional_degraded_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("housing:current:v1", fetched_at=now - timedelta(hours=1), status="error", error="timeout"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "warning"
+    assert review["blockers"] == []
+    assert review["warnings"][0]["id"] == "housing:current:v1"

@@ -12,9 +12,16 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+from api.decision_state import (
+    normalize_action_item,
+    normalize_approval,
+    normalize_course_of_action,
+    normalize_decision_outcome,
+    normalize_recommendation,
+)
 from api.llm_settings import get_setting, set_setting
-from api.source_health import build_workspace_source_health
+from api.source_health import build_approval_source_health_review, build_workspace_source_health
+from ontology.change_summary import ChangeSummaryInputError, build_workspace_change_summary
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -114,7 +121,7 @@ def dismiss_thesis_pressure(body: DismissThesisPressureRequest):
 
 
 @router.get("/workspace")
-def get_workspace():
+def get_workspace(since: str | None = None):
     """Return workspace landing page data."""
     reads = OntologyRuntimeReadService()
 
@@ -257,11 +264,37 @@ def get_workspace():
         pass
 
     # Pending approvals
-    pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
+    pending_approvals = [
+        normalized
+        for raw in ontology_bundle.get("pending_approvals", [])
+        if (
+            normalized := normalize_approval(
+                raw,
+                source_health_review=build_approval_source_health_review(raw, source_health),
+            )
+        )
+        is not None
+    ]
     recommendation_approvals = [
         a
         for a in pending_approvals
         if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
+    ]
+    course_of_action_approvals = [
+        a
+        for a in pending_approvals
+        if a.get("entity_type") == "course_of_action"
+        or a.get("target_object_type") == "CourseOfAction"
+        or (
+            isinstance(a.get("proposed_change"), dict)
+            and (
+                a["proposed_change"].get("course_of_action_id") is not None
+                or (
+                    isinstance(a["proposed_change"].get("record"), dict)
+                    and a["proposed_change"]["record"].get("course_of_action_id") is not None
+                )
+            )
+        )
     ]
 
     latest_daily_recommendation = normalize_recommendation(ontology_bundle.get("latest_daily_recommendation"))
@@ -270,6 +303,25 @@ def get_workspace():
     pending_actionable_recommendations = [
         normalize_recommendation(rec) for rec in pending_actionable_recommendations if isinstance(rec, dict)
     ]
+    pending_course_of_actions = [
+        item
+        for item in (
+            normalize_course_of_action(coa)
+            for coa in ontology_bundle.get("pending_course_of_actions", [])
+            if isinstance(coa, dict)
+        )
+        if item is not None
+    ]
+    recent_course_of_actions = [
+        item
+        for item in (
+            normalize_course_of_action(coa)
+            for coa in ontology_bundle.get("recent_course_of_actions", [])
+            if isinstance(coa, dict)
+        )
+        if item is not None
+    ]
+    open_course_of_action_comparisons = ontology_bundle.get("open_course_of_action_comparisons", [])
     blocked_recommendation_warnings = []
     for rec in (latest_daily_recommendation, latest_weekly_recommendation):
         if not isinstance(rec, dict):
@@ -292,16 +344,32 @@ def get_workspace():
 
     # Active watch triggers
     active_triggers = ontology_bundle.get("active_watch_triggers", [])
+    monitor_hits = ontology_bundle.get("recent_monitor_hits", [])
 
     # Latest workflow run
     recent_runs = ontology_bundle.get("recent_workflow_runs", [])
     recent_report_runs = ontology_bundle.get("recent_report_runs", [])
     challenged_claims = ontology_bundle.get("challenged_claims", []) + ontology_bundle.get("disconfirmed_claims", [])
+    pending_draft_decision_outcomes = [
+        normalize_decision_outcome(item)
+        for item in ontology_bundle.get("pending_draft_decision_outcomes", [])
+        if isinstance(item, dict)
+    ]
+    recent_finalized_decision_outcomes = [
+        normalize_decision_outcome(item)
+        for item in ontology_bundle.get("recent_finalized_decision_outcomes", [])
+        if isinstance(item, dict)
+    ]
+    try:
+        what_changed = build_workspace_change_summary(ontology_bundle, since=since)
+    except ChangeSummaryInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return {
         "regime": regime_summary,
         "portfolio": portfolio_summary,
         "source_health": source_health,
+        "what_changed": what_changed,
         "thesis_pressure": thesis_pressure,
         "pending_approvals": {
             "count": len(pending_approvals),
@@ -317,6 +385,21 @@ def get_workspace():
             "blocked_warnings": blocked_recommendation_warnings,
             "pending_approval_count": len(recommendation_approvals),
         },
+        "course_of_actions": {
+            "pending": {
+                "count": len(pending_course_of_actions),
+                "items": pending_course_of_actions[:5],
+            },
+            "recent": {
+                "count": len(recent_course_of_actions),
+                "items": recent_course_of_actions[:5],
+            },
+            "comparisons": {
+                "count": len(open_course_of_action_comparisons),
+                "items": open_course_of_action_comparisons[:5],
+            },
+            "pending_approval_count": len(course_of_action_approvals),
+        },
         "open_actions": {
             "count": len(open_actions),
             "items": open_actions,
@@ -329,10 +412,24 @@ def get_workspace():
             "count": len(active_triggers),
             "items": active_triggers,
         },
+        "monitor_hits": {
+            "count": len(monitor_hits),
+            "items": monitor_hits,
+        },
         "recent_workflow_runs": recent_runs,
         "recent_report_runs": recent_report_runs,
         "thesis_claims": {
             "challenged_count": len(challenged_claims),
             "items": challenged_claims[:5],
+        },
+        "decision_learning": {
+            "pending_review": {
+                "count": len(pending_draft_decision_outcomes),
+                "items": pending_draft_decision_outcomes[:5],
+            },
+            "recent_finalized": {
+                "count": len(recent_finalized_decision_outcomes),
+                "items": recent_finalized_decision_outcomes[:5],
+            },
         },
     }

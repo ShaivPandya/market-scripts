@@ -1,0 +1,52 @@
+{
+  "id": "opportunity_candidate_reject_crowded_2026",
+  "status": "review",
+  "decision_type": "opportunity_candidate",
+  "as_of_date": "2026-05-15",
+  "user_question": "Anything interesting in crowded mega-cap AI trades?",
+  "input_refs": [
+    {
+      "type": "other",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic prompt emphasizing crowded positioning with no differentiated variant.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "Crowded setups without a variant view should be rejected or kept off the queue."
+  ],
+  "gold_output": {
+    "ticker": null,
+    "source": "agent_chat",
+    "trigger": "User asked for ideas inside already crowded mega-cap AI trades.",
+    "opportunity_type": "crowded_narrative_avoid",
+    "consensus": "Mega-cap AI leaders are widely owned and debated.",
+    "variant_view": "No differentiated angle is established in the prompt.",
+    "why_now": "Crowding itself is the main signal, not a new mispricing.",
+    "price_confirmation": "No specific price setup is provided.",
+    "crowding": "High crowding reduces the appeal of new idea generation here.",
+    "payoff_asymmetry": "Payoff looks skewed against new long initiation without a variant view.",
+    "missing_inputs": [
+      "Specific ticker",
+      "Variant view",
+      "Catalyst",
+      "Price confirmation"
+    ],
+    "source_refs": [
+      {
+        "label": "Synthetic crowded AI prompt",
+        "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_reject_crowded_2026.json"
+      }
+    ],
+    "next_action": "avoid",
+    "summary": "Crowded mega-cap AI ideas should be avoided until a specific variant view and catalyst appear."
+  },
+  "expected_graduation": false,
+  "rubric_scores": {
+    "trigger_clarity": 4,
+    "why_now": 3,
+    "missing_inputs": 4,
+    "triage_discipline": 4
+  }
+}

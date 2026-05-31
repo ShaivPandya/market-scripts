@@ -51,7 +51,7 @@ def test_load_cases_defaults_to_review_and_approved():
 
     assert cases
     assert all(case.status in {"review", "approved"} for case in cases)
-    assert "scenario_simulator_uncertainty_disclosure_2026" not in {case.case_id for case in cases}
+    assert "scenario_simulator_uncertainty_disclosure_2026" in {case.case_id for case in cases}
 
 
 def test_dry_run_payload_omits_gold_and_future_outcome_context(monkeypatch):

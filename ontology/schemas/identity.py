@@ -254,6 +254,20 @@ def watch_trigger_id(identifier: object) -> str:
     return f"watch_trigger:{slug(identifier)}"
 
 
+def monitor_hit_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("monitor_hit:"):
+        text = text.split(":", 1)[1]
+    return f"monitor_hit:{slug(text)}"
+
+
+def opportunity_candidate_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("opportunity_candidate:"):
+        text = text.split(":", 1)[1]
+    return f"opportunity_candidate:{slug(text)}"
+
+
 def approval_id(identifier: object) -> str:
     return f"approval:{slug(identifier)}"
 
@@ -311,6 +325,13 @@ def simulated_outcome_id(identifier: object) -> str:
     if text.startswith("simulated_outcome:"):
         text = text.split(":", 1)[1]
     return f"simulated_outcome:{slug(text)}"
+
+
+def decision_outcome_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("decision_outcome:"):
+        text = text.split(":", 1)[1]
+    return f"decision_outcome:{slug(text)}"
 
 
 def course_of_action_rationale_id(identifier: object) -> str:

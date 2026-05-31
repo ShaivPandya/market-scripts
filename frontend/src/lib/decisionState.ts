@@ -3,6 +3,7 @@ import type { StatusTone } from "@/components/shared/StatusBadge"
 export type DecisionState =
   | "draft"
   | "analysis"
+  | "course_of_action"
   | "recommendation"
   | "proposal"
   | "pending_approval"
@@ -15,6 +16,7 @@ export type DecisionState =
 export type DecisionKind =
   | "draft"
   | "analysis"
+  | "course_of_action"
   | "recommendation"
   | "proposal"
   | "approval"
@@ -56,6 +58,8 @@ export function decisionStateLabel(state: string | null | undefined): string {
       return "Draft"
     case "analysis":
       return "Analysis"
+    case "course_of_action":
+      return "Course of Action"
     case "recommendation":
       return "Recommendation"
     case "proposal":
@@ -80,6 +84,7 @@ export function decisionStateLabel(state: string | null | undefined): string {
 export function decisionStateTone(state: string | null | undefined): StatusTone {
   switch (state) {
     case "analysis":
+    case "course_of_action":
     case "recommendation":
       return "info"
     case "pending_approval":
@@ -156,5 +161,23 @@ export function recommendationDecisionState(value: {
   if (approval === "approved") return "approved"
   if (approval === "rejected") return "rejected"
   if (value.recommendation_status === "error" || value.critical_data_quality === "failed") return "failed"
+  return "recommendation"
+}
+
+export function courseOfActionDecisionState(value: {
+  approval_status?: string | null
+  decision_state?: string | null
+  status?: string | null
+}): DecisionState {
+  const stored = String(value.decision_state ?? "").toLowerCase()
+  if (stored === "under_review" || stored === "proposed") return "pending_approval"
+  if (stored === "applied") return "applied"
+  if (stored === "approved") return "approved"
+  if (stored === "rejected") return "rejected"
+  const approval = String(value.approval_status ?? "none")
+  if (approval === "pending") return "pending_approval"
+  if (approval === "approved") return "approved"
+  if (approval === "rejected") return "rejected"
+  if (value.status === "error") return "failed"
   return "recommendation"
 }

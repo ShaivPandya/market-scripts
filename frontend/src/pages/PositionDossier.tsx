@@ -35,6 +35,8 @@ import {
   type ThesisClaimStatus,
   type ThesisStatus,
   type ThesisStatusValue,
+  type EvidenceLedgerSummary,
+  type DecisionOutcomeRecord,
 } from "@/lib/api"
 import {
   approvalSummaryQueryKey,
@@ -53,9 +55,13 @@ import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary
 import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSummary"
 import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
+import { EvidenceLedgerPanel } from "@/components/shared/EvidenceLedgerPanel"
+import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
+import { PositionScenarioSimulatorTab } from "@/components/scenario/PositionScenarioSimulatorTab"
 import type {
   ManagementQualityAssessment,
   ManagementQualityBullet,
@@ -87,6 +93,8 @@ interface DossierData {
     parsed: ParsedManagementQuality | null
     assessment?: ManagementQualityAssessment | null
   }
+  what_changed?: WhatChangedSummary | null
+  evidence_ledger?: EvidenceLedgerSummary | null
   thesis: {
     meta: ThesisMeta | null
     content: string | null
@@ -100,7 +108,9 @@ interface DossierData {
   workflow_runs: WorkflowRun[]
   action_items: ActionItem[]
   watch_triggers: Trigger[]
+  monitor_hits: MonitorHit[]
   pending_approvals: ApprovalRecord[]
+  decision_outcomes?: DecisionOutcomeRecord[]
 }
 
 interface ThesisMeta {
@@ -158,8 +168,22 @@ interface Trigger {
   last_checked_at: string | null
   last_evidence: string | null
 }
+interface MonitorHit {
+  id: EntityId
+  ticker?: string | null
+  entity_type: string
+  entity_id: string
+  entity_label?: string | null
+  hit_type: string
+  severity?: string | null
+  status: string
+  confidence?: number | null
+  evidence?: string | null
+  detected_at?: string | null
+  approval_id?: string | null
+}
 
-const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Scenarios", "Evidence", "Learning", "Workflows"] as const
 type Tab = "Overview" | "Management Quality" | "Valuation" | typeof BASE_TABS[number]
 type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
@@ -308,6 +332,7 @@ export function PositionDossier() {
   const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
+  const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
 
   const { data, isLoading, error } = useApiQuery<DossierData>(
     ["dossier", ticker],
@@ -481,8 +506,10 @@ export function PositionDossier() {
   const thesisClaims = Array.isArray(data.thesis_claims) ? data.thesis_claims : []
   const catalysts = Array.isArray(data.catalysts) ? data.catalysts : []
   const killConditions = Array.isArray(data.kill_conditions) ? data.kill_conditions : []
+  const monitorHits = Array.isArray(data.monitor_hits) ? data.monitor_hits : []
   const evaluations = Array.isArray(data.evaluations) ? data.evaluations : []
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
+  const decisionOutcomes = Array.isArray(data.decision_outcomes) ? data.decision_outcomes : []
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
   const hasPositionSummary = Boolean(
@@ -562,6 +589,8 @@ export function PositionDossier() {
         </StagedProposalNotice>
       )}
 
+      <WhatChangedPanel summary={data.what_changed} className="mb-4" from="dossier" maxItems={6} />
+
       {/* Tabs */}
       <div className="mb-4 flex w-full max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-app [-webkit-overflow-scrolling:touch]">
         {visibleTabs.map(t => (
@@ -580,6 +609,7 @@ export function PositionDossier() {
             {t === "Catalysts" && catalysts.length > 0 && <span className="ml-1 text-xs text-subtle">({catalysts.length})</span>}
             {t === "Kill Conditions" && killConditions.length > 0 && <span className="ml-1 text-xs text-subtle">({killConditions.length})</span>}
             {t === "Evaluations" && evaluations.length > 0 && <span className="ml-1 text-xs text-subtle">({evaluations.length})</span>}
+            {t === "Learning" && decisionOutcomes.length > 0 && <span className="ml-1 text-xs text-subtle">({decisionOutcomes.length})</span>}
           </button>
         ))}
       </div>
@@ -597,10 +627,22 @@ export function PositionDossier() {
         {activeTab === "Valuation" && <PositionValuationTab ticker={data.ticker} />}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
-        {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} ticker={ticker!} />}
-        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
+        {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} monitorHits={monitorHits} ticker={ticker!} />}
+        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} monitorHits={monitorHits} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
+        {activeTab === "Scenarios" && (
+          <PositionScenarioSimulatorTab ticker={data.ticker} position={data.position} />
+        )}
+        {activeTab === "Evidence" && (
+          <EvidenceLedgerPanel ledger={data.evidence_ledger} ticker={data.ticker} />
+        )}
+        {activeTab === "Learning" && (
+          <DecisionLearningTab
+            outcomes={decisionOutcomes}
+            onReview={setPostMortemReview}
+          />
+        )}
         {activeTab === "Workflows" && (
           <WorkflowsTab
             runs={workflowRuns}
@@ -634,7 +676,7 @@ export function PositionDossier() {
               const expanded = expandedIds.has(key)
               return (
                 <div key={a.id} className="rounded-lg px-3 py-2 text-sm border border-app">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <span className="text-xs text-subtle">{subjectLabel(a.entity_type)}</span>
                       <div className="mt-1 flex flex-wrap gap-2">
@@ -654,11 +696,11 @@ export function PositionDossier() {
                       )}
                       <ApprovalProgressSummary approval={a} compact />
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex flex-col gap-2 sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
                       <button
                         onClick={() => openApprovalReview(a, "approve")}
                         disabled={processingIds.has(a.id) || a.can_approve === false}
-                        className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                        className="min-h-11 rounded px-3 py-2 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                         title={a.base_state_status === "stale" ? a.base_state_message || "The underlying state changed." : "Review and apply internal state change"}
                       >
                         {approvalActionLabel(a)}
@@ -668,7 +710,7 @@ export function PositionDossier() {
                           type="button"
                           onClick={() => handleRejectAndRestage(a)}
                           disabled={processingIds.has(a.id)}
-                          className="rounded px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 disabled:opacity-50"
+                          className="min-h-11 rounded px-3 py-2 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                           title="Reject this stale proposal and create a fresh proposal from current state"
                         >
                           Reject & Restage
@@ -677,7 +719,7 @@ export function PositionDossier() {
                       <button
                         onClick={() => openApprovalReview(a, "reject")}
                         disabled={processingIds.has(a.id) || a.can_reject === false}
-                        className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50"
+                        className="min-h-11 rounded px-3 py-2 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                       >
                         Reject Proposal
                       </button>
@@ -850,11 +892,11 @@ export function PositionDossier() {
                 {approvalError}
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => setApprovalReview(null)}
-                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+                className="w-full rounded-lg border border-app px-3 py-2.5 text-sm font-medium text-muted hover:text-app sm:w-auto sm:py-2"
               >
                 Cancel
               </button>
@@ -871,7 +913,7 @@ export function PositionDossier() {
                   (!approvalNote.trim() || approvalReview.approval.can_approve === false)
                 }
                 className={cn(
-                  "w-auto px-4",
+                  "w-full px-4 sm:w-auto",
                   approvalReview.action === "approve" ? "theme-button-success" : "theme-button-destructive",
                 )}
               >
@@ -882,7 +924,7 @@ export function PositionDossier() {
                   onClick={() => handleRejectAndRestage(approvalReview.approval, approvalNote)}
                   loading={processingIds.has(approvalReview.approval.id)}
                   loadingText="Restaging..."
-                  className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
+                  className="w-full bg-amber-600 px-4 hover:bg-amber-700 sm:w-auto"
                 >
                   Reject & Restage
                 </ActionButton>
@@ -897,7 +939,7 @@ export function PositionDossier() {
                   }}
                   loading={triggerEditSubmitting}
                   loadingText="Opening..."
-                  className="w-auto px-4"
+                  className="w-full px-4 sm:w-auto"
                 >
                   Edit Proposal
                 </ActionButton>
@@ -966,6 +1008,16 @@ export function PositionDossier() {
           </ActionButton>
         </div>
       </Dialog>
+      <PostMortemReviewDialog
+        open={postMortemReview !== null}
+        onOpenChange={open => {
+          if (!open) setPostMortemReview(null)
+        }}
+        outcome={postMortemReview}
+        onFinalized={() => {
+          void qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+        }}
+      />
     </div>
   )
 }
@@ -1225,7 +1277,16 @@ function ManagementQualityTab({
       {parsed?.scorecard && (
         <section className="mb-5">
           <h3 className="mb-2 text-sm font-semibold text-app">Management Scorecard</h3>
-          <div className="overflow-x-auto rounded-lg border border-app">
+          <div className="space-y-3 md:hidden">
+            {parsed.scorecard.map(row => (
+              <div key={row.question} className="rounded-lg border border-app p-3">
+                <p className="text-sm font-medium text-app">{row.question}</p>
+                <div className="mt-2"><ManagementRatingBadge value={row.rating} /></div>
+                <p className="mt-2 text-sm text-muted">{row.evidence}</p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto rounded-lg border border-app md:block">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-app text-xs uppercase text-subtle">
                 <tr>
@@ -1722,7 +1783,15 @@ function LinkCheckboxes({
   )
 }
 
-function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
+function CatalystsTab({
+  catalysts,
+  monitorHits,
+  ticker,
+}: {
+  catalysts: Catalyst[]
+  monitorHits: MonitorHit[]
+  ticker: string
+}) {
   const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
@@ -1749,6 +1818,10 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
       )}
       {catalysts.map(c => {
         const status = statusOrFallback(c.status, "pending")
+        const entityId = String(c.object_uid || c.id)
+        const hits = monitorHits.filter(
+          hit => hit.entity_type === "catalyst" && String(hit.entity_id) === entityId,
+        )
         return (
           <div key={c.id} className="rounded-lg border border-app px-4 py-3">
             <div className="flex items-center justify-between mb-1">
@@ -1781,6 +1854,17 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
               {c.target_date && <span>Target: {c.target_date}</span>}
             </div>
             {c.evidence && <p className="text-xs text-muted mt-1">{c.evidence}</p>}
+            {hits.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-app pt-2">
+                {hits.slice(0, 3).map(hit => (
+                  <div key={hit.id} className="text-xs text-subtle">
+                    <span className="font-medium text-amber-700 dark:text-amber-300">{hit.hit_type.replace(/_/g, " ")}</span>
+                    {hit.detected_at && <span className="ml-2">Detected {formatTime(hit.detected_at)}</span>}
+                    {hit.evidence && <p className="mt-0.5 text-muted">{hit.evidence}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       })}
@@ -1788,7 +1872,15 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   )
 }
 
-function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]; ticker: string }) {
+function KillConditionsTab({
+  conditions,
+  monitorHits,
+  ticker,
+}: {
+  conditions: KillCondition[]
+  monitorHits: MonitorHit[]
+  ticker: string
+}) {
   const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
@@ -1815,6 +1907,10 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
       )}
       {conditions.map(k => {
         const status = statusOrFallback(k.status, "active")
+        const entityId = String(k.object_uid || k.id)
+        const hits = monitorHits.filter(
+          hit => hit.entity_type === "kill_condition" && String(hit.entity_id) === entityId,
+        )
         return (
           <div key={k.id} className={cn("rounded-lg border px-4 py-3", status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
             <div className="flex items-center justify-between mb-1">
@@ -1847,6 +1943,17 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
               {k.threshold && <span>Threshold: {k.threshold}</span>}
               {k.triggered_at && <span>Triggered: {formatTime(k.triggered_at)}</span>}
             </div>
+            {hits.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-app pt-2">
+                {hits.slice(0, 3).map(hit => (
+                  <div key={hit.id} className="text-xs text-subtle">
+                    <span className="font-medium text-amber-700 dark:text-amber-300">{hit.hit_type.replace(/_/g, " ")}</span>
+                    {hit.detected_at && <span className="ml-2">Detected {formatTime(hit.detected_at)}</span>}
+                    {hit.evidence && <p className="mt-0.5 text-muted">{hit.evidence}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       })}
@@ -2150,6 +2257,57 @@ function RiskTab({ ticker }: { ticker: string }) {
           </pre>
         </details>
       )}
+    </div>
+  )
+}
+
+function DecisionLearningTab({
+  outcomes,
+  onReview,
+}: {
+  outcomes: DecisionOutcomeRecord[]
+  onReview: (outcome: DecisionOutcomeRecord) => void
+}) {
+  if (!outcomes.length) {
+    return <p className="text-sm text-muted">No decision outcomes recorded for this position yet.</p>
+  }
+
+  return (
+    <div className="space-y-3">
+      {outcomes.map(outcome => (
+        <div
+          key={String(outcome.decision_outcome_id || outcome.object_uid || outcome.id)}
+          className="rounded-lg border border-app px-4 py-3 text-sm"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-app">{outcome.as_of || "Unknown date"}</span>
+            <span className="text-xs text-subtle">{outcome.source_kind?.replace(/_/g, " ")}</span>
+            {outcome.process_label && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">
+                {outcome.process_label.replace(/_/g, " ")}
+              </span>
+            )}
+            <span className="ml-auto text-xs text-subtle">{outcome.final_label_status || outcome.learning_state}</span>
+          </div>
+          <p className="mt-2 text-xs text-muted whitespace-pre-wrap">
+            {outcome.final_postmortem || outcome.draft_postmortem || "No post-mortem text."}
+          </p>
+          {outcome.lessons_learned && (
+            <p className="mt-2 text-xs text-app">
+              <span className="font-medium">Lessons:</span> {outcome.lessons_learned}
+            </p>
+          )}
+          {outcome.requires_review && (
+            <button
+              type="button"
+              onClick={() => onReview(outcome)}
+              className="mt-3 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-app hover:bg-[hsl(var(--muted-2))]"
+            >
+              Review draft post-mortem
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

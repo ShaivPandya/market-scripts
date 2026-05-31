@@ -1,0 +1,51 @@
+{
+  "id": "opportunity_candidate_graduate_nvda_2026",
+  "status": "review",
+  "decision_type": "opportunity_candidate",
+  "as_of_date": "2026-05-15",
+  "user_question": "NVDA looks interesting after the recent pullback. Should I pressure-test a new long?",
+  "input_refs": [
+    {
+      "type": "thesis",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic NVDA pullback prompt with enough context to justify graduation.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "Graduation requires enough thesis context for a full DecisionQuality pass.",
+    "Candidate output must still avoid actionable buy/add language before DQ gates run."
+  ],
+  "gold_output": {
+    "ticker": "NVDA",
+    "source": "agent_chat",
+    "trigger": "User flagged NVDA after a pullback and asked for a pressure-test.",
+    "opportunity_type": "quality_compounder",
+    "consensus": "The market still treats NVDA as the primary AI infrastructure winner.",
+    "variant_view": "The pullback may have opened a better entry if AI demand remains intact.",
+    "why_now": "The user is evaluating a new long after a recent drawdown.",
+    "price_confirmation": "Pullback is noted, but current chart confirmation and liquidity still need verification.",
+    "crowding": "Crowded long positioning remains a risk.",
+    "payoff_asymmetry": "Upside depends on sustained AI capex ROI; downside rises if monetization disappoints.",
+    "missing_inputs": [
+      "Current chart read",
+      "Portfolio sizing context"
+    ],
+    "source_refs": [
+      {
+        "label": "Synthetic NVDA pullback prompt",
+        "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_graduate_nvda_2026.json"
+      }
+    ],
+    "next_action": "graduate_to_decision_quality",
+    "summary": "NVDA is worth a full pressure-test because the user supplied a concrete new-long question with enough context."
+  },
+  "expected_graduation": true,
+  "rubric_scores": {
+    "trigger_clarity": 4,
+    "why_now": 4,
+    "missing_inputs": 4,
+    "triage_discipline": 4
+  }
+}

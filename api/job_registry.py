@@ -336,6 +336,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Watch trigger monitor failed",
     ),
+    "catalyst_kill_monitor": JobSpec(
+        job_type="catalyst_kill_monitor",
+        request_model=None,
+        compute_func="api.catalyst_kill_monitor.run_catalyst_kill_monitor",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_CATALYST_KILL_MONITOR_SECONDS", 10 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Catalyst/kill-condition monitor failed",
+    ),
     "continuous_optimizer": JobSpec(
         job_type="continuous_optimizer",
         request_model=None,

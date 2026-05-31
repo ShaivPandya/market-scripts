@@ -453,6 +453,65 @@ def test_ontology_api_and_agent_propagate_actor(auth_client, monkeypatch):
     assert captured["agent"].parent_actor_id == "admin"
 
 
+def test_ontology_api_temporal_query_forwards_params_and_returns_meta(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    captured: dict[str, Any] = {}
+
+    class _Service:
+        policy = _Policy()
+
+        def query(self, *args, actor: Actor | None = None, **kwargs):
+            captured["actor"] = actor
+            captured["kwargs"] = kwargs
+            return {
+                "run_id": "temporal-read-model",
+                "intent": "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "filters": {}},
+                "as_of": kwargs.get("as_of"),
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {"position_count": 0},
+                "_meta": {
+                    "temporal": {
+                        "as_of": kwargs.get("as_of"),
+                        "tx_as_of": kwargs.get("tx_as_of"),
+                        "include_history": kwargs.get("include_history"),
+                        "mode": "temporal_read_model",
+                    }
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _Service())
+    resp = auth_client.post(
+        "/api/ontology/query",
+        json={
+            "intent": "portfolio_risk_exposure",
+            "query": "historical risk view",
+            "schema_mode": "upgraded",
+            "as_of": "2026-03-08T00:00:00Z",
+            "tx_as_of": "2026-03-09T00:00:00Z",
+            "include_history": True,
+        },
+    )
+    assert resp.status_code == 202
+    job = resp.json()
+    done = auth_client.get(f"/api/ontology/query/async/{job['job_id']}").json()
+
+    assert done["status"] == "done"
+    assert captured["actor"].actor_id == "admin"
+    assert captured["kwargs"]["as_of"] == "2026-03-08T00:00:00Z"
+    assert captured["kwargs"]["tx_as_of"] == "2026-03-09T00:00:00Z"
+    assert captured["kwargs"]["include_history"] is True
+    temporal = done["result"]["_meta"]["temporal"]
+    assert temporal == {
+        "as_of": "2026-03-08T00:00:00Z",
+        "tx_as_of": "2026-03-09T00:00:00Z",
+        "include_history": True,
+        "mode": "temporal_read_model",
+    }
+
+
 def test_ontology_job_payload_includes_actor_and_cache_key_differs():
     import api.routers.ontology as ontology_router
 

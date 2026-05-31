@@ -48,12 +48,20 @@ class SourceRegistryEntry:
     freshness_sla_seconds: int | None
     required: bool
     fallback_source_id: str | None = None
+    reliability_tier: str | None = None
     snapshot_key: str | None = None
+    freshness_policy: str | None = None
+    freshness_calendar_id: str | None = None
+    freshness_max_age_days: int | None = None
     raw_module: str | None = None
     raw_function: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from ontology.sources.reliability import derive_reliability_tier
+
+        data = asdict(self)
+        data["reliability_tier"] = derive_reliability_tier(self)
+        return data
 
 
 def _entry(
@@ -65,7 +73,11 @@ def _entry(
     required: bool,
     *,
     fallback_source_id: str | None = None,
+    reliability_tier: str | None = None,
     snapshot_key: str | None = None,
+    freshness_policy: str | None = None,
+    freshness_calendar_id: str | None = None,
+    freshness_max_age_days: int | None = None,
     raw_module: str | None = None,
     raw_function: str | None = None,
 ) -> SourceRegistryEntry:
@@ -77,7 +89,11 @@ def _entry(
         freshness_sla_seconds=freshness_sla_seconds,
         required=required,
         fallback_source_id=fallback_source_id,
+        reliability_tier=reliability_tier,
         snapshot_key=snapshot_key,
+        freshness_policy=freshness_policy,
+        freshness_calendar_id=freshness_calendar_id,
+        freshness_max_age_days=freshness_max_age_days,
         raw_module=raw_module,
         raw_function=raw_function,
     )
@@ -103,6 +119,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_MARKET_BREADTH,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="equities.market_technicals.market_breadth",
             raw_function="get_data",
         ),
@@ -114,6 +132,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_TOP50_BREADTH,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="equities.market_technicals.top50_breadth",
             raw_function="get_data",
         ),
@@ -125,6 +145,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_VIX_TERM_STRUCTURE,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="equities.market_technicals.vix_term_structure",
             raw_function="get_data",
         ),
@@ -136,6 +158,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_SECTOR_METRICS,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="equities.sector_metrics.sector_metrics",
             raw_function="get_data",
         ),
@@ -147,6 +171,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_LIQUIDITY,
+            freshness_policy="max_age_days",
+            freshness_max_age_days=10,
             raw_module="macro.liquidity.liquidity",
             raw_function="get_snapshot",
         ),
@@ -158,6 +184,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             False,
             snapshot_key=SNAPSHOT_MOMENTUM,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="portfolio.momentum.price_momentum.momentum",
             raw_function="get_data",
         ),
@@ -169,6 +197,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             True,
             snapshot_key=SNAPSHOT_SIGNAL_AGGREGATOR,
+            freshness_policy="market_session",
+            freshness_calendar_id="XNYS",
             raw_module="api.signal_aggregator",
             raw_function="build_signal_aggregator",
         ),
@@ -191,6 +221,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             False,
             snapshot_key=SNAPSHOT_POSITIONING_SUMMARY,
+            freshness_policy="max_age_days",
+            freshness_max_age_days=10,
             raw_module="macro.positioning.positioning",
             raw_function="fetch_multiple_instruments",
         ),
@@ -202,6 +234,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             False,
             snapshot_key=SNAPSHOT_ECONOMIC_GROWTH,
+            freshness_policy="max_age_days",
+            freshness_max_age_days=45,
             raw_module="macro.economic_growth.economic_growth",
             raw_function="get_data",
         ),
@@ -213,6 +247,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             False,
             snapshot_key=SNAPSHOT_LABOR_MARKET,
+            freshness_policy="max_age_days",
+            freshness_max_age_days=10,
             raw_module="macro.labor_market.labor_market",
             raw_function="get_data",
         ),
@@ -224,6 +260,8 @@ def _build_source_registry() -> dict[str, SourceRegistryEntry]:
             DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
             False,
             snapshot_key=SNAPSHOT_HOUSING,
+            freshness_policy="max_age_days",
+            freshness_max_age_days=45,
             raw_module="api.routers.housing",
             raw_function="load_housing_payload",
         ),
@@ -378,10 +416,22 @@ def validate_source_registry(entries: Mapping[str, SourceRegistryEntry] | None =
             errors.append(f"{source_id}: authority_rank must be positive")
         if entry.freshness_sla_seconds is not None and entry.freshness_sla_seconds < 0:
             errors.append(f"{source_id}: freshness_sla_seconds must be non-negative")
+        if entry.freshness_policy is not None:
+            policy = str(entry.freshness_policy).strip().lower()
+            if policy not in {"elapsed", "market_session", "max_age_days", "request_time"}:
+                errors.append(f"{source_id}: freshness_policy is not supported")
+        if entry.freshness_max_age_days is not None and entry.freshness_max_age_days < 1:
+            errors.append(f"{source_id}: freshness_max_age_days must be positive")
         if entry.fallback_source_id == entry.source_id:
             errors.append(f"{source_id}: fallback_source_id cannot point to itself")
         if entry.fallback_source_id and entry.fallback_source_id not in registry:
             errors.append(f"{source_id}: fallback_source_id {entry.fallback_source_id} is not registered")
+        if entry.reliability_tier is not None:
+            from ontology.sources.reliability import RELIABILITY_TIERS
+
+            tier = str(entry.reliability_tier).strip().lower()
+            if tier not in RELIABILITY_TIERS:
+                errors.append(f"{source_id}: reliability_tier must be one of {sorted(RELIABILITY_TIERS)}")
     if errors:
         raise ValueError("; ".join(errors))
 

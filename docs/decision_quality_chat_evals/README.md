@@ -12,6 +12,12 @@ Offline tests use mocked providers and mocked tools:
 pytest tests/test_decision_quality_chat_eval_runner.py tests/test_agent_decision_quality_chat.py
 ```
 
+Workflow artifact and proposal boundary checks are deterministic and local:
+
+```bash
+pytest tests/test_decision_quality_chat_eval_runner.py tests/test_generated_review_approval_suppression.py
+```
+
 Manual model-backed runs:
 
 ```bash
@@ -40,6 +46,8 @@ Reports are written to `outputs/decision_quality_chat_evals/`.
 - `mock_tools` should make replay deterministic where possible.
 - `required_points` should be concrete claims or risks that a good Stan answer must surface.
 - `forbidden_patterns` should catch lazy generic phrasing.
+- `workflow_expectations` is optional. Use it for workflow cases that must include a `workflow_run_id`,
+  emit parseable fenced `artifacts` JSON with expected keys, and describe generated actions as proposals or pending approvals.
 - LLM judge scores are secondary; deterministic checks are the pass/fail gate.
 
 ## Capturing Failures

@@ -30,24 +30,47 @@ test("renders workspace common operating picture and enforces approval note gati
   await authenticate(page)
   await page.goto("/workspace")
 
-  await expect(page.getByRole("heading", { name: "Workspace" })).toBeVisible()
-  await expect(page.getByText("Market Regime")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+  await expect(page.getByText("What changed, what matters, and what needs review.")).toBeVisible()
+  await expect(page.getByText("Market Regime", { exact: true })).toBeVisible()
   await expect(page.getByText("Risk-on")).toBeVisible()
   await expect(page.getByText("Portfolio Risk")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Optimizer Alerts/ })).toBeVisible()
+  await expect(page.getByText("Recommended action shifted from hold to trim after risk review.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Thesis Claim Issues/ })).toBeVisible()
+  await expect(page.getByText("AI infrastructure demand remains durable through 2026.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: /Recent Activity/ })).toBeVisible()
+  await expect(page.getByText("Report Runs")).toBeVisible()
   await expect(page.getByRole("heading", { name: /Pending Approvals/ })).toBeVisible()
   await expect(page.getByText("1/2 approvals recorded")).toBeVisible()
   await expect(page.getByText("Portfolio manager (portfolio:default)")).toBeVisible()
 
-  await page.getByRole("button", { name: "Review" }).click()
+  await expect(page.getByRole("heading", { name: "Source Health" })).toBeVisible()
+  await expect(page.getByText("1 critical stale")).toBeVisible()
+  await expect(page.getByText("SLA breach").first()).toBeVisible()
+  await expect(page.getByText("Critical").first()).toBeVisible()
 
-  await expect(page.getByRole("dialog", { name: "Review Approval" })).toBeVisible()
-  await expect(page.getByText("Create internal action item")).toBeVisible()
+  await page.getByRole("button", { name: "Review", exact: true }).click()
 
-  const approveButton = page.getByRole("button", { name: "Approve & Apply" })
+  const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })
+  await expect(reviewDialog).toBeVisible()
+  await expect(reviewDialog.getByText("Create internal action item")).toBeVisible()
+  await expect(reviewDialog.getByText("standard source needs review")).toBeVisible()
+
+  const approveButton = reviewDialog.getByRole("button", { name: "Approve & Apply" })
   await expect(approveButton).toBeDisabled()
 
   await page.getByLabel("Decision note").fill("Reviewed staged research follow-up for smoke coverage.")
   await expect(approveButton).toBeEnabled()
+})
+
+test("opens approval review from workspace approval_id deep link", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace?approval_id=smoke-approval")
+
+  await expect(page).toHaveURL(/\/workspace(?:\?approval_id=smoke-approval)?$/)
+  await expect(page.getByRole("dialog", { name: "Review Approval" })).toBeVisible()
+  await expect(page.getByText("Create internal action item")).toBeVisible()
 })
 
 test("clears workspace pressure rows and bulk dismisses approvals", async ({ page }) => {
@@ -70,6 +93,20 @@ test("clears workspace pressure rows and bulk dismisses approvals", async ({ pag
   await expect(page.getByRole("button", { name: "Dismiss all", exact: true })).toHaveCount(0)
 })
 
+test("shows decision learning review queue on workspace", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByRole("heading", { name: "Decision Learning" })).toBeVisible()
+  await expect(page.getByText("Smoke draft post-mortem for review.")).toBeVisible()
+
+  await page.getByRole("button", { name: "Review post-mortem" }).click()
+  const dialog = page.getByRole("dialog", { name: "Review Post-Mortem" })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole("button", { name: "Finalize" }).click()
+  await expect(dialog).toBeHidden()
+})
+
 test("runs an ontology workbench query with mocked async results", async ({ page }) => {
   await authenticate(page)
   await page.goto("/ontology")
@@ -84,6 +121,30 @@ test("runs an ontology workbench query with mocked async results", async ({ page
   await expect(page.getByRole("cell", { name: "MSFT" })).toBeVisible()
   await expect(page.getByText("Liquidity impulse")).toBeVisible()
   await expect(page.getByText("Source Health And Staleness")).toBeVisible()
+})
+
+test("runs a historical ontology workbench query with temporal context", async ({ page, apiMocks }) => {
+  await authenticate(page)
+  await page.goto("/ontology")
+
+  await expect(page.getByRole("heading", { name: "Ontology Workbench" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Historical" }).click()
+  await page.getByRole("textbox", { name: "As of", exact: true }).fill("2026-05-10T09:30")
+  await page.getByRole("switch", { name: /Include history/ }).click()
+  await page.getByPlaceholder("Which positions are in deteriorating macro conditions?").fill("Show elevated portfolio risks as of last review")
+  await page.getByRole("button", { name: "Run Query" }).click()
+
+  const temporalContext = page.getByRole("region", { name: "Temporal query context" })
+  await expect(temporalContext).toBeVisible()
+  await expect(temporalContext.getByText("Temporal Context")).toBeVisible()
+  await expect(temporalContext.getByText("temporal_read_model")).toBeVisible()
+  await expect(temporalContext.getByText("History Included")).toBeVisible()
+  await expect(temporalContext.getByText("Yes")).toBeVisible()
+  await expect(page.getByRole("cell", { name: "MSFT" })).toBeVisible()
+
+  expect(typeof apiMocks.ontologyQueryRequest?.as_of).toBe("string")
+  expect(apiMocks.ontologyQueryRequest?.include_history).toBe(true)
 })
 
 test("renders liquidity data-quality warning and formatted screen context", async ({ page }) => {
@@ -124,4 +185,33 @@ test("opens the agent chat shell with workflow and preference fixtures", async (
   await page.getByRole("textbox", { name: "Conversation title" }).fill("Renamed NVDA Chat")
   await page.keyboard.press("Enter")
   await expect(page.getByText("Renamed NVDA Chat").first()).toBeVisible()
+})
+
+test("renders position dossier scenario comparison disclosure", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/dossier/MSFT")
+
+  await expect(page.getByRole("heading", { name: "MSFT" })).toBeVisible()
+  await page.getByRole("button", { name: "Scenarios", exact: true }).click()
+
+  await expect(page.getByRole("heading", { name: "Action Scenario Comparison" })).toBeVisible()
+  await expect(page.getByText("Scenario simulation is decision support only")).toBeVisible()
+  await page.getByRole("button", { name: "Run comparison" }).click()
+  await expect(page.getByText("medium uncertainty")).toBeVisible()
+  await expect(page.getByText("Liquidity missing")).toBeVisible()
+  await expect(page.getByText("No automatic trade recommendation or execution is produced by the simulator.")).toBeVisible()
+})
+
+test("renders position dossier evidence ledger tab", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/dossier/MSFT")
+
+  await expect(page.getByRole("heading", { name: "MSFT" })).toBeVisible()
+  await page.getByRole("button", { name: "Evidence", exact: true }).click()
+
+  await expect(page.getByRole("heading", { name: "Evidence Ledger" })).toBeVisible()
+  await expect(page.getByText("AI capex remains durable")).toBeVisible()
+  await expect(page.getByText("Azure growth re-accelerated in latest quarter")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Lineage" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Weekly report" })).toBeVisible()
 })

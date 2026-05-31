@@ -15,9 +15,14 @@ from typing import Any
 from portfolio.policy_matrix import FinancialPolicyFacts, evaluate_financial_policy_matrix
 
 POLICY_GATE_DECISIONS = ("pass", "warn", "review_required", "blocked", "error")
-ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "add", "short", "sell", "trim", "reduce", "exit", "hedge", "rebalance"}
 FINANCIAL_ACTION_ITEM_TYPES = {"enter", "exit", "resize", "hedge"}
-FINANCIAL_ACTION_IDS = {"create_recommendation", "update_portfolio_positions", "update_hedge_positions"}
+FINANCIAL_ACTION_IDS = {
+    "create_course_of_action",
+    "create_recommendation",
+    "update_portfolio_positions",
+    "update_hedge_positions",
+}
 
 FAILURE_REASON_CODES = {
     "data_missing",
@@ -77,7 +82,7 @@ def is_financial_action(action_id: str, payload: Mapping[str, Any] | None = None
     action = str(action_id or "").strip()
     if action in {"update_portfolio_positions", "update_hedge_positions"}:
         return True
-    if action == "create_recommendation":
+    if action in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         return str(record.get("action") or "").lower() in ACTIONABLE_RECOMMENDATION_ACTIONS
     if action == "create_action_item":
@@ -91,6 +96,7 @@ def ensure_policy_gate_for_action(
     *,
     context: Mapping[str, Any] | None = None,
     object_service: Any | None = None,
+    raise_on_blocked: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Attach or reuse a policy gate result for a financial action payload."""
     mutable = deepcopy(dict(payload))
@@ -100,7 +106,7 @@ def ensure_policy_gate_for_action(
     existing = _existing_gate_result(action_id, mutable)
     if existing:
         gate = normalize_policy_gate_result(existing)
-        if gate["decision"] == "blocked" and action_id != "create_recommendation":
+        if gate["decision"] == "blocked" and raise_on_blocked:
             raise PolicyGateBlockedError(_gate_summary(gate))
         return mutable, gate
 
@@ -146,7 +152,7 @@ def ensure_policy_gate_for_action(
         input_hash=target_id,
     )
     gate["policy_gate_result_id"] = gate_uid
-    if gate["decision"] == "blocked":
+    if gate["decision"] == "blocked" and raise_on_blocked:
         raise PolicyGateBlockedError(_gate_summary(gate))
     return _attach_gate_to_payload(action_id, mutable, gate), gate
 
@@ -861,7 +867,7 @@ def _financial_action_kind(action_id: str, payload: Mapping[str, Any]) -> str:
         return "hedge_positions"
     if action == "create_action_item":
         return str(payload.get("action_type") or "action_item").strip().lower() or "action_item"
-    if action == "create_recommendation":
+    if action in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         return str(record.get("action") or "recommendation").strip().lower() or "recommendation"
     return action
@@ -910,7 +916,7 @@ def _risk_level_for_policy(record: Mapping[str, Any], payload: Mapping[str, Any]
 
 
 def _existing_gate_result(action_id: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    if action_id == "create_recommendation":
+    if action_id in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         existing = record.get("policy_gate_result")
         return dict(existing) if isinstance(existing, Mapping) else None
@@ -919,7 +925,7 @@ def _existing_gate_result(action_id: str, payload: Mapping[str, Any]) -> dict[st
 
 
 def _attach_gate_to_payload(action_id: str, payload: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
-    if action_id == "create_recommendation":
+    if action_id in {"create_course_of_action", "create_recommendation"}:
         record = _recommendation_record(payload)
         _apply_gate_fields(record, gate)
         payload["record"] = record
@@ -935,6 +941,7 @@ def _attach_gate_to_payload(action_id: str, payload: dict[str, Any], gate: dict[
 
 def _apply_gate_fields(record: dict[str, Any], gate: dict[str, Any]) -> None:
     record["policy_gate_result"] = gate
+    record["policy_gate_result_id"] = gate.get("policy_gate_result_id")
     record["policy_gate_status"] = gate["decision"]
     record["policy_gate_decision"] = gate["decision"]
     record["policy_gate_review_required"] = bool(gate.get("review_required"))

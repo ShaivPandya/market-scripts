@@ -393,3 +393,41 @@ def test_decision_writeback_records_workflow_artifact_and_executed_action(monkey
         "approval_applies_action_run",
         "executed_action_mutates_object_version",
     } <= relation_types
+
+
+def test_decision_writeback_records_opportunity_candidate_with_evidence():
+    repo = _FakeTemporalRepo()
+    service = DecisionOntologyWriteback(OntologyObjectService(repository=repo))
+
+    service.record_opportunity_candidate(
+        record={
+            "candidate_id": "candidate:nvda:pullback",
+            "ticker": "NVDA",
+            "trigger": "User flagged NVDA after a pullback.",
+            "opportunity_type": "quality_compounder",
+            "consensus": "AI infrastructure leader",
+            "variant_view": "Pullback may improve entry",
+            "why_now": "User asked now",
+            "price_confirmation": "Needs chart",
+            "missing_inputs": ["Current chart read"],
+            "next_action": "research",
+            "summary": "Worth research before graduation.",
+            "source_refs": [
+                {
+                    "label": "Synthetic NVDA prompt",
+                    "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_graduate_nvda_2026.json",
+                }
+            ],
+        },
+        actor={"actor_id": "tester"},
+        provenance_id="pv:opportunity_candidate",
+    )
+
+    object_types = {write.object_type for write in repo.object_writes}
+    relation_types = {write.relation_type for write in repo.relation_writes}
+    assert "OpportunityCandidate" in object_types
+    assert "Evidence" in object_types
+    assert "opportunity_candidate_supported_by_evidence" in relation_types
+    candidate_write = next(write for write in repo.object_writes if write.object_type == "OpportunityCandidate")
+    assert candidate_write.properties["missing_inputs"] == ["Current chart read"]
+    assert candidate_write.properties["next_action"] == "research"

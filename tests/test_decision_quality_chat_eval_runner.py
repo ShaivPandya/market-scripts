@@ -125,6 +125,92 @@ def test_deterministic_score_checks_required_points_dimensions_and_forbidden_pat
     assert score["score"] == 100.0
 
 
+def test_deterministic_score_checks_workflow_expectations(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "expected_tool_names": ["get_thesis", "query_ontology"],
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "forbidden_patterns": [r"\bwrote the action item directly\b"],
+            "workflow_expectations": {
+                "requires_workflow_run_id": True,
+                "expected_artifact_keys": ["evaluation_draft", "action_items"],
+                "requires_pending_approval_language": True,
+            },
+        },
+    )
+    text = (
+        "I proposed the research item as a pending approval for Workspace review.\n"
+        "```artifacts\n"
+        '{"evaluation_draft": {"ticker": "NVDA", "thesis_status": "watch"}, '
+        '"action_items": [{"description": "Research NVDA memory cycle", "action_type": "research"}]}\n'
+        "```"
+    )
+    run = AgentChatRun(
+        final_text=text,
+        events=[],
+        tool_names=["get_thesis", "query_ontology"],
+        done_payload={
+            "workflow_run_id": "workflow:thesis_review:unit",
+            "tool_calls": [
+                {"name": "get_thesis", "status": "ok"},
+                {"name": "query_ontology", "status": "ok"},
+            ],
+        },
+    )
+
+    score = deterministic_score(case, run)
+
+    assert score["passed"] is True
+    assert {check["name"] for check in score["checks"]} >= {
+        "workflow_run_id_present",
+        "workflow_tool_metadata",
+        "workflow_artifacts_parseable",
+        "workflow_artifact_keys",
+        "workflow_pending_approval_boundary",
+    }
+
+
+def test_deterministic_score_fails_workflow_direct_write_and_bad_artifacts(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "expected_tool_names": ["get_thesis", "query_ontology"],
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "forbidden_patterns": [r"\bwrote the action item directly\b"],
+            "workflow_expectations": {
+                "requires_workflow_run_id": True,
+                "expected_artifact_keys": ["evaluation_draft", "action_items"],
+                "requires_pending_approval_language": True,
+            },
+        },
+    )
+    run = AgentChatRun(
+        final_text="I wrote the action item directly.\n```artifacts\n{bad json\n```",
+        events=[],
+        tool_names=["get_thesis"],
+        done_payload={
+            "tool_calls": [
+                {"name": "get_thesis", "status": "ok"},
+                {"name": "query_ontology", "status": "failed"},
+            ],
+        },
+    )
+
+    score = deterministic_score(case, run)
+    failed = {check["name"] for check in score["checks"] if not check["passed"]}
+
+    assert score["passed"] is False
+    assert "expected_tool_coverage" in failed
+    assert "workflow_run_id_present" in failed
+    assert "workflow_tool_metadata" in failed
+    assert "workflow_artifacts_parseable" in failed
+    assert "workflow_pending_approval_boundary" in failed
+    assert any(name.startswith("forbidden_") for name in failed)
+
+
 def test_run_case_with_fake_agent_and_report(tmp_path):
     case = _case(
         tmp_path / "case.json",

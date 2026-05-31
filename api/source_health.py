@@ -21,7 +21,14 @@ from api.snapshot_keys import (
     SNAPSHOT_VIX_TERM_STRUCTURE,
 )
 from api.snapshot_store import SnapshotRecord, list_snapshot_records
+from ontology.sources.reliability import (
+    enrich_source_reliability,
+    gate_action_for_tier,
+    sla_seconds_for_registry,
+    tier_counts,
+)
 from ontology.sources.source_registry import source_registry_metadata, source_registry_metadata_for_snapshot
+from utils.market_freshness import SourceFreshnessState, evaluate_source_freshness
 
 _SNAPSHOT_SOURCE_NAMES = {
     SNAPSHOT_MARKET_BREADTH: "market_breadth",
@@ -68,6 +75,14 @@ _REGIME_MODULE_SNAPSHOT_KEYS = {
     "momentum": SNAPSHOT_MOMENTUM,
 }
 
+_APPROVAL_SOURCE_DEPENDENCY_FIELDS = (
+    "source_dependencies",
+    "required_sources",
+    "source_requirements",
+    "source_ids",
+    "required_source_ids",
+)
+
 
 def build_workspace_source_health(
     *,
@@ -109,7 +124,9 @@ def build_workspace_source_health(
         sources_by_key.values(),
         key=lambda row: (str(row["domain"]), not bool(row["required"]), str(row["source_name"])),
     )
+    sources = [enrich_source_reliability(source) for source in sources]
     counts = _counts(sources)
+    counts["tier_counts"] = tier_counts(sources)
     domains = []
     by_domain: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for source in sources:
@@ -130,7 +147,50 @@ def build_workspace_source_health(
         "generated_at": generated_at,
         "overall_quality": _overall_quality(sources),
         "counts": counts,
+        "tier_counts": counts.get("tier_counts") or tier_counts(sources),
         "domains": domains,
+    }
+
+
+def build_approval_source_health_review(
+    approval: dict[str, Any] | None,
+    source_health: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Summarize source-health issues that matter during approval review."""
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    explicit_dependencies = _approval_source_dependencies(approval)
+
+    for source in _source_health_sources(source_health):
+        enriched = enrich_source_reliability(source)
+        status = str(enriched.get("status") or "missing").strip().lower()
+        tier = str(enriched.get("reliability_tier") or "standard").strip().lower()
+        required = bool(enriched.get("required"))
+        explicit = _source_matches_dependency(enriched, explicit_dependencies)
+
+        if tier == "critical" and status in {"stale", "failed", "missing"}:
+            blockers.append(_approval_source_issue(enriched, reason=f"critical source is {status}"))
+            continue
+        if status in {"failed", "missing"} and (required or explicit):
+            blockers.append(_approval_source_issue(enriched, reason="required source unavailable"))
+            continue
+        if status == "stale" and explicit:
+            blockers.append(_approval_source_issue(enriched, reason="explicit source dependency is stale"))
+            continue
+        if tier == "standard" and required and status in {"stale", "degraded"}:
+            warnings.append(_approval_source_issue(enriched, reason="standard source needs review"))
+            continue
+        if not required and status in {"degraded", "stale", "failed", "missing"}:
+            warnings.append(_approval_source_issue(enriched, reason="optional source degraded"))
+            continue
+        if explicit and status == "degraded":
+            warnings.append(_approval_source_issue(enriched, reason="explicit source dependency is degraded"))
+
+    return {
+        "status": "blocked" if blockers else "warning" if warnings else "ok",
+        "blockers": blockers,
+        "warnings": warnings,
+        "generated_at": (source_health or {}).get("generated_at") if isinstance(source_health, dict) else None,
     }
 
 
@@ -166,7 +226,10 @@ def _risk_source_status(portfolio_risk: dict[str, Any] | None) -> dict[str, dict
 def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: datetime | None) -> dict[str, Any]:
     registry = source_registry_metadata_for_snapshot(record.snapshot_key)
     required = required or bool((registry or {}).get("required"))
-    stale = _snapshot_is_stale(record, now=now)
+    sla_seconds = sla_seconds_for_registry(registry)
+    freshness_state = _snapshot_freshness_state(record, registry=registry, now=now, sla_seconds=sla_seconds)
+    freshness = freshness_state.to_dict()
+    stale = not freshness_state.fresh
     status = _normalize_status(record.status, stale=stale, quality=record.quality, required=required)
     source_name = str(
         (registry or {}).get("source_id")
@@ -186,7 +249,13 @@ def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: dateti
         "freshness_timestamp": record.as_of_date or record.fetched_at,
         "stale": stale,
         "error": record.error,
-        "detail": record.error or ("snapshot is stale" if stale else None),
+        "detail": record.error or (freshness_state.reason if stale else None),
+        "freshness": freshness,
+        "freshness_policy": freshness.get("policy"),
+        "expected_as_of_date": freshness.get("expected_as_of_date") or freshness.get("oldest_acceptable_date"),
+        "observed_as_of_date": freshness.get("observed_as_of_date"),
+        "calendar_id": freshness.get("calendar_id"),
+        "freshness_reason": freshness.get("reason"),
         "payload_hash": record.payload_hash,
         "source_registry": registry,
     }
@@ -219,6 +288,13 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
         "error": state.get("error"),
         "detail": state.get("detail") or state.get("error") or freshness.get("reason"),
         "freshness": freshness or None,
+        "freshness_policy": freshness.get("policy") if freshness else None,
+        "expected_as_of_date": (freshness.get("expected_as_of_date") or freshness.get("oldest_acceptable_date"))
+        if freshness
+        else None,
+        "observed_as_of_date": freshness.get("observed_as_of_date") if freshness else None,
+        "calendar_id": freshness.get("calendar_id") if freshness else None,
+        "freshness_reason": freshness.get("reason") if freshness else None,
         "source_registry": registry,
     }
 
@@ -432,13 +508,34 @@ def _missing_required_source(source_id: str) -> dict[str, Any]:
     }
 
 
-def _snapshot_is_stale(record: SnapshotRecord, *, now: datetime | None) -> bool:
-    try:
-        fetched = datetime.fromisoformat(str(record.fetched_at).replace("Z", "+00:00"))
-        current = now or datetime.now(tz=fetched.tzinfo) if fetched.tzinfo else now or datetime.now()
-        return max(0, (current - fetched).total_seconds()) > DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
-    except Exception:
-        return False
+def _snapshot_is_stale(record: SnapshotRecord, *, now: datetime | None, sla_seconds: int | None = None) -> bool:
+    freshness = evaluate_source_freshness(
+        record.fetched_at,
+        now=now,
+        policy="elapsed",
+        max_age_seconds=sla_seconds if sla_seconds is not None else DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
+    )
+    return not freshness.fresh
+
+
+def _snapshot_freshness_state(
+    record: SnapshotRecord,
+    *,
+    registry: dict[str, Any] | None,
+    now: datetime | None,
+    sla_seconds: int | None,
+) -> SourceFreshnessState:
+    registry = registry if isinstance(registry, dict) else {}
+    policy = str(registry.get("freshness_policy") or "elapsed").strip().lower()
+    value = record.fetched_at if policy in {"", "elapsed"} else record.as_of_date or record.fetched_at
+    return evaluate_source_freshness(
+        value,
+        now=now,
+        policy=policy or "elapsed",
+        max_age_seconds=sla_seconds if sla_seconds is not None else DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
+        max_age_days=_int_or_none(registry.get("freshness_max_age_days")),
+        calendar_id=str(registry.get("freshness_calendar_id") or "") or None,
+    )
 
 
 def _normalize_status(raw_status: Any, *, stale: bool, quality: Any, required: bool) -> str:
@@ -480,7 +577,7 @@ def _overall_quality(sources: list[dict[str, Any]]) -> str:
     return "ok"
 
 
-def _counts(sources: list[dict[str, Any]]) -> dict[str, int]:
+def _counts(sources: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {
         "total": len(sources),
         "ok": 0,
@@ -491,9 +588,13 @@ def _counts(sources: list[dict[str, Any]]) -> dict[str, int]:
         "required_stale": 0,
         "required_failed": 0,
         "optional_degraded": 0,
+        "critical_stale": 0,
+        "critical_failed": 0,
+        "sla_breach": 0,
     }
     for source in sources:
         status = str(source.get("status") or "missing")
+        tier = str(source.get("reliability_tier") or "")
         if status in counts:
             counts[status] += 1
         if source.get("required") and status == "stale":
@@ -502,6 +603,12 @@ def _counts(sources: list[dict[str, Any]]) -> dict[str, int]:
             counts["required_failed"] += 1
         if not source.get("required") and status in {"degraded", "failed", "missing", "stale"}:
             counts["optional_degraded"] += 1
+        if tier == "critical" and status == "stale":
+            counts["critical_stale"] += 1
+        if tier == "critical" and status in {"failed", "missing"}:
+            counts["critical_failed"] += 1
+        if source.get("sla_breach"):
+            counts["sla_breach"] += 1
     return counts
 
 
@@ -533,3 +640,109 @@ def _domain_label(domain: str) -> str:
 
 def _source_name_from_snapshot_key(snapshot_key: str) -> str:
     return str(snapshot_key or "source").split(":", 1)[0] or "source"
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_health_sources(source_health: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(source_health, dict):
+        return []
+    sources: list[dict[str, Any]] = []
+    for domain in source_health.get("domains") or []:
+        if not isinstance(domain, dict):
+            continue
+        for source in domain.get("sources") or []:
+            if isinstance(source, dict):
+                sources.append(source)
+    return sources
+
+
+def _approval_source_dependencies(approval: dict[str, Any] | None) -> set[str]:
+    if not isinstance(approval, dict):
+        return set()
+    proposed = _as_dict(approval.get("proposed_change")) or {}
+    record = _as_dict(proposed.get("record")) or {}
+    policy_gate = _as_dict(approval.get("policy_gate_result")) or _as_dict(proposed.get("policy_gate_result")) or {}
+    dependencies: set[str] = set()
+    for container in (approval, proposed, record, policy_gate):
+        for field in _APPROVAL_SOURCE_DEPENDENCY_FIELDS:
+            dependencies.update(_source_dependency_values(container.get(field)))
+    return dependencies
+
+
+def _source_dependency_values(value: Any) -> set[str]:
+    values: set[str] = set()
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text:
+            values.add(text)
+        return values
+    if isinstance(value, dict):
+        has_identity = any(field in value for field in ("id", "source_id", "snapshot_key", "source_name", "name"))
+        for field in ("id", "source_id", "snapshot_key", "source_name", "name"):
+            raw = value.get(field)
+            if raw is not None:
+                values.update(_source_dependency_values(raw))
+        if has_identity:
+            return values
+        for key, raw in value.items():
+            if raw in (None, "", False):
+                continue
+            values.update(_source_dependency_values(key))
+            if isinstance(raw, (str, dict, list, tuple, set)):
+                values.update(_source_dependency_values(raw))
+        return values
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            values.update(_source_dependency_values(item))
+    return values
+
+
+def _source_matches_dependency(source: dict[str, Any], dependencies: set[str]) -> bool:
+    if not dependencies:
+        return False
+    aliases = {
+        str(source.get("id") or "").strip().lower(),
+        str(source.get("source_name") or "").strip().lower(),
+        str(source.get("snapshot_key") or "").strip().lower(),
+    }
+    registry = source.get("source_registry")
+    if isinstance(registry, dict):
+        aliases.add(str(registry.get("source_id") or "").strip().lower())
+    return any(alias and alias in dependencies for alias in aliases)
+
+
+def _approval_source_issue(source: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "id": source.get("id"),
+        "source_name": source.get("source_name"),
+        "domain": source.get("domain"),
+        "status": source.get("status"),
+        "quality_state": source.get("quality_state"),
+        "required": bool(source.get("required")),
+        "reliability_tier": source.get("reliability_tier"),
+        "sla_breach": bool(source.get("sla_breach")),
+        "gate_action": source.get("gate_action")
+        or gate_action_for_tier(
+            str(source.get("reliability_tier") or "standard"),
+            str(source.get("status") or "missing"),
+        ),
+        "as_of": source.get("as_of"),
+        "fetched_at": source.get("fetched_at"),
+        "freshness_timestamp": source.get("freshness_timestamp"),
+        "detail": source.get("detail"),
+        "reason": reason,
+    }
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    return None

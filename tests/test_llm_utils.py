@@ -577,6 +577,40 @@ def test_anthropic_adaptive_thinking_request_shape(monkeypatch):
     assert fake_messages.kwargs["output_config"] == {"effort": "high"}
 
 
+def test_anthropic_opus_4_8_uses_adaptive_thinking(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    class FakeMessages:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="reasoned")], stop_reason="end_turn")
+
+    fake_messages = FakeMessages()
+
+    class FakeAnthropic:
+        def __init__(self, *args, **kwargs):
+            self.messages = fake_messages
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="hello",
+        model=llm_utils.MODEL_HIGH,
+        api_key=None,
+        max_tokens=4096,
+        reasoning_effort=llm_utils.REASONING_MAX,
+    )
+
+    assert text == "reasoned"
+    assert fake_messages.kwargs["model"] == "claude-opus-4-8"
+    assert fake_messages.kwargs["thinking"] == {"type": "adaptive", "display": "omitted"}
+    assert fake_messages.kwargs["output_config"] == {"effort": "max"}
+
+
 def test_anthropic_manual_thinking_request_shape(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")

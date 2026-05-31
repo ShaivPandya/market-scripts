@@ -264,6 +264,26 @@ class TemporalReadModelRepository:
                 limit=5,
                 order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            pending_course_of_actions = _fetch_operational_objects(
+                conn,
+                "CourseOfAction",
+                filters={"approval_status": "pending"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_course_of_actions = _fetch_operational_objects(
+                conn,
+                "CourseOfAction",
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            open_course_of_action_comparisons = _fetch_operational_objects(
+                conn,
+                "CourseOfActionComparison",
+                filters={"status": "open"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
             open_action_items = _fetch_operational_objects(
                 conn,
                 "ActionItem",
@@ -285,6 +305,13 @@ class TemporalReadModelRepository:
                 filters={"status": "active"},
                 limit=100,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_monitor_hits = _fetch_operational_objects(
+                conn,
+                "MonitorHit",
+                filters={"status": "open"},
+                limit=20,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
             )
             recent_workflow_runs = _fetch_operational_objects(
                 conn,
@@ -312,6 +339,19 @@ class TemporalReadModelRepository:
                 limit=5,
                 order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
             )
+            pending_draft_decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                filters={"final_label_status": "draft", "outcome_status": "evaluated"},
+                limit=10,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_finalized_decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                limit=10,
+                order_by="updated_sort DESC, as_of_sort DESC, object_uid ASC",
+            )
 
         return {
             "latest_evaluations": latest_evaluations,
@@ -320,13 +360,19 @@ class TemporalReadModelRepository:
             "latest_daily_recommendation": latest_daily_recommendation,
             "latest_weekly_recommendation": latest_weekly_recommendation,
             "pending_actionable_recommendations": pending_actionable_recommendations,
+            "pending_course_of_actions": pending_course_of_actions,
+            "recent_course_of_actions": recent_course_of_actions,
+            "open_course_of_action_comparisons": open_course_of_action_comparisons,
             "open_action_items": open_action_items,
             "optimizer_alerts": optimizer_alerts,
             "active_watch_triggers": active_watch_triggers,
+            "recent_monitor_hits": recent_monitor_hits,
             "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": recent_report_runs,
             "challenged_claims": challenged_claims,
             "disconfirmed_claims": disconfirmed_claims,
+            "pending_draft_decision_outcomes": pending_draft_decision_outcomes,
+            "recent_finalized_decision_outcomes": recent_finalized_decision_outcomes,
         }
 
     def fetch_dossier_bundle(self, ticker: str) -> dict[str, Any]:
@@ -406,12 +452,26 @@ class TemporalReadModelRepository:
                 limit=100,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            monitor_hits = _fetch_operational_objects(
+                conn,
+                "MonitorHit",
+                filters={"ticker": normalized},
+                limit=50,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
             pending_approvals = _fetch_operational_objects(
                 conn,
                 "Approval",
                 filters={"ticker": normalized, "status": "pending"},
                 limit=200,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            decision_outcomes = _fetch_operational_objects(
+                conn,
+                "DecisionOutcome",
+                filters={"ticker": normalized},
+                limit=20,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
             )
 
         return {
@@ -425,7 +485,9 @@ class TemporalReadModelRepository:
             "workflow_runs": workflow_runs,
             "action_items": action_items,
             "watch_triggers": watch_triggers,
+            "monitor_hits": monitor_hits,
             "pending_approvals": pending_approvals,
+            "decision_outcomes": decision_outcomes,
         }
 
     def source_status_summary(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -463,6 +525,7 @@ _OPERATIONAL_FILTER_COLUMNS = {
     "application_status",
     "approval_status",
     "outcome_status",
+    "final_label_status",
     "report_type",
     "parent_uid",
     "assessment_id",
@@ -488,7 +551,14 @@ def _fetch_operational_objects(
         value = str(raw_value)
         if column == "ticker":
             value = value.upper()
-        elif column in {"status", "application_status", "approval_status", "outcome_status", "report_type"}:
+        elif column in {
+            "status",
+            "application_status",
+            "approval_status",
+            "outcome_status",
+            "final_label_status",
+            "report_type",
+        }:
             value = value.lower()
         where_parts.append(f"{column} = %s")
         params.append(value)
@@ -688,6 +758,7 @@ def _operational_object(row_raw: Any) -> dict[str, Any]:
         "application_status": row.get("application_status"),
         "approval_status": row.get("approval_status"),
         "outcome_status": row.get("outcome_status"),
+        "final_label_status": row.get("final_label_status"),
         "report_type": row.get("report_type"),
         "parent_uid": row.get("parent_uid"),
         "assessment_id": row.get("assessment_id"),

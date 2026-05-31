@@ -15,6 +15,7 @@ from api.postgres import use_postgres_state
 from api.snapshot_keys import DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
 from ontology.sources.source_registry import source_registry_metadata_for_snapshot
 from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
+from utils.market_freshness import evaluate_source_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,15 @@ def _now_iso() -> str:
 
 def _parse_dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _sqlite_connect() -> sqlite3.Connection:
@@ -289,24 +299,49 @@ def attach_snapshot_meta(
         age_seconds = max(0, round((datetime.now() - _parse_dt(record.fetched_at)).total_seconds()))
     except Exception:
         age_seconds = None
+    source_registry = source_registry_metadata_for_snapshot(record.snapshot_key)
+    freshness = _snapshot_freshness(record, source_registry=source_registry, max_age_seconds=max_age_seconds)
     snapshot_meta = {
         "key": record.snapshot_key,
         "as_of": record.as_of_date,
         "fetched_at": record.fetched_at,
         "data_age_seconds": age_seconds,
-        "stale": bool(age_seconds is not None and age_seconds > max_age_seconds),
+        "stale": not freshness.get("fresh", False),
         "refresh_status": record.status,
         "error": record.error,
         "version": record.version,
+        "freshness_policy": freshness.get("policy"),
+        "expected_as_of_date": freshness.get("expected_as_of_date") or freshness.get("oldest_acceptable_date"),
+        "observed_as_of_date": freshness.get("observed_as_of_date"),
+        "calendar_id": freshness.get("calendar_id"),
+        "freshness_reason": freshness.get("reason"),
     }
     if record.artifact_uri:
         snapshot_meta["artifact_uri"] = record.artifact_uri
     meta["snapshot"] = snapshot_meta
-    source_registry = source_registry_metadata_for_snapshot(record.snapshot_key)
     if source_registry:
         meta["source_registry"] = source_registry
     out["_meta"] = meta
     return out
+
+
+def _snapshot_freshness(
+    record: SnapshotRecord,
+    *,
+    source_registry: dict[str, Any] | None,
+    max_age_seconds: int,
+) -> dict[str, Any]:
+    registry = source_registry if isinstance(source_registry, dict) else {}
+    policy = str(registry.get("freshness_policy") or "elapsed").strip().lower()
+    value = record.fetched_at if policy in {"", "elapsed"} else record.as_of_date or record.fetched_at
+    state = evaluate_source_freshness(
+        value,
+        policy=policy or "elapsed",
+        max_age_seconds=max_age_seconds,
+        max_age_days=_int_or_none(registry.get("freshness_max_age_days")),
+        calendar_id=str(registry.get("freshness_calendar_id") or "") or None,
+    )
+    return state.to_dict()
 
 
 def get_snapshot_response(

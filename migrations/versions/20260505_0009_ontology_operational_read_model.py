@@ -144,6 +144,7 @@ def upgrade() -> None:
           lower(NULLIF(properties_json->>'application_status', '')) AS application_status,
           lower(NULLIF(properties_json->>'approval_status', '')) AS approval_status,
           lower(NULLIF(properties_json->>'outcome_status', '')) AS outcome_status,
+          lower(NULLIF(properties_json->>'final_label_status', '')) AS final_label_status,
           lower(NULLIF(properties_json->>'report_type', '')) AS report_type,
           NULLIF(properties_json->>'parent_uid', '') AS parent_uid,
           NULLIF(properties_json->>'assessment_id', '') AS assessment_id,

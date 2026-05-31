@@ -228,6 +228,11 @@ class OntologyRuntimeReadService:
     ) -> list[dict[str, Any]]:
         return self.list_objects("ThesisClaim", filters=_ticker_status_filter(ticker, status), limit=limit)
 
+    def evidence_ledger(self, ticker: str) -> dict[str, Any]:
+        from ontology.evidence_ledger import build_ticker_evidence_ledger
+
+        return build_ticker_evidence_ledger(self, ticker)
+
     def action_items(
         self,
         *,
@@ -245,6 +250,26 @@ class OntologyRuntimeReadService:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         return self.list_objects("WatchTrigger", filters=_ticker_status_filter(ticker, status), limit=limit)
+
+    def monitor_hits(
+        self,
+        *,
+        ticker: str | None = None,
+        status: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        filters = _clean_filters(
+            {
+                "ticker": _ticker(ticker) if ticker else None,
+                "status": status,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+            }
+        )
+        rows = self.list_objects("MonitorHit", filters=filters, limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("detected_at") or ""), reverse=True)
 
     def approvals(
         self,
@@ -288,6 +313,31 @@ class OntologyRuntimeReadService:
         )
         return sorted(rows, key=lambda row: str(row.get("as_of") or ""), reverse=True)
 
+    def decision_outcomes(
+        self,
+        *,
+        ticker: str | None = None,
+        outcome_status: str | None = None,
+        final_label_status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        rows = self.list_objects(
+            "DecisionOutcome",
+            filters=_clean_filters(
+                {
+                    "ticker": _ticker(ticker) if ticker else None,
+                    "outcome_status": outcome_status,
+                    "final_label_status": final_label_status,
+                }
+            ),
+            limit=limit,
+        )
+        return sorted(
+            rows,
+            key=lambda row: str(row.get("finalized_at") or row.get("as_of") or row.get("updated_at") or ""),
+            reverse=True,
+        )
+
     def latest_recommendation(self, report_type: str) -> dict[str, Any] | None:
         return _first(self.recommendations(report_type=report_type, limit=1))
 
@@ -327,10 +377,21 @@ class OntologyRuntimeReadService:
             "open_action_items": self.action_items(status="open"),
             "optimizer_alerts": self.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5),
             "active_watch_triggers": self.watch_triggers(status="active"),
+            "recent_monitor_hits": self.monitor_hits(status="open", limit=20),
             "recent_workflow_runs": self.workflow_runs(limit=3),
             "recent_report_runs": self.report_runs(limit=5),
             "challenged_claims": self.thesis_claims(status="challenged", limit=5),
             "disconfirmed_claims": self.thesis_claims(status="disconfirmed", limit=5),
+            "pending_draft_decision_outcomes": self.decision_outcomes(
+                outcome_status="evaluated",
+                final_label_status="draft",
+                limit=10,
+            ),
+            "recent_finalized_decision_outcomes": [
+                row
+                for row in self.decision_outcomes(limit=20)
+                if str(row.get("final_label_status") or "draft") != "draft"
+            ][:10],
         }
 
     def _dossier_bundle_from_objects(self, ticker: str) -> dict[str, Any]:
@@ -351,7 +412,9 @@ class OntologyRuntimeReadService:
             "workflow_runs": self.workflow_runs(ticker=normalized, limit=10),
             "action_items": self.action_items(ticker=normalized, status="open"),
             "watch_triggers": self.watch_triggers(ticker=normalized),
+            "monitor_hits": self.monitor_hits(ticker=normalized, limit=50),
             "pending_approvals": self.approvals(ticker=normalized, status="pending"),
+            "decision_outcomes": self.decision_outcomes(ticker=normalized, limit=20),
         }
 
     def _merge_fresh_workflow_runs(

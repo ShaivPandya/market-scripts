@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import api.routers.agent as agent_router
+from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.models import DecisionQuality
+from decision_quality.opportunity_candidate import OpportunityCandidate
 
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
@@ -176,9 +178,35 @@ def _dq_result(actionability_status: str = "actionable") -> dict[str, Any]:
     return {"decision_quality": dq, "parse_errors": [], "gate": gate, "usage": {"input_tokens": 1, "output_tokens": 2}}
 
 
+def _oc_result(*, graduate: bool = True, next_action: str | None = None) -> dict[str, Any]:
+    action = next_action or ("graduate_to_decision_quality" if graduate else "research")
+    candidate = OpportunityCandidate.model_validate(
+        {
+            "ticker": "META",
+            "source": "agent_chat",
+            "trigger": "User asked for thesis review",
+            "opportunity_type": "quality_compounder",
+            "consensus": "Market is cautious on AI capex.",
+            "variant_view": "Ad efficiency may offset investment drag.",
+            "why_now": "User asked for a live review now.",
+            "price_confirmation": "Needs current chart confirmation.",
+            "next_action": action,
+            "summary": "Worth a full pressure-test." if graduate else "Stay in research until inputs arrive.",
+        }
+    )
+    gate = apply_opportunity_candidate_gates(candidate)
+    return {
+        "opportunity_candidate": candidate,
+        "parse_errors": [],
+        "gate": gate,
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+
+
 def test_serious_thesis_prompt_triggers_hidden_pass_and_metadata(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result())
     monkeypatch.setattr(agent_router, "_run_decision_quality_structured_pass", lambda **_kwargs: _dq_result())
     fake = _install_fake_anthropic(
         monkeypatch,
@@ -207,6 +235,8 @@ def test_serious_thesis_prompt_triggers_hidden_pass_and_metadata(auth_client, mo
     final_text = "".join(payload["text"] for event, payload in parsed if event == "delta")
     assert done["decision_quality_chat"]["ran"] is True
     assert done["decision_quality_chat"]["final_action"] == "buy"
+    assert done["opportunity_candidate_preflight"]["ran"] is True
+    assert done["opportunity_candidate_preflight"]["should_graduate"] is True
     assert "run_chart" in seen_tools
     assert "get_position_valuation" in seen_tools
     assert "simple_thesis" not in final_text
@@ -243,6 +273,7 @@ def test_lower_case_company_thesis_selects_price_action_tools():
 def test_gate_downgrade_is_visible_to_synthesis_prompt(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result())
     monkeypatch.setattr(
         agent_router, "_run_decision_quality_structured_pass", lambda **_kwargs: _dq_result("missing_inputs")
     )
@@ -274,3 +305,82 @@ def test_gate_downgrade_is_visible_to_synthesis_prompt(auth_client, monkeypatch)
     assert done["decision_quality_chat"]["final_action"] == "watch"
     assert '"final_action": "watch"' in synthesis_prompt
     assert "recommended_action" not in final_text
+
+
+def test_discovery_prompt_runs_candidate_preflight_without_decision_quality(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result(graduate=False)
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_run_decision_quality_structured_pass",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("should not run")),
+    )
+    _install_fake_anthropic(
+        monkeypatch,
+        "Bottom line: stay in research. The sector scan is interesting, but no single name is ready yet.",
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda name, args, **_kwargs: json.dumps({"name": name, "args": args, "_meta": {"cache": "test"}}),
+    )
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={
+            "message": "Scan semiconductors for anything interesting right now?",
+            "finalize_synchronously": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    done = [payload for event, payload in parsed if event == "done"][-1]
+    final_text = "".join(payload["text"] for event, payload in parsed if event == "delta")
+    assert done["opportunity_candidate_preflight"]["ran"] is True
+    assert done["opportunity_candidate_preflight"]["final_action"] == "research"
+    assert "decision_quality_chat" not in done
+    assert "buy" not in final_text.lower()
+    assert "short" not in final_text.lower()
+
+
+def test_opportunity_discovery_intent_detection():
+    assert agent_router._should_run_opportunity_candidate_preflight(
+        "Scan semiconductors for anything interesting right now?"
+    )
+    assert not agent_router._should_run_decision_quality_chat("Scan semiconductors for anything interesting right now?")
+
+
+def test_agent_done_payload_includes_intent_router_metadata(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result())
+    monkeypatch.setattr(agent_router, "_run_decision_quality_structured_pass", lambda **_kwargs: _dq_result())
+    _install_fake_anthropic(monkeypatch, "Bottom line: watch it until chart confirmation.")
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda name, args, **_kwargs: json.dumps({"name": name, "args": args, "_meta": {"cache": "test"}}),
+    )
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={
+            "message": "Here is my Meta thesis? What do you think?",
+            "screen_context": {"page_name": "Research", "route": "/research/meta", "ticker": "META"},
+            "finalize_synchronously": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    done = [payload for event, payload in _parse_sse(resp.text) if event == "done"][-1]
+    router = done.get("intent_router")
+    assert isinstance(router, dict)
+    applied = router.get("applied")
+    assert isinstance(applied, dict)
+    assert applied.get("run_hidden_dq") is True
+    assert applied.get("intent_class") == "thesis_review"
+    assert router.get("telemetry", {}).get("applied_source") == "regex"

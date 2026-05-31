@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from api.decision_state import normalize_action_item, normalize_approval
+from api.decision_state import normalize_action_item, normalize_approval, normalize_decision_outcome
 from api.exceptions import NotFoundError
+from ontology.change_summary import ChangeSummaryInputError, build_dossier_change_summary
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -16,7 +17,7 @@ logger = logging.getLogger("api.dossier")
 
 
 @router.get("/dossier/{ticker}")
-def get_dossier(ticker: str):
+def get_dossier(ticker: str, since: str | None = None):
     """Return unified dossier for a single position."""
     ticker = ticker.strip().upper()
     if not ticker:
@@ -89,7 +90,19 @@ def get_dossier(ticker: str):
     workflow_runs = ontology_bundle.get("workflow_runs", [])
     action_items = [normalize_action_item(a) for a in ontology_bundle.get("action_items", [])]
     watch_triggers = ontology_bundle.get("watch_triggers", [])
+    monitor_hits = ontology_bundle.get("monitor_hits", [])
     pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
+    decision_outcomes = [
+        normalize_decision_outcome(item)
+        for item in ontology_bundle.get("decision_outcomes", [])
+        if isinstance(item, dict)
+    ]
+    try:
+        what_changed = build_dossier_change_summary(ontology_bundle, ticker, since=since)
+    except ChangeSummaryInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    evidence_ledger = reads.evidence_ledger(ticker)
 
     # Ontology risk is loaded lazily by the frontend Risk tab to avoid
     # expensive macro ingestion during dossier navigation.
@@ -107,6 +120,8 @@ def get_dossier(ticker: str):
             else management_quality_parsed,
             "assessment": management_quality_assessment,
         },
+        "what_changed": what_changed,
+        "evidence_ledger": evidence_ledger,
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,
@@ -120,5 +135,7 @@ def get_dossier(ticker: str):
         "workflow_runs": workflow_runs,
         "action_items": action_items,
         "watch_triggers": watch_triggers,
+        "monitor_hits": monitor_hits,
         "pending_approvals": pending_approvals,
+        "decision_outcomes": decision_outcomes,
     }

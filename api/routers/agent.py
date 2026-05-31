@@ -51,12 +51,25 @@ from api.job_events import append_job_event, list_job_events
 from api.job_queue import cancel_job, get_job
 from api.routers.auth import require_actor
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
+from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
+from decision_quality.intent_router import (
+    RouteDecision,
+    build_regex_route_decision,
+    build_route_context,
+    resolve_agent_route,
+)
 from decision_quality.models import (
     DecisionQuality,
     DecisionQualityGate,
     decision_quality_schema,
     parse_decision_quality,
+)
+from decision_quality.opportunity_candidate import (
+    OpportunityCandidate,
+    OpportunityCandidateGate,
+    opportunity_candidate_schema,
+    parse_opportunity_candidate,
 )
 from llm_utils import (
     MODEL_MID,
@@ -871,6 +884,11 @@ def _select_tool_names(user_text: str) -> list[str]:
 
     stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
     ticker_candidates = [m for m in _TICKER_RX.findall(user_text or "") if m not in stop and len(m) >= 2]
+    if not ticker_candidates:
+        for alias, ticker in sorted(_COMPANY_TICKER_ALIASES.items(), key=lambda item: -len(item[0])):
+            if re.search(rf"\b{re.escape(alias)}\b", text):
+                ticker_candidates = [ticker]
+                break
     if ticker_candidates:
         add(
             "get_portfolio",
@@ -976,6 +994,14 @@ _DECISION_QUALITY_CHAT_INTENT_RX = re.compile(
     r")\b",
     flags=re.IGNORECASE,
 )
+_OPPORTUNITY_DISCOVERY_INTENT_RX = re.compile(
+    r"\b("
+    r"scan|scout|find|discover|look\s+for|interesting|opportunities?|opportunity|"
+    r"what\s+(?:should|could)\s+i|names?\s+to|ideas?\s+(?:in|for|on)|"
+    r"anything\s+(?:look|worth)|rank|triage|screen|watchlist"
+    r")\b",
+    flags=re.IGNORECASE,
+)
 _PASTED_THESIS_TERMS_RX = re.compile(
     r"\b(revenue|margin|valuation|multiple|target price|upside|catalyst|risk|moat|capex|cash flow|fcf)\b",
     flags=re.IGNORECASE,
@@ -1022,6 +1048,29 @@ def _should_run_decision_quality_chat(
         or _looks_like_pasted_thesis(text)
         or _should_use_retrieval(text)
     )
+
+
+def _should_run_opportunity_candidate_preflight(
+    user_text: str,
+    screen_context: ScreenContextModel | None = None,
+) -> bool:
+    if not _env_flag("AGENT_OPPORTUNITY_CANDIDATE_PREFLIGHT_ENABLED", default=True):
+        return False
+    text = (user_text or "").strip()
+    if not text:
+        return False
+    has_ticker = bool(_extract_candidate_ticker(text, screen_context))
+    if _OPPORTUNITY_DISCOVERY_INTENT_RX.search(text):
+        return True
+    if _looks_like_pasted_thesis(text):
+        return True
+    if _DECISION_QUALITY_CHAT_INTENT_RX.search(text) and (
+        has_ticker or _looks_like_pasted_thesis(text) or _should_use_retrieval(text)
+    ):
+        return True
+    if has_ticker and re.search(r"\b(idea|thesis|pitch|stock|name|company)\b", text, re.IGNORECASE):
+        return True
+    return False
 
 
 def _decision_quality_chat_tool_calls(
@@ -1194,6 +1243,127 @@ def _decision_quality_chat_done_meta(dq_result: dict[str, Any] | None) -> dict[s
     }
 
 
+def _build_opportunity_candidate_structured_prompt(context_bundle: dict[str, Any]) -> str:
+    return (
+        "Triage this live Stan chat opportunity using only the supplied context. "
+        "Return exactly one OpportunityCandidate JSON object, not a wrapper and not markdown. "
+        "This is a pre-decision triage pass only: do not recommend buy, add, short, sell, trim, reduce, "
+        "exit, hedge, or rebalance. Use graduate_to_decision_quality only when a full pressure-test is warranted. "
+        "If current price action, catalyst clarity, or source data is missing, surface that in missing_inputs "
+        "instead of inventing it.\n\n"
+        f"Live chat context:\n{_json_for_prompt(context_bundle)}"
+    )
+
+
+def _run_opportunity_candidate_structured_pass(
+    *,
+    context_bundle: dict[str, Any],
+    provider: str,
+    api_key: str,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    parsed, citations, response, diagnostics = call_llm_json(
+        prompt=_build_opportunity_candidate_structured_prompt(context_bundle),
+        model=MODEL_MID,
+        api_key=api_key,
+        max_tokens=DECISION_QUALITY_CHAT_STRUCTURED_MAX_TOKENS,
+        system=_load_required_prompt_file("opportunity_candidate.md"),
+        provider=provider,
+        enable_web_search=False,
+        reasoning_effort=reasoning_effort,
+        json_schema=opportunity_candidate_schema(),
+        json_schema_name="opportunity_candidate_chat",
+    )
+    raw_candidate = (
+        parsed.get("opportunity_candidate")
+        if isinstance(parsed, dict) and "opportunity_candidate" in parsed
+        else parsed
+    )
+    opportunity_candidate, parse_errors = parse_opportunity_candidate(raw_candidate)
+    gate = apply_opportunity_candidate_gates(opportunity_candidate, parse_errors=parse_errors)
+    return {
+        "opportunity_candidate": opportunity_candidate,
+        "parse_errors": parse_errors,
+        "gate": gate,
+        "raw": parsed,
+        "citations": [{"title": title, "url": url} for title, url in citations],
+        "usage": _usage_dict(response),
+        "diagnostics": diagnostics,
+    }
+
+
+def _build_opportunity_candidate_synthesis_prompt(
+    *,
+    user_text: str,
+    context_bundle: dict[str, Any],
+    oc_result: dict[str, Any],
+) -> str:
+    opportunity_candidate = oc_result.get("opportunity_candidate")
+    gate = oc_result.get("gate")
+    candidate_payload = (
+        opportunity_candidate.model_dump(mode="json")
+        if isinstance(opportunity_candidate, OpportunityCandidate)
+        else None
+    )
+    gate_payload = gate.model_dump(mode="json") if isinstance(gate, OpportunityCandidateGate) else None
+    return (
+        "The user asked Stan to triage a possible investment opportunity.\n\n"
+        "The OpportunityCandidate object and gate result below are private working state. "
+        "The gate result is binding for the final triage stance: if final_action is watch, research, avoid, "
+        "or do_nothing, the answer must not sound like a confident buy/add/short recommendation.\n\n"
+        f"User request:\n{user_text.strip()}\n\n"
+        f"Context bundle:\n{_json_for_prompt(context_bundle)}\n\n"
+        f"OpportunityCandidate:\n{_json_for_prompt(candidate_payload)}\n\n"
+        f"Gate:\n{_json_for_prompt(gate_payload)}\n\n"
+        f"Parse errors, if any:\n{_json_for_prompt(oc_result.get('parse_errors') or [])}"
+    )
+
+
+def _opportunity_candidate_done_meta(oc_result: dict[str, Any] | None) -> dict[str, Any]:
+    if not oc_result:
+        return {"ran": False}
+    opportunity_candidate = oc_result.get("opportunity_candidate")
+    gate = oc_result.get("gate")
+    missing_inputs_count = 0
+    if isinstance(opportunity_candidate, OpportunityCandidate):
+        missing_inputs_count = len(opportunity_candidate.missing_inputs)
+    return {
+        "ran": True,
+        "gate_status": gate.status if isinstance(gate, OpportunityCandidateGate) else "invalid",
+        "final_action": gate.final_action if isinstance(gate, OpportunityCandidateGate) else "research",
+        "should_graduate": gate.should_graduate if isinstance(gate, OpportunityCandidateGate) else False,
+        "missing_inputs_count": missing_inputs_count,
+    }
+
+
+def _opportunity_candidate_fallback(oc_result: dict[str, Any]) -> str:
+    opportunity_candidate = oc_result.get("opportunity_candidate")
+    gate = oc_result.get("gate")
+    if not isinstance(opportunity_candidate, OpportunityCandidate):
+        return (
+            "I cannot triage this cleanly yet. The opportunity pass did not produce a valid candidate object, "
+            "so the right next step is research: get the trigger, current thesis source, price action, and "
+            "missing inputs before treating it as actionable."
+        )
+    final_action = (
+        gate.final_action if isinstance(gate, OpportunityCandidateGate) else opportunity_candidate.next_action
+    )
+    missing_text = (
+        "; ".join(opportunity_candidate.missing_inputs[:4]) if opportunity_candidate.missing_inputs else "none flagged"
+    )
+    summary = opportunity_candidate.summary or opportunity_candidate.variant_view or opportunity_candidate.trigger
+    return (
+        f"Bottom line: I would treat this as {final_action}. "
+        f"The trigger is {opportunity_candidate.trigger}. "
+        f"Why now: {opportunity_candidate.why_now or 'not established yet'}. "
+        f"Consensus: {opportunity_candidate.consensus or 'not established yet'}. "
+        f"Variant view: {opportunity_candidate.variant_view or 'not established yet'}. "
+        f"Price confirmation: {opportunity_candidate.price_confirmation or 'needs more work'}. "
+        f"Missing inputs: {missing_text}. "
+        f"Summary: {summary}."
+    )
+
+
 def _decision_quality_chat_fallback(dq_result: dict[str, Any]) -> str:
     decision_quality = dq_result.get("decision_quality")
     gate = dq_result.get("gate")
@@ -1264,6 +1434,47 @@ def _detect_workflow(
                 ticker = candidates[0] if candidates else screen_ticker.strip().upper() or None
             return wf_name, ticker
     return None, None
+
+
+def _resolve_chat_route(
+    *,
+    user_text: str,
+    screen_context: ScreenContextModel | None,
+    recent_conversation: list[dict[str, Any]] | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
+    llm_credentials: tuple[str, str] | None = None,
+    reasoning_effort: str | None = None,
+) -> tuple[RouteDecision, dict[str, Any]]:
+    regex_baseline = build_regex_route_decision(
+        user_text=user_text,
+        select_tool_names=_select_tool_names,
+        detect_workflow=_detect_workflow,
+        should_run_hidden_dq=_should_run_decision_quality_chat,
+        should_run_opportunity_preflight=_should_run_opportunity_candidate_preflight,
+        screen_context=screen_context,
+    )
+    context = build_route_context(
+        user_text=user_text,
+        screen_context=screen_context,
+        recent_conversation=recent_conversation,
+        opportunity_candidate_metadata=opportunity_candidate_metadata,
+        allowed_tool_names=list(_tool_names()),
+        workflow_hints=list(AVAILABLE_WORKFLOWS.keys()),
+    )
+    system_prompt: str | None = None
+    try:
+        system_prompt = _load_required_prompt_file("intent_router.md")
+    except ConfigurationError:
+        system_prompt = None
+    provider, api_key = llm_credentials if llm_credentials else (None, None)
+    return resolve_agent_route(
+        context=context,
+        regex_baseline=regex_baseline,
+        provider=provider,
+        api_key=api_key,
+        system_prompt=system_prompt,
+        reasoning_effort=reasoning_effort,
+    )
 
 
 def _tool_call_signature(name: str, args: dict) -> str:
@@ -2330,8 +2541,22 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         )
 
     casual = _is_casual(req.message)
-    workflow_name, workflow_ticker = _detect_workflow(req.message, req.screen_context)
     llm_credentials: tuple[str, str] | None = None
+    route_decision = build_regex_route_decision(
+        user_text=req.message,
+        select_tool_names=_select_tool_names,
+        detect_workflow=_detect_workflow,
+        should_run_hidden_dq=_should_run_decision_quality_chat,
+        should_run_opportunity_preflight=_should_run_opportunity_candidate_preflight,
+        screen_context=req.screen_context,
+    )
+    route_meta: dict[str, Any] = {
+        "enabled": False,
+        "applied_source": "regex",
+        "regex_baseline": route_decision.to_meta(),
+    }
+    workflow_name = route_decision.workflow_name
+    workflow_ticker = route_decision.workflow_ticker
     if workflow_name and req.allow_workflow_handoff:
         provider_label = "deferred"
         active_tool_names: list[str] = []
@@ -2342,14 +2567,26 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         except ValueError as exc:
             raise ConfigurationError(str(exc)) from exc
         provider_label = provider
-        active_tool_names = [] if casual else _select_tool_names(req.message)
+        active_tool_names = [] if casual else list(route_decision.tool_names)
         tool_defs = _tool_definitions_from_names(provider, active_tool_names)
         if not casual:
             llm_credentials = _read_llm_api_key()
+            route_decision, route_meta = _resolve_chat_route(
+                user_text=req.message,
+                screen_context=req.screen_context,
+                llm_credentials=llm_credentials,
+                reasoning_effort=_chat_reasoning_effort(provider, req.response_preferences),
+            )
+            workflow_name = route_decision.workflow_name
+            workflow_ticker = route_decision.workflow_ticker
+            if not (workflow_name and req.allow_workflow_handoff):
+                active_tool_names = list(route_decision.tool_names)
+                tool_defs = _tool_definitions_from_names(provider, active_tool_names)
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
-        "agent_chat provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
+        "agent_chat provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s "
+        "route_source=%s route_intent=%s route_confidence=%.2f",
         provider_label,
         casual,
         workflow_name,
@@ -2358,6 +2595,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         force_refresh,
         enable_retrieval,
         req.session_id,
+        route_meta.get("applied_source", route_decision.source),
+        route_decision.intent_class,
+        route_decision.confidence,
     )
 
     def generate():  # noqa: C901
@@ -2639,10 +2879,13 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             )
             return
 
-        if not workflow_name and _should_run_decision_quality_chat(req.message, req.screen_context):
+        run_opportunity_preflight = not workflow_name and route_decision.run_opportunity_preflight
+        run_decision_quality_chat = not workflow_name and route_decision.run_hidden_dq
+        if run_opportunity_preflight or run_decision_quality_chat:
             dq_tool_calls = _decision_quality_chat_tool_calls(req.message, req.screen_context)
             tool_payloads: list[dict[str, Any]] = []
             dq_tool_results: list[dict[str, Any]] = []
+            oc_result: dict[str, Any] | None = None
             dq_result: dict[str, Any] | None = None
             final_message: object | None = None
             try:
@@ -2650,7 +2893,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     yield _phase_sse(
                         "tool_running",
                         turn_started,
-                        label="Pressure-testing thesis...",
+                        label=(
+                            "Triaging opportunity..."
+                            if run_opportunity_preflight and not run_decision_quality_chat
+                            else "Pressure-testing thesis..."
+                        ),
                         tool_names=[str(call.get("name")) for call in dq_tool_calls],
                         round_index=0,
                     )
@@ -2748,180 +2995,376 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     tool_results=dq_tool_results,
                 )
 
-                for attempt in range(MAX_API_RETRIES):
-                    model_timing = {
-                        "phase": "model_thinking",
-                        "purpose": "decision_quality_chat_structured",
-                        "attempt": attempt,
-                        "round_index": 0,
-                        "first_token_ms": None,
-                    }
-                    model_started = time.perf_counter()
-                    try:
-                        yield _phase_sse(
-                            "model_thinking",
-                            turn_started,
-                            model_purpose="decision_quality_chat_structured",
-                            attempt=attempt,
-                            round_index=0,
-                        )
-                        budget.check_model_call(
-                            estimated_input_tokens=max(1, len(_json_for_prompt(context_bundle)) // 4),
-                            estimated_cost_usd=0.0,
-                        )
-                        yield _sse("budget_update", budget.to_meta())
-                        dq_result = _run_decision_quality_structured_pass(
-                            context_bundle=context_bundle,
-                            provider=provider,
-                            api_key=api_key,
-                            reasoning_effort=reasoning_effort,
-                        )
-                        _record_model_timing(
-                            timings,
-                            model_timing,
-                            started=model_started,
-                            status="ok",
-                            provider=provider,
-                            model=resolve_model(MODEL_MID, provider),
-                        )
-                        budget.record_model_usage(dq_result.get("usage") or {})
-                        yield _sse("budget_update", budget.to_meta())
-                        break
-                    except Exception as retry_exc:
-                        _record_model_timing(
-                            timings,
-                            model_timing,
-                            started=model_started,
-                            status="error",
-                            provider=provider,
-                            model=resolve_model(MODEL_MID, provider),
-                        )
-                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
-                            continue
-                        raise
+                if run_opportunity_preflight:
+                    for attempt in range(MAX_API_RETRIES):
+                        model_timing = {
+                            "phase": "model_thinking",
+                            "purpose": "opportunity_candidate_chat_structured",
+                            "attempt": attempt,
+                            "round_index": 0,
+                            "first_token_ms": None,
+                        }
+                        model_started = time.perf_counter()
+                        try:
+                            yield _phase_sse(
+                                "model_thinking",
+                                turn_started,
+                                model_purpose="opportunity_candidate_chat_structured",
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            budget.check_model_call(
+                                estimated_input_tokens=max(1, len(_json_for_prompt(context_bundle)) // 4),
+                                estimated_cost_usd=0.0,
+                            )
+                            yield _sse("budget_update", budget.to_meta())
+                            oc_result = _run_opportunity_candidate_structured_pass(
+                                context_bundle=context_bundle,
+                                provider=provider,
+                                api_key=api_key,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="ok",
+                                provider=provider,
+                                model=resolve_model(MODEL_MID, provider),
+                            )
+                            budget.record_model_usage(oc_result.get("usage") or {})
+                            yield _sse("budget_update", budget.to_meta())
+                            break
+                        except Exception as retry_exc:
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="error",
+                                provider=provider,
+                                model=resolve_model(MODEL_MID, provider),
+                            )
+                            if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                                time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                                continue
+                            raise
+
+                should_run_full_dq = run_decision_quality_chat and (
+                    not run_opportunity_preflight
+                    or (
+                        isinstance(oc_result.get("gate"), OpportunityCandidateGate)
+                        and oc_result["gate"].should_graduate
+                    )
+                )
+
+                if should_run_full_dq:
+                    for attempt in range(MAX_API_RETRIES):
+                        model_timing = {
+                            "phase": "model_thinking",
+                            "purpose": "decision_quality_chat_structured",
+                            "attempt": attempt,
+                            "round_index": 0,
+                            "first_token_ms": None,
+                        }
+                        model_started = time.perf_counter()
+                        try:
+                            yield _phase_sse(
+                                "model_thinking",
+                                turn_started,
+                                model_purpose="decision_quality_chat_structured",
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            budget.check_model_call(
+                                estimated_input_tokens=max(1, len(_json_for_prompt(context_bundle)) // 4),
+                                estimated_cost_usd=0.0,
+                            )
+                            yield _sse("budget_update", budget.to_meta())
+                            dq_result = _run_decision_quality_structured_pass(
+                                context_bundle=context_bundle,
+                                provider=provider,
+                                api_key=api_key,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="ok",
+                                provider=provider,
+                                model=resolve_model(MODEL_MID, provider),
+                            )
+                            budget.record_model_usage(dq_result.get("usage") or {})
+                            yield _sse("budget_update", budget.to_meta())
+                            break
+                        except Exception as retry_exc:
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="error",
+                                provider=provider,
+                                model=resolve_model(MODEL_MID, provider),
+                            )
+                            if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                                time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                                continue
+                            raise
 
                 synthesis_chunks: list[str] = []
-                for attempt in range(MAX_API_RETRIES):
-                    model_timing = {
-                        "phase": "model_writing",
-                        "purpose": "decision_quality_chat_synthesis",
-                        "attempt": attempt,
-                        "round_index": 0,
-                        "first_token_ms": None,
-                    }
-                    model_started = time.perf_counter()
-                    model_event_id: str | None = None
-                    try:
-                        yield _phase_sse(
-                            "model_writing",
-                            turn_started,
-                            model_purpose="decision_quality_chat_synthesis",
-                            attempt=attempt,
-                            round_index=0,
-                        )
-                        synthesis_instructions = (
-                            instructions
-                            + "\n\n---\n\n"
-                            + _load_required_prompt_file("decision_quality_chat_synthesis.md")
-                        )
-                        synthesis_conversation = _user_prompt_for_provider(
-                            provider,
-                            _build_decision_quality_chat_synthesis_prompt(
-                                user_text=req.message,
-                                context_bundle=context_bundle,
-                                dq_result=dq_result or {},
-                            ),
-                        )
-                        stream_kwargs = _model_stream_kwargs(
-                            provider=provider,
-                            instructions=synthesis_instructions,
-                            conversation=synthesis_conversation,
-                            max_tokens=DECISION_QUALITY_CHAT_SYNTHESIS_MAX_TOKENS,
-                            reasoning_effort=reasoning_effort,
-                        )
-                        stream_kwargs, egress_meta = prepare_model_egress(
-                            provider=provider,
-                            purpose="decision_quality_chat_synthesis",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            budget=budget,
-                            parent_event_id=agent_turn_event_id,
-                            session_id=session_id,
-                            workflow_run_id=None,
-                        )
-                        yield _sse("egress_recorded", egress_meta)
-                        yield _sse("budget_update", budget.to_meta())
-                        model_event_id = _start_model_call_provenance(
-                            parent_event_id=agent_turn_event_id,
-                            session_id=session_id,
-                            workflow_run_id=None,
-                            provider=provider,
-                            purpose="decision_quality_chat_synthesis",
-                            stream_kwargs=stream_kwargs,
-                            actor=tool_actor,
-                            attempt=attempt,
-                            round_index=0,
-                        )
-                        final_message = yield from _stream_llm_response(
-                            client,
-                            provider,
-                            stream_kwargs,
-                            synthesis_chunks,
-                            model_timing=model_timing,
-                            turn_timings=timings,
-                            turn_started=turn_started,
-                        )
-                        _record_model_timing(
-                            timings,
-                            model_timing,
-                            started=model_started,
-                            status="ok",
-                            provider=provider,
-                            model=stream_kwargs.get("model"),
-                        )
-                        _finish_model_call_provenance(
-                            model_event_id,
-                            status="succeeded",
-                            final_message=final_message,
-                            output_text="".join(synthesis_chunks),
-                        )
-                        budget.record_model_usage(_usage_dict(final_message))
-                        yield _sse("budget_update", budget.to_meta())
-                        break
-                    except ModelGatewayDenied as exc:
-                        yield _sse("egress_recorded", exc.manifest)
-                        yield _sse("blocked", _blocked_model_egress_payload(exc))
-                        raise
-                    except Exception as retry_exc:
-                        _record_model_timing(
-                            timings,
-                            model_timing,
-                            started=model_started,
-                            status="error",
-                            provider=provider,
-                            model=locals().get("stream_kwargs", {}).get("model")
-                            if isinstance(locals().get("stream_kwargs"), dict)
-                            else None,
-                        )
-                        _finish_model_call_provenance(
-                            model_event_id,
-                            status="failed",
-                            error=str(retry_exc) or retry_exc.__class__.__name__,
-                        )
-                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
-                            continue
-                        raise
+                if should_run_full_dq:
+                    for attempt in range(MAX_API_RETRIES):
+                        model_timing = {
+                            "phase": "model_writing",
+                            "purpose": "decision_quality_chat_synthesis",
+                            "attempt": attempt,
+                            "round_index": 0,
+                            "first_token_ms": None,
+                        }
+                        model_started = time.perf_counter()
+                        model_event_id: str | None = None
+                        try:
+                            yield _phase_sse(
+                                "model_writing",
+                                turn_started,
+                                model_purpose="decision_quality_chat_synthesis",
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            synthesis_instructions = (
+                                instructions
+                                + "\n\n---\n\n"
+                                + _load_required_prompt_file("decision_quality_chat_synthesis.md")
+                            )
+                            synthesis_conversation = _user_prompt_for_provider(
+                                provider,
+                                _build_decision_quality_chat_synthesis_prompt(
+                                    user_text=req.message,
+                                    context_bundle=context_bundle,
+                                    dq_result=dq_result or {},
+                                ),
+                            )
+                            stream_kwargs = _model_stream_kwargs(
+                                provider=provider,
+                                instructions=synthesis_instructions,
+                                conversation=synthesis_conversation,
+                                max_tokens=DECISION_QUALITY_CHAT_SYNTHESIS_MAX_TOKENS,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            stream_kwargs, egress_meta = prepare_model_egress(
+                                provider=provider,
+                                purpose="decision_quality_chat_synthesis",
+                                stream_kwargs=stream_kwargs,
+                                actor=tool_actor,
+                                budget=budget,
+                                parent_event_id=agent_turn_event_id,
+                                session_id=session_id,
+                                workflow_run_id=None,
+                            )
+                            yield _sse("egress_recorded", egress_meta)
+                            yield _sse("budget_update", budget.to_meta())
+                            model_event_id = _start_model_call_provenance(
+                                parent_event_id=agent_turn_event_id,
+                                session_id=session_id,
+                                workflow_run_id=None,
+                                provider=provider,
+                                purpose="decision_quality_chat_synthesis",
+                                stream_kwargs=stream_kwargs,
+                                actor=tool_actor,
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            final_message = yield from _stream_llm_response(
+                                client,
+                                provider,
+                                stream_kwargs,
+                                synthesis_chunks,
+                                model_timing=model_timing,
+                                turn_timings=timings,
+                                turn_started=turn_started,
+                            )
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="ok",
+                                provider=provider,
+                                model=stream_kwargs.get("model"),
+                            )
+                            _finish_model_call_provenance(
+                                model_event_id,
+                                status="succeeded",
+                                final_message=final_message,
+                                output_text="".join(synthesis_chunks),
+                            )
+                            budget.record_model_usage(_usage_dict(final_message))
+                            yield _sse("budget_update", budget.to_meta())
+                            break
+                        except ModelGatewayDenied as exc:
+                            yield _sse("egress_recorded", exc.manifest)
+                            yield _sse("blocked", _blocked_model_egress_payload(exc))
+                            raise
+                        except Exception as retry_exc:
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="error",
+                                provider=provider,
+                                model=locals().get("stream_kwargs", {}).get("model")
+                                if isinstance(locals().get("stream_kwargs"), dict)
+                                else None,
+                            )
+                            _finish_model_call_provenance(
+                                model_event_id,
+                                status="failed",
+                                error=str(retry_exc) or retry_exc.__class__.__name__,
+                            )
+                            if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                                time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                                continue
+                            raise
+                else:
+                    for attempt in range(MAX_API_RETRIES):
+                        model_timing = {
+                            "phase": "model_writing",
+                            "purpose": "opportunity_candidate_chat_synthesis",
+                            "attempt": attempt,
+                            "round_index": 0,
+                            "first_token_ms": None,
+                        }
+                        model_started = time.perf_counter()
+                        model_event_id: str | None = None
+                        try:
+                            yield _phase_sse(
+                                "model_writing",
+                                turn_started,
+                                model_purpose="opportunity_candidate_chat_synthesis",
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            synthesis_instructions = (
+                                instructions
+                                + "\n\n---\n\n"
+                                + _load_required_prompt_file("opportunity_candidate_synthesis.md")
+                            )
+                            synthesis_conversation = _user_prompt_for_provider(
+                                provider,
+                                _build_opportunity_candidate_synthesis_prompt(
+                                    user_text=req.message,
+                                    context_bundle=context_bundle,
+                                    oc_result=oc_result or {},
+                                ),
+                            )
+                            stream_kwargs = _model_stream_kwargs(
+                                provider=provider,
+                                instructions=synthesis_instructions,
+                                conversation=synthesis_conversation,
+                                max_tokens=DECISION_QUALITY_CHAT_SYNTHESIS_MAX_TOKENS,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            stream_kwargs, egress_meta = prepare_model_egress(
+                                provider=provider,
+                                purpose="opportunity_candidate_chat_synthesis",
+                                stream_kwargs=stream_kwargs,
+                                actor=tool_actor,
+                                budget=budget,
+                                parent_event_id=agent_turn_event_id,
+                                session_id=session_id,
+                                workflow_run_id=None,
+                            )
+                            yield _sse("egress_recorded", egress_meta)
+                            yield _sse("budget_update", budget.to_meta())
+                            model_event_id = _start_model_call_provenance(
+                                parent_event_id=agent_turn_event_id,
+                                session_id=session_id,
+                                workflow_run_id=None,
+                                provider=provider,
+                                purpose="opportunity_candidate_chat_synthesis",
+                                stream_kwargs=stream_kwargs,
+                                actor=tool_actor,
+                                attempt=attempt,
+                                round_index=0,
+                            )
+                            final_message = yield from _stream_llm_response(
+                                client,
+                                provider,
+                                stream_kwargs,
+                                synthesis_chunks,
+                                model_timing=model_timing,
+                                turn_timings=timings,
+                                turn_started=turn_started,
+                            )
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="ok",
+                                provider=provider,
+                                model=stream_kwargs.get("model"),
+                            )
+                            _finish_model_call_provenance(
+                                model_event_id,
+                                status="succeeded",
+                                final_message=final_message,
+                                output_text="".join(synthesis_chunks),
+                            )
+                            budget.record_model_usage(_usage_dict(final_message))
+                            yield _sse("budget_update", budget.to_meta())
+                            break
+                        except ModelGatewayDenied as exc:
+                            yield _sse("egress_recorded", exc.manifest)
+                            yield _sse("blocked", _blocked_model_egress_payload(exc))
+                            raise
+                        except Exception as retry_exc:
+                            _record_model_timing(
+                                timings,
+                                model_timing,
+                                started=model_started,
+                                status="error",
+                                provider=provider,
+                                model=locals().get("stream_kwargs", {}).get("model")
+                                if isinstance(locals().get("stream_kwargs"), dict)
+                                else None,
+                            )
+                            _finish_model_call_provenance(
+                                model_event_id,
+                                status="failed",
+                                error=str(retry_exc) or retry_exc.__class__.__name__,
+                            )
+                            if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                                time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                                continue
+                            raise
 
                 synthesis_text = "".join(synthesis_chunks)
                 if not synthesis_text.strip():
-                    logger.warning("Decision-quality chat synthesis returned empty text; using deterministic fallback")
-                    synthesis_text = _decision_quality_chat_fallback(dq_result or {})
+                    if should_run_full_dq:
+                        logger.warning(
+                            "Decision-quality chat synthesis returned empty text; using deterministic fallback"
+                        )
+                        synthesis_text = _decision_quality_chat_fallback(dq_result or {})
+                    else:
+                        logger.warning(
+                            "Opportunity-candidate chat synthesis returned empty text; using deterministic fallback"
+                        )
+                        synthesis_text = _opportunity_candidate_fallback(oc_result or {})
                     yield _sse("delta", {"text": synthesis_text})
 
                 usage = _usage_dict(final_message)
-                dq_meta = _decision_quality_chat_done_meta(dq_result)
+                done_payload_data: dict[str, Any] = {
+                    "usage": usage,
+                    "session_id": session_id,
+                    "tool_calls": tool_payloads,
+                    "tools_used": [call["name"] for call in tool_payloads],
+                    "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
+                    "intent_router": {
+                        "applied": route_decision.to_meta(),
+                        "telemetry": route_meta,
+                    },
+                }
+                if should_run_full_dq:
+                    done_payload_data["decision_quality_chat"] = _decision_quality_chat_done_meta(dq_result)
                 turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
                 assistant_msg = {
@@ -2942,13 +3385,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 yield _sse(
                     "done",
                     _done_payload(
-                        {
-                            "usage": usage,
-                            "session_id": session_id,
-                            "tool_calls": tool_payloads,
-                            "tools_used": [call["name"] for call in tool_payloads],
-                            "decision_quality_chat": dq_meta,
-                        },
+                        done_payload_data,
                         timings,
                         turn_started,
                     ),
@@ -2971,7 +3408,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             "session_id": session_id,
                             "tool_calls": tool_payloads,
                             "tools_used": [call["name"] for call in tool_payloads],
+                            "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
                             "decision_quality_chat": _decision_quality_chat_done_meta(dq_result),
+                            "intent_router": {
+                                "applied": route_decision.to_meta(),
+                                "telemetry": route_meta,
+                            },
                         },
                         timings,
                         turn_started,
@@ -3540,7 +3982,21 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=full_text,
                     usage=usage,
                 )
-                yield _sse("done", _done_payload({"usage": usage, "session_id": session_id}, timings, turn_started))
+                yield _sse(
+                    "done",
+                    _done_payload(
+                        {
+                            "usage": usage,
+                            "session_id": session_id,
+                            "intent_router": {
+                                "applied": route_decision.to_meta(),
+                                "telemetry": route_meta,
+                            },
+                        },
+                        timings,
+                        turn_started,
+                    ),
+                )
                 return
 
         except Exception as exc:

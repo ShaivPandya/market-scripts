@@ -9,8 +9,17 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Any
 
-CALCULATION_VERSION = "scenario_simulator_v1"
+CALCULATION_VERSION = "scenario_simulator_v2"
 SUPPORTED_ACTIONS = {"hold", "add", "trim", "exit"}
+DEFAULT_MAX_ADV_PARTICIPATION = 1.0
+EXECUTION_ASSUMPTION_FIELDS = (
+    "transaction_cost_bps",
+    "slippage_bps",
+    "market_impact_bps",
+    "max_adv_participation",
+    "funding_bps_per_day",
+    "holding_days",
+)
 
 
 class ScenarioSimulatorValidationError(ValueError):
@@ -48,17 +57,32 @@ def simulate_investment_options(
         or portfolio.get("nav")
         or portfolio.get("portfolio_value")
     )
+    execution_assumptions = _normalize_execution_assumptions(assumptions, payload)
     base_source_refs = _source_refs([portfolio, position, *scenarios, *assumptions])
     outcomes: list[dict[str, Any]] = []
 
     for candidate in normalized_candidates:
         target = _target_position(base_position, candidate, portfolio_book=portfolio_book)
+        traded_notional = _traded_notional(base_position, target, candidate)
+        friction = _execution_friction(traded_notional, execution_assumptions)
         scenario_outcomes = [
-            _scenario_outcome(base_position, target, scenario, portfolio_book=portfolio_book)
+            _scenario_outcome(
+                base_position,
+                target,
+                scenario,
+                portfolio_book=portfolio_book,
+                friction=friction,
+            )
             for scenario in normalized_scenarios
         ]
         risk = _risk_summary(scenario_outcomes, normalized_scenarios, portfolio_book=portfolio_book)
-        liquidity = _liquidity_summary(base_position, target, candidate, position)
+        liquidity = _liquidity_summary(
+            base_position,
+            target,
+            candidate,
+            position,
+            execution_assumptions=execution_assumptions,
+        )
         thesis_pressure = _thesis_pressure_summary(normalized_scenarios)
         uncertainty = _uncertainty_summary(
             base_position=base_position,
@@ -68,6 +92,8 @@ def simulate_investment_options(
             scenarios=normalized_scenarios,
             scenario_notes=scenario_notes,
             candidate=candidate,
+            execution_assumptions=execution_assumptions,
+            friction=friction,
         )
         policy_gate_payload = _policy_gate_payload(
             portfolio=portfolio,
@@ -79,13 +105,18 @@ def simulate_investment_options(
         policy_gate = _evaluate_policy_gate(policy_gate_payload, context=context)
         source_refs = _unique([*base_source_refs, *_source_refs([candidate["raw"]])])
         candidate_hash = _hash_value({"candidate": candidate["raw"], "target": target}, length=16)
+        course_key = f"{simulation_id}:{candidate['candidate_id']}:{candidate['action']}"
+        course_uid = _course_of_action_uid(course_key)
         outcome = {
             "candidate_id": candidate["candidate_id"],
+            "course_of_action_id": course_uid,
             "action": candidate["action"],
             "rationale": candidate.get("rationale"),
             "target_position": target,
             "exposure": _exposure_summary(base_position, target, portfolio_book=portfolio_book),
             "scenario_outcomes": scenario_outcomes,
+            "execution_assumptions": execution_assumptions,
+            "execution_friction": friction,
             "risk": risk,
             "liquidity": liquidity,
             "thesis_pressure": thesis_pressure,
@@ -111,6 +142,7 @@ def simulate_investment_options(
             {
                 "rank": index + 1,
                 "candidate_id": item["candidate_id"],
+                "course_of_action_id": item.get("course_of_action_id"),
                 "action": item["action"],
                 "ranking_score": item["ranking_score"],
                 "policy_gate_decision": (item.get("policy_gate") or {}).get("decision"),
@@ -141,7 +173,9 @@ def simulate_investment_options(
             "book_value": portfolio_book,
         },
         "comparison": comparison,
+        "execution_assumptions": execution_assumptions,
         "outcomes": outcomes,
+        "risk_provenance": _as_dict(payload.get("risk_provenance")),
     }
 
 
@@ -169,7 +203,7 @@ def attach_persistence_artifacts(result: dict[str, Any], artifacts: Mapping[str,
 def _normalize_candidate(candidate: Mapping[str, Any], index: int) -> dict[str, Any]:
     action = str(candidate.get("action") or "").strip().lower()
     if action == "hedge":
-        raise ScenarioSimulatorValidationError("Hedging is out of scope for scenario simulator v1.")
+        raise ScenarioSimulatorValidationError("Hedging is out of scope for scenario simulator v2.")
     if action not in SUPPORTED_ACTIONS:
         raise ScenarioSimulatorValidationError(
             f"Unsupported candidate action '{action or '<empty>'}'. Supported actions: add, exit, hold, trim."
@@ -354,31 +388,161 @@ def _apply_delta(
     return target_qty, target_notional, notes
 
 
+def _normalize_execution_assumptions(
+    assumptions: Sequence[Mapping[str, Any]], payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Normalize execution friction assumptions from request assumptions and payload overrides."""
+    values: dict[str, float | None] = {field: None for field in EXECUTION_ASSUMPTION_FIELDS}
+    inline = _as_dict(payload.get("execution_assumptions"))
+    for field in EXECUTION_ASSUMPTION_FIELDS:
+        if field in inline:
+            values[field] = _assumption_number(inline.get(field))
+
+    alias_map = {
+        "transaction_cost_bps": ("transaction_cost_bps", "transaction_cost", "cost_bps"),
+        "slippage_bps": ("slippage_bps", "slippage"),
+        "market_impact_bps": ("market_impact_bps", "market_impact", "impact_bps"),
+        "max_adv_participation": ("max_adv_participation", "max_participation", "adv_participation"),
+        "funding_bps_per_day": ("funding_bps_per_day", "funding_bps", "funding_cost_bps"),
+        "holding_days": ("holding_days", "funding_days"),
+    }
+    for assumption in assumptions:
+        name = str(assumption.get("name") or "").strip().lower().replace(" ", "_")
+        if not name:
+            continue
+        raw_value = assumption.get("value")
+        if isinstance(raw_value, Mapping):
+            for field, aliases in alias_map.items():
+                for alias in aliases:
+                    if alias in raw_value and values[field] is None:
+                        values[field] = _assumption_number(raw_value.get(alias))
+        for field, aliases in alias_map.items():
+            if name in aliases and values[field] is None:
+                values[field] = _assumption_number(raw_value)
+
+    max_participation = values["max_adv_participation"]
+    if max_participation is None:
+        max_participation = DEFAULT_MAX_ADV_PARTICIPATION
+    elif max_participation > 1.0:
+        max_participation = max_participation / 100.0
+    max_participation = max(0.01, min(max_participation, 1.0))
+
+    holding_days = values["holding_days"] if values["holding_days"] is not None else 1.0
+    holding_days = max(0.0, holding_days)
+
+    transaction_cost_bps = values["transaction_cost_bps"] or 0.0
+    slippage_bps = values["slippage_bps"] or 0.0
+    market_impact_bps = values["market_impact_bps"] or 0.0
+    funding_bps_per_day = values["funding_bps_per_day"] or 0.0
+
+    normalized = {
+        "transaction_cost_bps": transaction_cost_bps,
+        "slippage_bps": slippage_bps,
+        "market_impact_bps": market_impact_bps,
+        "max_adv_participation": _round(max_participation),
+        "funding_bps_per_day": funding_bps_per_day,
+        "holding_days": _round(holding_days),
+        "source": "request_assumptions" if assumptions or inline else "defaults",
+    }
+    normalized["total_friction_bps"] = _round(
+        transaction_cost_bps + slippage_bps + market_impact_bps + funding_bps_per_day * holding_days
+    )
+    if normalized["source"] == "defaults":
+        normalized["disclosure"] = (
+            "Research-grade execution assumptions with zero explicit friction; decision support only."
+        )
+    else:
+        normalized["disclosure"] = (
+            "Scenario outcomes include explicit execution friction assumptions; still decision support only."
+        )
+    return normalized
+
+
+def _assumption_number(value: Any) -> float | None:
+    number = _float_or_none(value)
+    if number is None:
+        return None
+    return abs(number)
+
+
+def _traded_notional(base: Mapping[str, Any], target: Mapping[str, Any], candidate: Mapping[str, Any]) -> float:
+    current_notional = _positive_float(base.get("notional_base")) or 0.0
+    target_notional = _positive_float(target.get("notional_base")) or 0.0
+    action = str(candidate.get("action") or "")
+    if action == "hold":
+        return 0.0
+    if action == "exit":
+        return current_notional
+    return abs(target_notional - current_notional)
+
+
+def _execution_friction(traded_notional: float, execution_assumptions: Mapping[str, Any]) -> dict[str, Any]:
+    if traded_notional <= 0:
+        return {
+            "traded_notional_base": 0.0,
+            "transaction_cost_base": 0.0,
+            "slippage_cost_base": 0.0,
+            "market_impact_cost_base": 0.0,
+            "funding_cost_base": 0.0,
+            "total_friction_base": 0.0,
+            "assumptions": dict(execution_assumptions),
+        }
+
+    transaction_cost = traded_notional * float(execution_assumptions.get("transaction_cost_bps") or 0.0) / 10_000.0
+    slippage_cost = traded_notional * float(execution_assumptions.get("slippage_bps") or 0.0) / 10_000.0
+    market_impact_cost = traded_notional * float(execution_assumptions.get("market_impact_bps") or 0.0) / 10_000.0
+    funding_cost = (
+        traded_notional
+        * float(execution_assumptions.get("funding_bps_per_day") or 0.0)
+        / 10_000.0
+        * float(execution_assumptions.get("holding_days") or 1.0)
+    )
+    total = transaction_cost + slippage_cost + market_impact_cost + funding_cost
+    return {
+        "traded_notional_base": _round(traded_notional),
+        "transaction_cost_base": _round(transaction_cost),
+        "slippage_cost_base": _round(slippage_cost),
+        "market_impact_cost_base": _round(market_impact_cost),
+        "funding_cost_base": _round(funding_cost),
+        "total_friction_base": _round(total),
+        "assumptions": dict(execution_assumptions),
+    }
+
+
 def _scenario_outcome(
     base: Mapping[str, Any],
     target: Mapping[str, Any],
     scenario: Mapping[str, Any],
     *,
     portfolio_book: float | None,
+    friction: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     price_move = _float_or_none(scenario.get("price_move_ratio")) or 0.0
     direction = str(base.get("direction") or "long")
     current_notional = _positive_float(base.get("notional_base")) or 0.0
     target_notional = _positive_float(target.get("notional_base")) or 0.0
     current_pnl = _signed(current_notional * price_move, direction) or 0.0
-    target_pnl = _signed(target_notional * price_move, direction) or 0.0
-    incremental_pnl = target_pnl - current_pnl
+    target_pnl_gross = _signed(target_notional * price_move, direction) or 0.0
+    friction_cost = _float_or_none((friction or {}).get("total_friction_base")) or 0.0
+    target_pnl_net = target_pnl_gross - friction_cost
+    incremental_pnl_gross = target_pnl_gross - current_pnl
+    incremental_pnl_net = target_pnl_net - current_pnl
     return {
         "scenario_id": scenario.get("scenario_id"),
         "name": scenario.get("name"),
         "probability": scenario.get("probability"),
         "price_move_pct": scenario.get("price_move_pct"),
         "current_pnl_base": _round(current_pnl),
-        "target_pnl_base": _round(target_pnl),
-        "incremental_pnl_base": _round(incremental_pnl),
-        "target_return_pct_of_book": _pct_ratio(target_pnl, portfolio_book),
-        "incremental_return_pct_of_book": _pct_ratio(incremental_pnl, portfolio_book),
-        "loss_pct_of_book": _pct_ratio(max(0.0, -target_pnl), portfolio_book),
+        "target_pnl_gross_base": _round(target_pnl_gross),
+        "target_pnl_base": _round(target_pnl_net),
+        "target_pnl_net_base": _round(target_pnl_net),
+        "execution_friction_base": _round(friction_cost),
+        "incremental_pnl_gross_base": _round(incremental_pnl_gross),
+        "incremental_pnl_base": _round(incremental_pnl_net),
+        "incremental_pnl_net_base": _round(incremental_pnl_net),
+        "target_return_pct_of_book": _pct_ratio(target_pnl_net, portfolio_book),
+        "incremental_return_pct_of_book": _pct_ratio(incremental_pnl_net, portfolio_book),
+        "loss_pct_of_book": _pct_ratio(max(0.0, -target_pnl_net), portfolio_book),
         "thesis_pressure": scenario.get("thesis_pressure"),
         "source_refs": list(scenario.get("source_refs") or []),
     }
@@ -394,6 +558,11 @@ def _risk_summary(
         (_float_or_none(outcome.get("target_pnl_base")) or 0.0) * (_float_or_none(outcome.get("probability")) or 0.0)
         for outcome in scenario_outcomes
     )
+    weighted_loss = sum(
+        max(0.0, -(_float_or_none(outcome.get("target_pnl_base")) or 0.0))
+        * (_float_or_none(outcome.get("probability")) or 0.0)
+        for outcome in scenario_outcomes
+    )
     worst_pnl = min((_float_or_none(outcome.get("target_pnl_base")) or 0.0) for outcome in scenario_outcomes)
     worst_loss = max(0.0, -worst_pnl)
     scenario_stress = max((_float_or_none(scenario.get("stress_loss_ratio")) or 0.0) for scenario in scenarios)
@@ -401,12 +570,25 @@ def _risk_summary(
     stress_loss_ratio = max(value for value in (scenario_stress, computed_stress or 0.0) if value is not None)
     drawdown = max((_float_or_none(scenario.get("drawdown_ratio")) or 0.0) for scenario in scenarios)
     volatility = max((_float_or_none(scenario.get("daily_volatility_ratio")) or 0.0) for scenario in scenarios)
+    tail_threshold = weighted_pnl - 2.0 * (weighted_loss or 0.0)
+    tail_loss = max(
+        (
+            max(0.0, -(_float_or_none(outcome.get("target_pnl_base")) or 0.0))
+            for outcome in scenario_outcomes
+            if (_float_or_none(outcome.get("target_pnl_base")) or 0.0) <= tail_threshold
+        ),
+        default=worst_loss,
+    )
     return {
         "expected_pnl_base": _round(weighted_pnl),
+        "expected_loss_base": _round(weighted_loss),
         "expected_return_pct": _pct_ratio(weighted_pnl, portfolio_book),
+        "expected_loss_pct": _pct_ratio(weighted_loss, portfolio_book),
         "worst_case_pnl_base": _round(worst_pnl),
         "worst_loss_base": _round(worst_loss),
         "worst_loss_pct": _pct_ratio(worst_loss, portfolio_book),
+        "tail_loss_base": _round(tail_loss),
+        "tail_loss_pct": _pct_ratio(tail_loss, portfolio_book),
         "stress_loss_ratio": _round(stress_loss_ratio),
         "stress_loss_pct": _pct(stress_loss_ratio),
         "drawdown_ratio": _round(drawdown),
@@ -414,6 +596,7 @@ def _risk_summary(
         "daily_volatility_ratio": _round(volatility),
         "daily_volatility_pct": _pct(volatility),
         "scenario_count": len(scenario_outcomes),
+        "uses_net_pnl": True,
     }
 
 
@@ -422,6 +605,8 @@ def _liquidity_summary(
     target: Mapping[str, Any],
     candidate: Mapping[str, Any],
     raw_position: Mapping[str, Any],
+    *,
+    execution_assumptions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     delta = _as_dict(candidate.get("delta"))
     explicit_exit_days = _positive_float(
@@ -434,20 +619,42 @@ def _liquidity_summary(
         or raw_position.get("average_daily_volume_notional")
         or raw_position.get("adv_notional")
     )
-    current_notional = _positive_float(base.get("notional_base")) or 0.0
-    target_notional = _positive_float(target.get("notional_base")) or 0.0
-    action = str(candidate.get("action") or "")
-    traded_notional = current_notional if action == "exit" else abs(target_notional - current_notional)
+    traded_notional = _traded_notional(base, target, candidate)
+    max_participation = _float_or_none((execution_assumptions or {}).get("max_adv_participation"))
+    if max_participation is None:
+        max_participation = DEFAULT_MAX_ADV_PARTICIPATION
+    elif max_participation > 1.0:
+        max_participation = max_participation / 100.0
+    max_participation = max(0.01, min(max_participation, 1.0))
+    unconstrained_exit_days = None
     estimated_exit_days = explicit_exit_days
-    if estimated_exit_days is None and adv and adv > 0:
-        estimated_exit_days = traded_notional / adv
+    notes: list[str] = []
+    if adv and adv > 0 and traded_notional > 0:
+        unconstrained_exit_days = traded_notional / adv
+        participation_adv = adv * max_participation
+        participation_exit_days = traded_notional / participation_adv if participation_adv > 0 else None
+        if estimated_exit_days is None:
+            estimated_exit_days = participation_exit_days
+        if (
+            participation_exit_days is not None
+            and unconstrained_exit_days is not None
+            and participation_exit_days > unconstrained_exit_days * 1.001
+        ):
+            notes.append(f"Liquidity constrained by max ADV participation ({_pct(max_participation)}%).")
     status = "estimated" if estimated_exit_days is not None else "missing"
+    if status == "estimated" and notes:
+        status = "constrained"
+    if status == "missing":
+        notes.append("Liquidity inputs missing; policy gate may understate exit risk.")
     return {
         "traded_notional_base": _round(traded_notional),
         "average_daily_volume_notional": _round(adv),
+        "max_adv_participation": _round(max_participation),
+        "max_adv_participation_pct": _pct(max_participation),
+        "unconstrained_exit_days": _round(unconstrained_exit_days),
         "estimated_exit_days": _round(estimated_exit_days),
         "status": status,
-        "notes": [] if status != "missing" else ["Liquidity inputs missing; policy gate may understate exit risk."],
+        "notes": notes,
     }
 
 
@@ -476,6 +683,8 @@ def _uncertainty_summary(
     scenarios: Sequence[Mapping[str, Any]],
     scenario_notes: Sequence[str],
     candidate: Mapping[str, Any],
+    execution_assumptions: Mapping[str, Any] | None = None,
+    friction: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     notes: list[str] = list(scenario_notes)
     if base_position.get("notional_base") is None:
@@ -485,6 +694,8 @@ def _uncertainty_summary(
     if portfolio_book is None:
         notes.append("Portfolio book value missing; percent-of-book metrics are unavailable.")
     if liquidity.get("status") == "missing":
+        notes.extend(str(note) for note in liquidity.get("notes") or [])
+    elif liquidity.get("status") == "constrained":
         notes.extend(str(note) for note in liquidity.get("notes") or [])
     if not any(scenario.get("thesis_pressure") is not None for scenario in scenarios):
         notes.append("Thesis pressure inputs missing across scenarios.")
@@ -721,6 +932,14 @@ def _unique(values: Sequence[Any]) -> list[str]:
 def _hash_value(value: Any, *, length: int = 16) -> str:
     raw = json.dumps(_jsonable(value), sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+def _course_of_action_uid(course_key: str) -> str:
+    text = str(course_key or "").strip().lower()
+    slug = "".join(char if char.isalnum() else "-" for char in text).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return f"course_of_action:{slug}"
 
 
 def _jsonable(value: Any) -> Any:

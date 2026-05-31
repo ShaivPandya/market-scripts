@@ -661,6 +661,42 @@ class UpdateWatchTriggerDefinitionInput(BaseModel):
         return _strip_watch_trigger_id(value)
 
 
+class CreateMonitorHitInput(OptionalTickerMixin):
+    entity_type: Literal["catalyst", "kill_condition"]
+    entity_id: str
+    entity_label: str | None = None
+    hit_type: Literal["approaching", "triggered", "needs_review", "skipped", "ok"]
+    severity: Literal["low", "medium", "high"] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    result: dict[str, Any] | None = None
+    fingerprint: str | None = None
+    approval_id: str | None = None
+    action_item_id: str | None = None
+
+    @field_validator("entity_id")
+    @classmethod
+    def _strip_entity_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("entity_id cannot be empty.")
+        return text
+
+
+class UpdateMonitorHitStatusInput(BaseModel):
+    hit_id: str
+    status: Literal["open", "reviewed", "superseded", "resolved"]
+
+    @field_validator("hit_id")
+    @classmethod
+    def _strip_hit_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("hit_id cannot be empty.")
+        return text
+
+
 class ReplaceWatchTriggerInput(CreateWatchTriggerInput):
     trigger_id: WatchTriggerIdentifier
 
@@ -782,6 +818,30 @@ class CreateAnalystFeedbackInput(BaseModel):
         return self
 
 
+class FinalizeDecisionOutcomeInput(BaseModel):
+    decision_outcome_id: str
+    decision: Literal["confirm", "correct", "reject"]
+    note: str | None = None
+    corrected_postmortem: str | None = None
+    lessons_learned: str | None = None
+
+    @field_validator("decision_outcome_id")
+    @classmethod
+    def _required_outcome_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("decision_outcome_id is required.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_finalize_content(self) -> FinalizeDecisionOutcomeInput:
+        if self.decision in {"correct", "reject"} and not str(self.note or "").strip():
+            raise ValueError("note is required for correct and reject decisions.")
+        if self.decision == "correct" and not str(self.corrected_postmortem or "").strip():
+            raise ValueError("corrected_postmortem is required for correct decisions.")
+        return self
+
+
 class DeletePortfolioNewsDigestInput(BaseModel):
     digest_id: str
 
@@ -821,6 +881,10 @@ class CreateRecommendationInput(BaseModel):
         if not str(record.get("stance") or "").strip():
             record["stance"] = "Neutral / Watchful"
         return record
+
+
+class CreateCourseOfActionInput(CreateRecommendationInput):
+    """COA-first financial decision proposal using the legacy record payload shape."""
 
 
 class ResolveApprovalInput(BaseModel):
@@ -1527,6 +1591,9 @@ def _action_result_refs(
     }:
         if ref_id := _id("id", "trigger_id"):
             refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
+    elif action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
+        if ref_id := _id("id", "hit_id"):
+            refs.append(("monitor_hit", ref_id, produced if action_id == "create_monitor_hit" else updated))
     elif action_id == "create_portfolio_news_digest":
         if ref_id := _id("id"):
             refs.append(("news_digest", ref_id, produced))
@@ -1536,6 +1603,9 @@ def _action_result_refs(
     elif action_id == "create_recommendation":
         if ref_id := _id("id"):
             refs.append(("recommendation", ref_id, produced))
+    elif action_id == "create_course_of_action":
+        if ref_id := _id("id"):
+            refs.append(("course_of_action", ref_id, produced))
     elif action_id == "resolve_approval":
         if ref_id := _id("approval_id"):
             refs.append(("approval", ref_id, resolved))
@@ -1722,15 +1792,19 @@ _cancel_watch_trigger = _disabled_action_handler
 _replace_watch_trigger = _disabled_action_handler
 _update_watch_trigger_check = _disabled_action_handler
 _update_watch_trigger_definition = _disabled_action_handler
+_create_monitor_hit = _disabled_action_handler
+_update_monitor_hit_status = _disabled_action_handler
 _save_thesis_content = _disabled_action_handler
 _save_overview_content = _disabled_action_handler
 _save_management_quality_content = _disabled_action_handler
 _save_evaluation = _disabled_action_handler
 _create_research_note = _disabled_action_handler
 _create_analyst_feedback = _disabled_action_handler
+_finalize_decision_outcome = _disabled_action_handler
 _delete_portfolio_news_digest = _disabled_action_handler
 _create_portfolio_news_digest = _disabled_action_handler
 _create_recommendation = _disabled_action_handler
+_create_course_of_action = _disabled_action_handler
 _resolve_approval = _disabled_action_handler
 
 
@@ -1901,6 +1975,23 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         precondition_builder=_hash_watch_trigger_status,
         base_state_hash_fields=("trigger_id", "status"),
     ),
+    "create_monitor_hit": DomainAction(
+        action_id="create_monitor_hit",
+        input_model=CreateMonitorHitInput,
+        handler=_create_monitor_hit,
+        effect_kind="direct_mutation",
+        approval_entity_type="monitor_hit",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "update_monitor_hit_status": DomainAction(
+        action_id="update_monitor_hit_status",
+        input_model=UpdateMonitorHitStatusInput,
+        handler=_update_monitor_hit_status,
+        approval_entity_type="monitor_hit_status",
+        approval_payload=_model_payload,
+        base_state_hash_fields=("hit_id", "status"),
+    ),
     "save_thesis_content": DomainAction(
         action_id="save_thesis_content",
         input_model=SaveThesisContentInput,
@@ -1960,6 +2051,14 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_payload=_model_payload,
         effect_kind="approval_gated",
     ),
+    "finalize_decision_outcome": DomainAction(
+        action_id="finalize_decision_outcome",
+        input_model=FinalizeDecisionOutcomeInput,
+        handler=_finalize_decision_outcome,
+        approval_entity_type="decision_outcome",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
     "create_portfolio_news_digest": DomainAction(
         action_id="create_portfolio_news_digest",
         input_model=CreatePortfolioNewsDigestInput,
@@ -1980,7 +2079,15 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="create_recommendation",
         input_model=CreateRecommendationInput,
         handler=_create_recommendation,
-        approval_entity_type="recommendation",
+        approval_entity_type="course_of_action",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
+    "create_course_of_action": DomainAction(
+        action_id="create_course_of_action",
+        input_model=CreateCourseOfActionInput,
+        handler=_create_course_of_action,
+        approval_entity_type="course_of_action",
         approval_payload=_model_payload,
         effect_kind="approval_gated",
     ),
@@ -2426,7 +2533,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_sentiment', 'description': 'Fetch market sentiment indicators. Returns put/call ratios (equity aggregate,SPY, QQQ, IWM), investor surveys (AAII bull/bear spread, NAAIM exposure index), and volatility indices (VIX, VXN, VVIX). Includes quality checks and latest-date validation metadata. If quality.ok is false, do not draw directional sentiment conclusions and treat sentiment as unavailable for this turn.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('sentiment', 'put call', 'aaii', 'naaim', 'get sentiment'), 'selectable': True}
 {'name': 'get_central_banks', 'description': 'Fetch central bank news and recent publications. Returns articles and documents from the Fed, ECB, BoE, BoJ, SNB, RBA, and other major central banks, grouped by source with counts. Use this to check for recent policy signals or speeches.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('central banks', 'fed', 'ecb', 'boe', 'boj', 'get central banks'), 'selectable': True}
 {'name': 'get_industry_monitor', 'description': 'Fetch what businesses and companies are actually saying from their earnings call transcripts. Covers leading (housing, trucking), coincident (banks, retail), and lagging (capital goods) industry sectors. Returns per-company sentiment (bullish/neutral/bearish), demand trends, pricing commentary, guidance outlook, macro quotes, and sector-level economic signals (expanding/stable/slowing/contracting). Use this when the user asks what businesses, companies, or management teams are saying about the economy, demand, or business conditions.', 'parameters': {'type': 'object', 'properties': {'refresh': {'type': 'boolean', 'description': 'If true, bypass cached data and recompute from source files. Default: false.'}}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('industry monitor', 'transcripts', 'management commentary', 'get industry monitor'), 'selectable': True}
-{'name': 'query_ontology', 'description': 'Run a cross-module ontology query that joins portfolio positions with macro/market signals (VIX, breadth, sector stress, liquidity, and other read-only data modules). Returns per-position risk scores with evidence. Use this when users ask about portfolio risk exposure, positions in deteriorating conditions, or entity-level context. Pair with get_thesis for the investment reasoning behind positions.', 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': "Natural-language query, e.g. 'Which positions are in deteriorating macro conditions?'"}, 'intent': {'type': 'string', 'description': 'Optional explicit intent. Allowed: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context.'}, 'filters': {'type': 'object', 'description': 'Optional filters: tickers, sectors, assets, min_risk_score.'}, 'page': {'type': 'integer', 'description': 'Optional 1-based results page. Defaults to 1.'}, 'page_size': {'type': 'integer', 'description': 'Optional page size from 1 to 100. Defaults to 25.'}, 'timeframe': {'type': 'string', 'description': 'Timeframe for portfolio-linked data. Options: This Week, Daily, Weekly, Monthly.'}, 'include_graph': {'type': 'boolean', 'description': 'If true, include ontology nodes and edges in output.'}, 'run_id': {'type': 'string', 'description': 'Optional ontology snapshot run_id for historical replay.'}, 'refresh_snapshot': {'type': 'boolean', 'description': 'If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.'}}, 'required': []}, 'category': 'ontology', 'access_mode': 'read', 'aliases': ('ontology', 'risk exposure', 'portfolio risk', 'query ontology'), 'selectable': True}
+{'name': 'query_ontology', 'description': 'Run a cross-module ontology query that joins portfolio positions with macro/market signals (VIX, breadth, sector stress, liquidity, and other read-only data modules). Returns per-position risk scores with evidence. Use this when users ask about portfolio risk exposure, positions in deteriorating conditions, or entity-level context. Pair with get_thesis for the investment reasoning behind positions.', 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': "Natural-language query, e.g. 'Which positions are in deteriorating macro conditions?'"}, 'intent': {'type': 'string', 'description': 'Optional explicit intent. Allowed: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context.'}, 'filters': {'type': 'object', 'description': 'Optional filters: tickers, sectors, assets, min_risk_score.'}, 'page': {'type': 'integer', 'description': 'Optional 1-based results page. Defaults to 1.'}, 'page_size': {'type': 'integer', 'description': 'Optional page size from 1 to 100. Defaults to 25.'}, 'timeframe': {'type': 'string', 'description': 'Timeframe for portfolio-linked data. Options: This Week, Daily, Weekly, Monthly.'}, 'include_graph': {'type': 'boolean', 'description': 'If true, include ontology nodes and edges in output.'}, 'run_id': {'type': 'string', 'description': 'Optional ontology snapshot run_id for historical replay.'}, 'as_of': {'type': 'string', 'description': 'Optional valid-time timestamp for temporal ontology reads.'}, 'tx_as_of': {'type': 'string', 'description': 'Optional transaction-time timestamp for what Talisman knew then.'}, 'include_history': {'type': 'boolean', 'description': 'If true, include historical temporal versions where supported.'}, 'refresh_snapshot': {'type': 'boolean', 'description': 'If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.'}}, 'required': []}, 'category': 'ontology', 'access_mode': 'read', 'aliases': ('ontology', 'risk exposure', 'portfolio risk', 'query ontology'), 'selectable': True}
 {'name': 'get_thesis', 'description': "Fetch the investment thesis for a specific ticker. Returns the thesis markdown content (thesis statement, key catalysts, risk factors) and metadata (status, creation date, last update). Use this when the user asks about a position's investment reasoning, thesis, catalysts, kill conditions, or why they own something. Also useful for thesis pressure-tests and reviews.", 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive."}}, 'required': ['ticker']}, 'category': 'thesis', 'access_mode': 'read', 'aliases': ('thesis', 'investment thesis', 'get thesis'), 'selectable': True}
 {'name': 'get_thesis_evaluations', 'description': "Fetch the monitoring evaluation history for a specific ticker's thesis. Returns weekly evaluations (thesis status, technical read, fundamental read, recommended action, confidence, key developments, earnings notes, risk flags) and status change history. Use this to understand how a thesis has evolved over time, whether conviction has increased or decreased, and what developments have occurred since the thesis was written.", 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive."}, 'limit': {'type': 'integer', 'description': 'Maximum number of evaluations to return (most recent first). Default: 10.'}}, 'required': ['ticker']}, 'category': 'thesis', 'access_mode': 'read', 'aliases': ('thesis evaluations', 'monitoring history', 'get thesis evaluations'), 'selectable': True}
 {'name': 'search_knowledge_base', 'description': "Search across all indexed research documents — investment theses, uploaded news digests, weekly reports, daily reports, and past conversation summaries — using semantic similarity. Use this when the user asks what they wrote about a topic, references past research, wants to find previous analysis on a ticker or theme, or asks 'what did I say about X'. Returns ranked snippets with source attribution.", 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': "Natural language search query (e.g. 'cloud security thesis for CRWD', 'liquidity tightening analysis')."}, 'doc_types': {'type': 'string', 'description': 'Comma-separated document types to search. Options: thesis, news_digest, weekly_report, daily_report, conversation_summary. Leave empty to search all.'}, 'tickers': {'type': 'string', 'description': "Comma-separated ticker filter (e.g. 'CRWD,AAPL'). Leave empty for all."}, 'top_k': {'type': 'integer', 'description': 'Number of results to return. Default: 5.'}}, 'required': ['query']}, 'category': 'research', 'access_mode': 'read', 'aliases': ('knowledge base', 'past research', 'notes', 'news digests', 'search knowledge base'), 'selectable': True}

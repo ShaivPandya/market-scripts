@@ -50,6 +50,8 @@ from ontology.sources.macro import EconomicGrowthAdapter, LaborMarketAdapter, Po
 from ontology.sources.market_technicals import MarketBreadthAdapter, Top50BreadthAdapter, VixTermStructureAdapter
 from ontology.sources.sector_metrics import SectorMetricsAdapter
 from portfolio.position_groups import normalize_position_group_fields
+from utils.market_freshness import evaluate_source_freshness
+from utils.market_freshness import expected_market_date as shared_expected_market_date
 
 log = logging.getLogger("api.position_risk")
 
@@ -99,7 +101,14 @@ _MODULES: dict[str, ModuleConfig] = {
         "vix_term_structure", SNAPSHOT_VIX_TERM_STRUCTURE, True, VixTermStructureAdapter
     ),
     "sector_metrics": ModuleConfig("sector_metrics", SNAPSHOT_SECTOR_METRICS, True, SectorMetricsAdapter),
-    "liquidity": ModuleConfig("liquidity", SNAPSHOT_LIQUIDITY, True, LiquidityAdapter),
+    "liquidity": ModuleConfig(
+        "liquidity",
+        SNAPSHOT_LIQUIDITY,
+        True,
+        LiquidityAdapter,
+        freshness_policy="max_age_days",
+        freshness_max_age_days=10,
+    ),
     "sentiment": ModuleConfig(
         "sentiment",
         SNAPSHOT_SENTIMENT,
@@ -122,6 +131,8 @@ _MODULES: dict[str, ModuleConfig] = {
         True,
         EconomicGrowthAdapter,
         refresh_when_unavailable=True,
+        freshness_policy="max_age_days",
+        freshness_max_age_days=45,
     ),
     "labor_market": ModuleConfig(
         "labor_market",
@@ -129,6 +140,8 @@ _MODULES: dict[str, ModuleConfig] = {
         False,
         LaborMarketAdapter,
         refresh_when_unavailable=True,
+        freshness_policy="max_age_days",
+        freshness_max_age_days=10,
     ),
 }
 
@@ -913,65 +926,21 @@ def _freshness_state(
     policy: str = "market_day",
     max_age_days: int | None = None,
 ) -> dict[str, Any]:
-    observed = _observed_date(value)
     normalized_policy = str(policy or "market_day").strip().lower()
-    if normalized_policy == "weekly_report":
-        window_days = max(1, int(max_age_days or 10))
-        oldest_acceptable = now.astimezone(_EASTERN).date() - timedelta(days=window_days)
-        if observed is None:
-            return {
-                "policy": "weekly_report",
-                "fresh": False,
-                "basis": "as_of_or_fetched_at",
-                "max_age_days": window_days,
-                "oldest_acceptable_date": oldest_acceptable.isoformat(),
-                "observed_as_of_date": None,
-                "reason": "snapshot has no parseable as-of date",
-            }
-        fresh = observed >= oldest_acceptable
-        return {
-            "policy": "weekly_report",
-            "fresh": fresh,
-            "basis": "as_of_or_fetched_at",
-            "max_age_days": window_days,
-            "oldest_acceptable_date": oldest_acceptable.isoformat(),
-            "observed_as_of_date": observed.isoformat(),
-            "reason": None
-            if fresh
-            else f"snapshot as-of {observed.isoformat()} is older than weekly report window {oldest_acceptable.isoformat()}",
-        }
-
-    expected = _expected_market_date(now)
-    if observed is None:
-        return {
-            "policy": "market_day",
-            "fresh": False,
-            "basis": "as_of_or_fetched_at",
-            "expected_market_date": expected.isoformat(),
-            "observed_as_of_date": None,
-            "reason": "snapshot has no parseable as-of date",
-        }
-    fresh = observed >= expected
-    return {
-        "policy": "market_day",
-        "fresh": fresh,
-        "basis": "as_of_or_fetched_at",
-        "expected_market_date": expected.isoformat(),
-        "observed_as_of_date": observed.isoformat(),
-        "reason": None
-        if fresh
-        else f"snapshot as-of {observed.isoformat()} is older than required market day {expected.isoformat()}",
-    }
+    if normalized_policy == "market_day":
+        normalized_policy = "market_session"
+    state = evaluate_source_freshness(
+        value,
+        now=now,
+        policy=normalized_policy,
+        max_age_days=max_age_days,
+        calendar_id="XNYS" if normalized_policy == "market_session" else None,
+    )
+    return state.to_dict()
 
 
 def _expected_market_date(now: datetime) -> date:
-    local = now.astimezone(_EASTERN)
-    current = local.date()
-    if local.weekday() >= 5:
-        return _previous_business_day(current)
-    if local.time() < _AFTER_CLOSE_FRESHNESS_CUTOFF:
-        return _previous_business_day(current)
-    return current
+    return shared_expected_market_date(now, calendar_id="XNYS", after_close_cutoff=_AFTER_CLOSE_FRESHNESS_CUTOFF)
 
 
 def _previous_business_day(value: date) -> date:

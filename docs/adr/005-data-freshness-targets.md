@@ -26,6 +26,19 @@ Target freshness by domain:
 
 These are **best-effort targets**, not SLAs. The system does not have real-time streaming data.
 
+## Reliability tiers (TL-47)
+
+Sources are classified into named reliability tiers for decision gating and UI:
+
+| Tier | Meaning | Gate behavior |
+|------|---------|----------------|
+| `critical` | Required authoritative sources (required + authority rank 1 + SLA) | Block approval on stale, failed, or missing |
+| `standard` | Required operating sources without primary authority | Warn on stale/degraded unless explicitly required by approval |
+| `supplemental` | Optional enrichment or fallback vendors | Warn only |
+| `ad_hoc` | Uploads, news, or best-effort inputs with no durable SLA | Informational unless explicitly named by approval |
+
+Tiers default from registry metadata (`required`, `authority_rank`, `freshness_sla_seconds`) and may be overridden per source. Per-source `freshness_sla_seconds` drives staleness before the global 36h snapshot default.
+
 ## Alternatives Considered
 
 | Alternative | Pros | Cons |

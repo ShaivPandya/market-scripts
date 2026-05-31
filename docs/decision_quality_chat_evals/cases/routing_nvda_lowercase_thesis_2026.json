@@ -1,0 +1,33 @@
+{
+  "id": "routing_nvda_lowercase_thesis_2026",
+  "status": "review",
+  "as_of_date": "2026-05-31",
+  "user_message": "what do you think about nvidia as a long?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA"
+  },
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
+    "get_dossier": {"ticker": "NVDA", "summary": "Routing eval stub dossier."},
+    "get_thesis": {"ticker": "NVDA", "content": "Stub thesis for routing eval."},
+    "get_thesis_evaluations": {"ticker": "NVDA", "evaluations": []},
+    "get_position_valuation": {"ticker": "NVDA", "valuation": "stub"},
+    "run_chart": {"ticker": "NVDA", "technical_read": "stub"},
+    "get_price_volume_signals": {},
+    "search_knowledge_base": {"results": []},
+    "search_web": {"results": []},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": ["get_thesis", "run_chart"]
+  },
+  "expected_tool_names": ["get_thesis", "run_chart"],
+  "required_points": [{"label": "nonempty", "any_terms": ["nvidia", "NVDA", "thesis", "watch", "research"]}],
+  "forbidden_patterns": ["could be a good buy"],
+  "judge_min_score": 12
+}

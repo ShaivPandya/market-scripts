@@ -522,6 +522,7 @@ class PolicyGateResult(OntologySchemaBase):
 class TradeProposal(OntologySchemaBase):
     proposal_id: NonBlankStr
     recommendation_id: str | None = None
+    course_of_action_id: str | None = None
     account_id: str | None = None
     portfolio_id: str | None = None
     action: NonBlankStr
@@ -548,6 +549,7 @@ class TradeProposal(OntologySchemaBase):
 
     @field_validator(
         "recommendation_id",
+        "course_of_action_id",
         "account_id",
         "portfolio_id",
         "policy_gate_result_id",
@@ -1153,6 +1155,60 @@ class ActionItem(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class MonitorHit(OntologySchemaBase):
+    hit_id: str | None = None
+    ticker: NonBlankStr
+    entity_type: NonBlankStr
+    entity_id: NonBlankStr
+    entity_label: str | None = None
+    hit_type: NonBlankStr
+    severity: str | None = None
+    status: NonBlankStr = "open"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    result: dict[str, Any] | None = None
+    detected_at: str | None = None
+    approval_id: str | None = None
+    action_item_id: str | None = None
+    fingerprint: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("entity_type", "entity_id", "hit_type", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "hit_id",
+        "entity_label",
+        "severity",
+        "evidence",
+        "detected_at",
+        "approval_id",
+        "action_item_id",
+        "fingerprint",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def _source_ids(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return [str(value).strip()] if str(value).strip() else []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+
 class WatchTrigger(OntologySchemaBase):
     trigger_id: str | None = None
     condition: NonBlankStr
@@ -1518,6 +1574,7 @@ class CourseOfAction(OntologySchemaBase):
     approval_id: str | int | None = None
     approval_required: bool = False
     approval_status: str | None = None
+    outcome_status: str | None = None
     action_run_id: str | int | None = None
     executed_action_id: str | int | None = None
     supersedes_course_of_action_id: str | None = None
@@ -1570,6 +1627,7 @@ class CourseOfAction(OntologySchemaBase):
         "policy_gate_result_id",
         "policy_gate_decision",
         "approval_status",
+        "outcome_status",
         "supersedes_course_of_action_id",
         "comparison_id",
         "horizon",
@@ -1675,6 +1733,65 @@ class SimulatedOutcome(OntologySchemaBase):
         "generated_by_action",
         "generated_by_run_id",
         "as_of",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+DecisionOutcomeFinalLabelStatus = Literal["draft", "confirmed", "corrected", "rejected"]
+
+
+class DecisionOutcome(OntologySchemaBase):
+    decision_outcome_id: NonBlankStr
+    source_kind: NonBlankStr
+    recommendation_id: str | None = None
+    course_of_action_id: str | None = None
+    executed_decision_record_id: str | None = None
+    action_run_id: str | None = None
+    simulated_outcome_id: str | None = None
+    ticker: str | None = None
+    as_of: str | None = None
+    horizon: str | None = None
+    outcome_status: NonBlankStr = "pending"
+    final_label_status: DecisionOutcomeFinalLabelStatus = "draft"
+    evaluation_authority: str | None = "ai_draft_user_final"
+    process_label: str | None = None
+    draft_postmortem: str | None = None
+    final_postmortem: str | None = None
+    lessons_learned: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    decision_quality_snapshot: dict[str, Any] | None = None
+    finalized_by: str | None = None
+    finalized_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("decision_outcome_id", "source_kind", "outcome_status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator(
+        "recommendation_id",
+        "course_of_action_id",
+        "executed_decision_record_id",
+        "action_run_id",
+        "simulated_outcome_id",
+        "as_of",
+        "horizon",
+        "evaluation_authority",
+        "process_label",
+        "draft_postmortem",
+        "final_postmortem",
+        "lessons_learned",
+        "finalized_by",
+        "finalized_at",
         mode="before",
     )
     @classmethod
@@ -2654,6 +2771,72 @@ class ThesisSection(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class OpportunityCandidate(OntologySchemaBase):
+    candidate_id: NonBlankStr
+    idempotency_key: str | None = None
+    source_kind: NonBlankStr = "agent_chat"
+    source_type: str | None = None
+    source_id: str | None = None
+    ticker: str | None = None
+    trigger: NonBlankStr
+    opportunity_type: NonBlankStr = "unclear"
+    consensus: str | None = None
+    variant_view: str | None = None
+    why_now: str | None = None
+    price_confirmation: str | None = None
+    crowding: str | None = None
+    payoff_asymmetry: str | None = None
+    missing_inputs: list[str] = Field(default_factory=list)
+    next_action: NonBlankStr = "research"
+    summary: str | None = None
+    decision_state: NonBlankStr = "generated"
+    status: str | None = None
+    opportunity_candidate: dict[str, Any] | None = None
+    opportunity_candidate_gate: dict[str, Any] | None = None
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("candidate_id", "trigger", "next_action", "decision_state", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("source_kind", "opportunity_type", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_default_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = clean_optional_text(value)
+        return canonical_ticker(text) if text else None
+
+    @field_validator(
+        "idempotency_key",
+        "source_type",
+        "source_id",
+        "consensus",
+        "variant_view",
+        "why_now",
+        "price_confirmation",
+        "crowding",
+        "payoff_asymmetry",
+        "summary",
+        "status",
+        "created_at",
+        "updated_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class InvestmentIdea(OntologySchemaBase):
     idea_id: NonBlankStr
     id: str | int | None = None
@@ -3270,6 +3453,7 @@ OntologyObject = (
     | Evidence
     | Citation
     | ActionItem
+    | MonitorHit
     | WatchTrigger
     | Approval
     | ActionRun
@@ -3295,6 +3479,7 @@ OntologyObject = (
     | CourseOfActionComparison
     | ScenarioAssumption
     | SimulatedOutcome
+    | DecisionOutcome
     | CourseOfActionRationale
     | CourseOfActionDissent
     | ReportRun

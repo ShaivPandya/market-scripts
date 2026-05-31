@@ -187,6 +187,11 @@ def extract_text(_response):
     return ""
 
 
+def call_llm_json(**_kwargs):
+    response = SimpleNamespace(usage=None)
+    return {}, [], response, {}
+
+
 def call_llm_text(prompt, model="high", api_key=None, max_tokens=16384, system=None, enable_web_search=False, reasoning_effort=None):
     response = SimpleNamespace(usage=None)
     if "PASS1_STANCE_JSON" in prompt:

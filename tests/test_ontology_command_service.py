@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -28,6 +30,12 @@ SAMPLE_NEWS_DIGEST = """# Newsletter Digest - May 1, 2026
 """
 
 
+def _valid_decision_quality(action: str = "buy") -> dict[str, Any]:
+    raw = json.loads(Path("docs/decision_quality_evals/cases/mu_ai_memory_cycle_2025.json").read_text())["gold_output"]
+    raw["recommended_action"] = action
+    return raw
+
+
 class FakeObjectService:
     def __init__(self):
         self.objects: dict[str, dict[str, Any]] = {}
@@ -40,6 +48,8 @@ class FakeObjectService:
                 "account:",
                 "approval:",
                 "audit_event:",
+                "course_of_action:",
+                "course_of_action_rationale:",
                 "executed_decision_record:",
                 "document_artifact:",
                 "instrument:",
@@ -224,7 +234,7 @@ def _dual_control_requirements(*, allow_requester: bool = False) -> list[dict[st
 def _patch_dual_control_gate(monkeypatch, *, allow_requester: bool = False) -> None:
     import portfolio.policy_gate as policy_gate
 
-    def fake_gate(action_id, payload, *, context=None, object_service=None):
+    def fake_gate(action_id, payload, *, context=None, object_service=None, raise_on_blocked=True):
         del context, object_service
         return dict(payload), {
             "decision": "pass",
@@ -643,27 +653,147 @@ def test_create_recommendation_approval_applies_with_real_schema_normalization()
         "create_recommendation",
         {
             "record": {
-                "action": "rebalance",
-                "instrument": "hedge_overlay",
+                "action": "buy",
+                "ticker": "MU",
+                "instrument": "MU",
                 "report_type": "daily",
                 "as_of": "2026-05-06",
                 "confidence": 0.65,
                 "horizon": "1 trading day",
-                "rationale": "Rebalance hedge overlay.",
+                "rationale": "Buy MU ahead of the HBM earnings catalyst.",
                 "critical_data_quality": "ok",
+                "source_quality": "ok",
+                "disconfirming_evidence": ["Memory remains cyclical."],
+                "invalidation": "Review if HBM demand weakens.",
+                "decision_quality": _valid_decision_quality("buy"),
                 "idempotency_key": "daily:2026-05-06:hedge-overlay",
             }
         },
         context,
-        reason="Daily recommendation for hedge_overlay",
+        reason="Daily recommendation for MU",
     )
 
     applied = service.resolve_approval(approval["id"], "approved", "approved", context)
 
     assert applied["application_status"] == "applied"
+    assert approval["entity_type"] == "course_of_action"
+    assert approval["target_object_type"] == "CourseOfAction"
+    assert "course_of_action:daily_2026_05_06_hedge_overlay" in repo.objects
     assert "recommendation:daily_2026_05_06_hedge_overlay" in repo.objects
     assert any(row["object_type"] == "ActionRun" for row in repo.objects.values())
     assert any(row["object_type"] == "ExecutedDecisionRecord" for row in repo.objects.values())
+    relation_types = {row["relation_type"] for row in repo.relations}
+    assert "approval_targets_course_of_action" in relation_types
+    assert "course_of_action_links_recommendation" in relation_types
+    assert "action_run_applies_course_of_action" in relation_types
+
+
+def test_sparse_actionable_recommendation_is_downgraded_and_persisted_without_approval():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily")
+
+    result = service.propose_action(
+        "create_recommendation",
+        {
+            "record": {
+                "action": "buy",
+                "ticker": "MU",
+                "instrument": "MU",
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "critical_data_quality": "ok",
+                "source_quality": "ok",
+                "idempotency_key": "daily:2026-05-06:sparse-buy",
+            }
+        },
+        context,
+        reason="Sparse recommendation should not enter approvals",
+    )
+
+    recommendation = repo.objects["recommendation:daily_2026_05_06_sparse_buy"]["properties_json"]
+
+    assert result["id"] == "recommendation:daily_2026_05_06_sparse_buy"
+    assert result["approval_required"] is False
+    assert not any(row["object_type"] == "Approval" for row in repo.objects.values())
+    assert recommendation["action"] == "watch"
+    assert recommendation["approval_required"] is False
+    assert recommendation["payload"]["recommendation_status"] == "review_required"
+    assert recommendation["decision_quality_gate"]["status"] == "downgraded"
+    assert any(
+        reason["code"] == "MISSING_DECISION_QUALITY" for reason in recommendation["decision_quality_gate"]["reasons"]
+    )
+
+
+def test_stale_actionable_recommendation_is_downgraded_without_approval():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily")
+
+    result = service.propose_action(
+        "create_recommendation",
+        {
+            "record": {
+                "action": "buy",
+                "ticker": "MU",
+                "instrument": "MU",
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "rationale": "Buy MU ahead of the HBM earnings catalyst.",
+                "critical_data_quality": "stale",
+                "source_quality": "stale",
+                "disconfirming_evidence": ["Memory remains cyclical."],
+                "invalidation": "Review if HBM demand weakens.",
+                "decision_quality": _valid_decision_quality("buy"),
+                "idempotency_key": "daily:2026-05-06:stale-buy",
+            }
+        },
+        context,
+        reason="Stale recommendation should not enter approvals",
+    )
+
+    recommendation = repo.objects["recommendation:daily_2026_05_06_stale_buy"]["properties_json"]
+
+    assert result["id"] == "recommendation:daily_2026_05_06_stale_buy"
+    assert result["approval_required"] is False
+    assert not any(row["object_type"] == "Approval" for row in repo.objects.values())
+    assert recommendation["action"] == "watch"
+    assert recommendation["payload"]["recommendation_status"] == "review_required"
+    assert any(
+        reason["code"] == "CRITICAL_DATA_QUALITY" for reason in recommendation["decision_quality_gate"]["reasons"]
+    )
+
+
+def test_watch_recommendation_with_partial_data_persists_without_approval():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily")
+
+    result = service.propose_action(
+        "create_recommendation",
+        {
+            "record": {
+                "action": "watch",
+                "ticker": "MU",
+                "instrument": "MU",
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "idempotency_key": "daily:2026-05-06:watch-mu",
+            }
+        },
+        context,
+        reason="Watch item from incomplete evidence",
+    )
+
+    recommendation = repo.objects["recommendation:daily_2026_05_06_watch_mu"]["properties_json"]
+
+    assert result["id"] == "recommendation:daily_2026_05_06_watch_mu"
+    assert result["approval_required"] is False
+    assert not any(row["object_type"] == "Approval" for row in repo.objects.values())
+    assert recommendation["action"] == "watch"
+    assert recommendation["approval_required"] is False
+    assert recommendation["payload"]["recommendation_status"] == "clear"
+    assert recommendation["decision_quality_gate"] is None
 
 
 @pytest.mark.parametrize(
@@ -796,6 +926,40 @@ def test_update_watch_trigger_check_accepts_uid_and_preserves_context():
     assert props["last_result"] == result
     assert props["last_evidence"] == "Breadth was 42"
     assert props["last_checked_at"]
+
+
+def test_create_monitor_hit_persists_first_class_object():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_monitor_hit",
+        {
+            "ticker": "MU",
+            "entity_type": "kill_condition",
+            "entity_id": "kill_condition:memory_pricing",
+            "entity_label": "Memory pricing collapse",
+            "hit_type": "approaching",
+            "severity": "medium",
+            "confidence": 0.65,
+            "evidence": "Price within 5% of threshold",
+            "fingerprint": "abc123",
+            "result": {"actual": 94.0, "expected": 95.0},
+        },
+        context,
+        reason="Record monitor hit",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    hit_uid = "monitor_hit:abc123"
+    props = repo.objects[hit_uid]["properties_json"]
+    assert approval["entity_type"] == "monitor_hit"
+    assert applied["application_status"] == "applied"
+    assert props["ticker"] == "MU"
+    assert props["entity_type"] == "kill_condition"
+    assert props["hit_type"] == "approaching"
+    assert props["evidence"] == "Price within 5% of threshold"
 
 
 def test_update_watch_trigger_definition_accepts_uid_and_preserves_context():

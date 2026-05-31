@@ -1,0 +1,68 @@
+{
+  "id": "ontology_temporal_query_2026",
+  "status": "draft",
+  "as_of_date": "2026-05-28",
+  "user_message": "What did our portfolio risk exposure look like as of March 8, 2026? I want the historical read, not today's snapshot.",
+  "screen_context": null,
+  "input_refs": [],
+  "mock_tools": {
+    "query_ontology": {
+      "run_id": "temporal-read-model",
+      "intent": "portfolio_risk_exposure",
+      "as_of": "2026-03-08T00:00:00Z",
+      "interpreted_query": {"source": "structured", "query": "portfolio risk exposure as of 2026-03-08", "filters": {}},
+      "source_status": {"portfolio": {"status": "ok"}, "market": {"status": "ok"}},
+      "results": [
+        {
+          "ticker": "CRWD",
+          "risk_score": 0.63,
+          "signal": "deteriorating",
+          "evidence": ["VIX term structure inverted", "sector stress elevated"],
+          "_meta": {"temporal": {"as_of": "2026-03-08T00:00:00Z", "mode": "temporal_read_model"}}
+        },
+        {
+          "ticker": "MU",
+          "risk_score": 0.41,
+          "signal": "stable",
+          "evidence": ["market breadth neutral"],
+          "_meta": {"temporal": {"as_of": "2026-03-08T00:00:00Z", "mode": "temporal_read_model"}}
+        }
+      ],
+      "aggregate": {
+        "position_count": 2,
+        "average_risk_score": 0.52,
+        "risk_buckets": {"high": 0, "medium": 1, "low": 1},
+        "asset_exposure_counts": {"equity": 2},
+        "confidence": 1.0
+      },
+      "_meta": {
+        "temporal": {
+          "as_of": "2026-03-08T00:00:00Z",
+          "tx_as_of": null,
+          "include_history": false,
+          "mode": "temporal_read_model",
+          "read_model": true
+        }
+      }
+    },
+    "get_portfolio": {
+      "summary": {"position_count": 2},
+      "positions": [{"ticker": "CRWD"}, {"ticker": "MU"}]
+    }
+  },
+  "expected_tool_names": ["query_ontology"],
+  "required_points": [
+    {
+      "label": "as-of date acknowledged",
+      "any_terms": ["as of", "as-of", "march 8", "2026-03-08"]
+    },
+    {
+      "label": "historical point-in-time framing",
+      "any_terms": ["at that time", "as it stood", "historical", "back then", "point in time", "on that date"]
+    }
+  ],
+  "required_decision_quality_dimensions": [],
+  "forbidden_patterns": [],
+  "expected_stance": null,
+  "judge_min_score": 8
+}

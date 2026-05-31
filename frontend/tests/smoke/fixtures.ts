@@ -13,6 +13,7 @@ interface ApiMockState {
   agentHistoryTitle: string
   approvalsDismissed: boolean
   dismissedPressureKeys: Set<string>
+  ontologyQueryRequest: Record<string, JsonValue> | null
 }
 
 const smokeApproval = {
@@ -151,6 +152,26 @@ const smokeApproval = {
   can_retry_apply: false,
   can_restage: false,
   review_route: "/workspace",
+  source_health_review: {
+    status: "warning",
+    blockers: [],
+    warnings: [
+      {
+        id: "signal_aggregator:current:v1",
+        source_name: "market_regime",
+        domain: "market",
+        status: "stale",
+        quality_state: "stale",
+        required: true,
+        reliability_tier: "standard",
+        sla_breach: true,
+        gate_action: "warn",
+        reason: "standard source needs review",
+        freshness_timestamp: "2026-05-11",
+      },
+    ],
+    generated_at: "2026-05-14T14:10:00Z",
+  },
 } satisfies JsonValue
 
 function approvalSummaryResponse(state: ApiMockState) {
@@ -236,7 +257,125 @@ const baseWorkspaceResponse = {
       ],
     },
   },
-  source_health: null,
+  source_health: {
+    generated_at: "2026-05-14T14:10:00Z",
+    overall_quality: "stale",
+    counts: {
+      total: 3,
+      ok: 2,
+      stale: 1,
+      degraded: 0,
+      failed: 0,
+      missing: 0,
+      required_stale: 1,
+      required_failed: 0,
+      optional_degraded: 0,
+      critical_stale: 1,
+      critical_failed: 0,
+      sla_breach: 1,
+    },
+    tier_counts: {
+      ad_hoc: 0,
+      critical: 2,
+      standard: 1,
+      supplemental: 0,
+    },
+    domains: [
+      {
+        domain: "market",
+        label: "Market",
+        overall_quality: "stale",
+        counts: {
+          total: 2,
+          ok: 1,
+          stale: 1,
+          degraded: 0,
+          failed: 0,
+          missing: 0,
+          required_stale: 1,
+          required_failed: 0,
+          optional_degraded: 0,
+          critical_stale: 1,
+          critical_failed: 0,
+          sla_breach: 1,
+        },
+        sources: [
+          {
+            id: "market_breadth:sp500:1y",
+            domain: "market",
+            source_name: "market_breadth",
+            snapshot_key: "market_breadth:sp500:1y",
+            status: "stale",
+            quality_state: "stale",
+            required: true,
+            reliability_tier: "critical",
+            sla_seconds: 129600,
+            sla_breach: true,
+            gate_action: "block",
+            as_of: "2026-05-11",
+            fetched_at: "2026-05-11T14:10:00Z",
+            freshness_timestamp: "2026-05-11",
+            stale: true,
+            detail: "snapshot is stale",
+          },
+          {
+            id: "signal_aggregator:current:v1",
+            domain: "market",
+            source_name: "market_regime",
+            snapshot_key: "signal_aggregator:current:v1",
+            status: "ok",
+            quality_state: "ok",
+            required: true,
+            reliability_tier: "standard",
+            sla_seconds: 129600,
+            sla_breach: false,
+            gate_action: "ok",
+            as_of: "2026-05-14",
+            fetched_at: "2026-05-14T14:10:00Z",
+            freshness_timestamp: "2026-05-14",
+            stale: false,
+          },
+        ],
+      },
+      {
+        domain: "portfolio",
+        label: "Portfolio",
+        overall_quality: "ok",
+        counts: {
+          total: 1,
+          ok: 1,
+          stale: 0,
+          degraded: 0,
+          failed: 0,
+          missing: 0,
+          required_stale: 0,
+          required_failed: 0,
+          optional_degraded: 0,
+          critical_stale: 0,
+          critical_failed: 0,
+          sla_breach: 0,
+        },
+        sources: [
+          {
+            id: "portfolio",
+            domain: "portfolio",
+            source_name: "portfolio",
+            status: "ok",
+            quality_state: "ok",
+            required: true,
+            reliability_tier: "critical",
+            sla_seconds: 129600,
+            sla_breach: false,
+            gate_action: "ok",
+            as_of: "2026-05-14",
+            fetched_at: "2026-05-14T14:10:00Z",
+            freshness_timestamp: "2026-05-14",
+            stale: false,
+          },
+        ],
+      },
+    ],
+  },
   thesis_pressure: [
     {
       ticker: "MSFT",
@@ -270,6 +409,10 @@ const baseWorkspaceResponse = {
     count: 0,
     items: [],
   },
+  monitor_hits: {
+    count: 0,
+    items: [],
+  },
   recent_workflow_runs: [
     {
       run_id: "workflow-smoke",
@@ -278,6 +421,77 @@ const baseWorkspaceResponse = {
       started_at: "2026-05-14T13:00:00Z",
       completed_at: "2026-05-14T13:02:00Z",
       summary: { result: "No immediate rebalance required." },
+    },
+  ],
+  continuous_optimization: {
+    open_alert_count: 1,
+    open_alerts: [
+      {
+        id: "optimizer-alert-smoke",
+        mission_id: "balanced",
+        run_id: "optimizer-run-smoke",
+        ticker: "NVDA",
+        alert_type: "action_change",
+        severity: "high",
+        status: "open",
+        change_summary: "Recommended action shifted from hold to trim after risk review.",
+        created_at: "2026-05-14T14:15:00Z",
+      },
+    ],
+  },
+  thesis_claims: {
+    challenged_count: 1,
+    items: [
+      {
+        id: 42,
+        ticker: "MSFT",
+        claim: "AI infrastructure demand remains durable through 2026.",
+        expected_evidence: "Cloud capex commentary and backlog trends.",
+        disconfirming_evidence: "Hyperscaler capex guidance softened in the latest print.",
+        source_requirements: [],
+        cadence: "weekly",
+        confidence: 0.7,
+        status: "challenged",
+        linked_catalyst_ids: [],
+        linked_kill_condition_ids: [],
+        source_type: "manual",
+        source_id: null,
+        created_at: "2026-05-14T12:00:00Z",
+        updated_at: "2026-05-14T14:00:00Z",
+      },
+    ],
+  },
+  decision_learning: {
+    pending_review: {
+      count: 1,
+      items: [
+        {
+          decision_outcome_id: "rec:smoke-1",
+          ticker: "MSFT",
+          as_of: "2026-05-01",
+          process_label: "good_process_bad_outcome",
+          draft_postmortem: "Smoke draft post-mortem for review.",
+          final_label_status: "draft",
+          outcome_status: "evaluated",
+          requires_review: true,
+          source_kind: "recommendation",
+          recommendation_id: "smoke-rec-1",
+        },
+      ],
+    },
+    recent_finalized: {
+      count: 0,
+      items: [],
+    },
+  },
+  recent_report_runs: [
+    {
+      id: "report_run:1",
+      report_id: "daily:2026-05-14",
+      report_type: "daily",
+      as_of: "2026-05-14",
+      status: "completed",
+      synced_at: "2026-05-14T14:20:00Z",
     },
   ],
 } satisfies JsonValue
@@ -295,62 +509,74 @@ function workspaceResponse(state: ApiMockState) {
   } satisfies JsonValue
 }
 
-const ontologyResult = {
-  run_id: "ontology-smoke-run",
-  as_of: "2026-05-14T14:00:00Z",
-  aggregate: {
-    confidence: 0.88,
-    position_count: 2,
-    risk_buckets: { high: 1, medium: 1, low: 0 },
-  },
-  results: [
-    {
-      ticker: "MSFT",
-      asset: "equity",
-      direction: "long",
-      sector: "Information Technology",
-      risk_score: 0.68,
-      risk_level: "high",
-      evidence: [
-        {
-          source: "macro",
-          name: "Liquidity impulse",
-          contribution: 0.42,
-        },
-      ],
+function ontologyResultForRequest(body: Record<string, JsonValue> | null = null) {
+  const asOf = typeof body?.as_of === "string" && body.as_of ? body.as_of : "2026-05-14T14:00:00Z"
+  const txAsOf = typeof body?.tx_as_of === "string" && body.tx_as_of ? body.tx_as_of : null
+  const includeHistory = body?.include_history === true
+
+  return {
+    run_id: "ontology-smoke-run",
+    as_of: asOf,
+    aggregate: {
+      confidence: 0.88,
+      position_count: 2,
+      risk_buckets: { high: 1, medium: 1, low: 0 },
     },
-    {
-      ticker: "NVDA",
-      asset: "equity",
-      direction: "long",
-      sector: "Semiconductors",
-      risk_score: 0.51,
-      risk_level: "medium",
-      evidence: [
-        {
-          source: "positioning",
-          name: "Crowding",
-          contribution: 0.31,
-        },
-      ],
+    results: [
+      {
+        ticker: "MSFT",
+        asset: "equity",
+        direction: "long",
+        sector: "Information Technology",
+        risk_score: 0.68,
+        risk_level: "high",
+        evidence: [
+          {
+            source: "macro",
+            name: "Liquidity impulse",
+            contribution: 0.42,
+          },
+        ],
+      },
+      {
+        ticker: "NVDA",
+        asset: "equity",
+        direction: "long",
+        sector: "Semiconductors",
+        risk_score: 0.51,
+        risk_level: "medium",
+        evidence: [
+          {
+            source: "positioning",
+            name: "Crowding",
+            contribution: 0.31,
+          },
+        ],
+      },
+    ],
+    source_status: {
+      portfolio: { status: "ok", detail: "smoke fixture" },
+      macro: { status: "ok", detail: "smoke fixture" },
     },
-  ],
-  source_status: {
-    portfolio: { status: "ok", detail: "smoke fixture" },
-    macro: { status: "ok", detail: "smoke fixture" },
-  },
-  _meta: {
-    pagination: {
-      page: 1,
-      page_size: 25,
-      total_results: 2,
-      returned_results: 2,
-      total_pages: 1,
-      has_prev: false,
-      has_next: false,
+    _meta: {
+      pagination: {
+        page: 1,
+        page_size: 25,
+        total_results: 2,
+        returned_results: 2,
+        total_pages: 1,
+        has_prev: false,
+        has_next: false,
+      },
+      temporal: {
+        as_of: asOf,
+        tx_as_of: txAsOf,
+        include_history: includeHistory,
+        mode: "temporal_read_model",
+      },
     },
-  },
-} satisfies JsonValue
+  } satisfies JsonValue
+}
 
 const liquidityResponse = {
   composite_score: -0.03,
@@ -416,6 +642,106 @@ const responsePreferences = {
   custom_instructions: "",
 } satisfies JsonValue
 
+const dossierResponse = {
+  ticker: "MSFT",
+  position: { ticker: "MSFT", asset: "equity", instrument_type: "security", direction: "long" },
+  overview_content: null,
+  overview_parsed: null,
+  management_quality: { content: null, parsed: null },
+  what_changed: { counts: { total: 0 }, items: [] },
+  evidence_ledger: {
+    ticker: "MSFT",
+    generated_at: "2026-05-31T00:00:00Z",
+    claims: [
+      {
+        claim_id: "thesis_claim:MSFT:ai-capex",
+        claim: "AI capex remains durable",
+        status: "active",
+        expected_evidence_text: "Azure growth re-accelerated",
+        disconfirming_evidence_text: null,
+        supporting_evidence: [
+          {
+            evidence: {
+              evidence_id: "ev-1",
+              title: "Azure earnings",
+              summary: "Azure growth re-accelerated in latest quarter",
+              source_record_id: "report:weekly:2026-05-10",
+              observed_at: "2026-05-10T00:00:00Z",
+            },
+            citations: [{ citation_id: "cit-1", title: "Weekly report", url: "https://example.com/report" }],
+            source_record: {
+              source_record_id: "report:weekly:2026-05-10",
+              source_name: "weekly_report_sync",
+              vendor: "github_actions",
+              quality: "ok",
+              as_of: "2026-05-10T00:00:00Z",
+            },
+          },
+        ],
+        disconfirming_evidence: [],
+      },
+    ],
+    recommendations: [],
+    counts: { claims: 1, recommendations: 0, evidence_items: 1 },
+  },
+  thesis: { meta: { ticker: "MSFT", status: "active", last_evaluated: null }, content: null, status_history: [] },
+  evaluations: [],
+  thesis_claims: [],
+  catalysts: [],
+  kill_conditions: [],
+  ontology_risk: null,
+  workflow_runs: [],
+  action_items: [],
+  watch_triggers: [],
+  pending_approvals: [],
+} satisfies JsonValue
+
+const scenarioSimulatorResponse = {
+  simulation_id: "scenario_simulation:smoke",
+  calculation_version: "scenario_simulator_v2",
+  generated_at: "2026-05-31T12:00:00Z",
+  persisted: false,
+  execution_assumptions: {
+    disclosure: "Scenario simulation is decision support only. Rankings do not authorize execution.",
+    transaction_cost_bps: 5,
+    slippage_bps: 10,
+    market_impact_bps: 5,
+    max_adv_participation: 0.2,
+  },
+  comparison: {
+    selection_policy: "No automatic trade recommendation or execution is produced by the simulator.",
+    ranking: [
+      { rank: 1, candidate_id: "hold", action: "hold", uncertainty_level: "medium" },
+      { rank: 2, candidate_id: "trim", action: "trim", uncertainty_level: "medium" },
+    ],
+  },
+  outcomes: [
+    {
+      candidate_id: "hold",
+      action: "hold",
+      ranking_score: 0.12,
+      execution_friction: { total_friction_base: 0 },
+      risk: { expected_pnl_base: 0, worst_loss_base: 120 },
+      liquidity: { status: "missing", notes: ["Liquidity inputs missing; policy gate may understate exit risk."] },
+      uncertainty: {
+        level: "medium",
+        missing_input_count: 2,
+        notes: ["Liquidity inputs missing; policy gate may understate exit risk.", "Thesis pressure inputs missing across scenarios."],
+      },
+      policy_gate: { decision: "review_required", review_required: true },
+      scenario_outcomes: [
+        {
+          scenario_id: "downside",
+          name: "Downside",
+          target_pnl_gross_base: -120,
+          target_pnl_net_base: -120,
+          incremental_pnl_net_base: 0,
+        },
+      ],
+    },
+  ],
+} satisfies JsonValue
+
 function agentHistorySessions(state: ApiMockState) {
   const now = new Date().toISOString()
   return [
@@ -459,6 +785,12 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
   }
 
   if (method === "GET" && path === "/api/liquidity") return json(route, liquidityResponse)
+  if (method === "GET" && path === "/api/dossier/MSFT") return json(route, dossierResponse)
+  if (method === "POST" && path === "/api/scenario-simulator/evaluate") return json(route, scenarioSimulatorResponse)
+  if (method === "GET" && path === "/api/thesis/status") return json(route, { MSFT: "uploaded" })
+  if (method === "GET" && path === "/api/valuation/MSFT") {
+    return json(route, { ticker: "MSFT", status: "unavailable", valuation: null })
+  }
   if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse(state))
   if (method === "POST" && path === "/api/workspace/thesis-pressure/dismiss") {
     const body = JSON.parse(request.postData() || "{}") as { ticker?: string; pressure_key?: string }
@@ -469,6 +801,16 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       pressure_key: body.pressure_key ?? smokePressureKey,
     })
   }
+  if (method === "POST" && path.startsWith("/api/decision-outcomes/") && path.endsWith("/finalize")) {
+    return json(route, {
+      decision_outcome_id: "rec:smoke-1",
+      ticker: "MSFT",
+      final_label_status: "confirmed",
+      final_postmortem: "Smoke draft post-mortem for review.",
+      decision_state: "finalized",
+      requires_review: false,
+    })
+  }
   if (method === "GET" && path === "/api/approvals") {
     return json(route, {
       approvals: state.approvalsDismissed ? [] : [smokeApproval],
@@ -476,6 +818,20 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     })
   }
   if (method === "GET" && path === "/api/approvals/summary") return json(route, approvalSummaryResponse(state))
+  if (method === "GET" && path === "/api/approvals/smoke-approval") return json(route, smokeApproval)
+  if (method === "PUT" && path.startsWith("/api/optimization/alerts/") && path.endsWith("/dismiss")) {
+    return json(route, {
+      id: "optimizer-alert-smoke",
+      mission_id: "balanced",
+      run_id: "optimizer-run-smoke",
+      ticker: "NVDA",
+      alert_type: "action_change",
+      severity: "high",
+      status: "dismissed",
+      change_summary: "Recommended action shifted from hold to trim after risk review.",
+      created_at: "2026-05-14T14:15:00Z",
+    })
+  }
   if (method === "POST" && path === "/api/approvals/bulk-reject") {
     const body = JSON.parse(request.postData() || "{}") as { ids?: string[] }
     state.approvalsDismissed = true
@@ -504,17 +860,18 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     })
   }
   if (method === "POST" && path === "/api/ontology/query/async") {
+    state.ontologyQueryRequest = JSON.parse(request.postData() || "{}") as Record<string, JsonValue>
     return json(route, {
       job_id: "ontology-smoke-job",
       status: "done",
-      result: ontologyResult,
+      result: ontologyResultForRequest(state.ontologyQueryRequest),
     })
   }
   if (method === "GET" && path === "/api/ontology/query/async/ontology-smoke-job") {
     return json(route, {
       job_id: "ontology-smoke-job",
       status: "done",
-      result: ontologyResult,
+      result: ontologyResultForRequest(state.ontologyQueryRequest),
     })
   }
 
@@ -587,6 +944,7 @@ export const test = base.extend<{ apiMocks: ApiMockState }>({
         agentHistoryTitle: "NVDA Earnings Prep",
         approvalsDismissed: false,
         dismissedPressureKeys: new Set(),
+        ontologyQueryRequest: null,
       }
       await page.route("**/api/**", route => handleApiRoute(route, state))
       await use(state)

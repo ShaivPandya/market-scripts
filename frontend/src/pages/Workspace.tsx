@@ -1,10 +1,11 @@
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, X } from "lucide-react"
+import { Bell, CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, FileText, X } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
   fetchApprovals,
+  fetchApproval,
   fetchApprovalSummary,
   approveItem,
   rejectItem,
@@ -15,13 +16,21 @@ import {
   cancelTrigger,
   dismissAction,
   dismissWorkspaceThesisPressure,
+  dismissOptimizationAlert,
   replaceTrigger,
   refreshWorkspaceSources,
   type ApprovalRecord,
+  type CourseOfActionComparisonRecord,
+  type CourseOfActionRecord,
+  type DecisionOutcomeRecord,
+  type OptimizationAlert,
+  type ThesisClaim,
   type PolicyGateReason,
   type PolicyGateResult,
   type ProvenanceSelector,
   type RecommendationRecord,
+  type SourceHealth,
+  type SourceHealthSource,
   type TriggerMutationBody,
 } from "@/lib/api"
 import {
@@ -36,12 +45,14 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
 import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSummary"
 import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
+import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import {
   DecisionStateBadge,
@@ -50,9 +61,9 @@ import {
   PolicyStateBadge,
   QualityStateBadge,
 } from "@/components/shared/DecisionStateBadge"
-import { approvalDecisionState, recommendationDecisionState } from "@/lib/decisionState"
+import { approvalDecisionState, courseOfActionDecisionState, recommendationDecisionState } from "@/lib/decisionState"
 import { cn } from "@/lib/utils"
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 interface WorkspaceData {
   regime: {
@@ -84,6 +95,7 @@ interface WorkspaceData {
     } | null
   } | null
   source_health?: SourceHealth | null
+  what_changed?: WhatChangedSummary | null
   thesis_pressure: {
     ticker: string
     status: string
@@ -106,40 +118,29 @@ interface WorkspaceData {
     }[]
     pending_approval_count: number
   }
+  course_of_actions?: {
+    pending: { count: number; items: CourseOfActionRecord[] }
+    recent: { count: number; items: CourseOfActionRecord[] }
+    comparisons: { count: number; items: CourseOfActionComparisonRecord[] }
+    pending_approval_count: number
+  }
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
+  monitor_hits: { count: number; items: MonitorHit[] }
   recent_workflow_runs: WorkflowRun[]
-}
-
-interface SourceHealth {
-  generated_at: string
-  overall_quality: string
-  counts: Record<string, number>
-  domains: SourceHealthDomain[]
-}
-
-interface SourceHealthDomain {
-  domain: string
-  label: string
-  overall_quality: string
-  counts: Record<string, number>
-  sources: SourceHealthSource[]
-}
-
-interface SourceHealthSource {
-  id: string
-  domain: string
-  source_name: string
-  snapshot_key?: string | null
-  status: string
-  quality_state: string
-  required: boolean
-  as_of?: string | null
-  fetched_at?: string | null
-  freshness_timestamp?: string | null
-  stale?: boolean
-  error?: string | null
-  detail?: string | null
+  continuous_optimization?: {
+    open_alert_count: number
+    open_alerts: OptimizationAlert[]
+  }
+  thesis_claims?: {
+    challenged_count: number
+    items: ThesisClaim[]
+  }
+  decision_learning?: {
+    pending_review: { count: number; items: DecisionOutcomeRecord[] }
+    recent_finalized: { count: number; items: DecisionOutcomeRecord[] }
+  }
+  recent_report_runs: ReportRun[]
 }
 
 interface ActionItem {
@@ -164,6 +165,21 @@ interface Trigger {
   last_evidence: string | null
 }
 
+interface MonitorHit {
+  id: number | string
+  ticker: string | null
+  entity_type: string
+  entity_id: string
+  entity_label?: string | null
+  hit_type: string
+  severity?: string | null
+  status: string
+  confidence?: number | null
+  evidence?: string | null
+  detected_at?: string | null
+  approval_id?: string | null
+}
+
 interface WorkflowRun {
   run_id: string | null
   workflow_name: string | null
@@ -175,6 +191,19 @@ interface WorkflowRun {
   artifacts?: Record<string, unknown> | null
 }
 
+interface ReportRun {
+  id?: string | number
+  report_id?: string
+  report_type?: string
+  as_of?: string
+  status?: string
+  source?: string | null
+  synced_at?: string | null
+  created_at?: string | null
+  error?: string | null
+  issue_url?: string | null
+}
+
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
   bullish: { signal: "success", label: "Bullish" },
   neutral: { signal: "warning", label: "Neutral" },
@@ -182,6 +211,18 @@ const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error
   bearish: { signal: "error", label: "Bearish" },
   "risk-off": { signal: "error", label: "Risk-Off" },
   "risk-on": { signal: "success", label: "Risk-On" },
+}
+
+const CLAIM_STATUS_COLORS: Record<string, string> = {
+  challenged: "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
+  disconfirmed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
+}
+
+const ALERT_SEVERITY_COLORS: Record<string, string> = {
+  urgent: "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950",
+  high: "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-950",
+  normal: "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950",
+  low: "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
 }
 
 const URGENCY_COLORS: Record<string, string> = {
@@ -269,6 +310,213 @@ function workflowRunTime(run: WorkflowRun): string {
   return formatTime(run.started_at ?? run.completed_at)
 }
 
+function reportRunLabel(run: ReportRun): string {
+  const reportType = cleanText(run.report_type) ?? "report"
+  return titleCase(reportType)
+}
+
+function reportRunTime(run: ReportRun): string {
+  return formatTime(run.as_of ?? run.synced_at ?? run.created_at)
+}
+
+function reportRunKey(run: ReportRun, index: number): string {
+  return String(run.report_id ?? run.id ?? `report-run-${index}`)
+}
+
+function claimStatusClass(status: string | null | undefined): string {
+  return CLAIM_STATUS_COLORS[String(status || "").toLowerCase()] ?? "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800"
+}
+
+function alertSeverityClass(severity: string | null | undefined): string {
+  return ALERT_SEVERITY_COLORS[String(severity || "normal").toLowerCase()] ?? ALERT_SEVERITY_COLORS.normal
+}
+
+function OptimizationAlertsPanel({
+  alerts,
+  alertCount,
+  processingIds,
+  onDismiss,
+  dismissError,
+}: {
+  alerts: OptimizationAlert[]
+  alertCount: number
+  processingIds: Set<number | string>
+  onDismiss: (alert: OptimizationAlert) => void
+  dismissError: string | null
+}) {
+  if (alertCount <= 0) return null
+  return (
+    <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <Bell size={14} className="text-purple-500" />
+        Optimizer Alerts
+        <Link to="/analyzer" className="ml-auto text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+          Open analyzer
+        </Link>
+      </h2>
+      <p className="mb-3 text-xs text-subtle">{alertCount} open alert{alertCount !== 1 ? "s" : ""} with material action or risk changes.</p>
+      {dismissError && (
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Failed to dismiss alert: {dismissError}
+        </div>
+      )}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {alerts.map(alert => (
+          <div key={alert.id} className="rounded-lg border border-app px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {alert.ticker ? (
+                    <Link to={`/dossier/${encodeURIComponent(alert.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                      {alert.ticker}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold text-app">PORTFOLIO</span>
+                  )}
+                  <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", alertSeverityClass(alert.severity))}>
+                    {alert.severity}
+                  </span>
+                  <span className="text-xs text-subtle">{alert.alert_type.replace(/_/g, " ")}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted line-clamp-2">{alert.change_summary}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onDismiss(alert)}
+                disabled={processingIds.has(`optimizer-alert-${alert.id}`)}
+                className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ThesisClaimsPanel({ claims, claimCount }: { claims: ThesisClaim[]; claimCount: number }) {
+  if (claimCount <= 0) return null
+  return (
+    <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <AlertTriangle size={14} className="text-amber-500" />
+        Thesis Claim Issues
+        <span className="ml-auto text-xs text-subtle">{claimCount} challenged or disconfirmed</span>
+      </h2>
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {claims.map(claim => (
+          <div key={claim.id} className="rounded-lg border border-app px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to={`/dossier/${encodeURIComponent(claim.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                {claim.ticker}
+              </Link>
+              <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", claimStatusClass(claim.status))}>
+                {claim.status}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted line-clamp-2">{claim.claim}</p>
+            {claim.disconfirming_evidence && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400 line-clamp-2">{claim.disconfirming_evidence}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function RecentActivityPanel({
+  workflowRuns,
+  reportRuns,
+  onViewWorkflowLineage,
+}: {
+  workflowRuns: WorkflowRun[]
+  reportRuns: ReportRun[]
+  onViewWorkflowLineage?: (runId: string) => void
+}) {
+  if (workflowRuns.length === 0 && reportRuns.length === 0) return null
+  return (
+    <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+        <Clock size={14} className="text-gray-500" />
+        Recent Activity
+      </h2>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {workflowRuns.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Workflow Runs</h3>
+            <div className="space-y-2">
+              {workflowRuns.map((run, index) => {
+                const ticker = workflowRunTicker(run)
+                const runId = String(run.run_id ?? "").trim()
+                return (
+                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
+                    <div className="flex items-center gap-3">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
+                      {ticker && (
+                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
+                          {ticker}
+                        </Link>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
+                      {runId && onViewWorkflowLineage && (
+                        <button
+                          type="button"
+                          onClick={() => onViewWorkflowLineage(runId)}
+                          className="theme-icon-button h-8 w-8"
+                          aria-label={`View workflow ${runId} lineage`}
+                          title="Lineage"
+                        >
+                          <GitBranch size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        {reportRuns.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Report Runs</h3>
+            <div className="space-y-2">
+              {reportRuns.map((run, index) => (
+                <div key={reportRunKey(run, index)} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <FileText size={14} className="shrink-0 text-blue-500" />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-app">{reportRunLabel(run)}</span>
+                        <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                        <span className="text-xs text-subtle">{run.status ?? "unknown"}</span>
+                      </div>
+                      {run.error && <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{run.error}</p>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-subtle">{reportRunTime(run)}</span>
+                    {run.issue_url && (
+                      <a href={run.issue_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        Issue
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function sourceHealthLabel(value: string | null | undefined): string {
   const normalized = String(value || "missing").replace(/_/g, " ")
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
@@ -295,8 +543,22 @@ function sourceHealthTimestamp(source: SourceHealthSource): string {
   return formatTime(source.freshness_timestamp ?? source.as_of ?? source.fetched_at)
 }
 
+function reliabilityTierLabel(tier: string | null | undefined): string {
+  const value = String(tier || "standard").replace(/_/g, " ")
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function reliabilityTierBadgeClass(tier: string | null | undefined): string {
+  const value = String(tier || "standard").toLowerCase()
+  if (value === "critical") return "theme-badge-error"
+  if (value === "standard") return "theme-badge-warning"
+  if (value === "supplemental") return "theme-badge-neutral"
+  return "theme-badge-neutral"
+}
+
 function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
   const counts = sourceHealth.counts ?? {}
+  const tierCounts = sourceHealth.tier_counts ?? {}
   const domains = sourceHealth.domains ?? []
   return (
     <section className="theme-surface mt-6 rounded-xl p-4">
@@ -313,9 +575,11 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
       <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted">
         <span>{counts.total ?? 0} sources</span>
         <span>{counts.ok ?? 0} ok</span>
-        <span>{counts.required_stale ?? 0} stale required</span>
-        <span>{counts.required_failed ?? 0} required failed</span>
+        <span>{counts.critical_stale ?? 0} critical stale</span>
+        <span>{counts.critical_failed ?? 0} critical failed</span>
+        <span>{counts.sla_breach ?? 0} SLA breach</span>
         <span>{counts.optional_degraded ?? 0} optional degraded</span>
+        {(tierCounts.critical ?? 0) > 0 && <span>{tierCounts.critical} critical tier</span>}
       </div>
       {domains.length === 0 ? (
         <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
@@ -345,7 +609,11 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-app">{source.source_name.replace(/_/g, " ")}</span>
+                        <span className={cn("theme-badge", reliabilityTierBadgeClass(source.reliability_tier))}>
+                          {reliabilityTierLabel(source.reliability_tier)}
+                        </span>
                         <span className="text-subtle">{source.required ? "required" : "optional"}</span>
+                        {source.sla_breach && <span className="text-red-600 dark:text-red-400">SLA breach</span>}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-subtle">
                         <span>{sourceHealthTimestamp(source)}</span>
@@ -363,6 +631,76 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
         </div>
       )}
     </section>
+  )
+}
+
+type ApprovalSourceHealthReview = NonNullable<ApprovalRecord["source_health_review"]>
+type ApprovalSourceHealthIssue = ApprovalSourceHealthReview["blockers"][number]
+
+function approvalSourceHealthClass(status: string | null | undefined): string {
+  const value = String(status || "ok")
+  if (value === "blocked") return "theme-badge-error"
+  if (value === "warning") return "theme-badge-warning"
+  return "theme-badge-success"
+}
+
+function approvalSourceHealthLabel(review: ApprovalSourceHealthReview): string {
+  const blockers = review.blockers?.length ?? 0
+  const warnings = review.warnings?.length ?? 0
+  if (blockers > 0) return `${blockers} source blocker${blockers === 1 ? "" : "s"}`
+  if (warnings > 0) return `${warnings} source warning${warnings === 1 ? "" : "s"}`
+  return "Sources ok"
+}
+
+function ApprovalSourceHealthBadge({ review }: { review?: ApprovalRecord["source_health_review"] }) {
+  if (!review || review.status === "ok") return null
+  return (
+    <span className={cn("theme-badge inline-flex items-center gap-1", approvalSourceHealthClass(review.status))}>
+      <Database size={12} aria-hidden="true" />
+      {approvalSourceHealthLabel(review)}
+    </span>
+  )
+}
+
+function approvalSourceIssueLabel(issue: ApprovalSourceHealthIssue): string {
+  return String(issue.source_name || issue.id || "source").replace(/_/g, " ")
+}
+
+function ApprovalSourceHealthPanel({ review }: { review?: ApprovalRecord["source_health_review"] }) {
+  if (!review || review.status === "ok") return null
+  const rows = [
+    ...(review.blockers ?? []).map(issue => ({ ...issue, severity: "blocked" })),
+    ...(review.warnings ?? []).map(issue => ({ ...issue, severity: "warning" })),
+  ]
+  return (
+    <div className={cn("rounded-lg border px-3 py-2 text-sm", review.status === "blocked" ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200")}>
+      <div className="mb-2 flex flex-wrap items-center gap-2 font-medium">
+        <Database size={14} aria-hidden="true" />
+        <span>{approvalSourceHealthLabel(review)}</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map((issue, idx) => (
+          <div key={`${issue.id || issue.source_name || "source"}-${issue.severity}-${idx}`} className="grid gap-1 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <span className="font-medium capitalize">{approvalSourceIssueLabel(issue)}</span>
+              {issue.reason && <span className="ml-2 text-current/75">{issue.reason}</span>}
+              {issue.detail && <span className="ml-2 text-current/75">{issue.detail}</span>}
+            </div>
+            <div className="flex flex-wrap gap-2 text-current/75 sm:justify-end">
+              <span>{sourceHealthLabel(issue.status)}</span>
+              {issue.reliability_tier && (
+                <span className={cn("theme-badge", reliabilityTierBadgeClass(issue.reliability_tier))}>
+                  {reliabilityTierLabel(issue.reliability_tier)}
+                </span>
+              )}
+              {issue.sla_breach && <span>SLA breach</span>}
+              <span>{issue.required ? "required" : "optional"}</span>
+              <span>{formatTime(issue.freshness_timestamp ?? issue.as_of ?? issue.fetched_at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -555,6 +893,9 @@ function RiskBindingLine({ record }: { record: RecommendationRecord | Record<str
 
 export function Workspace() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkApprovalId = String(searchParams.get("approval_id") ?? "").trim()
+  const deepLinkAttemptRef = useRef<string | null>(null)
   const { data, isPending, error } = useApiQuery<WorkspaceData>(
     ["workspace"],
     fetchWorkspace,
@@ -570,6 +911,7 @@ export function Workspace() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
   const [approvalReview, setApprovalReview] = useState<ApprovalRecord | null>(null)
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalError, setApprovalError] = useState<string | null>(null)
@@ -581,6 +923,21 @@ export function Workspace() {
   const [triggerEdit, setTriggerEdit] = useState<TriggerEditState | null>(null)
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
+  const [optimizerDismissError, setOptimizerDismissError] = useState<string | null>(null)
+
+  const clearApprovalDeepLink = useCallback(() => {
+    if (!searchParams.has("approval_id")) return
+    const next = new URLSearchParams(searchParams)
+    next.delete("approval_id")
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  function openApprovalReview(approval: ApprovalRecord) {
+    setApprovalReview(approval)
+    setApprovalNote("")
+    setApprovalError(null)
+    setApprovalDialogAction(null)
+  }
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -589,13 +946,6 @@ export function Workspace() {
       else next.add(key)
       return next
     })
-  }
-
-  function openApprovalReview(approval: ApprovalRecord) {
-    setApprovalReview(approval)
-    setApprovalNote("")
-    setApprovalError(null)
-    setApprovalDialogAction(null)
   }
 
   async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
@@ -768,7 +1118,68 @@ export function Workspace() {
     }
   }
 
-  if (isPending) return <LoadingSpinner message="Loading workspace..." />
+  async function handleDismissOptimizerAlert(alert: OptimizationAlert) {
+    const processingKey = `optimizer-alert-${alert.id}`
+    setOptimizerDismissError(null)
+    setProcessingIds(prev => new Set(prev).add(processingKey))
+    try {
+      await dismissOptimizationAlert(alert.id)
+      void qc.invalidateQueries({ queryKey: ["workspace"] })
+    } catch (err) {
+      setOptimizerDismissError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProcessingIds(prev => {
+        const next = new Set(prev)
+        next.delete(processingKey)
+        return next
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (!deepLinkApprovalId || approvalReview?.id === deepLinkApprovalId) return
+    if (deepLinkAttemptRef.current === deepLinkApprovalId) return
+
+    const embeddedItems = [
+      ...(approvalSummary.data?.items ?? []),
+      ...(data?.pending_approvals.items ?? []),
+    ]
+    const fromList = embeddedItems.find(item => String(item.id) === deepLinkApprovalId)
+    if (fromList) {
+      deepLinkAttemptRef.current = deepLinkApprovalId
+      openApprovalReview(fromList)
+      clearApprovalDeepLink()
+      return
+    }
+
+    if (isPending || (approvalSummary.isPending && !approvalSummary.data)) return
+
+    let cancelled = false
+    deepLinkAttemptRef.current = deepLinkApprovalId
+    void fetchApproval(deepLinkApprovalId)
+      .then(approval => {
+        if (cancelled) return
+        openApprovalReview(approval)
+        clearApprovalDeepLink()
+      })
+      .catch(() => {
+        if (!cancelled) deepLinkAttemptRef.current = null
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    approvalReview?.id,
+    approvalSummary.data,
+    approvalSummary.isPending,
+    clearApprovalDeepLink,
+    data?.pending_approvals.items,
+    deepLinkApprovalId,
+    isPending,
+  ])
+
+  if (isPending) return <LoadingSpinner message="Loading portfolio commander..." />
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
@@ -784,6 +1195,12 @@ export function Workspace() {
       : `${approvalCount} total`
   const approvalRecommendationCount =
     approvalSummaryData?.recommendation_approval_count ?? data.recommendations.pending_approval_count
+  const courseOfActions = data.course_of_actions ?? {
+    pending: { count: 0, items: [] },
+    recent: { count: 0, items: [] },
+    comparisons: { count: 0, items: [] },
+    pending_approval_count: 0,
+  }
   const approvalSummaryError = approvalSummary.error
   const regime = data.regime
   const portfolioRisk = data.portfolio?.risk
@@ -794,11 +1211,19 @@ export function Workspace() {
     regime?.snapshot?.refresh_status && regime.snapshot.refresh_status !== "ok" ? `Refresh ${regime.snapshot.refresh_status}` : null,
     regime?.snapshot?.stale ? "Stale" : null,
   ].filter(Boolean).join(" · ")
+  const optimizerAlerts = data.continuous_optimization?.open_alerts ?? []
+  const optimizerAlertCount = data.continuous_optimization?.open_alert_count ?? optimizerAlerts.length
+  const thesisClaimItems = data.thesis_claims?.items ?? []
+  const thesisClaimCount = data.thesis_claims?.challenged_count ?? thesisClaimItems.length
+  const recentReportRuns = data.recent_report_runs ?? []
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-app">Workspace</h1>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-app">Portfolio Commander</h1>
+          <p className="mt-1 text-sm text-subtle">What changed, what matters, and what needs review.</p>
+        </div>
         <RefreshButton
           queryKeys={[["workspace"]]}
           beforeRefetch={refreshWorkspaceSources}
@@ -838,13 +1263,24 @@ export function Workspace() {
           signalLabel={approvalCount > 0 ? "Needs Review" : undefined}
         />
         <MetricCard
-          title="Recommendations"
-          value={data.recommendations.pending_actionable.count}
-          subtitle={`${approvalRecommendationCount} approval${approvalRecommendationCount !== 1 ? "s" : ""}`}
-          signal={data.recommendations.blocked_warnings.length > 0 ? "warning" : null}
-          signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
+          title="Courses Of Action"
+          value={courseOfActions.pending.count}
+          subtitle={[
+            `${courseOfActions.pending_approval_count || approvalRecommendationCount} approval${(courseOfActions.pending_approval_count || approvalRecommendationCount) !== 1 ? "s" : ""}`,
+            optimizerAlertCount > 0 ? `${optimizerAlertCount} optimizer alert${optimizerAlertCount !== 1 ? "s" : ""}` : null,
+          ].filter(Boolean).join(" · ") || undefined}
+          signal={data.recommendations.blocked_warnings.length > 0 || optimizerAlertCount > 0 ? "warning" : null}
+          signalLabel={
+            data.recommendations.blocked_warnings.length > 0
+              ? "Blocked"
+              : optimizerAlertCount > 0
+                ? "Monitor Hits"
+                : undefined
+          }
         />
       </div>
+
+      <WhatChangedPanel summary={data.what_changed} className="mb-6" from="workspace" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (
@@ -886,6 +1322,56 @@ export function Workspace() {
             )}
           </section>
         )}
+
+        {/* Course of Action Review */}
+        {(courseOfActions.pending.count > 0 || courseOfActions.recent.count > 0 || courseOfActions.comparisons.count > 0) && (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <GitBranch size={14} className="text-blue-500" />
+              Course of Action Review
+              <span className="ml-auto text-xs text-subtle">
+                {courseOfActions.pending.count} pending · {courseOfActions.comparisons.count} comparison{courseOfActions.comparisons.count !== 1 ? "s" : ""}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(courseOfActions.pending.items.length ? courseOfActions.pending.items : courseOfActions.recent.items).slice(0, 6).map(coa => (
+                <div key={`coa-${coa.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <DecisionStateBadge state={courseOfActionDecisionState(coa)} />
+                    <span className="font-semibold text-app">{coa.action.replace(/_/g, " ")}</span>
+                    {coa.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(coa.ticker)}`} state={{ from: "workspace" }} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
+                        {coa.ticker}
+                      </Link>
+                    )}
+                    <span className="ml-auto text-xs text-subtle">{coa.actionability?.replace(/_/g, " ") ?? "course"}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <EffectScopeBadge scope={coa.effect_scope ?? "internal_state"} />
+                    <QualityStateBadge state={coa.quality_state ?? coa.source_quality ?? "missing"} />
+                    <PolicyStateBadge state={coa.policy_state ?? coa.policy_gate_decision ?? "missing"} />
+                  </div>
+                  <p className="mt-2 text-xs text-muted line-clamp-2">
+                    {coa.rationale_summary || "No rationale summary captured yet."}
+                  </p>
+                  {coa.comparison_id && (
+                    <p className="mt-1 text-[11px] text-subtle">Comparison: {coa.comparison_id}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <OptimizationAlertsPanel
+          alerts={optimizerAlerts}
+          alertCount={optimizerAlertCount}
+          processingIds={processingIds}
+          onDismiss={handleDismissOptimizerAlert}
+          dismissError={optimizerDismissError}
+        />
+
+        <ThesisClaimsPanel claims={thesisClaimItems} claimCount={thesisClaimCount} />
 
         {/* Recommendation Summary */}
         {(data.recommendations.latest_daily || data.recommendations.latest_weekly || data.recommendations.blocked_warnings.length > 0) && (
@@ -955,9 +1441,80 @@ export function Workspace() {
           </section>
         )}
 
+        {(data.decision_learning?.pending_review.count || data.decision_learning?.recent_finalized.count) ? (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <GitBranch size={14} className="text-violet-500" />
+              Decision Learning
+              <span className="ml-auto text-xs text-subtle">
+                {data.decision_learning?.pending_review.count ?? 0} draft review
+                {(data.decision_learning?.pending_review.count ?? 0) !== 1 ? "s" : ""}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(data.decision_learning?.pending_review.items ?? []).map(outcome => (
+                <div key={`pending-outcome-${outcome.decision_outcome_id || outcome.object_uid || outcome.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {outcome.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(outcome.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                        {outcome.ticker}
+                      </Link>
+                    )}
+                    <span className="text-xs text-subtle">{outcome.as_of}</span>
+                    {outcome.process_label && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">
+                        {outcome.process_label.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-muted line-clamp-3">{outcome.draft_postmortem}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPostMortemReview(outcome)}
+                      className="rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-app hover:bg-[hsl(var(--muted-2))]"
+                    >
+                      Review post-mortem
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProvenanceSelector({
+                          recommendation_id: outcome.recommendation_id ?? undefined,
+                          ref_type: "DecisionOutcome",
+                          ref_id: String(outcome.decision_outcome_id || outcome.object_uid || outcome.id || ""),
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-muted hover:text-app"
+                    >
+                      <GitBranch size={12} />
+                      Lineage
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(data.decision_learning?.recent_finalized.items ?? []).length > 0 && (
+              <div className="mt-4 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle">Recent finalized</h3>
+                {(data.decision_learning?.recent_finalized.items ?? []).slice(0, 3).map(outcome => (
+                  <div key={`final-outcome-${outcome.decision_outcome_id || outcome.object_uid || outcome.id}`} className="rounded-lg border border-app px-3 py-2 text-xs text-muted">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {outcome.ticker && <span className="font-medium text-app">{outcome.ticker}</span>}
+                      <span>{outcome.final_label_status}</span>
+                      {outcome.finalized_at && <span>{outcome.finalized_at.slice(0, 10)}</span>}
+                    </div>
+                    <p className="mt-1 line-clamp-2">{outcome.final_postmortem || outcome.lessons_learned}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
+
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className="text-amber-500" />
               Positions Under Pressure
@@ -1012,7 +1569,7 @@ export function Workspace() {
 
         {/* Pending Approvals */}
         {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
@@ -1053,7 +1610,7 @@ export function Workspace() {
                     key={a.id}
                     className="overflow-hidden rounded-lg border border-app px-3 py-3 text-sm"
                   >
-                    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_auto] 2xl:items-start">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <DecisionStateBadge state={approvalDecisionState(a)} />
@@ -1074,6 +1631,7 @@ export function Workspace() {
                           <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
                           <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
                           <QualityStateBadge state={a.quality_state ?? "missing"} />
+                          <ApprovalSourceHealthBadge review={a.source_health_review} />
                         </div>
                         {displayReason && (
                           <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
@@ -1090,11 +1648,11 @@ export function Workspace() {
                         )}
                         <ApprovalProgressSummary approval={a} compact />
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                         <button
                           type="button"
                           onClick={() => setProvenanceSelector({ approval_id: a.id })}
-                          className="theme-icon-button h-8 w-8 shrink-0"
+                          className="theme-icon-button h-11 w-11 shrink-0"
                           aria-label={`View approval ${a.id} lineage`}
                           title="Lineage"
                         >
@@ -1104,7 +1662,7 @@ export function Workspace() {
                           type="button"
                           onClick={() => openApprovalReview(a)}
                           disabled={processingIds.has(a.id)}
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50"
+                          className="inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded px-3 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50 sm:px-2.5 sm:min-h-8"
                           title="Review approval"
                         >
                           Review
@@ -1120,7 +1678,7 @@ export function Workspace() {
 
         {/* Open Action Items */}
         {data.open_actions.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Play size={14} className="text-purple-500" />
               Internal Action Items
@@ -1170,7 +1728,7 @@ export function Workspace() {
 
         {/* Active Watch Triggers */}
         {data.active_triggers.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Eye size={14} className="text-cyan-500" />
               Active Triggers
@@ -1224,49 +1782,43 @@ export function Workspace() {
           </section>
         )}
 
-        {/* Recent Workflow Runs */}
-        {data.recent_workflow_runs.length > 0 && (
-          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+        {/* Thesis surveillance / monitor hits */}
+        {data.monitor_hits.count > 0 && (
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <Clock size={14} className="text-gray-500" />
-              Recent Workflow Runs
+              <AlertTriangle size={14} className="text-amber-500" />
+              Thesis Surveillance
+              <span className="ml-auto text-xs text-subtle">{data.monitor_hits.count} open</span>
             </h2>
-            <div className="space-y-2">
-              {data.recent_workflow_runs.map((run, index) => {
-                const ticker = workflowRunTicker(run)
-                const runId = String(run.run_id ?? "").trim()
-                return (
-                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
-                    <div className="flex items-center gap-3">
-                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
-                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
-                      {ticker && (
-                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
-                          {ticker}
-                        </Link>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (runId) setProvenanceSelector({ workflow_run_id: runId })
-                        }}
-                        disabled={!runId}
-                        className="theme-icon-button h-8 w-8 disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={runId ? `View workflow ${runId} lineage` : "Workflow lineage unavailable"}
-                        title={runId ? "Lineage" : "Lineage unavailable"}
-                      >
-                        <GitBranch size={14} />
-                      </button>
-                    </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+              {data.monitor_hits.items.map(hit => (
+                <div key={hit.id} className="rounded-lg px-3 py-2 text-sm border border-app/60">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {hit.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(hit.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                        {hit.ticker}
+                      </Link>
+                    )}
+                    <span className="text-xs uppercase tracking-wide text-subtle">{hit.entity_type.replace(/_/g, " ")}</span>
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                      {hit.hit_type.replace(/_/g, " ")}
+                    </span>
+                    {hit.severity && <span className="text-xs text-subtle">{hit.severity}</span>}
                   </div>
-                )
-              })}
+                  <p className="mt-1 text-xs text-muted">{hit.entity_label || hit.entity_id}</p>
+                  {hit.evidence && <p className="mt-1 text-xs text-subtle">{hit.evidence}</p>}
+                  {hit.detected_at && <p className="mt-1 text-[11px] text-subtle">Detected {formatTime(hit.detected_at)}</p>}
+                </div>
+              ))}
             </div>
           </section>
         )}
+
+        <RecentActivityPanel
+          workflowRuns={data.recent_workflow_runs}
+          reportRuns={recentReportRuns}
+          onViewWorkflowLineage={runId => setProvenanceSelector({ workflow_run_id: runId })}
+        />
       </div>
 
       {/* Empty state */}
@@ -1275,12 +1827,19 @@ export function Workspace() {
         !data.recommendations.latest_weekly &&
         !data.recommendations.pending_actionable.count &&
         !data.recommendations.blocked_warnings.length &&
+        !courseOfActions.pending.count &&
+        !courseOfActions.recent.count &&
+        !courseOfActions.comparisons.count &&
         !approvalSummaryInitialLoading &&
         !approvalSummaryError &&
         !approvalCount &&
         !data.open_actions.count &&
         !data.active_triggers.count &&
-        !data.recent_workflow_runs.length && (
+        !data.monitor_hits.count &&
+        !data.recent_workflow_runs.length &&
+        !recentReportRuns.length &&
+        optimizerAlertCount === 0 &&
+        thesisClaimCount === 0 && (
         <div className="theme-surface rounded-xl p-8 text-center text-muted text-sm mt-4">
           No pending items. Run a workflow or chat with the agent to get started.
         </div>
@@ -1338,6 +1897,7 @@ export function Workspace() {
             setApprovalNote("")
             setApprovalError(null)
             setApprovalDialogAction(null)
+            clearApprovalDeepLink()
           }
         }}
         title="Review Approval"
@@ -1355,6 +1915,7 @@ export function Workspace() {
               <EffectScopeBadge scope={approvalReview.effect_scope ?? "internal_state"} />
               <PolicyStateBadge state={approvalReview.policy_state ?? policyGateFromApproval(approvalReview)?.decision ?? "missing"} />
               <QualityStateBadge state={approvalReview.quality_state ?? "missing"} />
+              <ApprovalSourceHealthBadge review={approvalReview.source_health_review} />
             </div>
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -1379,6 +1940,7 @@ export function Workspace() {
                 {approvalReview.base_state_message || "The underlying state changed after this proposal was created."}
               </div>
             )}
+            <ApprovalSourceHealthPanel review={approvalReview.source_health_review} />
             <div>
               <label htmlFor="approval-note" className="theme-field-label">
                 Decision note
@@ -1397,7 +1959,7 @@ export function Workspace() {
                 {approvalError}
               </div>
             )}
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => {
@@ -1406,7 +1968,7 @@ export function Workspace() {
                   setApprovalError(null)
                   setApprovalDialogAction(null)
                 }}
-                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+                className="w-full rounded-lg border border-app px-3 py-2.5 text-sm font-medium text-muted hover:text-app sm:w-auto sm:py-2"
               >
                 Cancel
               </button>
@@ -1415,7 +1977,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "reject" && processingIds.has(approvalReview.id)}
                 loadingText="Rejecting..."
                 disabled={processingIds.has(approvalReview.id) || approvalReview.can_reject === false}
-                className="theme-button-destructive w-auto px-4"
+                className="theme-button-destructive w-full px-4 sm:w-auto"
               >
                 Reject Proposal
               </ActionButton>
@@ -1425,7 +1987,7 @@ export function Workspace() {
                   loading={approvalDialogAction === "restage" && processingIds.has(approvalReview.id)}
                   loadingText="Restaging..."
                   disabled={processingIds.has(approvalReview.id)}
-                  className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
+                  className="w-full bg-amber-600 px-4 hover:bg-amber-700 sm:w-auto"
                 >
                   Reject & Restage
                 </ActionButton>
@@ -1439,7 +2001,7 @@ export function Workspace() {
                     setTriggerEditError(null)
                   }}
                   disabled={processingIds.has(approvalReview.id)}
-                  className="w-auto px-4"
+                  className="w-full px-4 sm:w-auto"
                 >
                   Edit Proposal
                 </ActionButton>
@@ -1449,7 +2011,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
                 loadingText={approvalActionLabel(approvalReview) === "Record Approval" ? "Recording..." : "Applying..."}
                 disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
-                className="theme-button-success w-auto px-4"
+                className="theme-button-success w-full px-4 sm:w-auto"
               >
                 {approvalActionLabel(approvalReview)}
               </ActionButton>
@@ -1483,6 +2045,16 @@ export function Workspace() {
           if (!open) setProvenanceSelector(null)
         }}
         selector={provenanceSelector}
+      />
+      <PostMortemReviewDialog
+        open={postMortemReview !== null}
+        onOpenChange={open => {
+          if (!open) setPostMortemReview(null)
+        }}
+        outcome={postMortemReview}
+        onFinalized={() => {
+          void qc.invalidateQueries({ queryKey: ["workspace"] })
+        }}
       />
     </div>
   )

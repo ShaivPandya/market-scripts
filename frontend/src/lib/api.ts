@@ -167,11 +167,75 @@ export interface ApprovalProgress {
   remaining_requirements: ApprovalRequirement[]
 }
 
+export interface ApprovalSourceHealthIssue {
+  id?: string | null
+  source_name?: string | null
+  domain?: string | null
+  status?: string | null
+  quality_state?: string | null
+  required?: boolean
+  reliability_tier?: string | null
+  sla_breach?: boolean
+  gate_action?: string | null
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness_timestamp?: string | null
+  detail?: string | null
+  reason?: string | null
+}
+
+export interface SourceHealthSource {
+  id: string
+  domain: string
+  source_name: string
+  snapshot_key?: string | null
+  status: string
+  quality_state: string
+  required: boolean
+  reliability_tier?: string | null
+  sla_seconds?: number | null
+  sla_breach?: boolean
+  gate_action?: string | null
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness_timestamp?: string | null
+  stale?: boolean
+  error?: string | null
+  detail?: string | null
+  source_registry?: Record<string, unknown> | null
+}
+
+export interface SourceHealthDomain {
+  domain: string
+  label: string
+  overall_quality: string
+  counts: Record<string, number>
+  sources: SourceHealthSource[]
+}
+
+export interface SourceHealth {
+  generated_at: string
+  overall_quality: string
+  counts: Record<string, number>
+  tier_counts?: Record<string, number>
+  domains: SourceHealthDomain[]
+}
+
+export interface ApprovalSourceHealthReview {
+  status: "ok" | "warning" | "blocked" | string
+  blockers: ApprovalSourceHealthIssue[]
+  warnings: ApprovalSourceHealthIssue[]
+  generated_at?: string | null
+}
+
 export interface ApprovalRecord extends DecisionStateFields {
   id: string
   status?: string | null
   entity_type: string
+  entity_id?: string | null
   action_id?: string | null
+  target_object_uid?: string | null
+  target_object_type?: string | null
   ticker: string | null
   reason: string | null
   created_at: string
@@ -191,6 +255,7 @@ export interface ApprovalRecord extends DecisionStateFields {
   approval_policy_rule_id?: string | null
   approval_policy_reason?: string | null
   policy_gate?: PolicyGateResult | null
+  source_health_review?: ApprovalSourceHealthReview | null
   can_approve?: boolean
   can_reject?: boolean
   can_retry_apply?: boolean
@@ -258,6 +323,12 @@ export interface RecommendationRecord extends DecisionStateFields {
   rationale: string
   confidence: number | null
   approval_status: string
+  outcome_status?: string | null
+  draft_postmortem?: string | null
+  final_postmortem?: string | null
+  final_label_status?: string | null
+  process_label?: string | null
+  lessons_learned?: string | null
   blocked_reasons_json?: string[]
   policy_gate?: PolicyGateResult | null
   policy_gate_decision?: string | null
@@ -275,6 +346,54 @@ export interface RecommendationRecord extends DecisionStateFields {
   risk_bindings?: Record<string, unknown> | null
   decision_quality?: DecisionQuality | null
   decision_quality_gate?: DecisionQualityGate | null
+}
+
+export interface CourseOfActionRecord extends DecisionStateFields {
+  id: string
+  course_of_action_id?: string | null
+  source_kind?: string | null
+  source_type?: string | null
+  source_id?: string | null
+  decision_type?: string | null
+  action: string
+  actionability?: string | null
+  status?: string | null
+  ticker: string | null
+  instrument_id?: string | null
+  account_id?: string | null
+  portfolio_id?: string | null
+  policy_gate_result_id?: string | null
+  policy_gate_decision?: string | null
+  approval_id?: string | number | null
+  approval_required?: boolean | null
+  approval_status?: string | null
+  comparison_id?: string | null
+  confidence?: number | null
+  horizon?: string | null
+  rationale_summary?: string | null
+  source_quality?: string | null
+  sizing_summary?: Record<string, unknown> | null
+  effect_summary?: Record<string, unknown> | null
+  risk_summary?: Record<string, unknown> | null
+  policy_summary?: Record<string, unknown> | null
+  policy_gate?: PolicyGateResult | null
+  decision_quality?: DecisionQuality | null
+  decision_quality_gate?: DecisionQualityGate | null
+  payload?: Record<string, unknown> | null
+}
+
+export interface CourseOfActionComparisonRecord {
+  id: string
+  comparison_id?: string | null
+  objective?: string | null
+  scope_type?: string | null
+  scope_id?: string | null
+  selected_course_of_action_id?: string | null
+  decision_state?: string | null
+  status?: string | null
+  ranking_summary?: Record<string, unknown> | null
+  selection_reason?: string | null
+  as_of?: string | null
 }
 
 export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "accepted" | "rejected" | "archived"
@@ -1394,6 +1513,81 @@ export const refreshPortfolioRisk = () =>
   client
     .post("/risk/portfolio/refresh", undefined, { timeout: 180_000 })
     .then(r => r.data as PortfolioRiskSnapshot)
+
+export interface ScenarioSimulatorAssumptionInput {
+  name: string
+  value?: Record<string, unknown> | string | number | boolean | null
+  unit?: string | null
+  confidence?: number | null
+  source_refs?: string[]
+}
+
+export interface ScenarioSimulatorEvaluateRequest {
+  portfolio: {
+    portfolio_id?: string | null
+    account_id?: string | null
+    base_currency?: string
+    book_value?: number | null
+    positions?: Record<string, unknown>[]
+  }
+  position: Record<string, unknown>
+  candidates: Array<{
+    action: string
+    candidate_id?: string
+    delta?: Record<string, unknown>
+    rationale?: string | null
+  }>
+  scenarios: Array<Record<string, unknown>>
+  assumptions?: ScenarioSimulatorAssumptionInput[]
+  execution_assumptions?: Record<string, unknown>
+  enrich_from_risk_snapshot?: boolean
+  position_risk_snapshot_id?: string | null
+  portfolio_risk_snapshot_id?: string | null
+  persist?: boolean
+}
+
+export interface ScenarioSimulatorOutcome {
+  candidate_id: string
+  course_of_action_id?: string
+  action: string
+  rationale?: string | null
+  ranking_score?: number
+  target_position?: Record<string, unknown>
+  exposure?: Record<string, unknown>
+  scenario_outcomes?: Array<Record<string, unknown>>
+  execution_assumptions?: Record<string, unknown>
+  execution_friction?: Record<string, unknown>
+  risk?: Record<string, unknown>
+  liquidity?: Record<string, unknown>
+  thesis_pressure?: Record<string, unknown>
+  uncertainty?: {
+    level?: string
+    missing_input_count?: number
+    notes?: string[]
+  }
+  policy_gate?: PolicyGateResult | null
+  provenance?: Record<string, unknown>
+}
+
+export interface ScenarioSimulatorEvaluateResponse {
+  simulation_id: string
+  calculation_version?: string
+  generated_at?: string
+  persisted?: boolean
+  execution_assumptions?: Record<string, unknown>
+  risk_provenance?: Record<string, unknown>
+  comparison?: {
+    ranking?: Array<Record<string, unknown>>
+    selection_policy?: string
+    summary_metrics?: Record<string, unknown>
+  }
+  outcomes?: ScenarioSimulatorOutcome[]
+}
+
+export const evaluateScenarioSimulator = (body: ScenarioSimulatorEvaluateRequest) =>
+  client
+    .post("/scenario-simulator/evaluate", body, { timeout: 120_000 })
+    .then(r => r.data as ScenarioSimulatorEvaluateResponse)
 
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running"; timeout_s?: number }
@@ -2725,13 +2919,124 @@ export const fetchLatestRecommendations = () =>
 export const fetchRecommendation = (id: number) =>
   client.get(`/recommendations/${id}`).then(r => r.data)
 
+export interface DecisionOutcomeRecord extends DecisionStateFields {
+  id?: string | number
+  object_uid?: string
+  decision_outcome_id?: string
+  source_kind?: string
+  recommendation_id?: string | null
+  course_of_action_id?: string | null
+  ticker?: string | null
+  as_of?: string | null
+  horizon?: string | null
+  outcome_status?: string
+  final_label_status?: string
+  process_label?: string | null
+  draft_postmortem?: string | null
+  final_postmortem?: string | null
+  lessons_learned?: string | null
+  learning_state?: string
+  requires_review?: boolean
+  metrics?: Record<string, unknown>
+  finalized_by?: string | null
+  finalized_at?: string | null
+}
+
+export const fetchDecisionOutcomes = (params?: {
+  ticker?: string
+  outcome_status?: string
+  final_label_status?: string
+  limit?: number
+}) => client.get("/decision-outcomes", { params }).then(r => r.data as {
+  decision_outcomes: DecisionOutcomeRecord[]
+  count: number
+})
+
+export const finalizeDecisionOutcome = (
+  decisionOutcomeId: string,
+  body: {
+    decision: "confirm" | "correct" | "reject"
+    note?: string
+    corrected_postmortem?: string
+    lessons_learned?: string
+  },
+) => client.post(`/decision-outcomes/${encodeURIComponent(decisionOutcomeId)}/finalize`, body).then(r => r.data)
+
 // Dossier
+export interface EvidenceLedgerCitation {
+  citation_id?: string | null
+  title?: string | null
+  url?: string | null
+  source_path?: string | null
+  source_record_id?: string | null
+}
+
+export interface EvidenceLedgerSourceRecord {
+  source_record_id?: string | null
+  source_name?: string | null
+  vendor?: string | null
+  quality?: string | null
+  status?: string | null
+  as_of?: string | null
+  load_time?: string | null
+}
+
+export interface EvidenceLedgerEvidence {
+  evidence_id?: string | null
+  evidence_type?: string | null
+  title?: string | null
+  summary?: string | null
+  source_record_id?: string | null
+  observed_at?: string | null
+  confidence?: number | null
+}
+
+export interface EvidenceLedgerBundle {
+  evidence: EvidenceLedgerEvidence
+  citations: EvidenceLedgerCitation[]
+  source_record?: EvidenceLedgerSourceRecord | null
+  relation_role?: string | null
+}
+
+export interface EvidenceLedgerClaimEntry {
+  claim_id?: string | null
+  claim?: string | null
+  status?: string | null
+  expected_evidence_text?: string | null
+  disconfirming_evidence_text?: string | null
+  supporting_evidence: EvidenceLedgerBundle[]
+  disconfirming_evidence: EvidenceLedgerBundle[]
+}
+
+export interface EvidenceLedgerRecommendationEntry {
+  recommendation_id?: string | null
+  action?: string | null
+  as_of?: string | null
+  status?: string | null
+  supporting_evidence: EvidenceLedgerBundle[]
+  disconfirming_evidence: EvidenceLedgerBundle[]
+}
+
+export interface EvidenceLedgerSummary {
+  ticker: string
+  generated_at?: string | null
+  claims: EvidenceLedgerClaimEntry[]
+  recommendations: EvidenceLedgerRecommendationEntry[]
+  counts?: {
+    claims?: number
+    recommendations?: number
+    evidence_items?: number
+  }
+}
+
 export const fetchDossier = (ticker: string) =>
   client.get(`/dossier/${encodeURIComponent(ticker)}`).then(r => r.data)
 
 // Approvals
 export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data as ApprovalListResponse)
+export const fetchApproval = (id: string) =>
+  client.get(`/approvals/${encodeURIComponent(id)}`).then(r => r.data as ApprovalRecord)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: string, note: string, requirement_id?: string) =>
@@ -2756,6 +3061,11 @@ export const fetchActions = (params?: { status?: string; ticker?: string }) =>
   client.get("/actions", { params }).then(r => r.data)
 export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string } & StagedMutationOptions) =>
   client.post("/actions", body).then(r => r.data as StagedMutationResponse)
+export const createDomainActionProposal = (
+  actionId: string,
+  body: { payload: Record<string, unknown>; reason: string },
+) =>
+  client.post(`/domain-actions/${encodeURIComponent(actionId)}/proposals`, body).then(r => r.data as StagedMutationResponse)
 export const completeAction = (id: number | string, resolution_note?: string, options?: StagedMutationOptions) =>
   client.put(`/actions/${encodeURIComponent(String(id))}/complete`, { resolution_note: resolution_note ?? "", ...options }).then(r => r.data as StagedMutationResponse)
 export const dismissAction = (id: number | string, options?: StagedMutationOptions) =>

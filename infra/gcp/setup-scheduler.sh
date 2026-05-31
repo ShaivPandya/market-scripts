@@ -7,6 +7,7 @@
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
 #   market-snapshot-refresh   15 23 * * 1-5 POST  /api/admin/jobs/enqueue-market-snapshot-refresh
 #   macro-snapshot-refresh    30 23 * * 1-5 POST  /api/admin/jobs/enqueue-macro-snapshot-refresh
+#   workspace-source-refresh  45 23 * * 1-5 POST  /api/admin/jobs/enqueue-workspace-source-refresh
 #   continuous-optimizer      15 10 * * 1-5 POST /api/admin/jobs/enqueue-continuous-optimizer
 #
 # Optional:
@@ -149,12 +150,19 @@ upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/admin/jobs/enqueue-asy
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
 upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/admin/jobs/enqueue-market-snapshot-refresh
 upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-30 23 * * 1-5}" /api/admin/jobs/enqueue-macro-snapshot-refresh
+upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-45 23 * * 1-5}" /api/admin/jobs/enqueue-workspace-source-refresh
 upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
 
 if is_truthy "${SCHEDULE_WATCH_TRIGGER_MONITOR:-0}"; then
   upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/admin/jobs/enqueue-watch-trigger-monitor
 else
   delete_scheduler_job_if_present watch-trigger-monitor
+fi
+
+if is_truthy "${SCHEDULE_CATALYST_KILL_MONITOR:-0}"; then
+  upsert_api_job catalyst-kill-monitor "${CATALYST_KILL_MONITOR_SCHEDULE:-0 15-21 * * 1-5}" /api/admin/jobs/enqueue-catalyst-kill-monitor
+else
+  delete_scheduler_job_if_present catalyst-kill-monitor
 fi
 
 if is_truthy "${SCHEDULE_GOVERNANCE_OUTBOX_DRAIN:-0}"; then

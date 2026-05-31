@@ -23,6 +23,26 @@ def test_expected_market_date_weekend_uses_previous_weekday():
     assert expected_market_date(now).isoformat() == "2026-05-08"
 
 
+def test_expected_market_date_uses_nyse_calendar_for_memorial_day():
+    now = datetime(2026, 5, 25, 18, 0, tzinfo=EASTERN)
+    assert expected_market_date(now).isoformat() == "2026-05-22"
+
+
+def test_expected_market_date_sunday_after_friday_close_uses_friday():
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=EASTERN)
+    assert expected_market_date(now).isoformat() == "2026-05-29"
+
+
+def test_expected_market_date_after_holiday_before_cutoff_uses_prior_session():
+    now = datetime(2026, 5, 26, 15, 30, tzinfo=EASTERN)
+    assert expected_market_date(now).isoformat() == "2026-05-22"
+
+
+def test_expected_market_date_after_holiday_after_cutoff_uses_current_session():
+    now = datetime(2026, 5, 26, 16, 30, tzinfo=EASTERN)
+    assert expected_market_date(now).isoformat() == "2026-05-26"
+
+
 def test_older_cached_as_of_requires_probe_even_when_age_under_ttl():
     now = datetime(2026, 5, 6, 16, 30, tzinfo=EASTERN)
     decision = market_cache_decision(

@@ -29,6 +29,7 @@ from ontology.schemas.identity import (
     course_of_action_dissent_id,
     course_of_action_id,
     course_of_action_rationale_id,
+    decision_outcome_id,
     document_artifact_id,
     equity_overview_id,
     evaluation_id,
@@ -59,9 +60,11 @@ from ontology.schemas.identity import (
     media_artifact_id,
     missing_information_requirement_id,
     model_call_ref_id,
+    monitor_hit_id,
     object_version_ref_id,
     observation_id,
     ontology_run_ref_id,
+    opportunity_candidate_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
@@ -120,6 +123,7 @@ from ontology.schemas.objects import (
     CourseOfActionComparison,
     CourseOfActionDissent,
     CourseOfActionRationale,
+    DecisionOutcome,
     DocumentArtifact,
     EquityOverview,
     Evaluation,
@@ -150,10 +154,12 @@ from ontology.schemas.objects import (
     MediaArtifact,
     MissingInformationRequirement,
     ModelCallRef,
+    MonitorHit,
     ObjectVersionRef,
     Observation,
     OntologyObject,
     OntologyRunRef,
+    OpportunityCandidate,
     OptimizationActionSnapshot,
     OptimizationAlert,
     OptimizationMission,
@@ -238,6 +244,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Evidence": Evidence,
     "Citation": Citation,
     "ActionItem": ActionItem,
+    "MonitorHit": MonitorHit,
     "WatchTrigger": WatchTrigger,
     "Approval": Approval,
     "ActionRun": ActionRun,
@@ -263,6 +270,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "CourseOfActionComparison": CourseOfActionComparison,
     "ScenarioAssumption": ScenarioAssumption,
     "SimulatedOutcome": SimulatedOutcome,
+    "DecisionOutcome": DecisionOutcome,
     "CourseOfActionRationale": CourseOfActionRationale,
     "CourseOfActionDissent": CourseOfActionDissent,
     "ReportRun": ReportRun,
@@ -283,6 +291,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "ThesisDocument": ThesisDocument,
     "ThesisSection": ThesisSection,
     "InvestmentIdea": InvestmentIdea,
+    "OpportunityCandidate": OpportunityCandidate,
     "IdeaEvaluation": IdeaEvaluation,
     "IdeaComparisonRun": IdeaComparisonRun,
     "IdeaComparisonRanking": IdeaComparisonRanking,
@@ -305,6 +314,7 @@ OPTIONAL_NODE_TYPES = {
     "KillCondition",
     "ThesisClaim",
     "ActionItem",
+    "MonitorHit",
     "WatchTrigger",
     "Approval",
     "ActionRun",
@@ -316,6 +326,7 @@ OPTIONAL_NODE_TYPES = {
     "CourseOfActionComparison",
     "ScenarioAssumption",
     "SimulatedOutcome",
+    "DecisionOutcome",
     "CourseOfActionRationale",
     "CourseOfActionDissent",
     "ReportRun",
@@ -350,6 +361,7 @@ OPTIONAL_NODE_TYPES = {
     "ThesisDocument",
     "ThesisSection",
     "InvestmentIdea",
+    "OpportunityCandidate",
     "IdeaEvaluation",
     "IdeaComparisonRun",
     "IdeaComparisonRanking",
@@ -671,6 +683,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return citation_id(model.citation_id)
     if isinstance(model, ActionItem):
         return action_item_id(model.description)
+    if isinstance(model, MonitorHit):
+        return monitor_hit_id(model.hit_id or model.fingerprint or f"{model.entity_id}:{model.hit_type}")
     if isinstance(model, WatchTrigger):
         return watch_trigger_id(model.trigger_id or model.condition)
     if isinstance(model, Approval):
@@ -734,6 +748,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return scenario_assumption_id(model.assumption_id)
     if isinstance(model, SimulatedOutcome):
         return simulated_outcome_id(model.outcome_id)
+    if isinstance(model, DecisionOutcome):
+        return decision_outcome_id(model.decision_outcome_id)
     if isinstance(model, CourseOfActionRationale):
         return course_of_action_rationale_id(model.rationale_id)
     if isinstance(model, CourseOfActionDissent):
@@ -774,6 +790,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return thesis_section_id(model.section_id)
     if isinstance(model, InvestmentIdea):
         return investment_idea_id(model.idea_id)
+    if isinstance(model, OpportunityCandidate):
+        return opportunity_candidate_id(model.candidate_id or model.idempotency_key)
     if isinstance(model, IdeaEvaluation):
         return idea_evaluation_id(model.evaluation_id)
     if isinstance(model, IdeaComparisonRun):
@@ -988,6 +1006,10 @@ def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
         return model.name
     if isinstance(model, InvestmentIdea):
         return model.ticker
+    if isinstance(model, OpportunityCandidate):
+        label = model.summary or model.trigger
+        ticker = model.ticker or "unknown"
+        return f"{ticker}: {label[:80]}"
     if isinstance(model, IdeaComparisonRanking):
         return f"{model.ticker} rank {model.rank}"
     if isinstance(model, CourseOfAction):
@@ -998,6 +1020,9 @@ def _label_for(node_type: str, label: str, model: OntologyObject) -> str:
         return model.name
     if isinstance(model, SimulatedOutcome):
         return f"Simulated outcome: {model.outcome_id}"
+    if isinstance(model, DecisionOutcome):
+        process = model.process_label or model.outcome_status
+        return f"Decision outcome: {process}"
     if isinstance(model, CourseOfActionRationale):
         return model.summary[:80]
     if isinstance(model, CourseOfActionDissent):

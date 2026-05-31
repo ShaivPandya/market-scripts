@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -11,6 +12,7 @@ from api.action_execution import execute_api_action
 from api.decision_state import normalize_approval
 from api.exceptions import AppError, ConflictError, NotFoundError, ValidationError
 from api.routers.auth import ActorDep
+from api.source_health import build_approval_source_health_review, build_workspace_source_health
 from ontology.command_service import (
     OntologyCommandConflict,
     OntologyCommandContext,
@@ -69,6 +71,52 @@ def _get_approval_record(approval_id: str, *, actor) -> dict[str, Any]:
         raise NotFoundError("Approval", str(approval_id)) from exc
 
 
+def _current_source_health_context() -> dict[str, Any] | None:
+    portfolio_risk = None
+    portfolio_data = None
+    regime_data = None
+    try:
+        from api.position_risk import get_latest_portfolio_risk
+
+        portfolio_risk = get_latest_portfolio_risk()
+    except Exception:
+        portfolio_risk = None
+    try:
+        from api.agent_tools import execute_tool
+
+        raw = execute_tool("get_portfolio", {})
+        portfolio_data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        portfolio_data = None
+    try:
+        from api.signal_snapshot import get_signal_aggregator_snapshot_or_module_response
+
+        regime_data = get_signal_aggregator_snapshot_or_module_response(
+            lookback_weeks=156,
+            include_raw_modules=False,
+        )
+    except Exception:
+        regime_data = None
+    try:
+        return build_workspace_source_health(
+            portfolio_risk=portfolio_risk if isinstance(portfolio_risk, dict) else None,
+            portfolio_data=portfolio_data if isinstance(portfolio_data, dict) else None,
+            regime_data=regime_data if isinstance(regime_data, dict) else None,
+        )
+    except Exception:
+        return None
+
+
+def _normalize_approval_response(
+    approval: dict[str, Any],
+    source_health: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    return normalize_approval(
+        approval,
+        source_health_review=build_approval_source_health_review(approval, source_health),
+    )
+
+
 @router.get("/approvals")
 def list_approvals(
     actor: ActorDep,
@@ -89,7 +137,10 @@ def list_approvals(
         )
     except ValueError as e:
         raise ValidationError(str(e)) from e
-    return {"approvals": [normalize_approval(a) for a in approvals], "count": len(approvals)}
+    source_health = _current_source_health_context()
+    normalized = [_normalize_approval_response(a, source_health) for a in approvals]
+    normalized = [a for a in normalized if a is not None]
+    return {"approvals": normalized, "count": len(normalized)}
 
 
 @router.get("/approvals/summary")
@@ -112,9 +163,10 @@ def approval_summary(
         )
     except ValueError as e:
         raise ValidationError(str(e)) from e
+    source_health = _current_source_health_context()
     normalized: list[dict[str, Any]] = []
     for approval in approvals:
-        normalized_approval = normalize_approval(approval)
+        normalized_approval = _normalize_approval_response(approval, source_health)
         if normalized_approval is not None:
             normalized.append(normalized_approval)
 
@@ -140,7 +192,8 @@ def approval_summary(
 def get_approval(approval_id: str, actor: ActorDep):
     approval = _get_approval_record(approval_id, actor=actor)
     approval["provenance_summary"] = {"selector": {"approval_id": approval.get("id")}, "lineage_state": "ontology"}
-    return normalize_approval(approval)
+    source_health = _current_source_health_context()
+    return _normalize_approval_response(approval, source_health)
 
 
 @router.post("/approvals/{approval_id}/approve")
@@ -229,10 +282,11 @@ def reject_and_restage_item(approval_id: str, actor: ActorDep, body: ResolveRequ
         source_id="approvals.reject_and_restage",
         actor=actor,
     )
+    source_health = _current_source_health_context()
     return {
         "status": "replacement_created",
-        "original": normalize_approval(original),
-        "replacement": normalize_approval(replacement),
+        "original": _normalize_approval_response(original, source_health),
+        "replacement": _normalize_approval_response(replacement, source_health),
     }
 
 
@@ -277,10 +331,11 @@ def replace_item(approval_id: str, body: ReplaceWatchTriggerApprovalRequest, act
         source_id="approvals.replace",
         actor=actor,
     )
+    source_health = _current_source_health_context()
     return {
         "status": "replacement_created",
-        "original": normalize_approval(original),
-        "replacement": normalize_approval(replacement),
+        "original": _normalize_approval_response(original, source_health),
+        "replacement": _normalize_approval_response(replacement, source_health),
     }
 
 

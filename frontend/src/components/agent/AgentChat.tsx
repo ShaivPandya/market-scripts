@@ -246,7 +246,7 @@ export function AgentChat({
     if (lastConsumedCommandRef.current === command) return
     lastConsumedCommandRef.current = command
     pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(command)
-    setActivePanel("chat")
+    window.setTimeout(() => setActivePanel("chat"), 0)
     sendMessage(command, screenContext, activePreferences, { durable: pendingCommand.durable ?? true })
     onPendingCommandConsumed?.()
   }, [

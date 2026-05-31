@@ -148,3 +148,66 @@ def test_workflow_artifacts_skip_review_action_items_but_stage_research_items(mo
     assert len(writes) == 2
     assert [call["action_id"] for call in calls] == ["create_action_item"]
     assert calls[0]["payload"]["action_type"] == "research"
+
+
+def test_workflow_artifacts_persist_metadata_and_proposal_context(monkeypatch):
+    from api import workflow_artifacts
+
+    calls: list[dict[str, Any]] = []
+    writes: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow_artifacts, "OntologyCommandService", lambda: _FakeCommandService(calls))
+    monkeypatch.setattr(workflow_artifacts, "OntologyObjectService", lambda: _FakeObjectService(writes))
+    monkeypatch.setattr(workflow_artifacts, "emit_audit_event", lambda *args, **kwargs: None)
+
+    count = workflow_artifacts.persist_artifacts(
+        "workflow:thesis_review:unit",
+        "MU",
+        {
+            "evaluation_draft": {"ticker": "MU", "thesis_status": "watch", "confidence": 0.4},
+            "action_items": [
+                {"description": "Research MU HBM pricing into earnings", "action_type": "research", "urgency": "normal"}
+            ],
+        },
+    )
+
+    assert count == 2
+    assert len(writes) == 2
+    assert [call["action_id"] for call in calls] == ["save_evaluation", "create_action_item"]
+    for write, call in zip(writes, calls, strict=True):
+        props = write["properties"]
+        assert write["object_type"] == "WorkflowArtifact"
+        assert write["business_key"].startswith("workflow_artifact:")
+        assert props["workflow_run_id"] == "workflow:thesis_review:unit"
+        assert props["state"] == "proposed"
+        assert props["artifact_hash"]
+        assert props["provenance_event_id"].startswith("pv:workflow_artifact:workflow:thesis_review:unit:")
+        assert props["metadata"]["ticker"] == "MU"
+        assert "payload" in props["metadata"]
+        assert write["kwargs"]["provenance"] == props["provenance_event_id"]
+        assert call["source_type"] == "workflow"
+        assert call["source_id"] == "workflow:thesis_review:unit"
+        assert call["entity_id"] == write["business_key"]
+
+
+def test_workflow_artifacts_fail_closed_for_malformed_or_incomplete_artifacts(monkeypatch):
+    from api import workflow_artifacts
+
+    calls: list[dict[str, Any]] = []
+    writes: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow_artifacts, "OntologyCommandService", lambda: _FakeCommandService(calls))
+    monkeypatch.setattr(workflow_artifacts, "OntologyObjectService", lambda: _FakeObjectService(writes))
+    monkeypatch.setattr(workflow_artifacts, "emit_audit_event", lambda *args, **kwargs: None)
+
+    count = workflow_artifacts.persist_artifacts(
+        "workflow:thesis_review:unit",
+        "MU",
+        {
+            "evaluation_draft": {"ticker": "MU"},
+            "action_items": [{"action_type": "research"}],
+            "watch_triggers": "not-a-list",
+        },
+    )
+
+    assert count == 0
+    assert calls == []
+    assert writes == []
