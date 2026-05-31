@@ -108,23 +108,33 @@ def expected_market_date(
     else:
         local = current.astimezone(MARKET_TIMEZONE)
     current_date = local.date()
-    reference_date = current_date if local.time() >= after_close_cutoff else current_date - timedelta(days=1)
+    reference_date = (
+        current_date
+        if local.time() >= after_close_cutoff
+        else current_date - timedelta(days=1)
+    )
     return previous_market_session(reference_date, calendar_id=calendar_id)
 
 
-def previous_market_session(value: date, *, calendar_id: str = DEFAULT_MARKET_CALENDAR_ID) -> date:
+def previous_market_session(
+    value: date, *, calendar_id: str = DEFAULT_MARKET_CALENDAR_ID
+) -> date:
     try:
         import pandas as pd
 
         calendar = _exchange_calendar(calendar_id)
-        session = calendar.date_to_session(pd.Timestamp(value), direction="previous")
+        timestamp = pd.Timestamp(value)
+        try:
+            session = calendar.date_to_session(timestamp, direction="none")
+        except ValueError:
+            session = calendar.date_to_session(timestamp, direction="previous")
         return session.date()
     except Exception:
         return previous_business_day(value)
 
 
 def previous_business_day(value: date) -> date:
-    cur = value - timedelta(days=1)
+    cur = value
     while cur.weekday() >= 5:
         cur -= timedelta(days=1)
     return cur
@@ -172,7 +182,9 @@ def evaluate_source_freshness(
 
     if normalized_policy == "market_session":
         observed = parse_market_date(value)
-        expected = expected_market_date(now=local_now, calendar_id=calendar_id or DEFAULT_MARKET_CALENDAR_ID)
+        expected = expected_market_date(
+            now=local_now, calendar_id=calendar_id or DEFAULT_MARKET_CALENDAR_ID
+        )
         fresh = observed is not None and observed >= expected
         return SourceFreshnessState(
             policy="market_session",
@@ -181,12 +193,14 @@ def evaluate_source_freshness(
             observed_as_of_date=observed.isoformat() if observed is not None else None,
             expected_as_of_date=expected.isoformat(),
             calendar_id=calendar_id or DEFAULT_MARKET_CALENDAR_ID,
-            reason=None
-            if fresh
-            else (
-                "snapshot has no parseable as-of date"
-                if observed is None
-                else f"snapshot as-of {observed.isoformat()} is older than required market session {expected.isoformat()}"
+            reason=(
+                None
+                if fresh
+                else (
+                    "snapshot has no parseable as-of date"
+                    if observed is None
+                    else f"snapshot as-of {observed.isoformat()} is older than required market session {expected.isoformat()}"
+                )
             ),
         )
 
@@ -202,12 +216,14 @@ def evaluate_source_freshness(
             observed_as_of_date=observed.isoformat() if observed is not None else None,
             max_age_days=window_days,
             oldest_acceptable_date=oldest_acceptable.isoformat(),
-            reason=None
-            if fresh
-            else (
-                "snapshot has no parseable as-of date"
-                if observed is None
-                else f"snapshot as-of {observed.isoformat()} is older than freshness window {oldest_acceptable.isoformat()}"
+            reason=(
+                None
+                if fresh
+                else (
+                    "snapshot has no parseable as-of date"
+                    if observed is None
+                    else f"snapshot as-of {observed.isoformat()} is older than freshness window {oldest_acceptable.isoformat()}"
+                )
             ),
         )
 
@@ -218,15 +234,21 @@ def evaluate_source_freshness(
         policy="elapsed",
         fresh=fresh,
         basis="fetched_at",
-        observed_as_of_date=parse_market_date(value).isoformat() if parse_market_date(value) is not None else None,
+        observed_as_of_date=(
+            parse_market_date(value).isoformat()
+            if parse_market_date(value) is not None
+            else None
+        ),
         age_seconds=age_seconds,
         max_age_seconds=max_age,
-        reason=None
-        if fresh
-        else (
-            "snapshot has no parseable fetched timestamp"
-            if age_seconds is None
-            else f"snapshot age {age_seconds}s exceeds freshness SLA {max_age}s"
+        reason=(
+            None
+            if fresh
+            else (
+                "snapshot has no parseable fetched timestamp"
+                if age_seconds is None
+                else f"snapshot age {age_seconds}s exceeds freshness SLA {max_age}s"
+            )
         ),
     )
 
@@ -246,7 +268,8 @@ def build_market_cache_metadata(
         "status": status,
         "stale": stale,
         "cached_as_of": cached_as_of,
-        "expected_market_date": expected_market_date_value or expected_market_date().isoformat(),
+        "expected_market_date": expected_market_date_value
+        or expected_market_date().isoformat(),
         "latest_close": latest_close,
         "reason": reason,
     }
@@ -280,7 +303,9 @@ def metadata_from_decision(
     return meta
 
 
-def attach_market_cache_metadata(payload: dict[str, Any], market_cache: dict[str, Any]) -> dict[str, Any]:
+def attach_market_cache_metadata(
+    payload: dict[str, Any], market_cache: dict[str, Any]
+) -> dict[str, Any]:
     out = dict(payload)
     raw_meta = out.get("_meta")
     meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}

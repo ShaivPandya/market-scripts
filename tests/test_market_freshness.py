@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from utils.market_freshness import expected_market_date, market_cache_decision
+from utils.market_freshness import (
+    expected_market_date,
+    market_cache_decision,
+    previous_market_session,
+)
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -16,6 +20,27 @@ def test_expected_market_date_before_cutoff_uses_previous_business_day():
 def test_expected_market_date_after_cutoff_uses_current_business_day():
     now = datetime(2026, 5, 6, 16, 30, tzinfo=EASTERN)
     assert expected_market_date(now).isoformat() == "2026-05-06"
+
+
+def test_previous_market_session_keeps_current_trading_day():
+    assert (
+        previous_market_session(datetime(2026, 5, 6, tzinfo=EASTERN).date()).isoformat()
+        == "2026-05-06"
+    )
+
+
+def test_previous_market_session_fallback_keeps_current_weekday(monkeypatch):
+    def raise_calendar_error(calendar_id: str):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(
+        "utils.market_freshness._exchange_calendar", raise_calendar_error
+    )
+
+    assert (
+        previous_market_session(datetime(2026, 5, 6, tzinfo=EASTERN).date()).isoformat()
+        == "2026-05-06"
+    )
 
 
 def test_expected_market_date_weekend_uses_previous_weekday():
