@@ -68,6 +68,14 @@ _REGIME_MODULE_SNAPSHOT_KEYS = {
     "momentum": SNAPSHOT_MOMENTUM,
 }
 
+_APPROVAL_SOURCE_DEPENDENCY_FIELDS = (
+    "source_dependencies",
+    "required_sources",
+    "source_requirements",
+    "source_ids",
+    "required_source_ids",
+)
+
 
 def build_workspace_source_health(
     *,
@@ -131,6 +139,42 @@ def build_workspace_source_health(
         "overall_quality": _overall_quality(sources),
         "counts": counts,
         "domains": domains,
+    }
+
+
+def build_approval_source_health_review(
+    approval: dict[str, Any] | None,
+    source_health: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Summarize source-health issues that matter during approval review."""
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    explicit_dependencies = _approval_source_dependencies(approval)
+
+    for source in _source_health_sources(source_health):
+        status = str(source.get("status") or "missing").strip().lower()
+        required = bool(source.get("required"))
+        explicit = _source_matches_dependency(source, explicit_dependencies)
+        if status in {"failed", "missing"} and (required or explicit):
+            blockers.append(_approval_source_issue(source, reason="required source unavailable"))
+            continue
+        if status == "stale" and explicit:
+            blockers.append(_approval_source_issue(source, reason="explicit source dependency is stale"))
+            continue
+        if required and status in {"stale", "degraded"}:
+            warnings.append(_approval_source_issue(source, reason="required source needs review"))
+            continue
+        if not required and status in {"degraded", "stale", "failed", "missing"}:
+            warnings.append(_approval_source_issue(source, reason="optional source degraded"))
+            continue
+        if explicit and status == "degraded":
+            warnings.append(_approval_source_issue(source, reason="explicit source dependency is degraded"))
+
+    return {
+        "status": "blocked" if blockers else "warning" if warnings else "ok",
+        "blockers": blockers,
+        "warnings": warnings,
+        "generated_at": (source_health or {}).get("generated_at") if isinstance(source_health, dict) else None,
     }
 
 
@@ -533,3 +577,93 @@ def _domain_label(domain: str) -> str:
 
 def _source_name_from_snapshot_key(snapshot_key: str) -> str:
     return str(snapshot_key or "source").split(":", 1)[0] or "source"
+
+
+def _source_health_sources(source_health: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(source_health, dict):
+        return []
+    sources: list[dict[str, Any]] = []
+    for domain in source_health.get("domains") or []:
+        if not isinstance(domain, dict):
+            continue
+        for source in domain.get("sources") or []:
+            if isinstance(source, dict):
+                sources.append(source)
+    return sources
+
+
+def _approval_source_dependencies(approval: dict[str, Any] | None) -> set[str]:
+    if not isinstance(approval, dict):
+        return set()
+    proposed = _as_dict(approval.get("proposed_change")) or {}
+    record = _as_dict(proposed.get("record")) or {}
+    policy_gate = _as_dict(approval.get("policy_gate_result")) or _as_dict(proposed.get("policy_gate_result")) or {}
+    dependencies: set[str] = set()
+    for container in (approval, proposed, record, policy_gate):
+        for field in _APPROVAL_SOURCE_DEPENDENCY_FIELDS:
+            dependencies.update(_source_dependency_values(container.get(field)))
+    return dependencies
+
+
+def _source_dependency_values(value: Any) -> set[str]:
+    values: set[str] = set()
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text:
+            values.add(text)
+        return values
+    if isinstance(value, dict):
+        has_identity = any(field in value for field in ("id", "source_id", "snapshot_key", "source_name", "name"))
+        for field in ("id", "source_id", "snapshot_key", "source_name", "name"):
+            raw = value.get(field)
+            if raw is not None:
+                values.update(_source_dependency_values(raw))
+        if has_identity:
+            return values
+        for key, raw in value.items():
+            if raw in (None, "", False):
+                continue
+            values.update(_source_dependency_values(key))
+            if isinstance(raw, (str, dict, list, tuple, set)):
+                values.update(_source_dependency_values(raw))
+        return values
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            values.update(_source_dependency_values(item))
+    return values
+
+
+def _source_matches_dependency(source: dict[str, Any], dependencies: set[str]) -> bool:
+    if not dependencies:
+        return False
+    aliases = {
+        str(source.get("id") or "").strip().lower(),
+        str(source.get("source_name") or "").strip().lower(),
+        str(source.get("snapshot_key") or "").strip().lower(),
+    }
+    registry = source.get("source_registry")
+    if isinstance(registry, dict):
+        aliases.add(str(registry.get("source_id") or "").strip().lower())
+    return any(alias and alias in dependencies for alias in aliases)
+
+
+def _approval_source_issue(source: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "id": source.get("id"),
+        "source_name": source.get("source_name"),
+        "domain": source.get("domain"),
+        "status": source.get("status"),
+        "quality_state": source.get("quality_state"),
+        "required": bool(source.get("required")),
+        "as_of": source.get("as_of"),
+        "fetched_at": source.get("fetched_at"),
+        "freshness_timestamp": source.get("freshness_timestamp"),
+        "detail": source.get("detail"),
+        "reason": reason,
+    }
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    return None

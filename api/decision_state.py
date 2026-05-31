@@ -363,12 +363,19 @@ def _recommendation_decision_state(record: dict[str, Any]) -> str:
     return "recommendation"
 
 
-def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
+def normalize_approval(
+    record: dict[str, Any] | None,
+    *,
+    source_health_review: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Return an approval with additive normalized decision fields."""
 
     if record is None:
         return None
     out = deepcopy(record)
+    review = _as_dict(source_health_review) or _as_dict(out.get("source_health_review"))
+    if review is not None:
+        out["source_health_review"] = deepcopy(review)
     _filter_top_level_policy_fields(out)
     status = str(out.get("status") or "pending").strip().lower()
     application_status = str(out.get("application_status") or "pending").strip().lower()
@@ -398,10 +405,12 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
     base_state = _approval_base_state(out)
     out.update(base_state)
     is_stale = base_state["base_state_status"] == "stale"
+    source_health_blocked = str((review or {}).get("status") or "").strip().lower() == "blocked"
     out["can_approve"] = (
         status == "pending"
         and application_status in {"pending", "failed"}
         and not is_stale
+        and not source_health_blocked
         and (not approval_progress["completed"] or application_status == "failed")
     )
     out["can_reject"] = status == "pending"

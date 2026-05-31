@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from api.snapshot_store import SnapshotRecord
-from api.source_health import build_workspace_source_health
+from api.source_health import build_approval_source_health_review, build_workspace_source_health
 
 
 def _snapshot(
@@ -162,3 +162,72 @@ def test_source_health_degraded_optional_is_not_required_failure():
     assert sources["housing:current:v1"]["required"] is False
     assert sources["housing:current:v1"]["status"] == "degraded"
     assert payload["counts"]["optional_degraded"] == 1
+
+
+def test_approval_source_health_blocks_required_missing_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(now=now, snapshot_records=[])
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "blocked"
+    assert any(row["status"] == "missing" and row["required"] is True for row in review["blockers"])
+
+
+def test_approval_source_health_warns_on_required_stale_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=now - timedelta(days=3)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "warning"
+    assert review["blockers"] == []
+    assert any(row["id"] == "market_breadth:sp500:1y" for row in review["warnings"])
+
+
+def test_approval_source_health_blocks_explicit_stale_dependency():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("housing:current:v1", fetched_at=now - timedelta(days=3)),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review(
+        {
+            "id": "approval:1",
+            "proposed_change": {"source_dependencies": ["housing:current:v1"]},
+        },
+        payload,
+    )
+
+    assert review["status"] == "blocked"
+    assert review["blockers"][0]["id"] == "housing:current:v1"
+
+
+def test_approval_source_health_warns_on_optional_degraded_source():
+    now = datetime(2026, 5, 14, 18, 0)
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("housing:current:v1", fetched_at=now - timedelta(hours=1), status="error", error="timeout"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    review = build_approval_source_health_review({"id": "approval:1", "proposed_change": {}}, payload)
+
+    assert review["status"] == "warning"
+    assert review["blockers"] == []
+    assert review["warnings"][0]["id"] == "housing:current:v1"

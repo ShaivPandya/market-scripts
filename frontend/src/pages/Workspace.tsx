@@ -366,6 +366,70 @@ function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
   )
 }
 
+type ApprovalSourceHealthReview = NonNullable<ApprovalRecord["source_health_review"]>
+type ApprovalSourceHealthIssue = ApprovalSourceHealthReview["blockers"][number]
+
+function approvalSourceHealthClass(status: string | null | undefined): string {
+  const value = String(status || "ok")
+  if (value === "blocked") return "theme-badge-error"
+  if (value === "warning") return "theme-badge-warning"
+  return "theme-badge-success"
+}
+
+function approvalSourceHealthLabel(review: ApprovalSourceHealthReview): string {
+  const blockers = review.blockers?.length ?? 0
+  const warnings = review.warnings?.length ?? 0
+  if (blockers > 0) return `${blockers} source blocker${blockers === 1 ? "" : "s"}`
+  if (warnings > 0) return `${warnings} source warning${warnings === 1 ? "" : "s"}`
+  return "Sources ok"
+}
+
+function ApprovalSourceHealthBadge({ review }: { review?: ApprovalRecord["source_health_review"] }) {
+  if (!review || review.status === "ok") return null
+  return (
+    <span className={cn("theme-badge inline-flex items-center gap-1", approvalSourceHealthClass(review.status))}>
+      <Database size={12} aria-hidden="true" />
+      {approvalSourceHealthLabel(review)}
+    </span>
+  )
+}
+
+function approvalSourceIssueLabel(issue: ApprovalSourceHealthIssue): string {
+  return String(issue.source_name || issue.id || "source").replace(/_/g, " ")
+}
+
+function ApprovalSourceHealthPanel({ review }: { review?: ApprovalRecord["source_health_review"] }) {
+  if (!review || review.status === "ok") return null
+  const rows = [
+    ...(review.blockers ?? []).map(issue => ({ ...issue, severity: "blocked" })),
+    ...(review.warnings ?? []).map(issue => ({ ...issue, severity: "warning" })),
+  ]
+  return (
+    <div className={cn("rounded-lg border px-3 py-2 text-sm", review.status === "blocked" ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200")}>
+      <div className="mb-2 flex flex-wrap items-center gap-2 font-medium">
+        <Database size={14} aria-hidden="true" />
+        <span>{approvalSourceHealthLabel(review)}</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map((issue, idx) => (
+          <div key={`${issue.id || issue.source_name || "source"}-${issue.severity}-${idx}`} className="grid gap-1 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <span className="font-medium capitalize">{approvalSourceIssueLabel(issue)}</span>
+              {issue.reason && <span className="ml-2 text-current/75">{issue.reason}</span>}
+              {issue.detail && <span className="ml-2 text-current/75">{issue.detail}</span>}
+            </div>
+            <div className="flex flex-wrap gap-2 text-current/75 sm:justify-end">
+              <span>{sourceHealthLabel(issue.status)}</span>
+              <span>{issue.required ? "required" : "optional"}</span>
+              <span>{formatTime(issue.freshness_timestamp ?? issue.as_of ?? issue.fetched_at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function policyGateFromRecommendation(rec: RecommendationRecord): PolicyGateResult | null {
   if (rec.policy_gate) return rec.policy_gate
   if (!rec.policy_gate_decision) return null
@@ -1074,6 +1138,7 @@ export function Workspace() {
                           <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
                           <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
                           <QualityStateBadge state={a.quality_state ?? "missing"} />
+                          <ApprovalSourceHealthBadge review={a.source_health_review} />
                         </div>
                         {displayReason && (
                           <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
@@ -1355,6 +1420,7 @@ export function Workspace() {
               <EffectScopeBadge scope={approvalReview.effect_scope ?? "internal_state"} />
               <PolicyStateBadge state={approvalReview.policy_state ?? policyGateFromApproval(approvalReview)?.decision ?? "missing"} />
               <QualityStateBadge state={approvalReview.quality_state ?? "missing"} />
+              <ApprovalSourceHealthBadge review={approvalReview.source_health_review} />
             </div>
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -1379,6 +1445,7 @@ export function Workspace() {
                 {approvalReview.base_state_message || "The underlying state changed after this proposal was created."}
               </div>
             )}
+            <ApprovalSourceHealthPanel review={approvalReview.source_health_review} />
             <div>
               <label htmlFor="approval-note" className="theme-field-label">
                 Decision note

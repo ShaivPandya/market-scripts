@@ -181,6 +181,47 @@ def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeyp
     assert untracked["can_approve"] is True
 
 
+def test_normalize_approval_source_health_blocker_disables_approval():
+    blocked = normalize_approval(
+        {
+            "id": "approval:blocked",
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item",
+            "action_id": "create_action_item",
+            "proposed_change": {"description": "Review MU"},
+        },
+        source_health_review={
+            "status": "blocked",
+            "blockers": [{"id": "portfolio", "status": "missing", "required": True}],
+            "warnings": [],
+            "generated_at": "2026-05-14T18:00:00",
+        },
+    )
+    assert blocked is not None
+    assert blocked["source_health_review"]["status"] == "blocked"
+    assert blocked["can_approve"] is False
+
+    warning = normalize_approval(
+        {
+            "id": "approval:warning",
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item",
+            "action_id": "create_action_item",
+            "proposed_change": {"description": "Review MU"},
+        },
+        source_health_review={
+            "status": "warning",
+            "blockers": [],
+            "warnings": [{"id": "market_breadth:sp500:1y", "status": "stale", "required": True}],
+            "generated_at": "2026-05-14T18:00:00",
+        },
+    )
+    assert warning is not None
+    assert warning["can_approve"] is True
+
+
 def test_normalize_approval_recomputes_base_state_in_ontology_primary_mode(monkeypatch):
     import ontology.action_registry as action_registry
 
@@ -483,3 +524,14 @@ def test_workspace_source_health_panel_is_wired():
     assert "stale required" in workspace
     assert "optional degraded" in workspace
     assert "theme-badge-error" in workspace
+
+
+def test_workspace_approval_source_health_review_is_wired():
+    workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
+    api_types = (ROOT / "frontend/src/lib/api.ts").read_text()
+
+    assert "ApprovalSourceHealthBadge" in workspace
+    assert "ApprovalSourceHealthPanel" in workspace
+    assert "source blocker" in workspace
+    assert "source warning" in workspace
+    assert "source_health_review" in api_types

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
 from api.llm_settings import get_setting, set_setting
-from api.source_health import build_workspace_source_health
+from api.source_health import build_approval_source_health_review, build_workspace_source_health
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -257,7 +257,13 @@ def get_workspace():
         pass
 
     # Pending approvals
-    pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
+    pending_approvals = [
+        normalize_approval(
+            a,
+            source_health_review=build_approval_source_health_review(a, source_health),
+        )
+        for a in ontology_bundle.get("pending_approvals", [])
+    ]
     recommendation_approvals = [
         a
         for a in pending_approvals

@@ -167,6 +167,27 @@ export interface ApprovalProgress {
   remaining_requirements: ApprovalRequirement[]
 }
 
+export interface ApprovalSourceHealthIssue {
+  id?: string | null
+  source_name?: string | null
+  domain?: string | null
+  status?: string | null
+  quality_state?: string | null
+  required?: boolean
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness_timestamp?: string | null
+  detail?: string | null
+  reason?: string | null
+}
+
+export interface ApprovalSourceHealthReview {
+  status: "ok" | "warning" | "blocked" | string
+  blockers: ApprovalSourceHealthIssue[]
+  warnings: ApprovalSourceHealthIssue[]
+  generated_at?: string | null
+}
+
 export interface ApprovalRecord extends DecisionStateFields {
   id: string
   status?: string | null
@@ -191,6 +212,7 @@ export interface ApprovalRecord extends DecisionStateFields {
   approval_policy_rule_id?: string | null
   approval_policy_reason?: string | null
   policy_gate?: PolicyGateResult | null
+  source_health_review?: ApprovalSourceHealthReview | null
   can_approve?: boolean
   can_reject?: boolean
   can_retry_apply?: boolean
