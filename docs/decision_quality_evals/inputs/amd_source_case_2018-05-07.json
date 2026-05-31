@@ -1,0 +1,266 @@
+{
+  "ticker": "AMD",
+  "company_name": "Advanced Micro Devices",
+  "as_of_date": "2018-05-07",
+  "source_type": "user_provided_deep_research_distilled_to_as_of_content",
+  "source_summary": "As of the May 7, 2018 close, AMD had just reported a strong Q1 2018, guided Q2 above prior-year levels, and showed improving margins from Ryzen, Radeon, and EPYC products. The key point-in-time change was that AMD's own execution evidence arrived almost simultaneously with Intel's April 26, 2018 disclosure that 10nm volume production had moved from the second half of 2018 into 2019. The buy thesis was that the market remained anchored to AMD's prior low-margin history and crypto GPU risk while underpricing the server CPU share-gain option from EPYC and the Zen roadmap.",
+  "source_register": [
+    {
+      "source_name": "AMD Reports First Quarter 2018 Financial Results",
+      "publication_date": "2018-04-25",
+      "url": "https://ir.amd.com/news-events/press-releases/detail/829/amd-reports-first-quarter-2018-financial-results",
+      "source_type": "company_release",
+      "available_before_decision": true,
+      "key_facts": [
+        "Q1 2018 revenue was $1.65B, up 40% YoY and 23% QoQ.",
+        "Gross margin was 36%, up 4 percentage points YoY and 2 percentage points QoQ.",
+        "GAAP operating income was $120M and non-GAAP operating income was $152M.",
+        "Cash and cash equivalents were $1.04B.",
+        "Computing and Graphics revenue was $1.12B, up 95% YoY, driven by Radeon and Ryzen.",
+        "EESC revenue was $532M, down 12% YoY but up 23% QoQ, driven by semi-custom, embedded, and EPYC revenue.",
+        "Q2 2018 guidance was revenue of approximately $1.725B plus or minus $50M and non-GAAP gross margin of approximately 37%."
+      ]
+    },
+    {
+      "source_name": "AMD Q1 2018 Form 10-Q",
+      "publication_date": "2018-04-26",
+      "url": "https://www.sec.gov/Archives/edgar/data/2488/000000248818000068/amd0331201810q.htm",
+      "source_type": "primary_filing",
+      "available_before_decision": true,
+      "key_facts": [
+        "Cash and cash equivalents were $1.045B.",
+        "Short-term debt was $223M and long-term debt was $1.165B.",
+        "Current assets were $2.751B versus current liabilities of $1.697B.",
+        "AMD listed risks including Intel's dominance, foundry execution, third-party manufacturing yields, product timing, cyclicality, customer concentration, debt obligations, and dilution risk."
+      ]
+    },
+    {
+      "source_name": "AMD Q1 2018 Earnings Call Transcript",
+      "publication_date": "2018-04-25",
+      "url": "https://www.alphaspread.com/de/security/nasdaq/amd/investor-relations/earnings-call/q1-2018",
+      "source_type": "transcript",
+      "available_before_decision": true,
+      "key_facts": [
+        "Management attributed growth to Ryzen, Radeon, and EPYC product ramps.",
+        "The user-provided research notes that blockchain-related revenue was approximately 10% of Q1 revenue, making crypto a real but non-majority contributor."
+      ]
+    },
+    {
+      "source_name": "Intel Q1 2018 Earnings Conference Call",
+      "publication_date": "2018-04-26",
+      "url": "https://www.intc.com/news-events/ir-calendar/detail/20180426-q1-2018-intel-corporation-earnings-conference-call",
+      "source_type": "company_event",
+      "available_before_decision": true,
+      "key_facts": [
+        "Intel's Q1 2018 call was available from Intel investor relations before the AMD decision date.",
+        "Intel reported strong Q1 results, so the AMD thesis could not rely on Intel being financially weak."
+      ]
+    },
+    {
+      "source_name": "Intel Q1 2018 Earnings Call Transcript",
+      "publication_date": "2018-04-26",
+      "url": "https://www.fool.com/earnings/call-transcripts/2018/04/26/intel-corporation-intc-q1-2018-earnings-conference.aspx",
+      "source_type": "transcript",
+      "available_before_decision": true,
+      "key_facts": [
+        "Intel said it was shipping 10nm in low volume, yields were improving more slowly than anticipated, and volume production was moving from the second half of 2018 into 2019.",
+        "Intel planned to rely on 14nm optimizations and roadmap products such as Whiskey Lake and Cascade Lake."
+      ]
+    },
+    {
+      "source_name": "Markets Insider AMD earnings coverage",
+      "publication_date": "2018-04-26",
+      "url": "https://markets.businessinsider.com/currencies/news/amd-stock-price-earnings-per-share-revenue-sales-q1-2018-4-1022301661",
+      "source_type": "analyst_news",
+      "available_before_decision": true,
+      "key_facts": [
+        "Contemporaneous market coverage highlighted AMD's strong earnings reaction and ongoing debate around crypto-driven GPU demand."
+      ]
+    },
+    {
+      "source_name": "TechPowerUp AMD crypto-mining estimate coverage",
+      "publication_date": "2018-03-27",
+      "url": "https://www.techpowerup.com/242812/amd-corrects-analysts-cryptomining-revenue-estimate-in-defense-of-its-share-value",
+      "source_type": "analyst_news",
+      "available_before_decision": true,
+      "key_facts": [
+        "Contemporaneous coverage shows that crypto-mining exposure and GPU sustainability were active bear-case topics before the May 7 decision date."
+      ]
+    }
+  ],
+  "excluded_or_cautioned_sources": [
+    {
+      "source_category": "Post-May 7, 2018 company announcements, earnings reports, and press coverage",
+      "reason": "Excluded from solver evidence to avoid look-ahead bias."
+    },
+    {
+      "source_category": "Social media, unrelated SEC/XBRL links, and low-probative market-data placeholders in the source markdown",
+      "reason": "Not stable or not directly probative enough for the eval case; not used as core evidence."
+    }
+  ],
+  "decision_setup": {
+    "decision_context": "New AMD long after the May 7, 2018 close.",
+    "market_sentiment": "Polarized. AMD had reported strong Q1 results, but investor skepticism remained around crypto GPU demand, historical AMD execution, Intel's incumbent dominance, AMD's lower margins, and semiconductor cyclicality.",
+    "valuation_context": "The user-provided research frames AMD's enterprise value around $11B-$12B at the decision price, far below Intel's market value. The actionable mispricing was not that AMD was optically cheap on trailing earnings, but that even modest future server CPU share could be material to AMD's earnings power.",
+    "reason_now": "AMD's Q1 earnings and Q2 guidance showed revenue growth, operating leverage, and margin improvement, while Intel's 10nm delay created a more credible multi-quarter window for AMD's Zen and EPYC roadmap."
+  },
+  "q1_2018_financials": {
+    "revenue_billion": 1.65,
+    "revenue_yoy_growth": "40%",
+    "revenue_qoq_growth": "23%",
+    "gross_margin": "36%",
+    "gross_margin_yoy_change": "+4 percentage points",
+    "gross_margin_qoq_change": "+2 percentage points",
+    "gaap_operating_income_million": 120,
+    "non_gaap_operating_income_million": 152,
+    "gaap_net_income_million": 81,
+    "non_gaap_net_income_million": 121,
+    "gaap_diluted_eps": 0.08,
+    "non_gaap_diluted_eps": 0.11,
+    "cash_and_equivalents_billion": 1.045,
+    "short_term_debt_million": 223,
+    "long_term_debt_billion": 1.165,
+    "current_assets_billion": 2.751,
+    "current_liabilities_billion": 1.697
+  },
+  "segment_context": {
+    "computing_and_graphics": {
+      "revenue_billion": 1.12,
+      "revenue_yoy_growth": "95%",
+      "revenue_qoq_growth": "23%",
+      "operating_income_million": 138,
+      "drivers": [
+        "Strong sales of Radeon and Ryzen products",
+        "Client processor ASP increased due to a greater percentage of Ryzen products",
+        "GPU ASP increased due to a greater percentage of new Radeon products"
+      ]
+    },
+    "enterprise_embedded_and_semicustom": {
+      "revenue_million": 532,
+      "revenue_yoy_growth": "-12%",
+      "revenue_qoq_growth": "23%",
+      "operating_income_million": 14,
+      "drivers": [
+        "Year-over-year decline reflected lower semi-custom revenue and prior-year licensing gain comparison",
+        "Quarter-over-quarter growth was driven by semi-custom, embedded, and EPYC processor revenue"
+      ]
+    }
+  },
+  "guidance": {
+    "q2_2018_revenue_guidance_billion": 1.725,
+    "q2_2018_revenue_guidance_range_million": "+/- 50",
+    "q2_2018_revenue_yoy_growth": "50%",
+    "q2_2018_non_gaap_gross_margin_guidance": "approximately 37%",
+    "source_note": "The user-provided research markdown listed a lower Q2 guidance figure in one place; this input uses the AMD April 25, 2018 official release figure."
+  },
+  "product_and_competitive_setup": {
+    "ryzen": "The second generation Ryzen desktop CPUs had launched by the decision date, supporting the view that AMD was back in premium desktop CPUs rather than only low-end client processors.",
+    "epyc": "AMD reported new EPYC-powered platforms and deployments, including Dell EMC PowerEdge platforms, Yahoo Japan, Packet, and Cray CS500 offerings. EPYC remained early, but any sustained server share would be highly material because Intel historically dominated server CPUs.",
+    "radian_gpu_and_crypto": "Radeon demand and GPU ASP contributed to Q1 strength, while crypto-mining exposure created a credible near-term revenue and inventory risk.",
+    "intel": "Intel remained financially strong, but its disclosed 10nm volume-production delay into 2019 weakened the prior assumption that Intel's process lead would quickly reassert itself.",
+    "nvidia": "AMD remained structurally weaker than Nvidia in high-end GPUs and AI acceleration because it lacked a comparable software moat; the AMD buy thesis was primarily CPU/server share gain, not a claim of near-term GPU leadership."
+  },
+  "consensus_view": [
+    "AMD was still a lower-margin, high-beta semiconductor turnaround with a long history of execution problems.",
+    "Q1 strength could be peak-cycle or crypto-inflated because GPU mining demand might unwind quickly.",
+    "Intel's server CPU dominance, OEM relationships, and pricing power could prevent meaningful EPYC share gains.",
+    "AMD's balance sheet was better but still carried debt and dilution risk.",
+    "Semi-custom and PC cycles could offset CPU share gains."
+  ],
+  "variant_view": [
+    "The market was over-focusing on temporary crypto GPU risk and under-focusing on margin-accretive Ryzen and EPYC growth.",
+    "Intel's 10nm delay created a rare window in which AMD could compete on product timing and architecture rather than only price.",
+    "Q1 results and Q2 guidance showed that AMD's core product ramps were strong enough for sustained revenue growth and improving margins.",
+    "Even low single-digit to mid-single-digit server share could materially change AMD's earnings power because the starting share base was small and server CPUs carry higher ASPs and margins."
+  ],
+  "evidence_for": [
+    {
+      "claim": "AMD had just shown strong revenue growth and operating leverage.",
+      "support": "Q1 revenue was $1.65B, up 40% YoY; gross margin rose to 36%; GAAP operating income reached $120M.",
+      "why_material": "This directly challenged the view that AMD's new product cycle could not translate into profits.",
+      "source_refs": [
+        "AMD Q1 2018 earnings release",
+        "AMD Q1 2018 10-Q"
+      ]
+    },
+    {
+      "claim": "The revenue mix was shifting toward higher-value Ryzen, Radeon, and EPYC products.",
+      "support": "AMD said gross-margin improvement was driven by a greater percentage of revenue from Ryzen, Radeon, and EPYC products.",
+      "why_material": "The thesis required AMD's growth to be margin-accretive rather than just low-margin unit growth.",
+      "source_refs": [
+        "AMD Q1 2018 earnings release"
+      ]
+    },
+    {
+      "claim": "Q2 guidance supported durability after Q1.",
+      "support": "AMD guided Q2 revenue to about $1.725B plus or minus $50M and non-GAAP gross margin of about 37%.",
+      "why_material": "This reduced the risk that Q1 was only a one-off recovery quarter.",
+      "source_refs": [
+        "AMD Q1 2018 earnings release"
+      ]
+    },
+    {
+      "claim": "Intel's 10nm delay improved AMD's relative opportunity.",
+      "support": "Intel said 10nm volume production was moving from the second half of 2018 into 2019.",
+      "why_material": "This weakened the assumption that Intel's process advantage would quickly erase AMD's product window.",
+      "source_refs": [
+        "Intel Q1 2018 earnings call transcript"
+      ]
+    },
+    {
+      "claim": "EPYC traction was early but real.",
+      "support": "AMD cited Dell EMC platforms, Yahoo Japan, Packet, Cray, and EPYC contribution to EESC sequential growth.",
+      "why_material": "Server CPU share gain was the most important upside option in the thesis.",
+      "source_refs": [
+        "AMD Q1 2018 earnings release"
+      ]
+    },
+    {
+      "claim": "Financial fragility had declined compared with AMD's prior distress era.",
+      "support": "AMD held about $1.045B cash, with current assets exceeding current liabilities.",
+      "why_material": "The balance sheet gave AMD time to fund roadmap execution and reduced immediate bankruptcy or forced-equity-risk concerns.",
+      "source_refs": [
+        "AMD Q1 2018 10-Q"
+      ]
+    }
+  ],
+  "evidence_against": [
+    {
+      "claim": "Crypto GPU exposure could make Q1 quality look better than it was.",
+      "support": "The user-provided research notes management discussion that blockchain-related demand was around 10% of Q1 revenue, and contemporaneous commentary focused on crypto-mining sustainability.",
+      "why_it_mattered": "If crypto demand reversed, AMD could face GPU revenue decline, channel inventory pressure, and margin compression.",
+      "why_not_decisive_or_how_it_caps": "Crypto was a real sizing risk, but it did not fully explain Ryzen momentum, EPYC traction, Q2 guidance, or Intel's process delay."
+    },
+    {
+      "claim": "Intel remained a formidable incumbent.",
+      "support": "Intel's Q1 2018 revenue was $16.1B, with Data Center Group strength and large cash generation.",
+      "why_it_mattered": "Intel could use pricing, OEM relationships, and roadmap iteration to defend share.",
+      "why_not_decisive_or_how_it_caps": "Intel's financial strength capped confidence, but the specific 10nm delay created a time-bound opening for AMD."
+    },
+    {
+      "claim": "AMD's EESC segment was still down year-over-year.",
+      "support": "EESC revenue fell 12% YoY because lower semi-custom revenue offset higher server and embedded revenue.",
+      "why_it_mattered": "The server thesis was not yet dominant in reported segment numbers.",
+      "why_not_decisive_or_how_it_caps": "Sequential EESC growth and named EPYC deployments made this a watch metric rather than a reason to avoid."
+    },
+    {
+      "claim": "AMD still carried debt and dilution risk.",
+      "support": "Q1 2018 10-Q showed short-term debt of $223M and long-term debt of $1.165B, plus listed dilution and financing risks.",
+      "why_it_mattered": "A downturn or execution miss could pressure the balance sheet.",
+      "why_not_decisive_or_how_it_caps": "Current liquidity and improving profitability reduced immediate financing risk, but size should remain below max conviction."
+    },
+    {
+      "claim": "AMD had foundry and roadmap execution risk.",
+      "support": "AMD's own filing listed dependence on GLOBALFOUNDRIES and third-party manufacturing technology, yields, and sufficient capacity.",
+      "why_it_mattered": "The thesis depended on AMD and its manufacturing partners delivering new products on schedule.",
+      "why_not_decisive_or_how_it_caps": "This was a core invalidation metric, not a current contradiction, because Q1 execution and current product launches were on track."
+    },
+    {
+      "claim": "Price action was a reversal, not a fully established long-term uptrend.",
+      "support": "On May 7 AMD closed above the 100D and 150D SMAs but below the 200D, 40W, and 10M averages.",
+      "why_it_mattered": "The market had not yet fully confirmed a durable trend change.",
+      "why_not_decisive_or_how_it_caps": "Strong one-month momentum and post-earnings buying supported a starter buy, but the technical posture should cap sizing and require follow-through."
+    }
+  ],
+  "human_notes": "Distilled from /Users/shaivpandya/Downloads/AMD Investment Decision Research Case.md. Later outcome evidence and post-May 7 sources from the markdown are excluded. The Q2 guidance figure is corrected to the official AMD April 25, 2018 release."
+}
