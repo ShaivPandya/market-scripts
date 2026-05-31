@@ -68,6 +68,14 @@ AVAILABLE_WORKFLOWS = {
         "description": "Check if any kill conditions are approaching or triggered for a position.",
         "requires_ticker": True,
     },
+    "position_dossier_pressure_test": {
+        "label": "Position Dossier Pressure Test",
+        "description": (
+            "Guided pressure-test of a position using dossier evidence, thesis, valuation, "
+            "catalysts, kill conditions, and source freshness."
+        ),
+        "requires_ticker": True,
+    },
 }
 
 
@@ -644,6 +652,100 @@ def run_thesis_invalidation_check(
 
 
 # ---------------------------------------------------------------------------
+# Workflow: Position Dossier Pressure Test
+# ---------------------------------------------------------------------------
+
+_POSITION_DOSSIER_PRESSURE_TEST_SYNTHESIS = """\
+You are pressure-testing the investment thesis for {ticker} using the Position Dossier evidence bundle.
+
+Given the data below, deliver a disciplined decision-support review:
+
+1. **Thesis Under Test** – Restate the core thesis in one sentence. Is it specific and falsifiable?
+2. **Evidence Quality** – Which claims are well-supported vs weak/stale? Cite dossier objects and source artifacts.
+3. **Catalysts & Kill Conditions** – What must happen for the thesis to work? What would invalidate it?
+4. **Valuation & Scenario Pressure** – Is the position priced for perfection? What breaks the bull case?
+5. **Price Action & Position Context** – Does current price action support or challenge conviction and sizing?
+6. **Missing Inputs** – What data is absent, stale, or blocked that prevents an actionable decision?
+7. **Recommendation Stance** – hold, add, trim, exit, watch, or research — with explicit reasoning.
+
+Be skeptical and direct. Do not give a lazy buy call when evidence is incomplete.
+
+After your analysis, output a structured JSON block fenced with ```artifacts
+{{
+  "evaluation_draft": {{
+    "ticker": "{ticker}",
+    "thesis_status": "strengthen|neutral|weaken|insufficient-data",
+    "technical_read": "...",
+    "fundamental_read": "...",
+    "action": "hold|add|trim|exit|reassess|watch|research",
+    "confidence": "high|medium|low",
+    "key_developments": ["..."],
+    "earnings_note": null,
+    "risk_flag": null
+  }},
+  "action_items": [
+    {{"description": "...", "action_type": "review|resize|research|exit|enter|hedge|other", "urgency": "low|normal|high|urgent"}}
+  ],
+  "watch_triggers": [
+    {{"condition": "...", "trigger_type": "price|fundamental|news|other", "urgency": "low|normal|high|urgent"}}
+  ]
+}}
+```
+"""
+
+
+def run_position_dossier_pressure_test(
+    ticker: str,
+    actor: Actor | None = None,
+    workflow_run_id: str | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Execute a governed Position Dossier pressure-test workflow."""
+    ticker = ticker.upper()
+
+    calls: list[tuple[str, dict[str, Any]]] = [
+        ("get_dossier", {"ticker": ticker}),
+        ("get_thesis", {"ticker": ticker}),
+        ("get_thesis_evaluations", {"ticker": ticker, "limit": 5}),
+        ("get_portfolio", {}),
+        ("get_position_valuation", {"ticker": ticker}),
+        ("run_chart", {"ticker": ticker, "lookback": "1y"}),
+        ("get_catalysts", {"ticker": ticker}),
+        ("get_kill_conditions", {"ticker": ticker}),
+        ("query_ontology", {"filters": {"tickers": [ticker]}}),
+        (
+            "search_knowledge_base",
+            {"query": f"{ticker} thesis catalysts risks invalidation", "tickers": ticker, "top_k": 5},
+        ),
+        ("get_price_volume_signals", {}),
+        ("list_source_artifacts", {"ticker": ticker, "limit": 10}),
+        ("summarize_extracted_observations", {"limit": 10}),
+        ("search_web", {"query": f"{ticker} recent news catalysts risks"}),
+    ]
+
+    actor = actor or admin_actor(source="workflow")
+    results = _exec_parallel(
+        calls,
+        actor=actor,
+        workflow_run_id=workflow_run_id,
+        workflow_name="position_dossier_pressure_test",
+    )
+    for name, _parsed, elapsed in results:
+        logger.info(
+            "workflow=position_dossier_pressure_test ticker=%s tool=%s duration_ms=%.1f",
+            ticker,
+            name,
+            elapsed,
+        )
+
+    sections, data_block = _build_sections(results)
+    synthesis_prompt = (
+        _POSITION_DOSSIER_PRESSURE_TEST_SYNTHESIS.format(ticker=ticker)
+        + f"\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
+    )
+    return synthesis_prompt, sections
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
@@ -759,6 +861,11 @@ _WORKFLOW_RUNNERS = {
         workflow_run_id=run_id,
     ),
     "thesis_invalidation_check": lambda t, actor, run_id: run_thesis_invalidation_check(
+        t,
+        actor=actor,
+        workflow_run_id=run_id,
+    ),
+    "position_dossier_pressure_test": lambda t, actor, run_id: run_position_dossier_pressure_test(
         t,
         actor=actor,
         workflow_run_id=run_id,

@@ -946,6 +946,13 @@ _WORKFLOW_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bkill\s+condition\s+check\b", re.IGNORECASE), "thesis_invalidation_check"),
 ]
 
+_DOSSIER_PRESSURE_TEST_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bdossier\s+pressure[- ]?test\b", re.IGNORECASE),
+    re.compile(r"\brun\s+(?:a\s+)?pressure[- ]?test\s+(?:on|for)\b", re.IGNORECASE),
+    re.compile(r"\bpressure[- ]?test\s+(?:this\s+)?(?:position|thesis|dossier)\b", re.IGNORECASE),
+    re.compile(r"\bpoke\s+holes\s+in\s+(?:this\s+)?(?:position|thesis)\b", re.IGNORECASE),
+]
+
 _TICKER_RX = re.compile(r"\b([A-Z]{1,5})\b")
 _TICKER_STOP_WORDS = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
 _COMPANY_TICKER_ALIASES = {
@@ -1214,7 +1221,10 @@ def _decision_quality_chat_fallback(dq_result: dict[str, Any]) -> str:
     )
 
 
-def _detect_workflow(user_text: str) -> tuple[str | None, str | None]:
+def _detect_workflow(
+    user_text: str,
+    screen_context: ScreenContextModel | None = None,
+) -> tuple[str | None, str | None]:
     """Detect if a user message triggers a workflow.
 
     Returns (workflow_name, ticker) or (None, None).
@@ -1232,6 +1242,15 @@ def _detect_workflow(user_text: str) -> tuple[str | None, str | None]:
             return wf_name, ticker
         return None, None
 
+    screen_ticker = (screen_context.ticker if screen_context else None) or ""
+    on_position_dossier = bool(screen_context and screen_context.page_name == "Position Dossier")
+    if on_position_dossier:
+        for pattern in _DOSSIER_PRESSURE_TEST_PATTERNS:
+            if pattern.search(text):
+                ticker = screen_ticker.strip().upper() or _extract_candidate_ticker(text, screen_context)
+                if ticker:
+                    return "position_dossier_pressure_test", ticker
+
     # Check natural language patterns
     for pattern, wf_name in _WORKFLOW_PATTERNS:
         if pattern.search(text):
@@ -1242,7 +1261,7 @@ def _detect_workflow(user_text: str) -> tuple[str | None, str | None]:
                 # Filter out common English words that match ticker pattern
                 stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO"}
                 candidates = [m for m in _TICKER_RX.findall(text) if m not in stop and len(m) >= 2]
-                ticker = candidates[0] if candidates else None
+                ticker = candidates[0] if candidates else screen_ticker.strip().upper() or None
             return wf_name, ticker
     return None, None
 
@@ -2311,7 +2330,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         )
 
     casual = _is_casual(req.message)
-    workflow_name, workflow_ticker = _detect_workflow(req.message)
+    workflow_name, workflow_ticker = _detect_workflow(req.message, req.screen_context)
     llm_credentials: tuple[str, str] | None = None
     if workflow_name and req.allow_workflow_handoff:
         provider_label = "deferred"
