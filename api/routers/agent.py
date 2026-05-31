@@ -1334,8 +1334,12 @@ def _opportunity_candidate_fallback(oc_result: dict[str, Any]) -> str:
             "so the right next step is research: get the trigger, current thesis source, price action, and "
             "missing inputs before treating it as actionable."
         )
-    final_action = gate.final_action if isinstance(gate, OpportunityCandidateGate) else opportunity_candidate.next_action
-    missing_text = "; ".join(opportunity_candidate.missing_inputs[:4]) if opportunity_candidate.missing_inputs else "none flagged"
+    final_action = (
+        gate.final_action if isinstance(gate, OpportunityCandidateGate) else opportunity_candidate.next_action
+    )
+    missing_text = (
+        "; ".join(opportunity_candidate.missing_inputs[:4]) if opportunity_candidate.missing_inputs else "none flagged"
+    )
     summary = opportunity_candidate.summary or opportunity_candidate.variant_view or opportunity_candidate.trigger
     return (
         f"Bottom line: I would treat this as {final_action}. "

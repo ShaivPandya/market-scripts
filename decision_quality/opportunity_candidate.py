@@ -200,9 +200,7 @@ def coerce_opportunity_candidate_input(value: Any) -> Any:
 
     price_confirmation = _oc_pick(value, "price_confirmation", "price_action", "technical_confirmation")
     if isinstance(price_confirmation, dict):
-        price_confirmation = _oc_text(
-            _oc_pick(price_confirmation, "observed_behavior", "interpretation", "summary")
-        )
+        price_confirmation = _oc_text(_oc_pick(price_confirmation, "observed_behavior", "interpretation", "summary"))
 
     return {
         "ticker": _oc_pick(value, "ticker", "symbol"),

@@ -143,10 +143,9 @@ def _enrich_payload_from_risk_snapshot(payload: dict[str, Any]) -> dict[str, Any
         risk_provenance["position_risk_snapshot_id"] = position_snapshot_id
         position = dict(enriched.get("position") or {})
         if position.get("average_daily_volume_notional") is None:
-            position["average_daily_volume_notional"] = (
-                position_snapshot.get("average_daily_volume_notional")
-                or (position_snapshot.get("position") or {}).get("average_daily_volume_notional")
-            )
+            position["average_daily_volume_notional"] = position_snapshot.get("average_daily_volume_notional") or (
+                position_snapshot.get("position") or {}
+            ).get("average_daily_volume_notional")
         enriched["position"] = position
         _apply_risk_snapshot_to_scenarios(enriched, position_snapshot)
 
@@ -171,9 +170,11 @@ def _apply_risk_snapshot_to_scenarios(payload: dict[str, Any], snapshot: dict[st
     breadth = _ratio_from_pct(components.get("breadth_stress"))
     sector = _ratio_from_pct(components.get("sector_stress"))
     macro = _ratio_from_pct(components.get("macro_regime"))
-    drawdown = max(value for value in (breadth, sector, macro) if value is not None) if any(
-        value is not None for value in (breadth, sector, macro)
-    ) else None
+    drawdown = (
+        max(value for value in (breadth, sector, macro) if value is not None)
+        if any(value is not None for value in (breadth, sector, macro))
+        else None
+    )
 
     for scenario in scenarios:
         if not isinstance(scenario, dict):
@@ -197,8 +198,10 @@ def _apply_risk_snapshot_to_scenarios(payload: dict[str, Any], snapshot: dict[st
 def evaluate_scenario_simulator(body: ScenarioSimulatorEvaluateRequest, actor: ActorDep):
     payload = body.model_dump(mode="json")
     persist = bool(payload.pop("persist", False))
-    if payload.get("enrich_from_risk_snapshot") or payload.get("position_risk_snapshot_id") or payload.get(
-        "portfolio_risk_snapshot_id"
+    if (
+        payload.get("enrich_from_risk_snapshot")
+        or payload.get("position_risk_snapshot_id")
+        or payload.get("portfolio_risk_snapshot_id")
     ):
         payload = _enrich_payload_from_risk_snapshot(payload)
     try:

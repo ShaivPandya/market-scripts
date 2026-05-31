@@ -463,9 +463,7 @@ def _assumption_number(value: Any) -> float | None:
     return abs(number)
 
 
-def _traded_notional(
-    base: Mapping[str, Any], target: Mapping[str, Any], candidate: Mapping[str, Any]
-) -> float:
+def _traded_notional(base: Mapping[str, Any], target: Mapping[str, Any], candidate: Mapping[str, Any]) -> float:
     current_notional = _positive_float(base.get("notional_base")) or 0.0
     target_notional = _positive_float(target.get("notional_base")) or 0.0
     action = str(candidate.get("action") or "")
@@ -640,9 +638,7 @@ def _liquidity_summary(
             and unconstrained_exit_days is not None
             and participation_exit_days > unconstrained_exit_days * 1.001
         ):
-            notes.append(
-                f"Liquidity constrained by max ADV participation ({_pct(max_participation)}%)."
-            )
+            notes.append(f"Liquidity constrained by max ADV participation ({_pct(max_participation)}%).")
     status = "estimated" if estimated_exit_days is not None else "missing"
     if status == "estimated" and notes:
         status = "constrained"

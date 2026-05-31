@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import api.routers.agent as agent_router
+from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.models import DecisionQuality
-from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.opportunity_candidate import OpportunityCandidate
 
 
@@ -310,7 +310,9 @@ def test_gate_downgrade_is_visible_to_synthesis_prompt(auth_client, monkeypatch)
 def test_discovery_prompt_runs_candidate_preflight_without_decision_quality(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
-    monkeypatch.setattr(agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result(graduate=False))
+    monkeypatch.setattr(
+        agent_router, "_run_opportunity_candidate_structured_pass", lambda **_kwargs: _oc_result(graduate=False)
+    )
     monkeypatch.setattr(
         agent_router,
         "_run_decision_quality_structured_pass",
@@ -349,6 +351,4 @@ def test_opportunity_discovery_intent_detection():
     assert agent_router._should_run_opportunity_candidate_preflight(
         "Scan semiconductors for anything interesting right now?"
     )
-    assert not agent_router._should_run_decision_quality_chat(
-        "Scan semiconductors for anything interesting right now?"
-    )
+    assert not agent_router._should_run_decision_quality_chat("Scan semiconductors for anything interesting right now?")

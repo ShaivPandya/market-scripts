@@ -1382,14 +1382,10 @@ class DecisionOntologyWriteback:
         risk_provenance = _as_dict(request_payload.get("risk_provenance"))
         risk_provenance.update(_as_dict(simulation.get("risk_provenance")))
         position_snapshot_id = str(
-            request_payload.get("position_risk_snapshot_id")
-            or risk_provenance.get("position_risk_snapshot_id")
-            or ""
+            request_payload.get("position_risk_snapshot_id") or risk_provenance.get("position_risk_snapshot_id") or ""
         ).strip()
         portfolio_snapshot_id = str(
-            request_payload.get("portfolio_risk_snapshot_id")
-            or risk_provenance.get("portfolio_risk_snapshot_id")
-            or ""
+            request_payload.get("portfolio_risk_snapshot_id") or risk_provenance.get("portfolio_risk_snapshot_id") or ""
         ).strip()
         if position_snapshot_id:
             props = _position_risk_snapshot_props(

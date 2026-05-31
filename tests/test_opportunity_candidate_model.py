@@ -56,7 +56,9 @@ def test_actionable_next_action_is_coerced_to_graduation():
 
 
 def test_missing_trigger_invalidates_graduation():
-    candidate = OpportunityCandidate.model_validate(_valid_candidate(trigger="", next_action="graduate_to_decision_quality"))
+    candidate = OpportunityCandidate.model_validate(
+        _valid_candidate(trigger="", next_action="graduate_to_decision_quality")
+    )
     gate = apply_opportunity_candidate_gates(candidate)
     assert gate.final_action == "research"
     assert gate.should_graduate is False
