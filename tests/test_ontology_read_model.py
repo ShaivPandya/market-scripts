@@ -81,6 +81,8 @@ def test_operational_read_model_migration_contract():
         "properties_json->>'status'",
         "properties_json->>'application_status'",
         "properties_json->>'approval_status'",
+        "properties_json->>'outcome_status'",
+        "properties_json->>'final_label_status'",
         "properties_json->>'report_type'",
         "properties_json->>'parent_uid'",
         "properties_json->>'assessment_id'",
@@ -91,11 +93,15 @@ def test_operational_read_model_migration_contract():
         assert column in migration
 
 
-def test_latest_operational_read_model_migration_includes_decision_outcomes():
-    migration = Path("migrations/versions/20260531_0002_opportunity_candidate_read_model.py").read_text(encoding="utf-8")
+def test_operational_read_model_recreate_migrations_project_final_label_status():
+    for migration_path in (
+        "migrations/versions/20260515_0001_course_of_action_read_model.py",
+        "migrations/versions/20260531_0001_monitor_hit_read_model.py",
+        "migrations/versions/20260531_0002_opportunity_candidate_read_model.py",
+    ):
+        migration = Path(migration_path).read_text(encoding="utf-8")
 
-    assert 'DECISION_OUTCOME_OPERATIONAL_OBJECT_TYPES = ("DecisionOutcome",)' in migration
-    assert "*DECISION_OUTCOME_OPERATIONAL_OBJECT_TYPES" in migration
+        assert "properties_json->>'final_label_status'" in migration
 
 
 class _Rows:
@@ -150,7 +156,8 @@ def _op_row(object_type: str, object_uid: str, props: dict, **extra):
         "status": str(props.get("status")).lower() if props.get("status") else extra.get("status"),
         "application_status": extra.get("application_status"),
         "approval_status": str(props.get("approval_status")).lower() if props.get("approval_status") else None,
-        "outcome_status": None,
+        "outcome_status": str(props.get("outcome_status")).lower() if props.get("outcome_status") else None,
+        "final_label_status": str(props.get("final_label_status")).lower() if props.get("final_label_status") else None,
         "report_type": str(props.get("report_type")).lower() if props.get("report_type") else None,
         "parent_uid": props.get("parent_uid"),
         "assessment_id": props.get("assessment_id"),
@@ -231,8 +238,30 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
             [_op_row("ReportRun", "report_run:1", {"as_of": "2026-05-05"})],
             [_op_row("ThesisClaim", "claim:1", {"ticker": "MU", "status": "challenged"})],
             [_op_row("ThesisClaim", "claim:2", {"ticker": "MU", "status": "disconfirmed"})],
-            [],
-            [],
+            [
+                _op_row(
+                    "DecisionOutcome",
+                    "decision_outcome:draft",
+                    {
+                        "ticker": "MU",
+                        "outcome_status": "evaluated",
+                        "final_label_status": "draft",
+                        "as_of": "2026-05-05",
+                    },
+                )
+            ],
+            [
+                _op_row(
+                    "DecisionOutcome",
+                    "decision_outcome:confirmed",
+                    {
+                        "ticker": "MU",
+                        "outcome_status": "evaluated",
+                        "final_label_status": "confirmed",
+                        "as_of": "2026-05-04",
+                    },
+                )
+            ],
         ]
     )
     repo = TemporalReadModelRepository(connection_factory=lambda: conn)
@@ -249,6 +278,11 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
     assert bundle["optimizer_alerts"][0]["source_freshness"]["risk"]["status"] == "ok"
     assert bundle["challenged_claims"][0]["object_uid"] == "claim:1"
     assert bundle["disconfirmed_claims"][0]["object_uid"] == "claim:2"
+    assert bundle["pending_draft_decision_outcomes"][0]["final_label_status"] == "draft"
+    assert bundle["recent_finalized_decision_outcomes"][0]["final_label_status"] == "confirmed"
+    pending_sql, pending_params = conn.execute_calls[-2]
+    assert "final_label_status = %s" in pending_sql
+    assert pending_params[:3] == ("DecisionOutcome", "draft", "evaluated")
 
 
 def test_dossier_bundle_filters_by_ticker_and_attaches_management_quality_children():

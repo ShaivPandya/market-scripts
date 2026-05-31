@@ -758,6 +758,7 @@ def _operational_object(row_raw: Any) -> dict[str, Any]:
         "application_status": row.get("application_status"),
         "approval_status": row.get("approval_status"),
         "outcome_status": row.get("outcome_status"),
+        "final_label_status": row.get("final_label_status"),
         "report_type": row.get("report_type"),
         "parent_uid": row.get("parent_uid"),
         "assessment_id": row.get("assessment_id"),
