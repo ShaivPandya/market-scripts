@@ -84,11 +84,7 @@ def export_training_dataset(
     if include_fixtures:
         selectors = None
         if fixture_prefix:
-            selectors = [
-                path.stem
-                for path in sorted(CASES_DIR.glob("*.json"))
-                if path.stem.startswith(fixture_prefix)
-            ]
+            selectors = [path.stem for path in sorted(CASES_DIR.glob("*.json")) if path.stem.startswith(fixture_prefix)]
         for case in load_cases(case_selectors=selectors, statuses={"review", "approved", "draft"}):
             rows.append(eval_fixture_to_training_row(case))
 
@@ -204,7 +200,11 @@ def _score_predictions(rows: list[dict[str, Any]], predictions: list[dict[str, A
             if not label or label.get(field) is None:
                 continue
             total += 1
-            if bool(pred.get(field)) == bool(label.get(field)) if field.startswith("run_") else pred.get(field) == label.get(field):
+            if (
+                bool(pred.get(field)) == bool(label.get(field))
+                if field.startswith("run_")
+                else pred.get(field) == label.get(field)
+            ):
                 correct += 1
         return round(correct / total, 4) if total else 0.0
 

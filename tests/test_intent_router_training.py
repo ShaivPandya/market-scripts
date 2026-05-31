@@ -71,7 +71,14 @@ def test_should_capture_training_row_respects_flags(monkeypatch):
     monkeypatch.setenv("AGENT_INTENT_ROUTER_TRAINING_CAPTURE_ENABLED", "true")
     monkeypatch.setenv("AGENT_INTENT_ROUTER_TRAINING_CAPTURE_MISMATCH_ONLY", "true")
     should, reason = should_capture_training_row(
-        route_meta={"shadow_comparison": {"intent_match": True, "hidden_dq_match": True, "opportunity_preflight_match": True, "workflow_match": True}}
+        route_meta={
+            "shadow_comparison": {
+                "intent_match": True,
+                "hidden_dq_match": True,
+                "opportunity_preflight_match": True,
+                "workflow_match": True,
+            }
+        }
     )
     assert should is False
     assert reason == "mismatch_only_match"

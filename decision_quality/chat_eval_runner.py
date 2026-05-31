@@ -118,9 +118,7 @@ def load_cases(
                 selected.append(ChatEvalCase(path=path, data=_read_json(path)))
                 continue
             prefix_matches = [
-                case
-                for case in cases
-                if case.case_id.startswith(selector) or case.path.stem.startswith(selector)
+                case for case in cases if case.case_id.startswith(selector) or case.path.stem.startswith(selector)
             ]
             if prefix_matches:
                 selected.extend(prefix_matches)

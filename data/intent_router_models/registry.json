@@ -1,0 +1,15 @@
+{
+  "active_model_path": "/private/var/folders/mv/5bfh1j6d6jg7vrr90w4_m8k00000gn/T/pytest-of-shaivpandya/pytest-81/test_supervised_route_predicti0/models/20260531_234946/model.joblib",
+  "active_version": "20260531_234946",
+  "updated_at": "2026-05-31T23:49:46.483353+00:00",
+  "metrics": {
+    "count": 1,
+    "intent_accuracy": 0.0,
+    "hidden_dq_recall": 1.0,
+    "opportunity_preflight_recall": 0.0,
+    "workflow_accuracy": 0.0,
+    "train_rows": 4,
+    "holdout_rows": 1,
+    "fallback_threshold": 0.7
+  }
+}

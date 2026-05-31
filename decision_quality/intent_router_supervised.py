@@ -147,9 +147,8 @@ def predict_route_decision(
         run_opportunity_preflight=bool(prediction.get("run_opportunity_preflight")),
         workflow_name=wf_name,
         workflow_ticker=regex_baseline.workflow_ticker,
-        tool_names=[name for name in predicted_tools if name in set(tool_vocab) or not tool_vocab] or list(
-            regex_baseline.tool_names
-        ),
+        tool_names=[name for name in predicted_tools if name in set(tool_vocab) or not tool_vocab]
+        or list(regex_baseline.tool_names),
         confidence=max(0.0, min(1.0, confidence)),
         source="supervised",
         fallback_reason=None,

@@ -391,7 +391,7 @@ def _list_sqlite(*, limit: int, labeled_only: bool, since: str | None) -> list[d
         rows = conn.execute(
             f"""
             SELECT * FROM intent_router_training_rows
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY captured_at DESC
             LIMIT ?
             """,
@@ -421,7 +421,7 @@ def _list_postgres(*, limit: int, labeled_only: bool, since: str | None) -> list
                    label_intent_class, label_run_hidden_dq, label_run_opportunity_preflight,
                    label_workflow_name, label_tool_names_json, label_reviewer, labeled_at
             FROM intent_router_training_rows
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY captured_at DESC
             LIMIT %s
             """,
