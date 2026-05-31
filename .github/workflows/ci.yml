@@ -1,7 +1,8 @@
 name: CI
 
 on:
-  # Temporarily disabled: restore push/pull_request triggers when CI should run again.
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
