@@ -116,6 +116,7 @@ def test_portfolio_workflow_prompts_include_entry_history_guardrail(monkeypatch)
         lambda: workflows.run_pre_earnings("MU"),
         lambda: workflows.run_post_earnings_review("MU"),
         lambda: workflows.run_weekly_portfolio_review(),
+        lambda: workflows.run_position_dossier_pressure_test("MU"),
     ]
 
     for build_prompt in prompt_builders:

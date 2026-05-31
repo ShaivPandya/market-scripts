@@ -1261,6 +1261,60 @@ def test_agent_chat_workflow_done_includes_tool_metadata(auth_client, monkeypatc
     assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
 
 
+def test_agent_chat_position_dossier_pressure_test_workflow(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-pressure",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "execute_workflow",
+        lambda *_args, **_kwargs: (
+            "run-pressure",
+            "synthesis prompt",
+            [
+                {"tool": "get_dossier", "data": {}, "duration_ms": 1.0},
+                {"tool": "get_thesis", "data": {}, "duration_ms": 2.0},
+            ],
+        ),
+    )
+    monkeypatch.setattr("api.workflow_artifacts.extract_artifacts", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("api.workflow_artifacts.persist_artifacts", lambda *_args, **_kwargs: 0)
+
+    streams = [
+        (
+            [_event_text_delta('Pressure test\n```artifacts\n{"evaluation_draft": {"ticker": "MU"}}\n```')],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "Pressure test"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={"message": "/workflow:position_dossier_pressure_test:MU", "allow_workflow_handoff": False},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "session-pressure"
+    assert done_events[-1]["tools_used"] == ["get_dossier", "get_thesis"]
+
+
 def test_agent_chat_workflow_hands_off_to_durable_job(auth_client, monkeypatch):
     from api import async_job_runner, cache
 

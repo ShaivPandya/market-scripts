@@ -75,6 +75,7 @@ import { OverviewUpload } from "@/components/OverviewUpload"
 import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
 import { cn } from "@/lib/utils"
 import { cleanDossierDisplayText } from "@/lib/dossierText"
+import { openStanWithCommand } from "@/lib/stanLauncher"
 
 interface DossierData {
   ticker: string
@@ -195,6 +196,7 @@ const KNOWN_WORKFLOW_NAMES = [
   "post_earnings_review",
   "weekly_portfolio_review",
   "thesis_invalidation_check",
+  "position_dossier_pressure_test",
 ]
 
 function workflowNameFromRunId(runId: string | null | undefined): string | null {
@@ -599,7 +601,15 @@ export function PositionDossier() {
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
-        {activeTab === "Workflows" && <WorkflowsTab runs={workflowRuns} />}
+        {activeTab === "Workflows" && (
+          <WorkflowsTab
+            runs={workflowRuns}
+            ticker={data.ticker}
+            onRunPressureTest={() =>
+              openStanWithCommand(`/workflow:position_dossier_pressure_test:${data.ticker}`)
+            }
+          />
+        )}
       </div>
 
       {/* Pending Approvals for this ticker */}
@@ -2144,22 +2154,45 @@ function RiskTab({ ticker }: { ticker: string }) {
   )
 }
 
-function WorkflowsTab({ runs }: { runs: WorkflowRun[] }) {
-  if (!runs.length) return <p className="text-sm text-muted">No workflow runs recorded.</p>
+function WorkflowsTab({
+  runs,
+  ticker,
+  onRunPressureTest,
+}: {
+  runs: WorkflowRun[]
+  ticker: string
+  onRunPressureTest: () => void
+}) {
   return (
-    <div className="space-y-2">
-      {runs.map(run => (
-        <div key={run.run_id || `${workflowRunLabel(run)}-${run.started_at ?? run.completed_at ?? "unknown"}`} className="flex items-center justify-between rounded-lg border border-app px-4 py-3 text-sm">
-          <div className="flex items-center gap-3">
-            <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
-            <span className="font-medium text-app">{workflowRunLabel(run)}</span>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-subtle">
-            <span>{run.status ?? "unknown"}</span>
-            <span>{formatTime(run.started_at ?? run.completed_at)}</span>
-          </div>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-app bg-surface px-4 py-3">
+        <div>
+          <p className="text-sm font-medium text-app">Position Dossier Pressure Test</p>
+          <p className="text-xs text-muted">
+            Run a governed workflow over dossier evidence, thesis, valuation, catalysts, and kill conditions.
+          </p>
         </div>
-      ))}
+        <ActionButton onClick={onRunPressureTest}>Run pressure test</ActionButton>
+      </div>
+
+      {!runs.length ? (
+        <p className="text-sm text-muted">No workflow runs recorded for {ticker}.</p>
+      ) : (
+        <div className="space-y-2">
+          {runs.map(run => (
+            <div key={run.run_id || `${workflowRunLabel(run)}-${run.started_at ?? run.completed_at ?? "unknown"}`} className="flex items-center justify-between rounded-lg border border-app px-4 py-3 text-sm">
+              <div className="flex items-center gap-3">
+                <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                <span className="font-medium text-app">{workflowRunLabel(run)}</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-subtle">
+                <span>{run.status ?? "unknown"}</span>
+                <span>{formatTime(run.started_at ?? run.completed_at)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
