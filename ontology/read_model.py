@@ -551,7 +551,14 @@ def _fetch_operational_objects(
         value = str(raw_value)
         if column == "ticker":
             value = value.upper()
-        elif column in {"status", "application_status", "approval_status", "outcome_status", "final_label_status", "report_type"}:
+        elif column in {
+            "status",
+            "application_status",
+            "approval_status",
+            "outcome_status",
+            "final_label_status",
+            "report_type",
+        }:
             value = value.lower()
         where_parts.append(f"{column} = %s")
         params.append(value)

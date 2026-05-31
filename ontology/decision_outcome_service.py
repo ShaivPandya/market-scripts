@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Mapping
+from typing import Any
 
 from ontology.object_service import OntologyObjectService
 from ontology.policy import actor_to_dict, system_actor
@@ -284,7 +285,9 @@ def record_recommendation_outcome(
         rec_or_coa=rec,
         outcome_status=status,
         outcome_payload=outcome,
-        decision_quality_snapshot=rec.get("decision_quality") if isinstance(rec.get("decision_quality"), dict) else None,
+        decision_quality_snapshot=rec.get("decision_quality")
+        if isinstance(rec.get("decision_quality"), dict)
+        else None,
     )
 
 
@@ -353,7 +356,9 @@ def record_course_of_action_outcome(
         rec_or_coa=coa,
         outcome_status=status,
         outcome_payload=outcome,
-        decision_quality_snapshot=coa.get("decision_quality") if isinstance(coa.get("decision_quality"), dict) else None,
+        decision_quality_snapshot=coa.get("decision_quality")
+        if isinstance(coa.get("decision_quality"), dict)
+        else None,
     )
 
 
@@ -420,11 +425,7 @@ def _evaluate_directional_record(
         relative_right = relative_return > 0 if direction == "up" else relative_return < 0
         source_quality = str(record.get("source_quality") or "")
         confidence = _as_float(record.get("confidence"), 0.0)
-        process_quality = (
-            "good"
-            if source_quality in {"ok", "degraded"} and confidence >= 0.5
-            else "bad"
-        )
+        process_quality = "good" if source_quality in {"ok", "degraded"} and confidence >= 0.5 else "bad"
         outcome_quality = "good" if directionally_right and relative_right else "bad"
         thesis_context = _thesis_and_kill_context(str(ticker))
         update_fn(
@@ -557,7 +558,9 @@ def finalize_decision_outcome(
 
     final_status = {"confirm": "confirmed", "correct": "corrected", "reject": "rejected"}[decision_norm]
     draft = str(row.get("draft_postmortem") or "")
-    final_postmortem = corrected_postmortem if decision_norm == "correct" else (draft if decision_norm == "confirm" else note)
+    final_postmortem = (
+        corrected_postmortem if decision_norm == "correct" else (draft if decision_norm == "confirm" else note)
+    )
 
     now = datetime.now(UTC).isoformat()
     actor = actor_to_dict(system_actor(actor_id or "decision_outcome_reviewer"))
@@ -583,9 +586,7 @@ def finalize_decision_outcome(
     source_kind = str(row.get("source_kind") or "")
     parent_id = row.get("recommendation_id") if source_kind == "recommendation" else row.get("course_of_action_id")
     if parent_id:
-        parent_uid = (
-            recommendation_id(parent_id) if source_kind == "recommendation" else course_of_action_id(parent_id)
-        )
+        parent_uid = recommendation_id(parent_id) if source_kind == "recommendation" else course_of_action_id(parent_id)
         parent = reads.get(parent_uid)
         if parent:
             payload = dict(parent.get("payload") or {})
