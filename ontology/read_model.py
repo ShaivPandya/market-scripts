@@ -306,6 +306,13 @@ class TemporalReadModelRepository:
                 limit=100,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            recent_monitor_hits = _fetch_operational_objects(
+                conn,
+                "MonitorHit",
+                filters={"status": "open"},
+                limit=20,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
             recent_workflow_runs = _fetch_operational_objects(
                 conn,
                 "WorkflowRun",
@@ -346,6 +353,7 @@ class TemporalReadModelRepository:
             "open_action_items": open_action_items,
             "optimizer_alerts": optimizer_alerts,
             "active_watch_triggers": active_watch_triggers,
+            "recent_monitor_hits": recent_monitor_hits,
             "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": recent_report_runs,
             "challenged_claims": challenged_claims,
@@ -429,6 +437,13 @@ class TemporalReadModelRepository:
                 limit=100,
                 order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
             )
+            monitor_hits = _fetch_operational_objects(
+                conn,
+                "MonitorHit",
+                filters={"ticker": normalized},
+                limit=50,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
             pending_approvals = _fetch_operational_objects(
                 conn,
                 "Approval",
@@ -448,6 +463,7 @@ class TemporalReadModelRepository:
             "workflow_runs": workflow_runs,
             "action_items": action_items,
             "watch_triggers": watch_triggers,
+            "monitor_hits": monitor_hits,
             "pending_approvals": pending_approvals,
         }
 

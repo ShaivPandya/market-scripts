@@ -496,6 +496,16 @@ def action_mutations(
                 _row_time(row, now),
             )
         ]
+    if action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
+        row = {**dict(input_payload), **dict(output)}
+        return [
+            OntologyMutation(
+                "MonitorHit",
+                str(row.get("id") or row.get("hit_id") or row.get("fingerprint") or ""),
+                _monitor_hit_properties(row),
+                _row_time(row, now),
+            )
+        ]
     if action_id in {"create_thesis_claim", "update_thesis_claim"}:
         row = {**dict(input_payload), **dict(output)}
         return [
@@ -755,6 +765,27 @@ def _watch_trigger_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "last_checked_at": row.get("last_checked_at"),
         "last_result": _as_optional_dict(row.get("last_result") or row.get("last_result_json") or row.get("result")),
         "last_evidence": row.get("last_evidence") or row.get("evidence"),
+    }
+
+
+def _monitor_hit_properties(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "hit_id": row.get("hit_id") or row.get("id"),
+        "ticker": _optional_ticker(row.get("ticker")) or "UNKNOWN",
+        "entity_type": str(row.get("entity_type") or "catalyst"),
+        "entity_id": str(row.get("entity_id") or ""),
+        "entity_label": row.get("entity_label"),
+        "hit_type": str(row.get("hit_type") or "needs_review"),
+        "severity": row.get("severity"),
+        "status": str(row.get("status") or "open"),
+        "confidence": _optional_float(row.get("confidence")),
+        "evidence": row.get("evidence"),
+        "source_ids": _strings(row.get("source_ids")),
+        "result": _as_optional_dict(row.get("result")),
+        "detected_at": row.get("detected_at"),
+        "approval_id": row.get("approval_id"),
+        "action_item_id": row.get("action_item_id"),
+        "fingerprint": row.get("fingerprint"),
     }
 
 

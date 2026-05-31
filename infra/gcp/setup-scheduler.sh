@@ -157,6 +157,12 @@ else
   delete_scheduler_job_if_present watch-trigger-monitor
 fi
 
+if is_truthy "${SCHEDULE_CATALYST_KILL_MONITOR:-0}"; then
+  upsert_api_job catalyst-kill-monitor "${CATALYST_KILL_MONITOR_SCHEDULE:-0 15-21 * * 1-5}" /api/admin/jobs/enqueue-catalyst-kill-monitor
+else
+  delete_scheduler_job_if_present catalyst-kill-monitor
+fi
+
 if is_truthy "${SCHEDULE_GOVERNANCE_OUTBOX_DRAIN:-0}"; then
   upsert_api_job governance-outbox-drain "${GOVERNANCE_OUTBOX_DRAIN_SCHEDULE:-*/5 * * * *}" /api/admin/jobs/enqueue-governance-outbox-drain
 else

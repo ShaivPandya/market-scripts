@@ -43,6 +43,17 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
                 "active_watch_triggers": [
                     {"id": trigger_id, "status": "active", "ticker": "MU"} for trigger_id in range(1, 8)
                 ],
+                "recent_monitor_hits": [
+                    {
+                        "id": "monitor_hit:1",
+                        "ticker": "MU",
+                        "entity_type": "kill_condition",
+                        "entity_id": "kill_condition:1",
+                        "hit_type": "approaching",
+                        "status": "open",
+                        "evidence": "Price within 5% of threshold",
+                    }
+                ],
                 "recent_workflow_runs": [{"id": "workflow_run:1"}],
                 "recent_report_runs": [{"id": "report_run:1"}],
                 "challenged_claims": [{"id": 9, "status": "challenged"}],
@@ -81,6 +92,8 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     assert payload["continuous_optimization"]["open_alert_count"] == 1
     assert payload["active_triggers"]["count"] == 7
     assert len(payload["active_triggers"]["items"]) == 7
+    assert payload["monitor_hits"]["count"] == 1
+    assert payload["monitor_hits"]["items"][0]["hit_type"] == "approaching"
     assert payload["thesis_claims"]["challenged_count"] == 2
 
 
@@ -187,6 +200,7 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
                 "workflow_runs": [{"ticker": "MU"}],
                 "action_items": [{"ticker": "MU", "status": "open"}],
                 "watch_triggers": [{"ticker": "MU"}],
+                "monitor_hits": [{"ticker": "MU", "entity_type": "kill_condition", "hit_type": "approaching"}],
                 "pending_approvals": [{"id": 11, "ticker": "MU", "status": "pending"}],
             }
 
@@ -217,3 +231,4 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
     assert payload["action_items"][0]["decision_state"] == "open"
     assert payload["pending_approvals"][0]["decision_state"] == "pending_approval"
     assert payload["evidence_ledger"]["ticker"] == "MU"
+    assert payload["monitor_hits"][0]["hit_type"] == "approaching"

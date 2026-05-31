@@ -661,6 +661,42 @@ class UpdateWatchTriggerDefinitionInput(BaseModel):
         return _strip_watch_trigger_id(value)
 
 
+class CreateMonitorHitInput(OptionalTickerMixin):
+    entity_type: Literal["catalyst", "kill_condition"]
+    entity_id: str
+    entity_label: str | None = None
+    hit_type: Literal["approaching", "triggered", "needs_review", "skipped", "ok"]
+    severity: Literal["low", "medium", "high"] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    result: dict[str, Any] | None = None
+    fingerprint: str | None = None
+    approval_id: str | None = None
+    action_item_id: str | None = None
+
+    @field_validator("entity_id")
+    @classmethod
+    def _strip_entity_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("entity_id cannot be empty.")
+        return text
+
+
+class UpdateMonitorHitStatusInput(BaseModel):
+    hit_id: str
+    status: Literal["open", "reviewed", "superseded", "resolved"]
+
+    @field_validator("hit_id")
+    @classmethod
+    def _strip_hit_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("hit_id cannot be empty.")
+        return text
+
+
 class ReplaceWatchTriggerInput(CreateWatchTriggerInput):
     trigger_id: WatchTriggerIdentifier
 
@@ -1531,6 +1567,9 @@ def _action_result_refs(
     }:
         if ref_id := _id("id", "trigger_id"):
             refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
+    elif action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
+        if ref_id := _id("id", "hit_id"):
+            refs.append(("monitor_hit", ref_id, produced if action_id == "create_monitor_hit" else updated))
     elif action_id == "create_portfolio_news_digest":
         if ref_id := _id("id"):
             refs.append(("news_digest", ref_id, produced))
@@ -1729,6 +1768,8 @@ _cancel_watch_trigger = _disabled_action_handler
 _replace_watch_trigger = _disabled_action_handler
 _update_watch_trigger_check = _disabled_action_handler
 _update_watch_trigger_definition = _disabled_action_handler
+_create_monitor_hit = _disabled_action_handler
+_update_monitor_hit_status = _disabled_action_handler
 _save_thesis_content = _disabled_action_handler
 _save_overview_content = _disabled_action_handler
 _save_management_quality_content = _disabled_action_handler
@@ -1908,6 +1949,23 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_payload=_model_payload,
         precondition_builder=_hash_watch_trigger_status,
         base_state_hash_fields=("trigger_id", "status"),
+    ),
+    "create_monitor_hit": DomainAction(
+        action_id="create_monitor_hit",
+        input_model=CreateMonitorHitInput,
+        handler=_create_monitor_hit,
+        effect_kind="direct_mutation",
+        approval_entity_type="monitor_hit",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "update_monitor_hit_status": DomainAction(
+        action_id="update_monitor_hit_status",
+        input_model=UpdateMonitorHitStatusInput,
+        handler=_update_monitor_hit_status,
+        approval_entity_type="monitor_hit_status",
+        approval_payload=_model_payload,
+        base_state_hash_fields=("hit_id", "status"),
     ),
     "save_thesis_content": DomainAction(
         action_id="save_thesis_content",

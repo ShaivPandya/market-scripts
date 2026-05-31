@@ -90,6 +90,7 @@ def get_dossier(ticker: str, since: str | None = None):
     workflow_runs = ontology_bundle.get("workflow_runs", [])
     action_items = [normalize_action_item(a) for a in ontology_bundle.get("action_items", [])]
     watch_triggers = ontology_bundle.get("watch_triggers", [])
+    monitor_hits = ontology_bundle.get("monitor_hits", [])
     pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
     try:
         what_changed = build_dossier_change_summary(ontology_bundle, ticker, since=since)
@@ -129,5 +130,6 @@ def get_dossier(ticker: str, since: str | None = None):
         "workflow_runs": workflow_runs,
         "action_items": action_items,
         "watch_triggers": watch_triggers,
+        "monitor_hits": monitor_hits,
         "pending_approvals": pending_approvals,
     }

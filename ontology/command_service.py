@@ -57,6 +57,7 @@ from ontology.schemas.identity import (
     thesis_id,
     thesis_section_id,
     trade_proposal_id,
+    monitor_hit_id,
     watch_trigger_id,
 )
 from ontology.schemas.objects import normalize_course_of_action_action
@@ -91,6 +92,8 @@ RESEARCH_ACTION_IDS = {
     "replace_watch_trigger",
     "update_watch_trigger_check",
     "update_watch_trigger_definition",
+    "create_monitor_hit",
+    "update_monitor_hit_status",
 }
 WATCH_TRIGGER_TARGET_ACTION_IDS = {
     "fire_watch_trigger",
@@ -1405,9 +1408,79 @@ class OntologyCommandService:
                     if payload.get("threshold") is not None
                     else existing.get("threshold"),
                     "status": payload.get("status") or "active",
-                    "created_at": now,
+                    "triggered_at": now
+                    if str(payload.get("status") or existing.get("status") or "").strip().lower() == "triggered"
+                    else existing.get("triggered_at"),
+                    "created_at": existing.get("created_at") or now,
                     "updated_at": now,
                     "created_by": context.source_type,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_monitor_hit":
+            fingerprint = str(payload.get("fingerprint") or _stable_hash(payload)).strip()
+            hit_uid = monitor_hit_id(fingerprint)
+            now_detected = str(payload.get("detected_at") or now)
+            row = self.objects.write_object(
+                "MonitorHit",
+                hit_uid,
+                {
+                    "hit_id": hit_uid,
+                    "ticker": _optional_ticker(payload) or "UNKNOWN",
+                    "entity_type": str(payload.get("entity_type") or "catalyst"),
+                    "entity_id": str(payload.get("entity_id") or ""),
+                    "entity_label": payload.get("entity_label"),
+                    "hit_type": str(payload.get("hit_type") or "needs_review"),
+                    "severity": payload.get("severity"),
+                    "status": str(payload.get("status") or "open"),
+                    "confidence": payload.get("confidence"),
+                    "evidence": payload.get("evidence"),
+                    "source_ids": _list(payload.get("source_ids")),
+                    "result": _dict(payload.get("result")),
+                    "detected_at": now_detected,
+                    "approval_id": payload.get("approval_id"),
+                    "action_item_id": payload.get("action_item_id"),
+                    "fingerprint": fingerprint,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "update_monitor_hit_status":
+            hit_uid = _normalize_monitor_hit_uid(payload.get("hit_id"))
+            existing = _object_context_by_uid(self.objects, hit_uid)
+            if not existing:
+                raise OntologyCommandNotFound("MonitorHit", str(payload.get("hit_id")))
+            row = self.objects.write_object(
+                "MonitorHit",
+                hit_uid,
+                {
+                    "hit_id": hit_uid,
+                    "ticker": existing.get("ticker") or _optional_ticker(payload) or "UNKNOWN",
+                    "entity_type": existing.get("entity_type") or str(payload.get("entity_type") or "catalyst"),
+                    "entity_id": existing.get("entity_id") or str(payload.get("entity_id") or ""),
+                    "entity_label": existing.get("entity_label"),
+                    "hit_type": existing.get("hit_type") or str(payload.get("hit_type") or "needs_review"),
+                    "severity": existing.get("severity"),
+                    "status": str(payload.get("status") or existing.get("status") or "open"),
+                    "confidence": existing.get("confidence"),
+                    "evidence": existing.get("evidence"),
+                    "source_ids": _list(existing.get("source_ids")),
+                    "result": _dict(existing.get("result")),
+                    "detected_at": existing.get("detected_at") or now,
+                    "approval_id": existing.get("approval_id"),
+                    "action_item_id": existing.get("action_item_id"),
+                    "fingerprint": existing.get("fingerprint"),
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -3521,6 +3594,11 @@ def _normalize_action_item_uid(value: Any) -> str:
     return text if text.startswith("action_item:") else action_item_id(text)
 
 
+def _normalize_monitor_hit_uid(value: Any) -> str:
+    text = _non_blank(value, "hit_id")
+    return text if text.startswith("monitor_hit:") else monitor_hit_id(text)
+
+
 def _normalize_watch_trigger_uid(value: Any) -> str:
     text = _non_blank(value, "trigger_id")
     return text if text.startswith("watch_trigger:") else watch_trigger_id(text)
@@ -3547,6 +3625,12 @@ def _entity_type_for_action(action_id: str) -> str:
         return "watch_trigger_definition"
     if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         return "course_of_action"
+    if action_id == "create_monitor_hit":
+        return "monitor_hit"
+    if action_id == "update_monitor_hit_status":
+        return "monitor_hit_status"
+    if action_id == "create_recommendation":
+        return "recommendation"
     if action_id == "create_portfolio_news_digest":
         return "news_digest_create"
     if action_id == "delete_portfolio_news_digest":
@@ -3591,6 +3675,16 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         target_type = str(payload.get("target_object_type") or "").strip()
         if target_uid and target_type:
             return target_uid, target_type
+    if action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
+        entity_id = payload.get("entity_id") or payload.get("hit_id")
+        entity_type = str(payload.get("entity_type") or "").strip().lower()
+        if entity_id and entity_type == "catalyst":
+            return _canonical_object_key(entity_id), "Catalyst"
+        if entity_id and entity_type == "kill_condition":
+            return _canonical_object_key(entity_id), "KillCondition"
+        hit_id = payload.get("hit_id")
+        if hit_id:
+            return _normalize_monitor_hit_uid(hit_id), "MonitorHit"
     return None, None
 
 
