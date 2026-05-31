@@ -165,7 +165,8 @@ def _apply_risk_snapshot_to_scenarios(payload: dict[str, Any], snapshot: dict[st
     if not isinstance(scenarios, list):
         return
     risk_score = _ratio_from_pct(snapshot.get("risk_score"))
-    components = snapshot.get("component_scores") if isinstance(snapshot.get("component_scores"), dict) else {}
+    raw_components = snapshot.get("component_scores")
+    components = raw_components if isinstance(raw_components, dict) else {}
     volatility = _ratio_from_pct(components.get("volatility_cluster"))
     breadth = _ratio_from_pct(components.get("breadth_stress"))
     sector = _ratio_from_pct(components.get("sector_stress"))

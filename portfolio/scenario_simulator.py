@@ -430,20 +430,25 @@ def _normalize_execution_assumptions(
     holding_days = values["holding_days"] if values["holding_days"] is not None else 1.0
     holding_days = max(0.0, holding_days)
 
+    transaction_cost_bps = values["transaction_cost_bps"] or 0.0
+    slippage_bps = values["slippage_bps"] or 0.0
+    market_impact_bps = values["market_impact_bps"] or 0.0
+    funding_bps_per_day = values["funding_bps_per_day"] or 0.0
+
     normalized = {
-        "transaction_cost_bps": values["transaction_cost_bps"] or 0.0,
-        "slippage_bps": values["slippage_bps"] or 0.0,
-        "market_impact_bps": values["market_impact_bps"] or 0.0,
+        "transaction_cost_bps": transaction_cost_bps,
+        "slippage_bps": slippage_bps,
+        "market_impact_bps": market_impact_bps,
         "max_adv_participation": _round(max_participation),
-        "funding_bps_per_day": values["funding_bps_per_day"] or 0.0,
+        "funding_bps_per_day": funding_bps_per_day,
         "holding_days": _round(holding_days),
         "source": "request_assumptions" if assumptions or inline else "defaults",
     }
     normalized["total_friction_bps"] = _round(
-        normalized["transaction_cost_bps"]
-        + normalized["slippage_bps"]
-        + normalized["market_impact_bps"]
-        + normalized["funding_bps_per_day"] * normalized["holding_days"]
+        transaction_cost_bps
+        + slippage_bps
+        + market_impact_bps
+        + funding_bps_per_day * holding_days
     )
     if normalized["source"] == "defaults":
         normalized["disclosure"] = (

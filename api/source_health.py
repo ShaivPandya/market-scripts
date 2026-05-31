@@ -577,7 +577,7 @@ def _overall_quality(sources: list[dict[str, Any]]) -> str:
     return "ok"
 
 
-def _counts(sources: list[dict[str, Any]]) -> dict[str, int]:
+def _counts(sources: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {
         "total": len(sources),
         "ok": 0,

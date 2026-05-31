@@ -220,6 +220,10 @@ def _normalized_idea_instrument(payload: dict[str, Any], *, base: dict[str, Any]
         ticker=str(ticker_raw or ""),
         price_symbol=str(price_symbol_raw or ticker_raw or ""),
     )
+    fx_base: str | None
+    fx_quote: str | None
+    currency: str | None
+    exchange: str | None
 
     if instrument_type == "spot_fx":
         price_symbol = normalize_spot_fx_symbol(price_symbol_raw or ticker_raw, field_name="price_symbol")

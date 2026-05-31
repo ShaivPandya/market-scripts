@@ -3885,7 +3885,10 @@ def _apply_recommendation_gate(
     record["approval_required"] = bool(gate.final_action in ACTIONABLE_ACTIONS)
     if gate.confidence_cap is not None:
         try:
-            record["confidence"] = min(float(record.get("confidence")), gate.confidence_cap)
+            raw_confidence = record.get("confidence")
+            record["confidence"] = (
+                min(float(raw_confidence), gate.confidence_cap) if raw_confidence is not None else gate.confidence_cap
+            )
         except (TypeError, ValueError):
             record["confidence"] = gate.confidence_cap
 

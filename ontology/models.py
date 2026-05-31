@@ -34,6 +34,7 @@ EntityType = Literal[
     "Evidence",
     "Citation",
     "ActionItem",
+    "MonitorHit",
     "WatchTrigger",
     "Approval",
     "ActionRun",

@@ -420,8 +420,10 @@ def _props(row: dict[str, Any]) -> dict[str, Any]:
 
 def _temporal(row: dict[str, Any]) -> dict[str, Any]:
     meta = row.get("_meta")
-    if isinstance(meta, dict) and isinstance(meta.get("temporal"), dict):
-        return meta["temporal"]
+    if isinstance(meta, dict):
+        temporal = meta.get("temporal")
+        if isinstance(temporal, dict):
+            return temporal
     return {}
 
 

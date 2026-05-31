@@ -313,7 +313,7 @@ class OntologyObjectService:
         actor: Any = None,
         provenance: Mapping[str, Any] | str | None = None,
         action_run_id: int | None = None,
-        approval_id: int | None = None,
+        approval_id: str | int | None = None,
         source_record_id: str | None = None,
         input_hash: str | None = None,
         temporal_confidence: str = "native",
@@ -366,7 +366,7 @@ class OntologyObjectService:
         actor: Any = None,
         provenance: Mapping[str, Any] | str | None = None,
         action_run_id: int | None = None,
-        approval_id: int | None = None,
+        approval_id: str | int | None = None,
         source_record_id: str | None = None,
         input_hash: str | None = None,
         temporal_confidence: str = "native",
@@ -967,7 +967,7 @@ def _require_governed_lineage(
     *,
     provenance_event_id: str | None,
     action_run_id: int | None,
-    approval_id: int | None,
+    approval_id: str | int | None,
     source_record_id: str | None,
 ) -> None:
     governed = name in _GOVERNED_OBJECT_TYPES if surface == "object" else name in _GOVERNED_RELATION_TYPES

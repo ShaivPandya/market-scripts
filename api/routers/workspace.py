@@ -265,11 +265,15 @@ def get_workspace(since: str | None = None):
 
     # Pending approvals
     pending_approvals = [
-        normalize_approval(
-            a,
-            source_health_review=build_approval_source_health_review(a, source_health),
+        normalized
+        for raw in ontology_bundle.get("pending_approvals", [])
+        if (
+            normalized := normalize_approval(
+                raw,
+                source_health_review=build_approval_source_health_review(raw, source_health),
+            )
         )
-        for a in ontology_bundle.get("pending_approvals", [])
+        is not None
     ]
     recommendation_approvals = [
         a

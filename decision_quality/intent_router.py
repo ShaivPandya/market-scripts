@@ -248,7 +248,10 @@ def _parse_llm_route(
     if not isinstance(parsed, dict):
         return None
     try:
-        confidence = float(parsed.get("confidence"))
+        raw_confidence = parsed.get("confidence")
+        if raw_confidence is None:
+            return None
+        confidence = float(raw_confidence)
     except (TypeError, ValueError):
         return None
     intent_class = str(parsed.get("intent_class") or "general_research")

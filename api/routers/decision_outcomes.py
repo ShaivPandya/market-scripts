@@ -68,7 +68,7 @@ def finalize_decision_outcome_endpoint(
             note=body.note,
             corrected_postmortem=body.corrected_postmortem,
             lessons_learned=body.lessons_learned,
-            actor_id=str(actor.get("actor_id") or actor.get("email") or "user"),
+            actor_id=actor.actor_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

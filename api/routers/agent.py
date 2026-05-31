@@ -1458,7 +1458,7 @@ def _resolve_chat_route(
         screen_context=screen_context,
         recent_conversation=recent_conversation,
         opportunity_candidate_metadata=opportunity_candidate_metadata,
-        allowed_tool_names=_tool_names(),
+        allowed_tool_names=list(_tool_names()),
         workflow_hints=list(AVAILABLE_WORKFLOWS.keys()),
     )
     system_prompt: str | None = None

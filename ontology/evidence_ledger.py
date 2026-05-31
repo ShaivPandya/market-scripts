@@ -182,7 +182,7 @@ def write_parent_evidence_graph(
     valid_from: str,
     actor: Mapping[str, Any],
     provenance_id: str,
-    approval_id: int | None = None,
+    approval_id: str | int | None = None,
     source_record_id: str | None = None,
     observed_at: str | None = None,
     input_hash: str | None = None,
@@ -310,7 +310,7 @@ def write_claim_evidence_graph(
     valid_from: str,
     actor: Mapping[str, Any],
     provenance_id: str,
-    approval_id: int | None = None,
+    approval_id: str | int | None = None,
     input_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -355,7 +355,7 @@ def maybe_link_source_record_materialization(
     actor: Mapping[str, Any],
     provenance_id: str,
     valid_from: str,
-    approval_id: int | None = None,
+    approval_id: str | int | None = None,
 ) -> list[dict[str, Any]]:
     if not source_record_id:
         return []

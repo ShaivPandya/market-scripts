@@ -467,8 +467,10 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("critical_data_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
-    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
-    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+    raw_payload = out.get("payload")
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    raw_outcome = payload.get("outcome")
+    outcome = raw_outcome if isinstance(raw_outcome, dict) else {}
     if outcome:
         out["draft_postmortem"] = outcome.get("draft_postmortem")
         out["final_postmortem"] = outcome.get("final_postmortem")
@@ -498,8 +500,10 @@ def normalize_course_of_action(record: dict[str, Any] | None) -> dict[str, Any] 
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("source_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
-    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
-    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+    raw_payload = out.get("payload")
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    raw_outcome = payload.get("outcome")
+    outcome = raw_outcome if isinstance(raw_outcome, dict) else {}
     if outcome:
         out["draft_postmortem"] = outcome.get("draft_postmortem")
         out["final_postmortem"] = outcome.get("final_postmortem")

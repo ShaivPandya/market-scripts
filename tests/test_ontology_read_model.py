@@ -219,10 +219,13 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
                 )
             ],
             [_op_row("WatchTrigger", "watch_trigger:1", {"ticker": "MU", "status": "active"})],
+            [],
             [_op_row("WorkflowRun", "workflow_run:1", {"ticker": "MU"})],
             [_op_row("ReportRun", "report_run:1", {"as_of": "2026-05-05"})],
             [_op_row("ThesisClaim", "claim:1", {"ticker": "MU", "status": "challenged"})],
             [_op_row("ThesisClaim", "claim:2", {"ticker": "MU", "status": "disconfirmed"})],
+            [],
+            [],
         ]
     )
     repo = TemporalReadModelRepository(connection_factory=lambda: conn)
@@ -285,7 +288,9 @@ def test_dossier_bundle_filters_by_ticker_and_attaches_management_quality_childr
             [_op_row("WorkflowRun", "workflow_run:MU", {"ticker": "MU"})],
             [_op_row("ActionItem", "action_item:MU", {"ticker": "MU", "status": "open"})],
             [_op_row("WatchTrigger", "watch_trigger:MU", {"ticker": "MU"})],
+            [],
             [_op_row("Approval", "approval:MU", {"ticker": "MU", "status": "pending"})],
+            [],
         ]
     )
     repo = TemporalReadModelRepository(connection_factory=lambda: conn)

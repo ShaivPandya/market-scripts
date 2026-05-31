@@ -35,7 +35,7 @@ class ObjectVersionWrite:
     source_record_id: uuid.UUID | str | None = None
     provenance_event_id: str | None = None
     action_run_id: int | None = None
-    approval_id: int | None = None
+    approval_id: str | int | None = None
     actor_type: str | None = None
     actor_id: str | None = None
     input_hash: str | None = None
@@ -58,7 +58,7 @@ class RelationVersionWrite:
     source_record_id: uuid.UUID | str | None = None
     provenance_event_id: str | None = None
     action_run_id: int | None = None
-    approval_id: int | None = None
+    approval_id: str | int | None = None
     actor_type: str | None = None
     actor_id: str | None = None
     input_hash: str | None = None
