@@ -53,6 +53,7 @@ import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary
 import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSummary"
 import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { PositionValuationTab } from "@/components/valuation/PositionValuationTab"
@@ -86,6 +87,7 @@ interface DossierData {
     parsed: ParsedManagementQuality | null
     assessment?: ManagementQualityAssessment | null
   }
+  what_changed?: WhatChangedSummary | null
   thesis: {
     meta: ThesisMeta | null
     content: string | null
@@ -559,6 +561,8 @@ export function PositionDossier() {
           staged for {subjectLabel(lastProposal.entity_type)}. It will not change app state until approved and applied.
         </StagedProposalNotice>
       )}
+
+      <WhatChangedPanel summary={data.what_changed} className="mb-4" from="dossier" maxItems={6} />
 
       {/* Tabs */}
       <div className="mb-4 flex w-full max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-app [-webkit-overflow-scrolling:touch]">

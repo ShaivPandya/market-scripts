@@ -42,6 +42,7 @@ import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSum
 import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
+import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import {
   DecisionStateBadge,
@@ -84,6 +85,7 @@ interface WorkspaceData {
     } | null
   } | null
   source_health?: SourceHealth | null
+  what_changed?: WhatChangedSummary | null
   thesis_pressure: {
     ticker: string
     status: string
@@ -909,6 +911,8 @@ export function Workspace() {
           signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
         />
       </div>
+
+      <WhatChangedPanel summary={data.what_changed} className="mb-6" from="workspace" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (

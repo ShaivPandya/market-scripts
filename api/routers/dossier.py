@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api.decision_state import normalize_action_item, normalize_approval
 from api.exceptions import NotFoundError
+from ontology.change_summary import ChangeSummaryInputError, build_dossier_change_summary
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -16,7 +17,7 @@ logger = logging.getLogger("api.dossier")
 
 
 @router.get("/dossier/{ticker}")
-def get_dossier(ticker: str):
+def get_dossier(ticker: str, since: str | None = None):
     """Return unified dossier for a single position."""
     ticker = ticker.strip().upper()
     if not ticker:
@@ -90,6 +91,10 @@ def get_dossier(ticker: str):
     action_items = [normalize_action_item(a) for a in ontology_bundle.get("action_items", [])]
     watch_triggers = ontology_bundle.get("watch_triggers", [])
     pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
+    try:
+        what_changed = build_dossier_change_summary(ontology_bundle, ticker, since=since)
+    except ChangeSummaryInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Ontology risk is loaded lazily by the frontend Risk tab to avoid
     # expensive macro ingestion during dossier navigation.
@@ -107,6 +112,7 @@ def get_dossier(ticker: str):
             else management_quality_parsed,
             "assessment": management_quality_assessment,
         },
+        "what_changed": what_changed,
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,

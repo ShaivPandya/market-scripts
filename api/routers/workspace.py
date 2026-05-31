@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
 from api.llm_settings import get_setting, set_setting
 from api.source_health import build_approval_source_health_review, build_workspace_source_health
+from ontology.change_summary import ChangeSummaryInputError, build_workspace_change_summary
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -114,7 +115,7 @@ def dismiss_thesis_pressure(body: DismissThesisPressureRequest):
 
 
 @router.get("/workspace")
-def get_workspace():
+def get_workspace(since: str | None = None):
     """Return workspace landing page data."""
     reads = OntologyRuntimeReadService()
 
@@ -303,11 +304,16 @@ def get_workspace():
     recent_runs = ontology_bundle.get("recent_workflow_runs", [])
     recent_report_runs = ontology_bundle.get("recent_report_runs", [])
     challenged_claims = ontology_bundle.get("challenged_claims", []) + ontology_bundle.get("disconfirmed_claims", [])
+    try:
+        what_changed = build_workspace_change_summary(ontology_bundle, since=since)
+    except ChangeSummaryInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return {
         "regime": regime_summary,
         "portfolio": portfolio_summary,
         "source_health": source_health,
+        "what_changed": what_changed,
         "thesis_pressure": thesis_pressure,
         "pending_approvals": {
             "count": len(pending_approvals),

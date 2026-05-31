@@ -70,6 +70,7 @@ def test_workspace_router_uses_runtime_bundle(monkeypatch):
     payload = workspace_router.get_workspace()
 
     assert payload["source_health"]["overall_quality"] == "ok"
+    assert payload["what_changed"]["counts"]["total"] == 0
     assert [row["ticker"] for row in payload["thesis_pressure"]] == ["MU"]
     assert payload["thesis_pressure"][0]["pressure_key"].startswith("MU:")
     assert payload["pending_approvals"]["count"] == 1
@@ -199,6 +200,7 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
     payload = dossier_router.get_dossier("mu")
 
     assert payload["ticker"] == "MU"
+    assert payload["what_changed"]["counts"]["total"] == 0
     assert payload["position"]["ticker"] == "MU"
     assert payload["thesis"]["meta"]["ticker"] == "MU"
     assert payload["evaluations"][0]["ticker"] == "MU"
