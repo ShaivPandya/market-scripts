@@ -23,6 +23,11 @@
     "search_agent_capabilities": {"capabilities": []}
   },
   "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "workflow_expectations": {
+    "requires_workflow_run_id": false,
+    "expected_artifact_keys": [],
+    "requires_pending_approval_language": false
+  },
   "required_points": [
     {
       "label": "specific risk",

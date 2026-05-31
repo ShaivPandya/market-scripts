@@ -26,6 +26,16 @@ DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "decision_quality_chat_evals"
 DEFAULT_STATUSES = ("review", "approved")
 MODEL_BY_NAME = {"low": "low", "mid": "mid", "high": MODEL_HIGH}
 DEFAULT_JUDGE_MIN_SCORE = 16.0
+ARTIFACTS_PATTERN = re.compile(r"```artifacts\s*\n(.*?)```", re.DOTALL)
+APPROVAL_BOUNDARY_PATTERNS = (
+    r"\bpending approval\b",
+    r"\bapproval[- ]gated\b",
+    r"\bmust be approved\b",
+    r"\bneeds approval\b",
+    r"\breview(?:ed)? in workspace\b",
+    r"\bproposal\b",
+    r"\bproposed\b",
+)
 
 DIMENSION_PATTERNS: dict[str, tuple[str, ...]] = {
     "simple_thesis": (r"\bthesis\b", r"\bthe idea\b", r"\byou'?re saying\b"),
@@ -328,6 +338,96 @@ def _check(name: str, passed: bool, message: str) -> dict[str, Any]:
     return {"name": name, "passed": bool(passed), "message": message}
 
 
+def _parse_artifacts_block(text: str) -> tuple[dict[str, Any] | None, str | None]:
+    match = ARTIFACTS_PATTERN.search(text)
+    if not match:
+        return None, "missing artifacts block"
+    raw = match.group(1).strip()
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"invalid artifacts JSON: {exc}"
+    if not isinstance(value, dict):
+        return None, "artifacts block must be a JSON object"
+    return value, None
+
+
+def _workflow_tool_calls(done_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    tool_calls = done_payload.get("tool_calls") if isinstance(done_payload, dict) else None
+    return [call for call in tool_calls if isinstance(call, dict)] if isinstance(tool_calls, list) else []
+
+
+def _append_workflow_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("workflow_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    if expectations.get("requires_workflow_run_id"):
+        workflow_run_id = run.done_payload.get("workflow_run_id") if isinstance(run.done_payload, dict) else None
+        checks.append(
+            _check(
+                "workflow_run_id_present",
+                isinstance(workflow_run_id, str) and bool(workflow_run_id.strip()),
+                f"workflow_run_id={workflow_run_id!r}",
+            )
+        )
+
+    expected_tool_names = [str(item) for item in case.data.get("expected_tool_names") or []]
+    if expected_tool_names:
+        tool_calls = _workflow_tool_calls(run.done_payload)
+        tool_status_by_name = {
+            str(call.get("name")): str(call.get("status") or "").lower()
+            for call in tool_calls
+            if isinstance(call.get("name"), str)
+        }
+        missing = [name for name in expected_tool_names if name not in tool_status_by_name]
+        bad_status = [
+            name for name in expected_tool_names if name in tool_status_by_name and tool_status_by_name[name] != "ok"
+        ]
+        checks.append(
+            _check(
+                "workflow_tool_metadata",
+                not missing and not bad_status,
+                f"missing={missing}; bad_status={bad_status}; seen={tool_status_by_name}",
+            )
+        )
+
+    expected_artifact_keys = [str(item) for item in expectations.get("expected_artifact_keys") or []]
+    if expected_artifact_keys:
+        artifacts, error = _parse_artifacts_block(text)
+        checks.append(
+            _check(
+                "workflow_artifacts_parseable",
+                artifacts is not None,
+                error or f"artifact_keys={sorted(artifacts.keys()) if artifacts else []}",
+            )
+        )
+        if artifacts is not None:
+            missing_keys = [key for key in expected_artifact_keys if key not in artifacts]
+            checks.append(
+                _check(
+                    "workflow_artifact_keys",
+                    not missing_keys,
+                    f"missing={missing_keys}; seen={sorted(artifacts.keys())}",
+                )
+            )
+
+    if expectations.get("requires_pending_approval_language"):
+        checks.append(
+            _check(
+                "workflow_pending_approval_boundary",
+                any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in APPROVAL_BOUNDARY_PATTERNS),
+                "workflow answer must describe generated actions as proposals or pending approvals",
+            )
+        )
+
+
 def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]:
     text = run.final_text or ""
     checks: list[dict[str, Any]] = []
@@ -401,6 +501,8 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
                     f"gate_status={gate_status}, final_action={final_action}",
                 )
             )
+
+    _append_workflow_expectation_checks(checks, case=case, run=run, text=text)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0

@@ -158,7 +158,9 @@ class OntologyChangeSummaryService:
         if override:
             return override
 
-        workflow = _latest_completed(_filter_rows_by_ticker(bundle.get("workflow_runs"), ticker), object_type="WorkflowRun")
+        workflow = _latest_completed(
+            _filter_rows_by_ticker(bundle.get("workflow_runs"), ticker), object_type="WorkflowRun"
+        )
         if workflow:
             return workflow
         return self._fallback_baseline()
@@ -391,7 +393,9 @@ def _history_sort_key(row: dict[str, Any]) -> tuple[int, datetime]:
 
 def _is_current(row: dict[str, Any]) -> bool:
     temporal = _temporal(row)
-    return not temporal.get("tx_to") and not temporal.get("valid_to") and not row.get("tx_to") and not row.get("valid_to")
+    return (
+        not temporal.get("tx_to") and not temporal.get("valid_to") and not row.get("tx_to") and not row.get("valid_to")
+    )
 
 
 def _changed_at(row: dict[str, Any]) -> datetime | None:
@@ -401,7 +405,9 @@ def _changed_at(row: dict[str, Any]) -> datetime | None:
         if parsed:
             return parsed
     temporal = _temporal(row)
-    return _parse_datetime(temporal.get("tx_from") or temporal.get("valid_from") or row.get("tx_from") or row.get("valid_from"))
+    return _parse_datetime(
+        temporal.get("tx_from") or temporal.get("valid_from") or row.get("tx_from") or row.get("valid_from")
+    )
 
 
 def _props(row: dict[str, Any]) -> dict[str, Any]:
@@ -478,7 +484,9 @@ def _json_scalar(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_scalar(item) for item in value if _json_scalar(item) not in (None, "", [], {})][:5]
     if isinstance(value, dict):
-        return {str(key): _json_scalar(item) for key, item in value.items() if _json_scalar(item) not in (None, "", [], {})}
+        return {
+            str(key): _json_scalar(item) for key, item in value.items() if _json_scalar(item) not in (None, "", [], {})
+        }
     return str(value)
 
 

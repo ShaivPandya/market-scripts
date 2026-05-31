@@ -155,13 +155,23 @@ def test_dossier_summary_filters_by_ticker_and_uses_workflow_baseline():
                 _row(
                     "ReportRun",
                     "report:mu",
-                    {"ticker": "MU", "report_type": "daily", "status": "completed", "synced_at": "2026-05-20T09:00:00Z"},
+                    {
+                        "ticker": "MU",
+                        "report_type": "daily",
+                        "status": "completed",
+                        "synced_at": "2026-05-20T09:00:00Z",
+                    },
                     tx_from="2026-05-20T09:00:00Z",
                 ),
                 _row(
                     "ReportRun",
                     "report:crwd",
-                    {"ticker": "CRWD", "report_type": "daily", "status": "completed", "synced_at": "2026-05-20T12:00:00Z"},
+                    {
+                        "ticker": "CRWD",
+                        "report_type": "daily",
+                        "status": "completed",
+                        "synced_at": "2026-05-20T12:00:00Z",
+                    },
                     tx_from="2026-05-20T12:00:00Z",
                 ),
             ],
@@ -183,7 +193,7 @@ def test_dossier_summary_filters_by_ticker_and_uses_workflow_baseline():
                     "ticker": "MU",
                     "status": "succeeded",
                     "completed_at": "2026-05-19T00:00:00Z",
-                }
+                },
             ]
         },
         "MU",
