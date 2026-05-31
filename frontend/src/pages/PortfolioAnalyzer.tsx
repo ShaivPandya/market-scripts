@@ -669,13 +669,6 @@ function workspaceActionVerb(action: AnalyzerCourseAction) {
   }
 }
 
-function workspaceActionUrgency(action: AnalyzerCourseAction) {
-  const band = String(action.conviction_band || "").toLowerCase()
-  if (band === "large") return "high"
-  if (band === "small" || band === "none" || action.gate_status === "watch") return "low"
-  return "normal"
-}
-
 function workspaceActionDescription(action: AnalyzerCourseAction) {
   const lines = [
     `${workspaceActionVerb(action)} for ${action.ticker}.`,

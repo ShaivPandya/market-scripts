@@ -50,7 +50,7 @@ test("renders workspace common operating picture and enforces approval note gati
   await expect(page.getByText("SLA breach").first()).toBeVisible()
   await expect(page.getByText("Critical").first()).toBeVisible()
 
-  await page.getByRole("button", { name: "Review" }).click()
+  await page.getByRole("button", { name: "Review", exact: true }).click()
 
   const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })
   await expect(reviewDialog).toBeVisible()

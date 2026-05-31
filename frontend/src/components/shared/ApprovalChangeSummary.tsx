@@ -423,8 +423,6 @@ function proposedChangeSummary(approval: ApprovalRecord): { title: string; summa
       return { title, ...thesisStatusSummary(change, "catalyst") }
     case "update_kill_condition_status":
       return { title, ...thesisStatusSummary(change, "kill condition") }
-    case "create_recommendation":
-      return { title, ...recommendationSummary(change) }
     default:
       return {
         title,

@@ -26,7 +26,7 @@ test.describe("mobile responsive surfaces", () => {
     await page.goto("/workspace")
 
     await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
-    await page.getByRole("button", { name: "Review" }).click()
+    await page.getByRole("button", { name: "Review", exact: true }).click()
 
     const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })
     await expect(reviewDialog).toBeVisible()
