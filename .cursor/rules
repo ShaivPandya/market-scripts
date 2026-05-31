@@ -1,7 +1,0 @@
-# Cursor Cloud Agent Rules
-
-## Branch policy
-
-Commit directly to the branch that is currently checked out. Do not create new branches unless explicitly asked.
-Do not use the `cursor/<name>-0dfb` branch naming template.
-Do not open separate pull requests per task unless explicitly asked — push to the active branch.

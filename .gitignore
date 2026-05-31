@@ -83,6 +83,7 @@ infra/gcp/config.sh
 infra/gcp/release-manifest.json
 
 # Local editor/agent config
+.cursor/
 .claude/
 .jules/
 .vscode/
