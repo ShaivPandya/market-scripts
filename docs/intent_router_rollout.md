@@ -25,7 +25,7 @@ Override at deploy time, e.g. `AGENT_INTENT_ROUTER_SHADOW_MODE=false ./infra/gcp
 2. Collect `done.intent_router.telemetry.shadow_comparison` rows until burn-in window completes.
 3. Run offline routing evals:
    ```bash
-   python -m decision_quality.chat_eval_runner --cases routing_
+   python -m decision_quality.chat_eval_runner --routing-only
    ```
 4. Review mismatch clusters (`tool_only_in_candidate`, hidden DQ disagreements, workflow disagreements).
 
@@ -36,7 +36,17 @@ Override at deploy time, e.g. `AGENT_INTENT_ROUTER_SHADOW_MODE=false ./infra/gcp
 
 ## Phase C — tuning
 1. Adjust threshold only after reviewing shadow telemetry.
-2. Feed labeled rows into TL-55 supervised training loop.
+2. Feed labeled rows into TL-55 supervised training loop:
+   ```bash
+   python -m decision_quality.intent_router_training export
+   python -m decision_quality.intent_router_training train
+   ```
+3. Enable supervised rollout behind feature flags:
+   - `AGENT_INTENT_ROUTER_SUPERVISED_ENABLED=true`
+   - `AGENT_INTENT_ROUTER_SUPERVISED_MODEL_PATH=/path/to/model.joblib`
+4. Persist production shadow rows with:
+   - `AGENT_INTENT_ROUTER_TRAINING_CAPTURE_ENABLED=true`
+   - optional `AGENT_INTENT_ROUTER_TRAINING_CAPTURE_MISMATCH_ONLY=true`
 
 ## Regression safety
 - High-risk trade prompts must still route through hidden decision quality when regex baseline requires it.

@@ -117,6 +117,14 @@ def load_cases(
             if path.exists():
                 selected.append(ChatEvalCase(path=path, data=_read_json(path)))
                 continue
+            prefix_matches = [
+                case
+                for case in cases
+                if case.case_id.startswith(selector) or case.path.stem.startswith(selector)
+            ]
+            if prefix_matches:
+                selected.extend(prefix_matches)
+                continue
             match = by_id.get(selector) or by_stem.get(selector) or by_name.get(selector)
             if match is None:
                 raise ValueError(f"Unknown decision-quality chat eval case: {selector}")
@@ -794,7 +802,12 @@ def _parse_statuses(value: str) -> set[str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run live decision-quality chat eval cases against Stan.")
-    parser.add_argument("--case", action="append", default=[], help="Case id, filename, or path. Repeatable.")
+    parser.add_argument("--case", action="append", default=[], help="Case id, filename, path, or prefix. Repeatable.")
+    parser.add_argument(
+        "--routing-only",
+        action="store_true",
+        help="Only run routing_* cases (shortcut for --case routing_).",
+    )
     parser.add_argument("--status", default="review,approved", help="Comma-separated statuses to run.")
     parser.add_argument("--model", choices=sorted(MODEL_BY_NAME), default="high")
     parser.add_argument("--provider", choices=["anthropic", "openai", "gemini"], default=None)
@@ -810,7 +823,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     _load_local_env()
     args = parse_args(argv)
-    cases = load_cases(case_selectors=args.case or None, statuses=_parse_statuses(args.status))
+    case_selectors = list(args.case or [])
+    if args.routing_only and "routing_" not in case_selectors:
+        case_selectors.append("routing_")
+    cases = load_cases(case_selectors=case_selectors or None, statuses=_parse_statuses(args.status))
     model = MODEL_BY_NAME[args.model]
 
     def runner(case: ChatEvalCase) -> AgentChatRun:

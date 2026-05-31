@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from llm_utils import MODEL_LOW, call_llm_json
@@ -15,6 +17,9 @@ from llm_utils import MODEL_LOW, call_llm_json
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.70
+TRAINING_ROW_SCHEMA_VERSION = 1
+DEFAULT_TRAINING_REDACTION_POLICY = "router_training_v1"
+DEFAULT_TRAINING_RETENTION_CLASS = "router_training_365d"
 
 INTENT_CLASSES = frozenset(
     {
@@ -57,6 +62,57 @@ def intent_router_confidence_threshold() -> float:
         return max(0.0, min(1.0, float(raw)))
     except (TypeError, ValueError):
         return DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def intent_router_training_capture_enabled() -> bool:
+    return _env_flag("AGENT_INTENT_ROUTER_TRAINING_CAPTURE_ENABLED", default=False)
+
+
+def intent_router_training_capture_mismatch_only() -> bool:
+    return _env_flag("AGENT_INTENT_ROUTER_TRAINING_CAPTURE_MISMATCH_ONLY", default=False)
+
+
+def intent_router_training_capture_sample_rate() -> float:
+    raw = os.environ.get("AGENT_INTENT_ROUTER_TRAINING_CAPTURE_SAMPLE_RATE", "1.0")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def intent_router_supervised_enabled() -> bool:
+    return _env_flag("AGENT_INTENT_ROUTER_SUPERVISED_ENABLED", default=False)
+
+
+def intent_router_supervised_model_path() -> Path | None:
+    raw = os.environ.get("AGENT_INTENT_ROUTER_SUPERVISED_MODEL_PATH", "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def should_capture_training_row(*, route_meta: dict[str, Any]) -> tuple[bool, str]:
+    """Return whether this turn should be persisted and the sampling reason."""
+    if not intent_router_training_capture_enabled():
+        return False, "capture_disabled"
+    if intent_router_training_capture_mismatch_only():
+        comparison = route_meta.get("shadow_comparison")
+        if not isinstance(comparison, dict):
+            return False, "mismatch_only_no_comparison"
+        if (
+            comparison.get("intent_match")
+            and comparison.get("hidden_dq_match")
+            and comparison.get("opportunity_preflight_match")
+            and comparison.get("workflow_match")
+            and not comparison.get("tool_only_in_candidate")
+            and not comparison.get("tool_only_in_applied")
+        ):
+            return False, "mismatch_only_match"
+        return True, "shadow_mismatch"
+    sample_rate = intent_router_training_capture_sample_rate()
+    if sample_rate < 1.0 and random.random() > sample_rate:
+        return False, "sampled_out"
+    return True, "shadow_all"
 
 
 @dataclass(frozen=True)
@@ -347,6 +403,75 @@ def compare_route_decisions(
     }
 
 
+def _finalize_candidate_route(
+    *,
+    context: RouteContext,
+    regex_baseline: RouteDecision,
+    candidate: RouteDecision | None,
+    meta: dict[str, Any],
+    candidate_key: str,
+    applied_source: str,
+) -> tuple[RouteDecision, dict[str, Any]]:
+    threshold = float(meta.get("confidence_threshold") or intent_router_confidence_threshold())
+    if candidate is None:
+        meta["applied_source"] = "regex"
+        meta["fallback_reason"] = meta.get("fallback_reason") or f"{candidate_key}_unavailable"
+        return regex_baseline, meta
+
+    meta[candidate_key] = candidate.to_meta()
+    meta["shadow_comparison"] = compare_route_decisions(applied=regex_baseline, candidate=candidate)
+
+    if intent_router_shadow_mode():
+        meta["applied_source"] = "regex_shadow"
+        meta["shadow_mode"] = True
+        return regex_baseline, meta
+
+    if candidate.confidence < threshold:
+        meta["applied_source"] = "regex"
+        meta["fallback_reason"] = "confidence_below_threshold"
+        return (
+            RouteDecision(
+                intent_class=regex_baseline.intent_class,
+                run_hidden_dq=regex_baseline.run_hidden_dq,
+                run_opportunity_preflight=regex_baseline.run_opportunity_preflight,
+                workflow_name=regex_baseline.workflow_name,
+                workflow_ticker=regex_baseline.workflow_ticker,
+                tool_names=regex_baseline.tool_names,
+                confidence=candidate.confidence,
+                source="regex",
+                fallback_reason="confidence_below_threshold",
+                tool_pack=regex_baseline.tool_pack,
+            ),
+            meta,
+        )
+
+    meta["applied_source"] = applied_source
+    return candidate, meta
+
+
+def run_supervised_route_decision(
+    *,
+    context: RouteContext,
+    regex_baseline: RouteDecision,
+    model_path: Path | None = None,
+) -> RouteDecision | None:
+    """Run the configured supervised router artifact, if available."""
+    from decision_quality.intent_router_supervised import predict_route_decision
+
+    resolved_path = model_path or intent_router_supervised_model_path()
+    if resolved_path is None:
+        return None
+    try:
+        return predict_route_decision(
+            context=context,
+            regex_baseline=regex_baseline,
+            model_path=resolved_path,
+        )
+    except Exception:
+        logger.exception("intent_router_supervised_predict_failed path=%s", resolved_path)
+        return None
+
+
 def resolve_agent_route(
     *,
     context: RouteContext,
@@ -359,11 +484,25 @@ def resolve_agent_route(
     """Resolve effective routing and telemetry metadata."""
     threshold = intent_router_confidence_threshold()
     meta: dict[str, Any] = {
-        "enabled": intent_router_enabled(),
+        "enabled": intent_router_enabled() or intent_router_supervised_enabled(),
         "shadow_mode": intent_router_shadow_mode(),
         "confidence_threshold": threshold,
         "regex_baseline": regex_baseline.to_meta(),
+        "supervised_enabled": intent_router_supervised_enabled(),
     }
+
+    if intent_router_supervised_enabled():
+        supervised_decision = run_supervised_route_decision(context=context, regex_baseline=regex_baseline)
+        if supervised_decision is not None:
+            return _finalize_candidate_route(
+                context=context,
+                regex_baseline=regex_baseline,
+                candidate=supervised_decision,
+                meta=meta,
+                candidate_key="supervised_candidate",
+                applied_source="supervised",
+            )
+        meta["supervised_skipped"] = True
 
     if not intent_router_enabled():
         meta["applied_source"] = "regex"
@@ -404,35 +543,14 @@ def resolve_agent_route(
             meta,
         )
 
-    meta["llm_candidate"] = llm_decision.to_meta()
-    meta["shadow_comparison"] = compare_route_decisions(applied=regex_baseline, candidate=llm_decision)
-
-    if intent_router_shadow_mode():
-        meta["applied_source"] = "regex_shadow"
-        meta["shadow_mode"] = True
-        return regex_baseline, meta
-
-    if llm_decision.confidence < threshold:
-        meta["applied_source"] = "regex"
-        meta["fallback_reason"] = "confidence_below_threshold"
-        return (
-            RouteDecision(
-                intent_class=regex_baseline.intent_class,
-                run_hidden_dq=regex_baseline.run_hidden_dq,
-                run_opportunity_preflight=regex_baseline.run_opportunity_preflight,
-                workflow_name=regex_baseline.workflow_name,
-                workflow_ticker=regex_baseline.workflow_ticker,
-                tool_names=regex_baseline.tool_names,
-                confidence=llm_decision.confidence,
-                source="regex",
-                fallback_reason="confidence_below_threshold",
-                tool_pack=regex_baseline.tool_pack,
-            ),
-            meta,
-        )
-
-    meta["applied_source"] = "llm"
-    return llm_decision, meta
+    return _finalize_candidate_route(
+        context=context,
+        regex_baseline=regex_baseline,
+        candidate=llm_decision,
+        meta=meta,
+        candidate_key="llm_candidate",
+        applied_source="llm",
+    )
 
 
 def training_row_from_telemetry(
@@ -440,21 +558,35 @@ def training_row_from_telemetry(
     user_text: str,
     route_meta: dict[str, Any],
     session_id: str | None = None,
+    client_turn_id: str | None = None,
     screen_context: dict[str, Any] | None = None,
+    recent_session_features: list[dict[str, Any]] | None = None,
+    applied_route: dict[str, Any] | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
+    capture_policy: str = "shadow_all",
+    sampling_reason: str | None = None,
 ) -> dict[str, Any]:
     """Serialize one shadow-mode row for offline router training/eval."""
-    applied = route_meta.get("regex_baseline")
-    candidate = route_meta.get("llm_candidate")
     return {
+        "schema_version": TRAINING_ROW_SCHEMA_VERSION,
         "session_id": session_id,
+        "client_turn_id": client_turn_id,
         "user_text": user_text,
         "screen_context": screen_context,
-        "regex_baseline": applied,
-        "llm_candidate": candidate,
+        "recent_session_features": recent_session_features or [],
+        "regex_baseline": route_meta.get("regex_baseline"),
+        "llm_candidate": route_meta.get("llm_candidate"),
+        "supervised_candidate": route_meta.get("supervised_candidate"),
         "shadow_comparison": route_meta.get("shadow_comparison"),
+        "applied_route": applied_route,
         "applied_source": route_meta.get("applied_source"),
         "fallback_reason": route_meta.get("fallback_reason"),
         "confidence_threshold": route_meta.get("confidence_threshold"),
+        "opportunity_candidate_metadata": opportunity_candidate_metadata,
+        "capture_policy": capture_policy,
+        "sampling_reason": sampling_reason,
+        "redaction_policy": DEFAULT_TRAINING_REDACTION_POLICY,
+        "retention_class": DEFAULT_TRAINING_RETENTION_CLASS,
     }
 
 
