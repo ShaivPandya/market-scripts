@@ -81,10 +81,20 @@ def _cloudflare_proxy_secret_configured() -> bool:
     return bool((os.environ.get("API_PROXY_SECRET") or "").strip())
 
 
+def _is_production_runtime() -> bool:
+    return os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
+
+
 def _get_password_hash() -> bytes:
     value = os.environ.get("AUTH_PASSWORD_HASH")
     if not value:
         raise RuntimeError("AUTH_PASSWORD_HASH is not set")
+
+    if _is_production_runtime():
+        # Ensure it looks like a bcrypt hash in production
+        if not value.startswith("$2b$") or len(value) < 50:
+            raise RuntimeError("AUTH_PASSWORD_HASH must be a valid bcrypt hash in production.")
+
     return value.encode()
 
 
@@ -98,6 +108,13 @@ def _get_jwt_secret() -> str:
     value = os.environ.get("JWT_SECRET")
     if not value:
         raise RuntimeError("JWT_SECRET is not set")
+
+    if _is_production_runtime():
+        if value == "your_random_jwt_secret_here":
+            raise RuntimeError("JWT_SECRET cannot be the default example value in production.")
+        if len(value) < 32:
+            raise RuntimeError("JWT_SECRET must be at least 32 characters in production.")
+
     return value
 
 
@@ -117,11 +134,12 @@ router = APIRouter(tags=["auth"])
 
 def _create_token(subject: str = "admin") -> str:
     ttl_hours = _get_jwt_ttl_hours()
-    expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    now = datetime.now(UTC)
+    expire = now + timedelta(hours=ttl_hours)
     return cast(
         str,
         jwt.encode(
-            {"sub": subject, "exp": expire},
+            {"sub": subject, "iat": now, "exp": expire},
             _get_jwt_secret(),
             algorithm=_get_jwt_algorithm(),
         ),
@@ -215,20 +233,21 @@ def require_auth(access_token: str | None = Cookie(default=None, alias="__sessio
                 access_token,
                 _get_jwt_secret(),
                 algorithms=[_get_jwt_algorithm()],
+                options={"require_iat": True, "require_exp": True},
             ),
         )
         sub = payload.get("sub")
-        if isinstance(sub, str):
-            return sub
+        if not isinstance(sub, str) or not sub.strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload: missing or invalid subject",
+            )
+        return sub
+    except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-    except JWTError:
-        raise HTTPException(  # noqa: B904
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
+            detail=f"Invalid or expired token: {exc}",
+        ) from exc
 
 
 def require_actor(sub: str = Depends(require_auth)) -> Actor:
