@@ -1226,7 +1226,26 @@ def persist_recommendations(
             context,
             reason=reason,
         )
-        persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
+        proposed_change = approval.get("proposed_change") if isinstance(approval.get("proposed_change"), dict) else {}
+        persisted_record = proposed_change.get("record") if isinstance(proposed_change.get("record"), dict) else record
+        if str(approval.get("id") or "").startswith("recommendation:"):
+            persisted.append(
+                {
+                    "status": "recommendation_persisted",
+                    "id": approval["id"],
+                    "recommendation_id": approval["id"],
+                    "record": persisted_record,
+                }
+            )
+        else:
+            persisted.append(
+                {
+                    "status": "pending_approval_created",
+                    "id": approval["id"],
+                    "approval_id": approval["id"],
+                    "record": record,
+                }
+            )
     return persisted
 
 

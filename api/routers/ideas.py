@@ -2813,6 +2813,8 @@ def accept_idea_evaluation(
         reason=(body.note if body else None) or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
     )
     recommendation_id = recommendation["id"]
+    recommendation_approval_id = recommendation_id if str(recommendation_id).startswith("approval:") else None
+    recommendation_object_id = recommendation_id if str(recommendation_id).startswith("recommendation:") else None
 
     action_proposal = None
     action_error = None
@@ -2828,9 +2830,11 @@ def accept_idea_evaluation(
             action_type = "hedge"
         else:
             action_type = "research"
+        recommendation_ref = recommendation_approval_id or recommendation_object_id or recommendation_id
+        recommendation_ref_label = "approval" if recommendation_approval_id else "record"
         description = (
             f"{'Evaluate position change' if action in DECISION_ACTIONABLE_ACTIONS else 'Research remaining evidence'} for "
-            f"{idea['ticker']} from idea evaluator recommendation approval {recommendation_id}."
+            f"{idea['ticker']} from idea evaluator recommendation {recommendation_ref_label} {recommendation_ref}."
         )
         missing = (
             evaluation.get("missing_information") if isinstance(evaluation.get("missing_information"), list) else []
@@ -2844,7 +2848,7 @@ def accept_idea_evaluation(
             action_proposal = stage_api_action(
                 "create_action_item",
                 {
-                    "recommendation_id": recommendation_id,
+                    "recommendation_id": recommendation_ref,
                     "ticker": idea.get("ticker"),
                     "asset": instrument.get("asset"),
                     "instrument_type": instrument.get("instrument_type"),
@@ -2866,7 +2870,8 @@ def accept_idea_evaluation(
         "accepted": True,
         "accepted_by": "user",
         "accepted_at": _now(),
-        "recommendation_approval_id": recommendation_id,
+        "recommendation_approval_id": recommendation_approval_id,
+        "recommendation_object_id": recommendation_object_id,
         "action_approval_id": action_proposal["approval_id"] if action_proposal else None,
     }
     accepted_payload.pop("_meta", None)

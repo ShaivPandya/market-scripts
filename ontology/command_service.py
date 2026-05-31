@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from decision_quality.actions import ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_ACTIONS
+from decision_quality.actions import normalize_action
+from decision_quality.gates import apply_decision_quality_gates
+from decision_quality.models import DecisionQualityGate, DecisionQualityGateReason, parse_decision_quality
 from ontology.approval_workflow import (
     approval_requirement_progress,
     normalize_approval_decisions,
@@ -55,17 +59,7 @@ from ontology.schemas.identity import (
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
 logger = logging.getLogger(__name__)
-ACTIONABLE_ACTIONS = {
-    "buy",
-    "add",
-    "short",
-    "sell",
-    "trim",
-    "reduce",
-    "exit",
-    "hedge",
-    "rebalance",
-}
+ACTIONABLE_ACTIONS = set(DECISION_ACTIONABLE_ACTIONS)
 FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
 RESEARCH_ACTION_IDS = {
     "change_thesis_status",
@@ -253,9 +247,23 @@ class OntologyCommandService:
 
         with runtime_object_service(self.objects):
             payload_dict = _approval_payload_for_action(action_id, payload_dict)
+            _normalize_create_recommendation_payload(action_id, payload_dict)
             self._prepare_action_payload(action_id, payload_dict)
             base_state_hash = _base_state_hash(action_id, payload_dict)
+        if _recommendation_should_persist_without_approval(action_id, payload_dict):
+            return self._persist_recommendation_without_approval(
+                payload_dict,
+                context,
+                reason=reason,
+            )
         policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
+        if _recommendation_policy_gate_blocks(policy_gate_result):
+            _downgrade_recommendation_for_policy_gate(payload_dict, policy_gate_result)
+            return self._persist_recommendation_without_approval(
+                payload_dict,
+                context,
+                reason=reason,
+            )
         approval_requirements = normalize_approval_requirements((policy_gate_result or {}).get("approval_requirements"))
         is_financial = _is_financial_action_for_payload(action_id, payload_dict)
         now = _now()
@@ -435,12 +443,115 @@ class OntologyCommandService:
                     "actor_roles": list(context.actor.roles),
                 },
                 object_service=self.objects,
+                raise_on_blocked=action_id != "create_recommendation",
             )
         except PolicyGateBlockedError as exc:
             raise OntologyCommandValidationError(str(exc)) from exc
         payload.clear()
         payload.update(gated_payload)
         return gate
+
+    def _persist_recommendation_without_approval(
+        self,
+        payload: dict[str, Any],
+        context: OntologyCommandContext,
+        *,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        action_id = "create_recommendation"
+        now = _now()
+        input_hash = _stable_hash({"action_id": action_id, "payload": payload})
+        run_key = f"{action_id}:{now}"
+        run_uid = action_run_id(run_key)
+        provenance_id = _provenance_id("recommendation.persisted", run_uid, input_hash)
+        actor = actor_to_dict(context.actor)
+        run_props = {
+            "action_id": action_id,
+            "action_schema_name": action_id,
+            "action_schema_version": 1,
+            "actor_type": context.actor.actor_type,
+            "actor_id": context.actor.actor_id,
+            "source_type": context.source_type,
+            "source_id": context.source_id,
+            "approval_id": None,
+            "input_hash": input_hash,
+            "started_at": now,
+            "provenance_event_id": provenance_id,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        self.objects.write_object(
+            "ActionRun",
+            run_key,
+            {
+                **run_props,
+                "status": "running",
+                "execution_state": "running",
+                "completed_at": None,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        version_refs = self._write_action_targets(
+            action_id,
+            payload,
+            context,
+            provenance_id=provenance_id,
+            input_hash=input_hash,
+            approval_object_id=None,
+            action_run_id=run_uid,
+        )
+        self.objects.write_object(
+            "ActionRun",
+            run_key,
+            {
+                **run_props,
+                "status": "succeeded",
+                "execution_state": "succeeded",
+                "completed_at": _now(),
+                "output_hash": _stable_hash(version_refs),
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        record = _dict(payload.get("record") or payload)
+        rec_key = str(record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record))
+        rec_uid = recommendation_id(rec_key)
+        self._write_audit(
+            "recommendation.persisted",
+            "recommendation",
+            "succeeded",
+            actor=context.actor,
+            provenance_id=provenance_id,
+            object_refs=[{"type": "Recommendation", "id": rec_uid}, {"type": "ActionRun", "id": run_uid}],
+            after_summary={
+                "action": record.get("action"),
+                "recommendation_status": record.get("recommendation_status"),
+                "approval_required": False,
+            },
+        )
+        try:
+            row = self.objects.get_object(rec_uid)
+        except Exception:
+            row = None
+        out = _flatten_object(row) if row else {"id": rec_uid, "object_uid": rec_uid, "payload": record}
+        out.update(
+            {
+                "entity_type": "recommendation",
+                "action_id": action_id,
+                "approval_required": False,
+                "approval_id": None,
+                "application_status": "applied",
+                "action_run_id": run_uid,
+                "proposed_change": payload,
+                "reason": reason,
+            }
+        )
+        _refresh_temporal_read_models_after_command()
+        return out
 
     def resolve_approval(
         self,
@@ -1669,7 +1780,17 @@ class OntologyCommandService:
                     "ticker": _optional_ticker(record),
                     "instrument": record.get("instrument") or record.get("ticker"),
                     "decision_state": "approved" if record.get("action") in ACTIONABLE_ACTIONS else "generated",
+                    "status": record.get("status") or record.get("recommendation_status"),
+                    "approval_id": approval_object_id,
                     "approval_required": bool(record.get("action") in ACTIONABLE_ACTIONS),
+                    "approval_status": "approved" if approval_object_id else "none",
+                    "outcome_status": record.get("outcome_status") or "pending",
+                    "account_id": record.get("account_id"),
+                    "portfolio_id": record.get("portfolio_id"),
+                    "policy_id": record.get("policy_id"),
+                    "policy_gate_result_id": record.get("policy_gate_result_id"),
+                    "policy_gate_decision": record.get("policy_gate_decision"),
+                    "policy_gate_review_required": bool(record.get("policy_gate_review_required")),
                     "confidence": record.get("confidence"),
                     "horizon": record.get("horizon"),
                     "rationale_summary": record.get("rationale") or record.get("rationale_summary"),
@@ -3205,6 +3326,181 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
         _non_blank(payload.get("target_object_uid"), "target_object_uid")
         _non_blank(payload.get("target_object_type"), "target_object_type")
         _non_blank(payload.get("decision"), "decision")
+
+
+def _normalize_create_recommendation_payload(action_id: str, payload: dict[str, Any]) -> None:
+    if action_id != "create_recommendation":
+        return
+    record = _dict(payload.get("record") or payload)
+    action = normalize_action(record.get("action"))
+    record["action"] = action
+    record["recommendation_status"] = _recommendation_status_value(record.get("recommendation_status"))
+    if action in ACTIONABLE_ACTIONS:
+        decision_quality, parse_errors = parse_decision_quality(record.get("decision_quality"))
+        gate = apply_decision_quality_gates(
+            decision_quality,
+            current_action=action,
+            recommendation_status=record["recommendation_status"],
+            data_quality=_recommendation_data_quality(record),
+            parse_errors=parse_errors,
+        )
+        gate = _add_required_recommendation_gate_reasons(gate, record, action)
+        _apply_recommendation_gate(record, gate, decision_quality)
+    else:
+        record["approval_required"] = False
+        if _recommendation_has_blocking_data_quality(record) and record["recommendation_status"] == "clear":
+            record["recommendation_status"] = "review_required"
+        if isinstance(record.get("decision_quality"), Mapping):
+            decision_quality, parse_errors = parse_decision_quality(record.get("decision_quality"))
+            gate = apply_decision_quality_gates(
+                decision_quality,
+                current_action=action,
+                recommendation_status=record["recommendation_status"],
+                data_quality=_recommendation_data_quality(record),
+                parse_errors=parse_errors,
+            )
+            _apply_recommendation_gate(record, gate, decision_quality)
+            record["approval_required"] = False
+    payload["record"] = record
+
+
+def _recommendation_status_value(value: Any) -> str:
+    status = str(value or "clear").strip().lower() or "clear"
+    return status if status in {"clear", "review_required", "blocked", "error"} else "clear"
+
+
+def _recommendation_data_quality(record: Mapping[str, Any]) -> dict[str, Any]:
+    summary = _dict(record.get("source_quality_summary") or record.get("data_quality"))
+    critical = (
+        record.get("critical_data_quality") or summary.get("critical_data_quality") or summary.get("overall_status")
+    )
+    source = record.get("source_quality") or summary.get("source_quality") or summary.get("quality")
+    return {
+        **summary,
+        "critical_data_quality": critical,
+        "overall_status": summary.get("overall_status") or critical,
+        "source_quality": source,
+        "quality": summary.get("quality") or source,
+    }
+
+
+def _recommendation_has_source_quality(record: Mapping[str, Any]) -> bool:
+    quality = _recommendation_data_quality(record)
+    return any(
+        str(quality.get(field) or "").strip() for field in ("critical_data_quality", "source_quality", "quality")
+    )
+
+
+def _recommendation_has_blocking_data_quality(record: Mapping[str, Any]) -> bool:
+    quality = _recommendation_data_quality(record)
+    values = {str(value or "").strip().lower() for value in quality.values()}
+    return bool(values & {"stale", "failed"})
+
+
+def _add_required_recommendation_gate_reasons(
+    gate: DecisionQualityGate,
+    record: Mapping[str, Any],
+    original_action: str,
+) -> DecisionQualityGate:
+    reasons = list(gate.reasons)
+    if not str(record.get("rationale") or record.get("rationale_summary") or "").strip():
+        reasons.append(
+            DecisionQualityGateReason(
+                code="MISSING_RATIONALE",
+                severity="blocker",
+                message="Actionable recommendations require a rationale before approval review.",
+            )
+        )
+    if not _recommendation_has_source_quality(record):
+        reasons.append(
+            DecisionQualityGateReason(
+                code="MISSING_SOURCE_QUALITY",
+                severity="blocker",
+                message="Actionable recommendations require explicit source quality before approval review.",
+            )
+        )
+    if reasons == list(gate.reasons):
+        return gate
+    final_action = gate.final_action
+    final_status = gate.final_recommendation_status
+    if any(reason.severity == "blocker" for reason in reasons) and original_action in ACTIONABLE_ACTIONS:
+        final_action = _recommendation_fallback_action(original_action)
+        final_status = "review_required" if final_status == "clear" else final_status
+    return gate.model_copy(
+        update={
+            "status": _recommendation_gate_status(reasons, original_action, final_action),
+            "final_action": final_action,
+            "final_recommendation_status": final_status,
+            "reasons": reasons,
+        }
+    )
+
+
+def _apply_recommendation_gate(
+    record: dict[str, Any],
+    gate: DecisionQualityGate,
+    decision_quality: Any,
+) -> None:
+    record["action"] = gate.final_action
+    record["recommendation_status"] = gate.final_recommendation_status
+    record["decision_quality"] = decision_quality.model_dump(mode="json") if decision_quality else None
+    record["decision_quality_gate"] = gate.model_dump(mode="json")
+    record["approval_required"] = bool(gate.final_action in ACTIONABLE_ACTIONS)
+    if gate.confidence_cap is not None:
+        try:
+            record["confidence"] = min(float(record.get("confidence")), gate.confidence_cap)
+        except (TypeError, ValueError):
+            record["confidence"] = gate.confidence_cap
+
+
+def _recommendation_gate_status(
+    reasons: list[DecisionQualityGateReason],
+    original_action: str,
+    final_action: str,
+) -> str:
+    if any(reason.severity == "blocker" for reason in reasons):
+        return "blocked" if final_action == original_action else "downgraded"
+    if reasons:
+        return "downgraded" if final_action != original_action else "pass"
+    return "pass"
+
+
+def _recommendation_fallback_action(original_action: str) -> str:
+    if original_action in {"short", "sell"}:
+        return "avoid"
+    if original_action == "do_nothing":
+        return "do_nothing"
+    return "watch"
+
+
+def _recommendation_should_persist_without_approval(action_id: str, payload: Mapping[str, Any]) -> bool:
+    if action_id != "create_recommendation":
+        return False
+    record = _dict(payload.get("record") or payload)
+    return normalize_action(record.get("action")) not in ACTIONABLE_ACTIONS
+
+
+def _recommendation_policy_gate_blocks(policy_gate_result: Mapping[str, Any] | None) -> bool:
+    decision = str((policy_gate_result or {}).get("decision") or "").strip().lower()
+    return decision in {"blocked", "error"}
+
+
+def _downgrade_recommendation_for_policy_gate(
+    payload: dict[str, Any],
+    policy_gate_result: Mapping[str, Any] | None,
+) -> None:
+    record = _dict(payload.get("record") or payload)
+    action = normalize_action(record.get("action"))
+    if action in ACTIONABLE_ACTIONS:
+        record["action"] = _recommendation_fallback_action(action)
+    record["recommendation_status"] = "blocked"
+    record["approval_required"] = False
+    blocked_reasons = [str(item) for item in _list(record.get("blocked_reasons")) if str(item).strip()]
+    policy_reason = f"policy_gate:{str((policy_gate_result or {}).get('decision') or 'blocked')}"
+    if policy_reason not in blocked_reasons:
+        blocked_reasons.append(policy_reason)
+    record["blocked_reasons"] = blocked_reasons
+    payload["record"] = record
 
 
 def _is_financial_action_for_payload(action_id: str, payload: Mapping[str, Any]) -> bool:
