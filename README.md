@@ -238,7 +238,7 @@ Production is deployed through the scripts in `infra/gcp/`:
 - A generic Cloud Run Job runs async work with `python -m api.async_job_runner run`.
 - Cloud SQL stores application state with Alembic migrations.
 - Cloud Storage stores generated and migrated research documents.
-- Cloud Scheduler enqueues async sweeps, top-50 refreshes, market/macro snapshot refreshes, and continuous optimizer runs.
+- Cloud Scheduler enqueues async sweeps, top-50 refreshes, market/macro snapshot refreshes, workspace source refreshes, and continuous optimizer runs.
 - Firebase Hosting serves `frontend/dist` and rewrites `/api/**` to Cloud Run.
 
 First-time setup and routine deploy commands are documented in `infra/gcp/README.md`. The common entry points are:

@@ -122,6 +122,16 @@ def test_catalyst_kill_monitor_scheduler_is_disabled_by_default() -> None:
     assert 'upsert_api_job catalyst-kill-monitor "${CATALYST_KILL_MONITOR_SCHEDULE:-0 15-21 * * 1-5}"' in script
 
 
+def test_workspace_source_refresh_scheduler_is_enabled_by_default() -> None:
+    script = (ROOT / "infra/gcp/setup-scheduler.sh").read_text()
+
+    assert "delete_scheduler_job_if_present workspace-source-refresh" not in script
+    assert (
+        'upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-45 23 * * 1-5}" '
+        "/api/admin/jobs/enqueue-workspace-source-refresh"
+    ) in script
+
+
 def test_common_gcp_env_requires_postgres_for_api_and_ontology_worker() -> None:
     lib = (ROOT / "infra/gcp/lib.sh").read_text()
 

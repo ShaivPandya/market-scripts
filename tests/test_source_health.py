@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from api.snapshot_store import SnapshotRecord
 from api.source_health import build_approval_source_health_review, build_workspace_source_health
@@ -10,6 +11,7 @@ def _snapshot(
     key: str,
     *,
     fetched_at: datetime,
+    as_of_date: str | None = None,
     status: str = "ok",
     quality: str = "ok",
     error: str | None = None,
@@ -17,7 +19,7 @@ def _snapshot(
     return SnapshotRecord(
         snapshot_key=key,
         payload={"value": 1},
-        as_of_date=fetched_at.date().isoformat(),
+        as_of_date=as_of_date if as_of_date is not None else fetched_at.date().isoformat(),
         fetched_at=fetched_at.isoformat(),
         status=status,
         error=error,
@@ -98,6 +100,75 @@ def test_source_health_stale_required_affects_overall_quality():
     assert payload["counts"]["required_stale"] == 1
     assert payload["counts"]["critical_stale"] == 1
     assert payload["tier_counts"]["critical"] >= 1
+
+
+def test_source_health_market_snapshot_fresh_on_sunday_after_friday_close():
+    eastern = ZoneInfo("America/New_York")
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=eastern)
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    sources = _sources(payload)
+    assert sources["market_breadth:sp500:1y"]["status"] == "ok"
+    assert sources["market_breadth:sp500:1y"]["stale"] is False
+    assert sources["market_breadth:sp500:1y"]["expected_as_of_date"] == "2026-05-29"
+
+
+def test_source_health_market_snapshot_fresh_monday_before_close_and_stale_after_close():
+    eastern = ZoneInfo("America/New_York")
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+
+    before_close = build_workspace_source_health(
+        now=datetime(2026, 6, 1, 15, 30, tzinfo=eastern),
+        portfolio_risk=_portfolio_risk(datetime(2026, 6, 1, 15, 30, tzinfo=eastern)),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+    after_close = build_workspace_source_health(
+        now=datetime(2026, 6, 1, 16, 30, tzinfo=eastern),
+        portfolio_risk=_portfolio_risk(datetime(2026, 6, 1, 16, 30, tzinfo=eastern)),
+        snapshot_records=[
+            _snapshot("market_breadth:sp500:1y", fetched_at=fetched, as_of_date="2026-05-29"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    assert _sources(before_close)["market_breadth:sp500:1y"]["status"] == "ok"
+    assert _sources(after_close)["market_breadth:sp500:1y"]["status"] == "stale"
+    assert _sources(after_close)["market_breadth:sp500:1y"]["expected_as_of_date"] == "2026-06-01"
+
+
+def test_source_health_macro_cadence_windows_do_not_use_wall_clock_sla():
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+    fetched = datetime(2026, 5, 29, 23, 30, tzinfo=ZoneInfo("UTC"))
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=_portfolio_risk(now),
+        snapshot_records=[
+            _snapshot("liquidity:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("labor_market:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("positioning_summary:current:v1", fetched_at=fetched, as_of_date="2026-05-22"),
+            _snapshot("housing:current:v1", fetched_at=fetched, as_of_date="2026-04-20"),
+            _snapshot("economic_growth:current:v1", fetched_at=fetched, as_of_date="2026-04-20"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=fetched, as_of_date="2026-05-29"),
+        ],
+    )
+
+    sources = _sources(payload)
+    assert sources["liquidity:current:v1"]["status"] == "ok"
+    assert sources["labor_market:current:v1"]["status"] == "ok"
+    assert sources["positioning_summary:current:v1"]["status"] == "ok"
+    assert sources["housing:current:v1"]["status"] == "ok"
+    assert sources["economic_growth:current:v1"]["status"] == "ok"
 
 
 def test_source_health_missing_required_source_does_not_throw():
@@ -222,7 +293,7 @@ def test_approval_source_health_blocks_explicit_stale_dependency():
         now=now,
         portfolio_risk=_portfolio_risk(now),
         snapshot_records=[
-            _snapshot("housing:current:v1", fetched_at=now - timedelta(days=3)),
+            _snapshot("housing:current:v1", fetched_at=now - timedelta(days=60)),
             _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1)),
         ],
     )

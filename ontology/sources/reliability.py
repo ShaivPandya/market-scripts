@@ -38,6 +38,13 @@ def derive_reliability_tier(entry: SourceRegistryEntry | None) -> str:
 
 def sla_seconds_for_registry(registry: dict[str, Any] | None) -> int:
     if isinstance(registry, dict):
+        if str(registry.get("freshness_policy") or "").strip().lower() == "max_age_days":
+            raw_days = registry.get("freshness_max_age_days")
+            if raw_days is not None:
+                try:
+                    return max(1, int(raw_days)) * 24 * 60 * 60
+                except (TypeError, ValueError):
+                    pass
         raw = registry.get("freshness_sla_seconds")
         if raw is not None:
             try:

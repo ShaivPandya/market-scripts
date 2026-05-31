@@ -28,6 +28,7 @@ from ontology.sources.reliability import (
     tier_counts,
 )
 from ontology.sources.source_registry import source_registry_metadata, source_registry_metadata_for_snapshot
+from utils.market_freshness import SourceFreshnessState, evaluate_source_freshness
 
 _SNAPSHOT_SOURCE_NAMES = {
     SNAPSHOT_MARKET_BREADTH: "market_breadth",
@@ -226,7 +227,9 @@ def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: dateti
     registry = source_registry_metadata_for_snapshot(record.snapshot_key)
     required = required or bool((registry or {}).get("required"))
     sla_seconds = sla_seconds_for_registry(registry)
-    stale = _snapshot_is_stale(record, now=now, sla_seconds=sla_seconds)
+    freshness_state = _snapshot_freshness_state(record, registry=registry, now=now, sla_seconds=sla_seconds)
+    freshness = freshness_state.to_dict()
+    stale = not freshness_state.fresh
     status = _normalize_status(record.status, stale=stale, quality=record.quality, required=required)
     source_name = str(
         (registry or {}).get("source_id")
@@ -246,7 +249,13 @@ def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: dateti
         "freshness_timestamp": record.as_of_date or record.fetched_at,
         "stale": stale,
         "error": record.error,
-        "detail": record.error or ("snapshot is stale" if stale else None),
+        "detail": record.error or (freshness_state.reason if stale else None),
+        "freshness": freshness,
+        "freshness_policy": freshness.get("policy"),
+        "expected_as_of_date": freshness.get("expected_as_of_date") or freshness.get("oldest_acceptable_date"),
+        "observed_as_of_date": freshness.get("observed_as_of_date"),
+        "calendar_id": freshness.get("calendar_id"),
+        "freshness_reason": freshness.get("reason"),
         "payload_hash": record.payload_hash,
         "source_registry": registry,
     }
@@ -279,6 +288,13 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
         "error": state.get("error"),
         "detail": state.get("detail") or state.get("error") or freshness.get("reason"),
         "freshness": freshness or None,
+        "freshness_policy": freshness.get("policy") if freshness else None,
+        "expected_as_of_date": (freshness.get("expected_as_of_date") or freshness.get("oldest_acceptable_date"))
+        if freshness
+        else None,
+        "observed_as_of_date": freshness.get("observed_as_of_date") if freshness else None,
+        "calendar_id": freshness.get("calendar_id") if freshness else None,
+        "freshness_reason": freshness.get("reason") if freshness else None,
         "source_registry": registry,
     }
 
@@ -493,13 +509,33 @@ def _missing_required_source(source_id: str) -> dict[str, Any]:
 
 
 def _snapshot_is_stale(record: SnapshotRecord, *, now: datetime | None, sla_seconds: int | None = None) -> bool:
-    max_age = sla_seconds if sla_seconds is not None else DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
-    try:
-        fetched = datetime.fromisoformat(str(record.fetched_at).replace("Z", "+00:00"))
-        current = now or datetime.now(tz=fetched.tzinfo) if fetched.tzinfo else now or datetime.now()
-        return max(0, (current - fetched).total_seconds()) > max_age
-    except Exception:
-        return False
+    freshness = evaluate_source_freshness(
+        record.fetched_at,
+        now=now,
+        policy="elapsed",
+        max_age_seconds=sla_seconds if sla_seconds is not None else DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
+    )
+    return not freshness.fresh
+
+
+def _snapshot_freshness_state(
+    record: SnapshotRecord,
+    *,
+    registry: dict[str, Any] | None,
+    now: datetime | None,
+    sla_seconds: int | None,
+) -> SourceFreshnessState:
+    registry = registry if isinstance(registry, dict) else {}
+    policy = str(registry.get("freshness_policy") or "elapsed").strip().lower()
+    value = record.fetched_at if policy in {"", "elapsed"} else record.as_of_date or record.fetched_at
+    return evaluate_source_freshness(
+        value,
+        now=now,
+        policy=policy or "elapsed",
+        max_age_seconds=sla_seconds if sla_seconds is not None else DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
+        max_age_days=_int_or_none(registry.get("freshness_max_age_days")),
+        calendar_id=str(registry.get("freshness_calendar_id") or "") or None,
+    )
 
 
 def _normalize_status(raw_status: Any, *, stale: bool, quality: Any, required: bool) -> str:
@@ -604,6 +640,15 @@ def _domain_label(domain: str) -> str:
 
 def _source_name_from_snapshot_key(snapshot_key: str) -> str:
     return str(snapshot_key or "source").split(":", 1)[0] or "source"
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _source_health_sources(source_health: dict[str, Any] | None) -> list[dict[str, Any]]:
