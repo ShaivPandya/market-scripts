@@ -13,12 +13,13 @@ import {
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { SelectInput, TextInput } from "@/components/shared/FormControls"
+import { SelectInput, SegmentedControl, TextInput, Toggle } from "@/components/shared/FormControls"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 
 type Intent = "auto" | "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
 type Timeframe = "This Week" | "Daily" | "Weekly" | "Monthly"
+type TemporalMode = "current" | "historical"
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -61,6 +62,14 @@ function parseCsv(text: string): string[] | undefined {
     .map(v => v.trim())
     .filter(Boolean)
   return vals.length > 0 ? vals : undefined
+}
+
+function datetimeLocalToIso(rawValue: string): string | undefined {
+  const raw = rawValue.trim()
+  if (!raw) return undefined
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return undefined
+  return parsed.toISOString()
 }
 
 function summarizeEvidence(evidence: OntologyEvidence[] | undefined): string {
@@ -107,6 +116,11 @@ export function OntologyWorkbench() {
   const [pageSize, setPageSize] = useState("25")
   const [page, setPage] = useState(1)
   const [runId, setRunId] = useState("")
+  const [temporalMode, setTemporalMode] = useState<TemporalMode>("current")
+  const [asOf, setAsOf] = useState("")
+  const [txAsOf, setTxAsOf] = useState("")
+  const [includeHistory, setIncludeHistory] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
   const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -148,14 +162,37 @@ export function OntologyWorkbench() {
 
   const handleIntentChange = useCallback((v: string) => setIntent(v as Intent), [])
   const handleTimeframeChange = useCallback((v: string) => setTimeframe(v as Timeframe), [])
+  const handleTemporalModeChange = useCallback((v: TemporalMode) => {
+    setTemporalMode(v)
+    setFormError(null)
+  }, [])
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setPage(1)
-  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId])
+  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId, temporalMode, asOf, txAsOf, includeHistory])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const submitQuery = useCallback((nextPage: number) => {
+    let temporalAsOf: string | undefined
+    let temporalTxAsOf: string | undefined
+    if (temporalMode === "historical") {
+      if (runId.trim()) {
+        setFormError("Clear Snapshot Run ID before running a historical ontology query.")
+        return
+      }
+      temporalAsOf = datetimeLocalToIso(asOf)
+      if (!temporalAsOf) {
+        setFormError("Choose a valid As of timestamp before running a historical ontology query.")
+        return
+      }
+      temporalTxAsOf = txAsOf.trim() ? datetimeLocalToIso(txAsOf) : undefined
+      if (txAsOf.trim() && !temporalTxAsOf) {
+        setFormError("Choose a valid Tx as of timestamp or leave it blank.")
+        return
+      }
+    }
+
     const filters: Record<string, unknown> = {}
     const parsedTickers = parseCsv(tickers)
     const parsedSectors = parseCsv(sectors)
@@ -172,24 +209,29 @@ export function OntologyWorkbench() {
     const safePage = Math.max(1, nextPage)
 
     setPage(safePage)
+    setFormError(null)
     mutation.mutate({
       query: query.trim() || undefined,
       intent: intent === "auto" ? undefined : intent,
       filters: Object.keys(filters).length > 0 ? filters : undefined,
       timeframe,
       run_id: runId.trim() || undefined,
+      as_of: temporalAsOf,
+      tx_as_of: temporalTxAsOf,
+      include_history: temporalMode === "historical" ? includeHistory : undefined,
       include_graph: false,
       refresh_snapshot: false,
       page: safePage,
       page_size: safePageSize,
     })
-  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId, mutation])
+  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId, temporalMode, asOf, txAsOf, includeHistory, mutation])
 
   const handleSubmit = useCallback(() => submitQuery(page), [page, submitQuery])
 
   const data = (mutation.data as OntologyResponse | undefined) ?? cachedResult
   const rows = useMemo(() => (Array.isArray(data?.results) ? data.results : []), [data])
   const pagination = data?._meta?.pagination
+  const temporalMeta = data?._meta?.temporal
   const currentPage = pagination?.page ?? page
   const runOptions = useMemo(() => {
     const items = runsData?.runs
@@ -289,6 +331,49 @@ export function OntologyWorkbench() {
             {!runsLoading && runsError && "Could not load run suggestions. Manual run ID entry still works."}
           </p>
         </div>
+        <div className="space-y-1.5 md:col-span-3">
+          <span className="theme-field-label">Temporal Mode</span>
+          <SegmentedControl
+            value={temporalMode}
+            onChange={handleTemporalModeChange}
+            options={[
+              { value: "current", label: "Current" },
+              { value: "historical", label: "Historical" },
+            ]}
+          />
+          <p className="theme-field-caption">
+            Current reads the latest temporal read model. Historical reads require an as-of timestamp and cannot be combined with snapshot replay.
+          </p>
+        </div>
+        {temporalMode === "historical" && (
+          <>
+            <TextInput
+              id="ontology-as-of"
+              label="As of"
+              value={asOf}
+              onChange={setAsOf}
+              type="datetime-local"
+              errorText={!asOf.trim() && formError?.includes("As of") ? formError : undefined}
+            />
+            <TextInput
+              id="ontology-tx-as-of"
+              label="Tx as of"
+              value={txAsOf}
+              onChange={setTxAsOf}
+              type="datetime-local"
+              helperText="Optional transaction-time cutoff."
+              errorText={formError?.includes("Tx as of") ? formError : undefined}
+            />
+            <div className="flex items-end">
+              <Toggle
+                label="Include history"
+                checked={includeHistory}
+                onChange={setIncludeHistory}
+                description="Return historical rows when the backend has version history."
+              />
+            </div>
+          </>
+        )}
         <TextInput
           label="Tickers (CSV)"
           value={tickers}
@@ -334,6 +419,7 @@ export function OntologyWorkbench() {
         </div>
       </div>
 
+      {formError && <ErrorMessage message={formError} />}
       {mutation.isPending && (
         <div className="flex items-center gap-4">
           <LoadingSpinner message={`Running ontology query... (${elapsed}s elapsed)`} />
@@ -364,6 +450,30 @@ export function OntologyWorkbench() {
             <EffectScopeBadge scope="read_only" />
             <QualityStateBadge state={statusRows.some(row => row.status !== "ok") ? "degraded" : "ok"} />
           </div>
+
+          {temporalMeta && (
+            <section className="mb-6 rounded-lg border border-app bg-card-muted p-4" aria-label="Temporal query context">
+              <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Temporal Context</h2>
+              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-subtle">Mode</dt>
+                  <dd className="mt-1 text-app">{temporalMeta.mode || "N/A"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-subtle">As of</dt>
+                  <dd className="mt-1 text-app">{formatTimestampLabel(temporalMeta.as_of ?? undefined)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-subtle">Tx as of</dt>
+                  <dd className="mt-1 text-app">{formatTimestampLabel(temporalMeta.tx_as_of ?? undefined)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-subtle">History Included</dt>
+                  <dd className="mt-1 text-app">{temporalMeta.include_history ? "Yes" : "No"}</dd>
+                </div>
+              </dl>
+            </section>
+          )}
 
           {data.run_id && (
             <div className="mb-6 flex justify-end">

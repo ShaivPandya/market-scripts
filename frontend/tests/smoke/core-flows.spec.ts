@@ -86,6 +86,30 @@ test("runs an ontology workbench query with mocked async results", async ({ page
   await expect(page.getByText("Source Health And Staleness")).toBeVisible()
 })
 
+test("runs a historical ontology workbench query with temporal context", async ({ page, apiMocks }) => {
+  await authenticate(page)
+  await page.goto("/ontology")
+
+  await expect(page.getByRole("heading", { name: "Ontology Workbench" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Historical" }).click()
+  await page.getByRole("textbox", { name: "As of", exact: true }).fill("2026-05-10T09:30")
+  await page.getByRole("switch", { name: /Include history/ }).click()
+  await page.getByPlaceholder("Which positions are in deteriorating macro conditions?").fill("Show elevated portfolio risks as of last review")
+  await page.getByRole("button", { name: "Run Query" }).click()
+
+  const temporalContext = page.getByRole("region", { name: "Temporal query context" })
+  await expect(temporalContext).toBeVisible()
+  await expect(temporalContext.getByText("Temporal Context")).toBeVisible()
+  await expect(temporalContext.getByText("temporal_read_model")).toBeVisible()
+  await expect(temporalContext.getByText("History Included")).toBeVisible()
+  await expect(temporalContext.getByText("Yes")).toBeVisible()
+  await expect(page.getByRole("cell", { name: "MSFT" })).toBeVisible()
+
+  expect(typeof apiMocks.ontologyQueryRequest?.as_of).toBe("string")
+  expect(apiMocks.ontologyQueryRequest?.include_history).toBe(true)
+})
+
 test("renders liquidity data-quality warning and formatted screen context", async ({ page }) => {
   await authenticate(page)
   await page.goto("/liquidity")

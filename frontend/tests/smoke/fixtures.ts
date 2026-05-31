@@ -13,6 +13,7 @@ interface ApiMockState {
   agentHistoryTitle: string
   approvalsDismissed: boolean
   dismissedPressureKeys: Set<string>
+  ontologyQueryRequest: Record<string, JsonValue> | null
 }
 
 const smokeApproval = {
@@ -295,62 +296,74 @@ function workspaceResponse(state: ApiMockState) {
   } satisfies JsonValue
 }
 
-const ontologyResult = {
-  run_id: "ontology-smoke-run",
-  as_of: "2026-05-14T14:00:00Z",
-  aggregate: {
-    confidence: 0.88,
-    position_count: 2,
-    risk_buckets: { high: 1, medium: 1, low: 0 },
-  },
-  results: [
-    {
-      ticker: "MSFT",
-      asset: "equity",
-      direction: "long",
-      sector: "Information Technology",
-      risk_score: 0.68,
-      risk_level: "high",
-      evidence: [
-        {
-          source: "macro",
-          name: "Liquidity impulse",
-          contribution: 0.42,
-        },
-      ],
+function ontologyResultForRequest(body: Record<string, JsonValue> | null = null) {
+  const asOf = typeof body?.as_of === "string" && body.as_of ? body.as_of : "2026-05-14T14:00:00Z"
+  const txAsOf = typeof body?.tx_as_of === "string" && body.tx_as_of ? body.tx_as_of : null
+  const includeHistory = body?.include_history === true
+
+  return {
+    run_id: "ontology-smoke-run",
+    as_of: asOf,
+    aggregate: {
+      confidence: 0.88,
+      position_count: 2,
+      risk_buckets: { high: 1, medium: 1, low: 0 },
     },
-    {
-      ticker: "NVDA",
-      asset: "equity",
-      direction: "long",
-      sector: "Semiconductors",
-      risk_score: 0.51,
-      risk_level: "medium",
-      evidence: [
-        {
-          source: "positioning",
-          name: "Crowding",
-          contribution: 0.31,
-        },
-      ],
+    results: [
+      {
+        ticker: "MSFT",
+        asset: "equity",
+        direction: "long",
+        sector: "Information Technology",
+        risk_score: 0.68,
+        risk_level: "high",
+        evidence: [
+          {
+            source: "macro",
+            name: "Liquidity impulse",
+            contribution: 0.42,
+          },
+        ],
+      },
+      {
+        ticker: "NVDA",
+        asset: "equity",
+        direction: "long",
+        sector: "Semiconductors",
+        risk_score: 0.51,
+        risk_level: "medium",
+        evidence: [
+          {
+            source: "positioning",
+            name: "Crowding",
+            contribution: 0.31,
+          },
+        ],
+      },
+    ],
+    source_status: {
+      portfolio: { status: "ok", detail: "smoke fixture" },
+      macro: { status: "ok", detail: "smoke fixture" },
     },
-  ],
-  source_status: {
-    portfolio: { status: "ok", detail: "smoke fixture" },
-    macro: { status: "ok", detail: "smoke fixture" },
-  },
-  _meta: {
-    pagination: {
-      page: 1,
-      page_size: 25,
-      total_results: 2,
-      returned_results: 2,
-      total_pages: 1,
-      has_prev: false,
-      has_next: false,
+    _meta: {
+      pagination: {
+        page: 1,
+        page_size: 25,
+        total_results: 2,
+        returned_results: 2,
+        total_pages: 1,
+        has_prev: false,
+        has_next: false,
+      },
+      temporal: {
+        as_of: asOf,
+        tx_as_of: txAsOf,
+        include_history: includeHistory,
+        mode: "temporal_read_model",
+      },
     },
-  },
-} satisfies JsonValue
+  } satisfies JsonValue
+}
 
 const liquidityResponse = {
   composite_score: -0.03,
@@ -504,17 +517,18 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     })
   }
   if (method === "POST" && path === "/api/ontology/query/async") {
+    state.ontologyQueryRequest = JSON.parse(request.postData() || "{}") as Record<string, JsonValue>
     return json(route, {
       job_id: "ontology-smoke-job",
       status: "done",
-      result: ontologyResult,
+      result: ontologyResultForRequest(state.ontologyQueryRequest),
     })
   }
   if (method === "GET" && path === "/api/ontology/query/async/ontology-smoke-job") {
     return json(route, {
       job_id: "ontology-smoke-job",
       status: "done",
-      result: ontologyResult,
+      result: ontologyResultForRequest(state.ontologyQueryRequest),
     })
   }
 
@@ -587,6 +601,7 @@ export const test = base.extend<{ apiMocks: ApiMockState }>({
         agentHistoryTitle: "NVDA Earnings Prep",
         approvalsDismissed: false,
         dismissedPressureKeys: new Set(),
+        ontologyQueryRequest: null,
       }
       await page.route("**/api/**", route => handleApiRoute(route, state))
       await use(state)
