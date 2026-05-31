@@ -9,6 +9,7 @@ import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@
 import { fetchApprovalSummary, type ApprovalRecord } from "@/lib/api"
 import { approvalSummaryQueryKey } from "@/lib/approvalQueries"
 import { STAN_OPEN_EVENT, type StanOpenDetail } from "@/lib/stanLauncher"
+import { cn } from "@/lib/utils"
 
 const ACTION_ITEM_ALERT_LIMIT = 50
 
@@ -140,12 +141,15 @@ function LayoutInner({
         </div>
       </main>
 
-      <ActionItemApprovalAlert />
+      <ActionItemApprovalAlert agentOpen={agentOpen} />
 
       <button
         type="button"
         onClick={() => setAgentOpen(true)}
-        className="theme-floating fixed bottom-[max(1.25rem,calc(1.25rem+var(--safe-bottom)))] right-[max(1rem,calc(1rem+var(--safe-right)))] z-40 flex h-14 w-14 items-center justify-center text-link transition-colors hover:bg-selected"
+        className={cn(
+          "theme-floating fixed bottom-[max(1.25rem,calc(1.25rem+var(--safe-bottom)))] right-[max(1rem,calc(1rem+var(--safe-right)))] z-40 flex h-14 w-14 items-center justify-center text-link transition-colors hover:bg-selected md:flex",
+          agentOpen && "max-md:hidden",
+        )}
         aria-label="Open Stan"
       >
         <MessageCircle size={20} />
@@ -185,7 +189,7 @@ function actionItemReviewRoute(approval: ApprovalRecord) {
   return approval.review_route ?? `/workspace?approval_id=${encodeURIComponent(approval.id)}`
 }
 
-function ActionItemApprovalAlert() {
+function ActionItemApprovalAlert({ agentOpen }: { agentOpen: boolean }) {
   const location = useLocation()
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
   const summaryQuery = useQuery({
@@ -200,13 +204,13 @@ function ActionItemApprovalAlert() {
     return items.find(item => item.action_id === "create_action_item" && !dismissedIds.has(item.id)) ?? null
   }, [dismissedIds, summaryQuery.data?.items])
 
-  if (!approval || location.pathname === "/workspace") return null
+  if (!approval || location.pathname === "/workspace" || agentOpen) return null
 
   const ticker = actionItemTicker(approval)
 
   return (
     <aside
-      className="theme-floating fixed right-[max(1rem,calc(1rem+var(--safe-right)))] top-[max(1rem,calc(1rem+var(--safe-top)))] z-50 w-[min(27rem,calc(100vw-2rem))] p-4"
+      className="theme-floating fixed right-[max(1rem,calc(1rem+var(--safe-right)))] top-[max(4.75rem,calc(4.75rem+var(--safe-top)))] z-50 w-[min(27rem,calc(100vw-2rem))] p-4 md:top-[max(1rem,calc(1rem+var(--safe-top)))]"
       role="status"
       aria-live="polite"
     >

@@ -838,8 +838,8 @@ function ValuationFootballField({ valuation }: { valuation: PositionValuation })
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-app">
-        <div className="min-w-[680px] px-4 py-3">
-          <div className="grid grid-cols-[11rem_minmax(0,1fr)] gap-4 border-b border-app pb-2 text-xs text-subtle">
+        <div className="min-w-0 px-4 py-3 sm:min-w-[680px]">
+          <div className="grid grid-cols-1 gap-4 border-b border-app pb-2 text-xs text-subtle sm:grid-cols-[11rem_minmax(0,1fr)]">
             <span>Metric</span>
             <div className="flex justify-between">
               <span>{formatSharePrice(axisMin, outputCurrency)}</span>
@@ -854,7 +854,7 @@ function ValuationFootballField({ valuation }: { valuation: PositionValuation })
               const width = Math.max(right - left, 0.7)
               const basePct = row.base != null ? positionPct(row.base) : null
               return (
-                <div key={row.id} className="grid grid-cols-[11rem_minmax(0,1fr)] gap-4 py-3">
+                <div key={row.id} className="grid grid-cols-1 gap-3 py-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
                   <div>
                     <p className="text-sm font-medium text-app">{row.label}</p>
                     <p className="text-xs text-subtle">{row.subtitle}</p>
@@ -1041,7 +1041,49 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
         </div>
       </section>
 
-      <section className="overflow-x-auto rounded-lg border border-app">
+      <section className="rounded-lg border border-app">
+        <div className="space-y-3 p-3 md:hidden">
+          {VALUATION_METRIC_ORDER.map(key => {
+            const metric = data.metrics[key]
+            const peer = data.peer_context.metric_stats[key]
+            return (
+              <div key={key} className="rounded-lg border border-app p-3">
+                <div className="font-medium text-app">{metric?.label ?? key}</div>
+                {metric?.period && <div className="text-xs text-subtle">{metric.period}</div>}
+                <dl className="mt-3 grid gap-2 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <dt className="text-xs uppercase text-subtle">Multiple</dt>
+                    <dd className="font-mono text-app">{formatMultipleValue(metric?.value)}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <dt className="text-xs uppercase text-subtle">Denominator</dt>
+                    <dd className="text-right text-app">
+                      {formatValuationDenominator(key, metric?.denominator, metric?.denominator_currency ?? financialCcy)}
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <dt className="text-xs uppercase text-subtle">Peer Percentile</dt>
+                    <dd className="text-app">{formatValuationPct(peer?.percentile)}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <dt className="text-xs uppercase text-subtle">Peer Median</dt>
+                    <dd className="text-app">{formatMultipleValue(peer?.median)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase text-subtle">Status</dt>
+                    <dd className="mt-1">
+                      <span className={cn("inline-flex rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(metric?.status))}>
+                        {(metric?.status ?? "missing").replace(/_/g, " ")}
+                      </span>
+                      {metric?.reason && <div className="mt-1 text-xs text-subtle">{metric.reason.replace(/_/g, " ")}</div>}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            )
+          })}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-app text-xs uppercase text-subtle">
             <tr>
@@ -1086,6 +1128,7 @@ export function PositionValuationTab({ ticker }: { ticker: string }) {
             })}
           </tbody>
         </table>
+        </div>
       </section>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

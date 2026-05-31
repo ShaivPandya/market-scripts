@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react"
+import { MOBILE_MAX_WIDTH_QUERY, useMediaQuery } from "@/hooks/useMediaQuery"
 
 export interface ColumnDef {
   key: string
@@ -16,6 +17,8 @@ interface DataTableProps {
   label?: string
   onRowClick?: (row: Record<string, unknown>) => void
   mobileLayout?: "table" | "cards"
+  /** When true, renders card layout below the md breakpoint even if mobileLayout is "table". */
+  responsiveCards?: boolean
 }
 
 export const DataTable = memo(function DataTable({
@@ -25,8 +28,11 @@ export const DataTable = memo(function DataTable({
   label,
   onRowClick,
   mobileLayout = "table",
+  responsiveCards = false,
 }: DataTableProps) {
   const [copied, setCopied] = useState(false)
+  const isMobile = useMediaQuery(MOBILE_MAX_WIDTH_QUERY)
+  const useCardLayout = mobileLayout === "cards" || (responsiveCards && isMobile)
 
   const displayColumns = useMemo(
     () => columns.filter(c => rows.some(r => c.key in r)),
@@ -95,7 +101,7 @@ export const DataTable = memo(function DataTable({
         {label ? <h3 className="section-title text-sm">{label}</h3> : <span />}
         {copyButton}
       </div>
-      {mobileLayout === "cards" ? (
+      {useCardLayout ? (
         <div className="grid gap-3 sm:grid-cols-2">
           {rows.map((row, ri) => (
             <div
@@ -111,9 +117,9 @@ export const DataTable = memo(function DataTable({
                   const color = colorStr.split(";")[0]?.trim() || undefined
 
                   return (
-                    <div key={col.key} className="flex items-start justify-between gap-3">
+                    <div key={col.key} className="grid gap-1 sm:flex sm:items-start sm:justify-between sm:gap-3">
                       <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{col.header}</dt>
-                      <dd className="text-right text-sm text-app" style={{ color }}>
+                      <dd className="break-words text-sm text-app sm:text-right" style={{ color }}>
                         {String(display)}
                       </dd>
                     </div>

@@ -17,7 +17,7 @@ export function Dialog({ open, onOpenChange, title, description, children, maxWi
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-40 bg-[hsl(var(--background-overlay))]/45 backdrop-blur-[2px]" />
         <RadixDialog.Content
-          className={`theme-floating fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-1.5rem),64rem)] -translate-x-1/2 -translate-y-1/2 ${maxWidth} max-h-[min(88vh,calc(100dvh-2rem-var(--safe-top)-var(--safe-bottom)))] overflow-y-auto rounded-[1.4rem] focus:outline-none`}
+          className={`theme-floating fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-1.5rem),64rem)] -translate-x-1/2 -translate-y-1/2 ${maxWidth} max-h-[min(88vh,calc(100dvh-2rem-var(--safe-top)-var(--safe-bottom)))] overflow-y-auto rounded-[1.4rem] focus:outline-none max-sm:top-auto max-sm:bottom-[max(0.75rem,calc(0.75rem+var(--safe-bottom)))] max-sm:max-h-[min(92dvh,calc(100dvh-1.5rem-var(--safe-top)-var(--safe-bottom)))] max-sm:translate-y-0`}
         >
           <div className="flex items-center justify-between gap-4 border-b border-app px-5 py-4 sm:px-6">
             <div>

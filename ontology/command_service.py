@@ -45,6 +45,7 @@ from ontology.schemas.identity import (
     management_quality_assessment_id,
     management_quality_scorecard_row_id,
     management_quality_setback_id,
+    monitor_hit_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
@@ -57,7 +58,6 @@ from ontology.schemas.identity import (
     thesis_id,
     thesis_section_id,
     trade_proposal_id,
-    monitor_hit_id,
     watch_trigger_id,
 )
 from ontology.schemas.objects import normalize_course_of_action_action

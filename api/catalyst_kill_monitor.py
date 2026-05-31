@@ -361,9 +361,7 @@ def run_catalyst_kill_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 continue
 
             suggested_status = str(result.get("suggested_status") or "").strip()
-            status_action = (
-                "update_catalyst_status" if entity_type == "catalyst" else "update_kill_condition_status"
-            )
+            status_action = "update_catalyst_status" if entity_type == "catalyst" else "update_kill_condition_status"
             status_payload: dict[str, Any] = {
                 "ticker": result.get("ticker") or entity.get("ticker"),
                 "status": suggested_status,

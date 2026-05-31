@@ -1212,8 +1212,8 @@ export function Workspace() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-app">Portfolio Commander</h1>
           <p className="mt-1 text-sm text-subtle">What changed, what matters, and what needs review.</p>
         </div>
@@ -1436,7 +1436,7 @@ export function Workspace() {
 
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className="text-amber-500" />
               Positions Under Pressure
@@ -1491,7 +1491,7 @@ export function Workspace() {
 
         {/* Pending Approvals */}
         {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
@@ -1532,7 +1532,7 @@ export function Workspace() {
                     key={a.id}
                     className="overflow-hidden rounded-lg border border-app px-3 py-3 text-sm"
                   >
-                    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_auto] 2xl:items-start">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <DecisionStateBadge state={approvalDecisionState(a)} />
@@ -1570,11 +1570,11 @@ export function Workspace() {
                         )}
                         <ApprovalProgressSummary approval={a} compact />
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                         <button
                           type="button"
                           onClick={() => setProvenanceSelector({ approval_id: a.id })}
-                          className="theme-icon-button h-8 w-8 shrink-0"
+                          className="theme-icon-button h-11 w-11 shrink-0"
                           aria-label={`View approval ${a.id} lineage`}
                           title="Lineage"
                         >
@@ -1584,7 +1584,7 @@ export function Workspace() {
                           type="button"
                           onClick={() => openApprovalReview(a)}
                           disabled={processingIds.has(a.id)}
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50"
+                          className="inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded px-3 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50 sm:px-2.5 sm:min-h-8"
                           title="Review approval"
                         >
                           Review
@@ -1600,7 +1600,7 @@ export function Workspace() {
 
         {/* Open Action Items */}
         {data.open_actions.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Play size={14} className="text-purple-500" />
               Internal Action Items
@@ -1650,7 +1650,7 @@ export function Workspace() {
 
         {/* Active Watch Triggers */}
         {data.active_triggers.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Eye size={14} className="text-cyan-500" />
               Active Triggers
@@ -1706,7 +1706,7 @@ export function Workspace() {
 
         {/* Thesis surveillance / monitor hits */}
         {data.monitor_hits.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className="text-amber-500" />
               Thesis Surveillance
@@ -1881,7 +1881,7 @@ export function Workspace() {
                 {approvalError}
               </div>
             )}
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => {
@@ -1890,7 +1890,7 @@ export function Workspace() {
                   setApprovalError(null)
                   setApprovalDialogAction(null)
                 }}
-                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+                className="w-full rounded-lg border border-app px-3 py-2.5 text-sm font-medium text-muted hover:text-app sm:w-auto sm:py-2"
               >
                 Cancel
               </button>
@@ -1899,7 +1899,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "reject" && processingIds.has(approvalReview.id)}
                 loadingText="Rejecting..."
                 disabled={processingIds.has(approvalReview.id) || approvalReview.can_reject === false}
-                className="theme-button-destructive w-auto px-4"
+                className="theme-button-destructive w-full px-4 sm:w-auto"
               >
                 Reject Proposal
               </ActionButton>
@@ -1909,7 +1909,7 @@ export function Workspace() {
                   loading={approvalDialogAction === "restage" && processingIds.has(approvalReview.id)}
                   loadingText="Restaging..."
                   disabled={processingIds.has(approvalReview.id)}
-                  className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
+                  className="w-full bg-amber-600 px-4 hover:bg-amber-700 sm:w-auto"
                 >
                   Reject & Restage
                 </ActionButton>
@@ -1923,7 +1923,7 @@ export function Workspace() {
                     setTriggerEditError(null)
                   }}
                   disabled={processingIds.has(approvalReview.id)}
-                  className="w-auto px-4"
+                  className="w-full px-4 sm:w-auto"
                 >
                   Edit Proposal
                 </ActionButton>
@@ -1933,7 +1933,7 @@ export function Workspace() {
                 loading={approvalDialogAction === "approve" && processingIds.has(approvalReview.id)}
                 loadingText={approvalActionLabel(approvalReview) === "Record Approval" ? "Recording..." : "Applying..."}
                 disabled={processingIds.has(approvalReview.id) || !approvalNote.trim() || approvalReview.can_approve === false}
-                className="theme-button-success w-auto px-4"
+                className="theme-button-success w-full px-4 sm:w-auto"
               >
                 {approvalActionLabel(approvalReview)}
               </ActionButton>

@@ -660,7 +660,7 @@ export function PositionDossier() {
               const expanded = expandedIds.has(key)
               return (
                 <div key={a.id} className="rounded-lg px-3 py-2 text-sm border border-app">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <span className="text-xs text-subtle">{subjectLabel(a.entity_type)}</span>
                       <div className="mt-1 flex flex-wrap gap-2">
@@ -680,11 +680,11 @@ export function PositionDossier() {
                       )}
                       <ApprovalProgressSummary approval={a} compact />
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex flex-col gap-2 sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
                       <button
                         onClick={() => openApprovalReview(a, "approve")}
                         disabled={processingIds.has(a.id) || a.can_approve === false}
-                        className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                        className="min-h-11 rounded px-3 py-2 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                         title={a.base_state_status === "stale" ? a.base_state_message || "The underlying state changed." : "Review and apply internal state change"}
                       >
                         {approvalActionLabel(a)}
@@ -694,7 +694,7 @@ export function PositionDossier() {
                           type="button"
                           onClick={() => handleRejectAndRestage(a)}
                           disabled={processingIds.has(a.id)}
-                          className="rounded px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 disabled:opacity-50"
+                          className="min-h-11 rounded px-3 py-2 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                           title="Reject this stale proposal and create a fresh proposal from current state"
                         >
                           Reject & Restage
@@ -703,7 +703,7 @@ export function PositionDossier() {
                       <button
                         onClick={() => openApprovalReview(a, "reject")}
                         disabled={processingIds.has(a.id) || a.can_reject === false}
-                        className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50"
+                        className="min-h-11 rounded px-3 py-2 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50 sm:min-h-0 sm:px-2 sm:py-1"
                       >
                         Reject Proposal
                       </button>
@@ -876,11 +876,11 @@ export function PositionDossier() {
                 {approvalError}
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => setApprovalReview(null)}
-                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+                className="w-full rounded-lg border border-app px-3 py-2.5 text-sm font-medium text-muted hover:text-app sm:w-auto sm:py-2"
               >
                 Cancel
               </button>
@@ -897,7 +897,7 @@ export function PositionDossier() {
                   (!approvalNote.trim() || approvalReview.approval.can_approve === false)
                 }
                 className={cn(
-                  "w-auto px-4",
+                  "w-full px-4 sm:w-auto",
                   approvalReview.action === "approve" ? "theme-button-success" : "theme-button-destructive",
                 )}
               >
@@ -908,7 +908,7 @@ export function PositionDossier() {
                   onClick={() => handleRejectAndRestage(approvalReview.approval, approvalNote)}
                   loading={processingIds.has(approvalReview.approval.id)}
                   loadingText="Restaging..."
-                  className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
+                  className="w-full bg-amber-600 px-4 hover:bg-amber-700 sm:w-auto"
                 >
                   Reject & Restage
                 </ActionButton>
@@ -923,7 +923,7 @@ export function PositionDossier() {
                   }}
                   loading={triggerEditSubmitting}
                   loadingText="Opening..."
-                  className="w-auto px-4"
+                  className="w-full px-4 sm:w-auto"
                 >
                   Edit Proposal
                 </ActionButton>
@@ -1251,7 +1251,16 @@ function ManagementQualityTab({
       {parsed?.scorecard && (
         <section className="mb-5">
           <h3 className="mb-2 text-sm font-semibold text-app">Management Scorecard</h3>
-          <div className="overflow-x-auto rounded-lg border border-app">
+          <div className="space-y-3 md:hidden">
+            {parsed.scorecard.map(row => (
+              <div key={row.question} className="rounded-lg border border-app p-3">
+                <p className="text-sm font-medium text-app">{row.question}</p>
+                <div className="mt-2"><ManagementRatingBadge value={row.rating} /></div>
+                <p className="mt-2 text-sm text-muted">{row.evidence}</p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto rounded-lg border border-app md:block">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-app text-xs uppercase text-subtle">
                 <tr>

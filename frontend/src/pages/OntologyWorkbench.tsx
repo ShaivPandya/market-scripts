@@ -527,12 +527,12 @@ export function OntologyWorkbench() {
                 </div>
               )}
             </div>
-            <DataTable columns={RESULT_COLUMNS} rows={rows as unknown as Record<string, unknown>[]} />
+            <DataTable columns={RESULT_COLUMNS} rows={rows as unknown as Record<string, unknown>[]} responsiveCards />
           </section>
 
           <section>
             <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Source Health And Staleness</h2>
-            <DataTable columns={STATUS_COLUMNS} rows={statusRows} />
+            <DataTable columns={STATUS_COLUMNS} rows={statusRows} responsiveCards />
           </section>
         </>
       )}
