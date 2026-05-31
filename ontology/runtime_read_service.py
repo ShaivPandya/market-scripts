@@ -251,6 +251,26 @@ class OntologyRuntimeReadService:
     ) -> list[dict[str, Any]]:
         return self.list_objects("WatchTrigger", filters=_ticker_status_filter(ticker, status), limit=limit)
 
+    def monitor_hits(
+        self,
+        *,
+        ticker: str | None = None,
+        status: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        filters = _clean_filters(
+            {
+                "ticker": _ticker(ticker) if ticker else None,
+                "status": status,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+            }
+        )
+        rows = self.list_objects("MonitorHit", filters=filters, limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("detected_at") or ""), reverse=True)
+
     def approvals(
         self,
         *,
@@ -332,6 +352,7 @@ class OntologyRuntimeReadService:
             "open_action_items": self.action_items(status="open"),
             "optimizer_alerts": self.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5),
             "active_watch_triggers": self.watch_triggers(status="active"),
+            "recent_monitor_hits": self.monitor_hits(status="open", limit=20),
             "recent_workflow_runs": self.workflow_runs(limit=3),
             "recent_report_runs": self.report_runs(limit=5),
             "challenged_claims": self.thesis_claims(status="challenged", limit=5),
@@ -356,6 +377,7 @@ class OntologyRuntimeReadService:
             "workflow_runs": self.workflow_runs(ticker=normalized, limit=10),
             "action_items": self.action_items(ticker=normalized, status="open"),
             "watch_triggers": self.watch_triggers(ticker=normalized),
+            "monitor_hits": self.monitor_hits(ticker=normalized, limit=50),
             "pending_approvals": self.approvals(ticker=normalized, status="pending"),
         }
 

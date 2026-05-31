@@ -409,6 +409,10 @@ const baseWorkspaceResponse = {
     count: 0,
     items: [],
   },
+  monitor_hits: {
+    count: 0,
+    items: [],
+  },
   recent_workflow_runs: [
     {
       run_id: "workflow-smoke",

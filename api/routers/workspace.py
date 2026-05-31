@@ -339,6 +339,7 @@ def get_workspace(since: str | None = None):
 
     # Active watch triggers
     active_triggers = ontology_bundle.get("active_watch_triggers", [])
+    monitor_hits = ontology_bundle.get("recent_monitor_hits", [])
 
     # Latest workflow run
     recent_runs = ontology_bundle.get("recent_workflow_runs", [])
@@ -395,6 +396,10 @@ def get_workspace(since: str | None = None):
         "active_triggers": {
             "count": len(active_triggers),
             "items": active_triggers,
+        },
+        "monitor_hits": {
+            "count": len(monitor_hits),
+            "items": monitor_hits,
         },
         "recent_workflow_runs": recent_runs,
         "recent_report_runs": recent_report_runs,

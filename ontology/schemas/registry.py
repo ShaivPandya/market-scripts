@@ -97,6 +97,7 @@ from ontology.schemas.identity import (
     thesis_section_id,
     tool_call_ref_id,
     trade_proposal_id,
+    monitor_hit_id,
     watch_trigger_id,
     workflow_artifact_id,
     workflow_run_id,
@@ -150,6 +151,7 @@ from ontology.schemas.objects import (
     MediaArtifact,
     MissingInformationRequirement,
     ModelCallRef,
+    MonitorHit,
     ObjectVersionRef,
     Observation,
     OntologyObject,
@@ -238,6 +240,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Evidence": Evidence,
     "Citation": Citation,
     "ActionItem": ActionItem,
+    "MonitorHit": MonitorHit,
     "WatchTrigger": WatchTrigger,
     "Approval": Approval,
     "ActionRun": ActionRun,
@@ -305,6 +308,7 @@ OPTIONAL_NODE_TYPES = {
     "KillCondition",
     "ThesisClaim",
     "ActionItem",
+    "MonitorHit",
     "WatchTrigger",
     "Approval",
     "ActionRun",
@@ -671,6 +675,8 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return citation_id(model.citation_id)
     if isinstance(model, ActionItem):
         return action_item_id(model.description)
+    if isinstance(model, MonitorHit):
+        return monitor_hit_id(model.hit_id or model.fingerprint or f"{model.entity_id}:{model.hit_type}")
     if isinstance(model, WatchTrigger):
         return watch_trigger_id(model.trigger_id or model.condition)
     if isinstance(model, Approval):

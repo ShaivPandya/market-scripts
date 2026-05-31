@@ -928,6 +928,40 @@ def test_update_watch_trigger_check_accepts_uid_and_preserves_context():
     assert props["last_checked_at"]
 
 
+def test_create_monitor_hit_persists_first_class_object():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_monitor_hit",
+        {
+            "ticker": "MU",
+            "entity_type": "kill_condition",
+            "entity_id": "kill_condition:memory_pricing",
+            "entity_label": "Memory pricing collapse",
+            "hit_type": "approaching",
+            "severity": "medium",
+            "confidence": 0.65,
+            "evidence": "Price within 5% of threshold",
+            "fingerprint": "abc123",
+            "result": {"actual": 94.0, "expected": 95.0},
+        },
+        context,
+        reason="Record monitor hit",
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    hit_uid = "monitor_hit:abc123"
+    props = repo.objects[hit_uid]["properties_json"]
+    assert approval["entity_type"] == "monitor_hit"
+    assert applied["application_status"] == "applied"
+    assert props["ticker"] == "MU"
+    assert props["entity_type"] == "kill_condition"
+    assert props["hit_type"] == "approaching"
+    assert props["evidence"] == "Price within 5% of threshold"
+
+
 def test_update_watch_trigger_definition_accepts_uid_and_preserves_context():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]

@@ -254,6 +254,13 @@ def watch_trigger_id(identifier: object) -> str:
     return f"watch_trigger:{slug(identifier)}"
 
 
+def monitor_hit_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("monitor_hit:"):
+        text = text.split(":", 1)[1]
+    return f"monitor_hit:{slug(text)}"
+
+
 def approval_id(identifier: object) -> str:
     return f"approval:{slug(identifier)}"
 

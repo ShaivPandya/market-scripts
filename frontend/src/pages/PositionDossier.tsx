@@ -105,6 +105,7 @@ interface DossierData {
   workflow_runs: WorkflowRun[]
   action_items: ActionItem[]
   watch_triggers: Trigger[]
+  monitor_hits: MonitorHit[]
   pending_approvals: ApprovalRecord[]
 }
 
@@ -162,6 +163,20 @@ interface Trigger {
   definition?: Record<string, unknown> | null
   last_checked_at: string | null
   last_evidence: string | null
+}
+interface MonitorHit {
+  id: EntityId
+  ticker?: string | null
+  entity_type: string
+  entity_id: string
+  entity_label?: string | null
+  hit_type: string
+  severity?: string | null
+  status: string
+  confidence?: number | null
+  evidence?: string | null
+  detected_at?: string | null
+  approval_id?: string | null
 }
 
 const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Evidence", "Workflows"] as const
@@ -486,6 +501,7 @@ export function PositionDossier() {
   const thesisClaims = Array.isArray(data.thesis_claims) ? data.thesis_claims : []
   const catalysts = Array.isArray(data.catalysts) ? data.catalysts : []
   const killConditions = Array.isArray(data.kill_conditions) ? data.kill_conditions : []
+  const monitorHits = Array.isArray(data.monitor_hits) ? data.monitor_hits : []
   const evaluations = Array.isArray(data.evaluations) ? data.evaluations : []
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
   const positionQuantity = pos?.quantity ?? pos?.shares
@@ -604,8 +620,8 @@ export function PositionDossier() {
         {activeTab === "Valuation" && <PositionValuationTab ticker={data.ticker} />}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
-        {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} ticker={ticker!} />}
-        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
+        {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} monitorHits={monitorHits} ticker={ticker!} />}
+        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} monitorHits={monitorHits} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
         {activeTab === "Evidence" && (
@@ -1732,7 +1748,15 @@ function LinkCheckboxes({
   )
 }
 
-function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
+function CatalystsTab({
+  catalysts,
+  monitorHits,
+  ticker,
+}: {
+  catalysts: Catalyst[]
+  monitorHits: MonitorHit[]
+  ticker: string
+}) {
   const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
@@ -1759,6 +1783,10 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
       )}
       {catalysts.map(c => {
         const status = statusOrFallback(c.status, "pending")
+        const entityId = String(c.object_uid || c.id)
+        const hits = monitorHits.filter(
+          hit => hit.entity_type === "catalyst" && String(hit.entity_id) === entityId,
+        )
         return (
           <div key={c.id} className="rounded-lg border border-app px-4 py-3">
             <div className="flex items-center justify-between mb-1">
@@ -1791,6 +1819,17 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
               {c.target_date && <span>Target: {c.target_date}</span>}
             </div>
             {c.evidence && <p className="text-xs text-muted mt-1">{c.evidence}</p>}
+            {hits.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-app pt-2">
+                {hits.slice(0, 3).map(hit => (
+                  <div key={hit.id} className="text-xs text-subtle">
+                    <span className="font-medium text-amber-700 dark:text-amber-300">{hit.hit_type.replace(/_/g, " ")}</span>
+                    {hit.detected_at && <span className="ml-2">Detected {formatTime(hit.detected_at)}</span>}
+                    {hit.evidence && <p className="mt-0.5 text-muted">{hit.evidence}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       })}
@@ -1798,7 +1837,15 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   )
 }
 
-function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]; ticker: string }) {
+function KillConditionsTab({
+  conditions,
+  monitorHits,
+  ticker,
+}: {
+  conditions: KillCondition[]
+  monitorHits: MonitorHit[]
+  ticker: string
+}) {
   const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
@@ -1825,6 +1872,10 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
       )}
       {conditions.map(k => {
         const status = statusOrFallback(k.status, "active")
+        const entityId = String(k.object_uid || k.id)
+        const hits = monitorHits.filter(
+          hit => hit.entity_type === "kill_condition" && String(hit.entity_id) === entityId,
+        )
         return (
           <div key={k.id} className={cn("rounded-lg border px-4 py-3", status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
             <div className="flex items-center justify-between mb-1">
@@ -1857,6 +1908,17 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
               {k.threshold && <span>Threshold: {k.threshold}</span>}
               {k.triggered_at && <span>Triggered: {formatTime(k.triggered_at)}</span>}
             </div>
+            {hits.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-app pt-2">
+                {hits.slice(0, 3).map(hit => (
+                  <div key={hit.id} className="text-xs text-subtle">
+                    <span className="font-medium text-amber-700 dark:text-amber-300">{hit.hit_type.replace(/_/g, " ")}</span>
+                    {hit.detected_at && <span className="ml-2">Detected {formatTime(hit.detected_at)}</span>}
+                    {hit.evidence && <p className="mt-0.5 text-muted">{hit.evidence}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       })}

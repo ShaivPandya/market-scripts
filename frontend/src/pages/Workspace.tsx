@@ -120,6 +120,7 @@ interface WorkspaceData {
   }
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
+  monitor_hits: { count: number; items: MonitorHit[] }
   recent_workflow_runs: WorkflowRun[]
 }
 
@@ -143,6 +144,21 @@ interface Trigger {
   definition?: Record<string, unknown> | null
   last_checked_at: string | null
   last_evidence: string | null
+}
+
+interface MonitorHit {
+  id: number | string
+  ticker: string | null
+  entity_type: string
+  entity_id: string
+  entity_label?: string | null
+  hit_type: string
+  severity?: string | null
+  status: string
+  confidence?: number | null
+  evidence?: string | null
+  detected_at?: string | null
+  approval_id?: string | null
 }
 
 interface WorkflowRun {
@@ -1344,6 +1360,38 @@ export function Workspace() {
           </section>
         )}
 
+        {/* Thesis surveillance / monitor hits */}
+        {data.monitor_hits.count > 0 && (
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <AlertTriangle size={14} className="text-amber-500" />
+              Thesis Surveillance
+              <span className="ml-auto text-xs text-subtle">{data.monitor_hits.count} open</span>
+            </h2>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+              {data.monitor_hits.items.map(hit => (
+                <div key={hit.id} className="rounded-lg px-3 py-2 text-sm border border-app/60">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {hit.ticker && (
+                      <Link to={`/dossier/${encodeURIComponent(hit.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                        {hit.ticker}
+                      </Link>
+                    )}
+                    <span className="text-xs uppercase tracking-wide text-subtle">{hit.entity_type.replace(/_/g, " ")}</span>
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                      {hit.hit_type.replace(/_/g, " ")}
+                    </span>
+                    {hit.severity && <span className="text-xs text-subtle">{hit.severity}</span>}
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{hit.entity_label || hit.entity_id}</p>
+                  {hit.evidence && <p className="mt-1 text-xs text-subtle">{hit.evidence}</p>}
+                  {hit.detected_at && <p className="mt-1 text-[11px] text-subtle">Detected {formatTime(hit.detected_at)}</p>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Recent Workflow Runs */}
         {data.recent_workflow_runs.length > 0 && (
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
@@ -1403,6 +1451,7 @@ export function Workspace() {
         !approvalCount &&
         !data.open_actions.count &&
         !data.active_triggers.count &&
+        !data.monitor_hits.count &&
         !data.recent_workflow_runs.length && (
         <div className="theme-surface rounded-xl p-8 text-center text-muted text-sm mt-4">
           No pending items. Run a workflow or chat with the agent to get started.

@@ -1155,6 +1155,60 @@ class ActionItem(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class MonitorHit(OntologySchemaBase):
+    hit_id: str | None = None
+    ticker: NonBlankStr
+    entity_type: NonBlankStr
+    entity_id: NonBlankStr
+    entity_label: str | None = None
+    hit_type: NonBlankStr
+    severity: str | None = None
+    status: NonBlankStr = "open"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    result: dict[str, Any] | None = None
+    detected_at: str | None = None
+    approval_id: str | None = None
+    action_item_id: str | None = None
+    fingerprint: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("entity_type", "entity_id", "hit_type", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "hit_id",
+        "entity_label",
+        "severity",
+        "evidence",
+        "detected_at",
+        "approval_id",
+        "action_item_id",
+        "fingerprint",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def _source_ids(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return [str(value).strip()] if str(value).strip() else []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+
 class WatchTrigger(OntologySchemaBase):
     trigger_id: str | None = None
     condition: NonBlankStr
@@ -3272,6 +3326,7 @@ OntologyObject = (
     | Evidence
     | Citation
     | ActionItem
+    | MonitorHit
     | WatchTrigger
     | Approval
     | ActionRun

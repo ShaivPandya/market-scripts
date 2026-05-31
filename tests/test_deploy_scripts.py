@@ -114,6 +114,14 @@ def test_watch_trigger_monitor_scheduler_is_disabled_by_default() -> None:
     assert 'upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}"' in script
 
 
+def test_catalyst_kill_monitor_scheduler_is_disabled_by_default() -> None:
+    script = (ROOT / "infra/gcp/setup-scheduler.sh").read_text()
+
+    assert "SCHEDULE_CATALYST_KILL_MONITOR:-0" in script
+    assert "delete_scheduler_job_if_present catalyst-kill-monitor" in script
+    assert 'upsert_api_job catalyst-kill-monitor "${CATALYST_KILL_MONITOR_SCHEDULE:-0 15-21 * * 1-5}"' in script
+
+
 def test_common_gcp_env_requires_postgres_for_api_and_ontology_worker() -> None:
     lib = (ROOT / "infra/gcp/lib.sh").read_text()
 
