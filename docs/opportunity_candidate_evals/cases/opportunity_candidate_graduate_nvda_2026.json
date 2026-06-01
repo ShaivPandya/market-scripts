@@ -1,9 +1,18 @@
 {
   "id": "opportunity_candidate_graduate_nvda_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "opportunity_candidate",
   "as_of_date": "2026-05-15",
   "user_question": "NVDA looks interesting after the recent pullback. Should I pressure-test a new long?",
+  "corpus_tags": ["opportunity_identification"],
+  "failure_type": "process_regression",
+  "failure_tags": ["process_regression"],
+  "required_oc_dimensions": [
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline"
+  ],
   "input_refs": [
     {
       "type": "thesis",
@@ -42,6 +51,8 @@
     "summary": "NVDA is worth a full pressure-test because the user supplied a concrete new-long question with enough context."
   },
   "expected_graduation": true,
+  "expected_final_action": "graduate_to_decision_quality",
+  "expected_gate_status": "pass",
   "rubric_scores": {
     "trigger_clarity": 4,
     "why_now": 4,

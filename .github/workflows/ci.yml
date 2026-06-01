@@ -65,6 +65,7 @@ jobs:
             tests/test_decision_quality_chat_eval_runner.py \
             tests/test_agent_decision_quality_chat.py \
             tests/test_opportunity_candidate_model.py \
+            tests/test_opportunity_candidate_eval_runner.py \
             tests/test_opportunity_scout.py \
             tests/test_opportunity_scout_integration.py \
             tests/test_opportunity_scout_workspace.py \
@@ -73,6 +74,8 @@ jobs:
         run: python -m decision_quality.eval_runner --approved-only --dry-run --no-judge
       - name: Run approved chat eval dry-run
         run: python -m decision_quality.chat_eval_runner --approved-only --dry-run
+      - name: Run approved opportunity candidate eval dry-run
+        run: python -m decision_quality.opportunity_candidate_eval_runner --approved-only --dry-run --no-judge
       - name: Upload eval artifacts
         if: failure()
         uses: actions/upload-artifact@v7
@@ -81,6 +84,7 @@ jobs:
           path: |
             outputs/decision_quality_evals/
             outputs/decision_quality_chat_evals/
+            outputs/opportunity_candidate_evals/
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------

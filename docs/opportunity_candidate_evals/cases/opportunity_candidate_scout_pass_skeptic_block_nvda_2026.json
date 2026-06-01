@@ -1,9 +1,18 @@
 {
   "id": "opportunity_candidate_scout_pass_skeptic_block_nvda_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "opportunity_candidate",
   "as_of_date": "2026-05-15",
   "user_question": "NVDA pulled back — scout should find the setup but skeptic should block graduation without full pressure-test artifacts.",
+  "corpus_tags": ["opportunity_identification"],
+  "failure_type": "sizing_discipline",
+  "failure_tags": ["overconfident_actionability"],
+  "required_oc_dimensions": [
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline"
+  ],
   "input_refs": [
     {
       "type": "thesis",
@@ -43,7 +52,11 @@
     "summary": "Scout finds a candidate setup, but skeptic should block actionability until DQ artifacts exist."
   },
   "expected_graduation": false,
-  "expected_skeptic_block_reasons": ["MISSING_DECISION_QUALITY", "TOO_MANY_MISSING_INPUTS"],
+  "expected_final_action": "research",
+  "expected_gate_status": "pass",
+  "expected_scout_status": "pass",
+  "expected_skeptic_status": "fail",
+  "expected_skeptic_block_reasons": ["MISSING_DECISION_QUALITY"],
   "rubric_scores": {
     "trigger_clarity": 4,
     "why_now": 4,

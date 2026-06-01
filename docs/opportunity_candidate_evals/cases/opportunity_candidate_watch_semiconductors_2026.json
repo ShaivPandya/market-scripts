@@ -1,9 +1,18 @@
 {
   "id": "opportunity_candidate_watch_semiconductors_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "opportunity_candidate",
   "as_of_date": "2026-05-15",
   "user_question": "Scan semiconductors for anything interesting right now.",
+  "corpus_tags": ["opportunity_identification"],
+  "failure_type": "missing_mispricing",
+  "failure_tags": ["weak_opportunity_id"],
+  "required_oc_dimensions": [
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline"
+  ],
   "input_refs": [
     {
       "type": "other",
@@ -44,6 +53,8 @@
     "summary": "Sector scan is worth research, but no single opportunity is ready for a full pressure-test yet."
   },
   "expected_graduation": false,
+  "expected_final_action": "research",
+  "expected_gate_status": "pass",
   "rubric_scores": {
     "trigger_clarity": 4,
     "why_now": 3,

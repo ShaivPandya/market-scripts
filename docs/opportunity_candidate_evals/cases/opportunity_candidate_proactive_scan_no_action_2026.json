@@ -1,9 +1,18 @@
 {
   "id": "opportunity_candidate_proactive_scan_no_action_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "opportunity_candidate",
   "as_of_date": "2026-06-01",
   "user_question": "Scan the portfolio for anything that changed overnight.",
+  "corpus_tags": ["opportunity_identification"],
+  "failure_type": "process_regression",
+  "failure_tags": ["process_regression"],
+  "required_oc_dimensions": [
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline"
+  ],
   "input_refs": [
     {
       "type": "other",
@@ -44,6 +53,8 @@
     "summary": "Worth research, but not action-ready."
   },
   "expected_graduation": false,
+  "expected_final_action": "research",
+  "expected_gate_status": "pass",
   "rubric_scores": {
     "trigger_clarity": 4,
     "why_now": 4,
