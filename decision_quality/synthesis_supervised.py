@@ -156,7 +156,9 @@ def _normalize_prediction(raw: dict[str, Any], *, default_confidence: float) -> 
     confidence = float(raw.get("confidence") or default_confidence)
     return SupervisedTriagePrediction(
         next_action=next_action,
-        should_graduate=bool(raw.get("should_graduate")) if raw.get("should_graduate") is not None else next_action == GRADUATE_ACTION,
+        should_graduate=bool(raw.get("should_graduate"))
+        if raw.get("should_graduate") is not None
+        else next_action == GRADUATE_ACTION,
         synthesis_stance=stance,
         missing_input_tags=missing_tags,
         confidence=max(0.0, min(1.0, confidence)),

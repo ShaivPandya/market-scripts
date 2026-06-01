@@ -246,7 +246,9 @@ def labels_from_structured_dq_gold(gold: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def labels_from_opportunity_candidate_gold(gold: dict[str, Any], *, expected_graduation: bool | None = None) -> dict[str, Any]:
+def labels_from_opportunity_candidate_gold(
+    gold: dict[str, Any], *, expected_graduation: bool | None = None
+) -> dict[str, Any]:
     next_action = normalize_triage_action(gold.get("next_action"))
     return {
         "label_next_action": next_action,

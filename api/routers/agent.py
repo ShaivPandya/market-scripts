@@ -74,13 +74,13 @@ from decision_quality.models import (
     decision_quality_schema,
     parse_decision_quality,
 )
-from decision_quality.synthesis_supervised import apply_supervised_triage_overlay
 from decision_quality.opportunity_candidate import (
     OpportunityCandidate,
     OpportunityCandidateGate,
     opportunity_candidate_schema,
     parse_opportunity_candidate,
 )
+from decision_quality.synthesis_supervised import apply_supervised_triage_overlay
 from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
