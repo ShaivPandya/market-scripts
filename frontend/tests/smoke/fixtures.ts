@@ -828,7 +828,16 @@ const dossierResponse = {
   catalysts: [],
   kill_conditions: [],
   ontology_risk: null,
-  workflow_runs: [],
+  workflow_runs: [
+    {
+      run_id: "dossier-workflow-smoke",
+      workflow_name: "position_dossier_pressure_test",
+      status: "completed",
+      started_at: "2026-05-14T13:00:00Z",
+      completed_at: "2026-05-14T13:02:00Z",
+      summary: { result: "Pressure test completed with watch recommendation." },
+    },
+  ],
   action_items: [],
   watch_triggers: [],
   pending_approvals: [],
@@ -1073,6 +1082,34 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       job_id: "monitor-builder-smoke-job",
       status: "queued",
     }, 202)
+  }
+
+  if (method === "POST" && path === "/api/agent/chat/async") {
+    return json(route, {
+      job_id: "agent-smoke-job",
+      status: "done",
+      session_id: "smoke-agent-session",
+      events: [
+        {
+          seq: 1,
+          event_type: "done",
+          payload: { session_id: "smoke-agent-session", text: "Smoke workflow command handled." },
+        },
+      ],
+      next_seq: 2,
+    })
+  }
+  if (method === "GET" && path.startsWith("/api/agent/chat/async/") && path.endsWith("/events")) {
+    return json(route, {
+      job_id: "agent-smoke-job",
+      status: "done",
+      session_id: "smoke-agent-session",
+      events: [],
+      next_seq: 2,
+    })
+  }
+  if (method === "POST" && path.startsWith("/api/agent/chat/async/") && path.endsWith("/cancel")) {
+    return json(route, { status: "cancelled" })
   }
 
   if (method === "GET" && path === "/api/agent/workflows") {

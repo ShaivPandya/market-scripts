@@ -1,4 +1,5 @@
 import { authenticate, expect, test } from "./fixtures"
+import { expectDecisionTraceDrawer, expectPrimaryControlsSeparated } from "./operatingWorkflow"
 
 test("redirects protected routes to login and signs in with password auth", async ({ page }) => {
   await page.goto("/workspace")
@@ -58,7 +59,9 @@ test("renders workspace common operating picture and enforces approval note gati
   await expect(reviewDialog.getByText("standard source needs review")).toBeVisible()
 
   const approveButton = reviewDialog.getByRole("button", { name: "Approve & Apply" })
+  const rejectButton = reviewDialog.getByRole("button", { name: "Reject Proposal" })
   await expect(approveButton).toBeDisabled()
+  await expectPrimaryControlsSeparated(approveButton, rejectButton)
 
   await page.getByLabel("Decision note").fill("Reviewed staged research follow-up for smoke coverage.")
   await expect(approveButton).toBeEnabled()
@@ -244,16 +247,52 @@ test("renders position dossier evidence ledger tab", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Weekly report" })).toBeVisible()
 })
 
+test("opens dossier pressure test workflow and records prior run trace", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/dossier/MSFT")
+
+  await expect(page.getByRole("heading", { name: "MSFT" })).toBeVisible()
+  await page.getByRole("button", { name: "Workflows", exact: true }).click()
+
+  await expect(page.getByText("Position Dossier Pressure Test", { exact: true })).toBeVisible()
+  await expect(page.getByText("position dossier pressure test", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Run pressure test" }).click()
+  await expect(page.getByRole("dialog", { name: "Stan" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Close Stan" }).click()
+  await page.getByRole("button", { name: "Trace workflow dossier-workflow-smoke" }).click()
+  await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
+})
+
+test("opens workflow trace from workspace recent activity", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByRole("heading", { name: /Recent Activity/ })).toBeVisible()
+  await page.getByRole("button", { name: "View workflow workflow-smoke trace" }).click()
+  await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
+})
+
+test("opens ontology run lineage trace after temporal query", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/ontology")
+
+  await page.getByPlaceholder("Which positions are in deteriorating macro conditions?").fill("Show elevated portfolio risks")
+  await page.getByRole("button", { name: "Run Query" }).click()
+  await expect(page.getByText("Risk Analysis Results")).toBeVisible()
+
+  await page.getByRole("button", { name: "Trace", exact: true }).click()
+  const drawer = page.getByRole("dialog", { name: "Decision Trace" })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole("heading", { name: "Provenance" })).toBeVisible()
+})
+
 test("opens unified decision trace drawer from workspace approval", async ({ page }) => {
   await authenticate(page)
   await page.goto("/workspace")
 
   await page.getByRole("button", { name: "View approval smoke-approval trace" }).click()
-  const drawer = page.getByRole("dialog", { name: "Decision Trace" })
-  await expect(drawer).toBeVisible()
-  await expect(drawer.getByRole("heading", { name: "Blockers" })).toBeVisible()
-  await expect(drawer.getByRole("heading", { name: "Gates" })).toBeVisible()
-  await expect(drawer.getByRole("heading", { name: "Provenance" })).toBeVisible()
+  await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
 })
 
 test("opens decision trace drawer from OpportunityScout and dossier evidence", async ({ page }) => {
