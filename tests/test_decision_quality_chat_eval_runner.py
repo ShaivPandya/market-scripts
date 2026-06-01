@@ -53,6 +53,23 @@ def test_load_cases_and_validate_hashed_input_refs(tmp_path):
     assert "sha256 mismatch" in errors[0]
 
 
+def test_load_cases_filters_by_corpus_tag(tmp_path):
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    (cases_dir / "routing.json").write_text(
+        json.dumps({"id": "routing", "status": "approved", "corpus_tags": ["routing_tool_use"]}),
+        encoding="utf-8",
+    )
+    (cases_dir / "chat.json").write_text(
+        json.dumps({"id": "chat", "status": "approved", "corpus_tags": ["chat_behavior"]}),
+        encoding="utf-8",
+    )
+
+    cases = load_cases(statuses={"approved"}, corpus_tags={"routing_tool_use"}, cases_dir=cases_dir)
+
+    assert [case.case_id for case in cases] == ["routing"]
+
+
 def test_sse_parsing_and_run_summary():
     raw = "\n\n".join(
         [

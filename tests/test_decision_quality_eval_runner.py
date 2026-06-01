@@ -54,6 +54,13 @@ def test_load_cases_defaults_to_review_and_approved():
     assert "scenario_simulator_uncertainty_disclosure_2026" in {case.case_id for case in cases}
 
 
+def test_load_cases_filters_by_corpus_tag():
+    cases = load_cases(statuses={"approved"}, corpus_tags={"structured_dq"})
+
+    assert cases
+    assert all("structured_dq" in case.data.get("corpus_tags", []) for case in cases)
+
+
 def test_dry_run_payload_omits_gold_and_future_outcome_context(monkeypatch):
     def fail_call(*_args, **_kwargs):
         raise AssertionError("dry-run should not call the LLM")

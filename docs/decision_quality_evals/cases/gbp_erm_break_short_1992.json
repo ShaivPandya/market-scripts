@@ -1,6 +1,6 @@
 {
   "id": "gbp_erm_break_short_1992",
-  "status": "review",
+  "status": "approved",
   "decision_type": "macro_stance",
   "as_of_date": "1992-09-15",
   "user_question": "Using the 1992 ERM setup after Schlesinger's comments, should short GBP versus DEM have been actionable, watch, research, or do_nothing?",
@@ -197,5 +197,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical macro/FX example designed to teach policy-break asymmetry and trade-after-the-trade reasoning."
+  "human_notes": "Review case. Historical macro/FX example designed to teach policy-break asymmetry and trade-after-the-trade reasoning.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "id": "amd_zen_epyc_share_gain_long_2018",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2018-05-07",
   "user_question": "Using the AMD setup as of the May 7, 2018 close, should this new buy have been actionable, watch, research, avoid, or do_nothing?",
@@ -234,5 +234,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Built from the user-provided AMD deep research markdown. The gold output intentionally softens overconfident language from the research file, corrects the Q2 guidance figure to the official AMD release, and excludes post-May 7 source material."
+  "human_notes": "Review case. Built from the user-provided AMD deep research markdown. The gold output intentionally softens overconfident language from the research file, corrects the Q2 guidance figure to the official AMD release, and excludes post-May 7 source material.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

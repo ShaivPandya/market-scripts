@@ -1,24 +1,71 @@
 {
   "id": "routing_catalyst_status_nvda_2026",
-  "status": "review",
+  "status": "approved",
   "as_of_date": "2026-05-31",
   "user_message": "Has the NVDA export-license catalyst played out yet?",
-  "screen_context": {"page_name": "Research", "route": "/research/nvda", "ticker": "NVDA"},
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA"
+  },
   "mock_tools": {
-    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
-    "get_dossier": {"ticker": "NVDA", "summary": "stub"},
-    "get_catalysts": {"ticker": "NVDA", "catalysts": []},
-    "search_web": {"results": [{"title": "stub", "snippet": "license news"}]},
-    "search_knowledge_base": {"results": []},
-    "search_agent_capabilities": {"capabilities": []}
+    "get_portfolio": {
+      "summary": {
+        "position_count": 0
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "NVDA",
+      "summary": "stub"
+    },
+    "get_catalysts": {
+      "ticker": "NVDA",
+      "catalysts": []
+    },
+    "search_web": {
+      "results": [
+        {
+          "title": "stub",
+          "snippet": "license news"
+        }
+      ]
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
   },
   "routing_expectations": {
     "intent_class": "catalyst_status",
     "run_hidden_dq": false,
     "run_opportunity_preflight": false,
-    "required_tool_names": ["search_web"]
+    "required_tool_names": [
+      "search_web"
+    ]
   },
-  "expected_tool_names": ["search_web"],
-  "required_points": [{"label": "catalyst framing", "any_terms": ["catalyst", "played", "license", "status", "news"]}],
-  "judge_min_score": 12
+  "expected_tool_names": [
+    "search_web"
+  ],
+  "required_points": [
+    {
+      "label": "catalyst framing",
+      "any_terms": [
+        "catalyst",
+        "played",
+        "license",
+        "status",
+        "news"
+      ]
+    }
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "routing_tool_use"
+  ],
+  "failure_type": "wrong_routing",
+  "tool_pack": "catalyst_status",
+  "required_dq_dimensions": []
 }

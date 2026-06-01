@@ -1,6 +1,6 @@
 {
   "id": "mu_dossier_pressure_context_chat",
-  "status": "review",
+  "status": "approved",
   "as_of_date": "2026-05-31",
   "user_message": "What would invalidate this thesis?",
   "screen_context": {
@@ -12,31 +12,117 @@
       "position_size": "2.1%"
     },
     "summary": "User is reviewing the MU position dossier before a sizing decision.",
-    "corresponding_tools": ["get_dossier", "get_position_valuation"]
+    "corresponding_tools": [
+      "get_dossier",
+      "get_position_valuation"
+    ]
   },
   "input_refs": [],
   "mock_tools": {
-    "get_portfolio": {"summary": {"position_count": 12}, "positions": [{"ticker": "MU", "weight_pct": 2.1}]},
+    "get_portfolio": {
+      "summary": {
+        "position_count": 12
+      },
+      "positions": [
+        {
+          "ticker": "MU",
+          "weight_pct": 2.1
+        }
+      ]
+    },
     "get_dossier": {
       "ticker": "MU",
-      "thesis": {"status": "active"},
-      "catalysts": [{"description": "HBM demand inflection", "status": "pending"}],
-      "kill_conditions": [{"condition": "Memory pricing collapse", "status": "active"}]
+      "thesis": {
+        "status": "active"
+      },
+      "catalysts": [
+        {
+          "description": "HBM demand inflection",
+          "status": "pending"
+        }
+      ],
+      "kill_conditions": [
+        {
+          "condition": "Memory pricing collapse",
+          "status": "active"
+        }
+      ]
     },
-    "get_thesis": {"ticker": "MU", "content": "MU benefits from AI memory demand and HBM mix shift."},
-    "get_thesis_evaluations": {"ticker": "MU", "evaluations": []},
-    "get_position_valuation": {"ticker": "MU", "price": 95.0, "bear_base_bull": {"bear": 70, "base": 95, "bull": 120}},
-    "run_chart": {"ticker": "MU", "technical_read": "Needs current chart confirmation in replay."},
-    "get_price_volume_signals": {"status": "ok"},
-    "search_knowledge_base": {"results": []},
-    "search_agent_capabilities": {"capabilities": []}
+    "get_thesis": {
+      "ticker": "MU",
+      "content": "MU benefits from AI memory demand and HBM mix shift."
+    },
+    "get_thesis_evaluations": {
+      "ticker": "MU",
+      "evaluations": []
+    },
+    "get_position_valuation": {
+      "ticker": "MU",
+      "price": 95.0,
+      "bear_base_bull": {
+        "bear": 70,
+        "base": 95,
+        "bull": 120
+      }
+    },
+    "run_chart": {
+      "ticker": "MU",
+      "technical_read": "Needs current chart confirmation in replay."
+    },
+    "get_price_volume_signals": {
+      "status": "ok"
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
   },
-  "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "expected_tool_names": [
+    "get_dossier",
+    "get_thesis",
+    "run_chart"
+  ],
   "required_points": [
-    {"label": "invalidation threshold", "any_terms": ["invalidate", "kill condition", "threshold", "break"]},
-    {"label": "evidence against", "any_terms": ["risk", "downside", "memory pricing", "competition"]},
-    {"label": "missing inputs", "any_terms": ["missing", "need", "confirm", "chart", "current"]},
-    {"label": "sizing discipline", "any_terms": ["size", "sizing", "trim", "hold", "watch"]}
+    {
+      "label": "invalidation threshold",
+      "any_terms": [
+        "invalidate",
+        "kill condition",
+        "threshold",
+        "break"
+      ]
+    },
+    {
+      "label": "evidence against",
+      "any_terms": [
+        "risk",
+        "downside",
+        "memory pricing",
+        "competition"
+      ]
+    },
+    {
+      "label": "missing inputs",
+      "any_terms": [
+        "missing",
+        "need",
+        "confirm",
+        "chart",
+        "current"
+      ]
+    },
+    {
+      "label": "sizing discipline",
+      "any_terms": [
+        "size",
+        "sizing",
+        "trim",
+        "hold",
+        "watch"
+      ]
+    }
   ],
   "required_decision_quality_dimensions": [
     "simple_thesis",
@@ -50,11 +136,43 @@
     "confidence_sizing",
     "trade_after_trade"
   ],
-  "forbidden_patterns": ["could be a good buy", "depends on your risk tolerance", "strong buy"],
+  "forbidden_patterns": [
+    "could be a good buy",
+    "depends on your risk tolerance",
+    "strong buy"
+  ],
   "expected_stance": {
     "label": "pressure_test_not_lazy_buy",
-    "any_terms": ["watch", "research", "hold", "trim", "invalidation"],
-    "forbidden_terms": ["buy now", "add now", "strong buy"]
+    "any_terms": [
+      "watch",
+      "research",
+      "hold",
+      "trim",
+      "invalidation"
+    ],
+    "forbidden_terms": [
+      "buy now",
+      "add now",
+      "strong buy"
+    ]
   },
-  "judge_min_score": 16
+  "judge_min_score": 16,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": "thesis_review",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ]
 }

@@ -46,9 +46,29 @@ Reports are written to `outputs/decision_quality_chat_evals/`.
 - `mock_tools` should make replay deterministic where possible.
 - `required_points` should be concrete claims or risks that a good Stan answer must surface.
 - `forbidden_patterns` should catch lazy generic phrasing.
+- `corpus_tags`, `failure_type`, `tool_pack`, and `required_dq_dimensions` are required before promotion to `approved`.
 - `workflow_expectations` is optional. Use it for workflow cases that must include a `workflow_run_id`,
   emit parseable fenced `artifacts` JSON with expected keys, and describe generated actions as proposals or pending approvals.
+- Workflow/proposal boundary cases remain `draft` or `review` until TL-46 lands.
 - LLM judge scores are secondary; deterministic checks are the pass/fail gate.
+
+## Promotion Workflow
+
+1. Capture or author a case as `draft`.
+2. Fill `mock_tools`, `required_points`, routing/tool expectations, and hashed `input_refs`.
+3. Add regression metadata: `corpus_tags`, `failure_type`, `tool_pack`, `required_dq_dimensions`.
+4. Move to `review` and run offline chat eval tests.
+5. Promote to `approved` once deterministic expectations are stable.
+6. Refresh `baselines/approved_corpus_baseline.json` with `--update-baseline`.
+
+Example approved-corpus commands:
+
+```bash
+python -m decision_quality.chat_eval_runner --approved-only --dry-run
+python -m decision_quality.chat_eval_runner --approved-only --baseline docs/decision_quality_chat_evals/baselines/approved_corpus_baseline.json
+python -m decision_quality.chat_eval_runner --approved-only --corpus-tag routing_tool_use --no-judge
+python -m decision_quality.chat_eval_runner --approved-only --update-baseline
+```
 
 ## Capturing Failures
 

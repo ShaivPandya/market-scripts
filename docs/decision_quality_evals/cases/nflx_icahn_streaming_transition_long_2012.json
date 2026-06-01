@@ -1,6 +1,6 @@
 {
   "id": "nflx_icahn_streaming_transition_long_2012",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2012-10-31",
   "user_question": "Using the NFLX setup as of Carl Icahn's 2012-10-31 stake disclosure, should this new position have been actionable, watch, research, avoid, or do_nothing?",
@@ -214,5 +214,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical new-position example designed to teach contrarian strategic-value reasoning during a business-model transition. Price action is intentionally marked incomplete because the user did not provide the standard technical snapshot."
+  "human_notes": "Review case. Historical new-position example designed to teach contrarian strategic-value reasoning during a business-model transition. Price action is intentionally marked incomplete because the user did not provide the standard technical snapshot.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

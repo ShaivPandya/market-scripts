@@ -61,5 +61,20 @@
     "any_terms": ["watch", "research", "not ready to add"],
     "forbidden_terms": ["buy now", "add now"]
   },
-  "judge_min_score": 16
+  "judge_min_score": 16,
+  "corpus_tags": ["chat_behavior", "opportunity_identification"],
+  "failure_type": null,
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ]
 }

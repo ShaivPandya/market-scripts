@@ -1,6 +1,6 @@
 {
   "id": "nvda_ai_platform_long_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2026-04-10",
   "user_question": "Using the NVDA thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
@@ -202,5 +202,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Gold output reflects an actionable buy at conviction 4 with 2 of 3 confirmations present."
+  "human_notes": "Review case. Gold output reflects an actionable buy at conviction 4 with 2 of 3 confirmations present.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

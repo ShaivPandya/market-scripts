@@ -1,6 +1,6 @@
 {
   "id": "mu_kill_condition_monitor_chat",
-  "status": "review",
+  "status": "approved",
   "as_of_date": "2026-05-31",
   "user_message": "The monitor says MU's kill condition is approaching. What should I do?",
   "screen_context": {
@@ -12,14 +12,29 @@
       "entity_type": "kill_condition"
     },
     "summary": "User is triaging a monitor hit on an approaching kill condition for MU.",
-    "corresponding_tools": ["get_dossier", "get_kill_conditions"]
+    "corresponding_tools": [
+      "get_dossier",
+      "get_kill_conditions"
+    ]
   },
   "input_refs": [],
   "mock_tools": {
-    "get_portfolio": {"summary": {"position_count": 12}, "positions": [{"ticker": "MU", "weight_pct": 2.1}]},
+    "get_portfolio": {
+      "summary": {
+        "position_count": 12
+      },
+      "positions": [
+        {
+          "ticker": "MU",
+          "weight_pct": 2.1
+        }
+      ]
+    },
     "get_dossier": {
       "ticker": "MU",
-      "thesis": {"status": "active"},
+      "thesis": {
+        "status": "active"
+      },
       "kill_conditions": [
         {
           "condition": "Memory pricing collapse",
@@ -39,18 +54,68 @@
     },
     "get_kill_conditions": {
       "ticker": "MU",
-      "kill_conditions": [{"condition": "Memory pricing collapse", "status": "active"}]
+      "kill_conditions": [
+        {
+          "condition": "Memory pricing collapse",
+          "status": "active"
+        }
+      ]
     },
-    "get_thesis": {"ticker": "MU", "content": "MU benefits from AI memory demand and HBM mix shift."},
-    "search_knowledge_base": {"results": []},
-    "search_agent_capabilities": {"capabilities": []}
+    "get_thesis": {
+      "ticker": "MU",
+      "content": "MU benefits from AI memory demand and HBM mix shift."
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
   },
-  "expected_tool_names": ["get_dossier", "get_kill_conditions"],
+  "expected_tool_names": [
+    "get_dossier",
+    "get_kill_conditions"
+  ],
   "required_points": [
-    {"label": "cite monitor evidence", "any_terms": ["monitor", "approaching", "94.5", "threshold", "evidence"]},
-    {"label": "invalidation framing", "any_terms": ["kill condition", "invalidate", "thesis", "risk"]},
-    {"label": "no auto trigger", "any_terms": ["review", "confirm", "approval", "propose", "watch"]},
-    {"label": "missing inputs caution", "any_terms": ["confirm", "verify", "source", "fresh", "need"]}
+    {
+      "label": "cite monitor evidence",
+      "any_terms": [
+        "monitor",
+        "approaching",
+        "94.5",
+        "threshold",
+        "evidence"
+      ]
+    },
+    {
+      "label": "invalidation framing",
+      "any_terms": [
+        "kill condition",
+        "invalidate",
+        "thesis",
+        "risk"
+      ]
+    },
+    {
+      "label": "no auto trigger",
+      "any_terms": [
+        "review",
+        "confirm",
+        "approval",
+        "propose",
+        "watch"
+      ]
+    },
+    {
+      "label": "missing inputs caution",
+      "any_terms": [
+        "confirm",
+        "verify",
+        "source",
+        "fresh",
+        "need"
+      ]
+    }
   ],
   "required_decision_quality_dimensions": [
     "invalidation",
@@ -58,11 +123,44 @@
     "missing_inputs",
     "confidence_sizing"
   ],
-  "forbidden_patterns": ["already triggered", "auto-trigger", "sell immediately", "exit now"],
+  "forbidden_patterns": [
+    "already triggered",
+    "auto-trigger",
+    "sell immediately",
+    "exit now"
+  ],
   "expected_stance": {
     "label": "review_not_auto_trigger",
-    "any_terms": ["review", "watch", "confirm", "approval", "research"],
-    "forbidden_terms": ["triggered now", "sell now", "exit immediately"]
+    "any_terms": [
+      "review",
+      "watch",
+      "confirm",
+      "approval",
+      "research"
+    ],
+    "forbidden_terms": [
+      "triggered now",
+      "sell now",
+      "exit immediately"
+    ]
   },
-  "judge_min_score": 14
+  "judge_min_score": 14,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": "missing_invalidation",
+  "tool_pack": "position_monitor",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ]
 }

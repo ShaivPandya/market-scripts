@@ -63,6 +63,49 @@
     "human_notes": {
       "type": "string",
       "default": ""
+    },
+    "corpus_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "structured_dq",
+          "chat_behavior",
+          "routing_tool_use",
+          "opportunity_identification",
+          "workflow_boundary"
+        ]
+      },
+      "default": []
+    },
+    "failure_type": {
+      "type": ["string", "null"],
+      "enum": [
+        "process_regression",
+        "missing_invalidation",
+        "missing_mispricing",
+        "missing_catalyst",
+        "generic_answer",
+        "wrong_routing",
+        "wrong_tools",
+        "workflow_boundary_violation",
+        "sizing_discipline",
+        "source_freshness",
+        "price_confirmation",
+        "other",
+        null
+      ]
+    },
+    "tool_pack": {
+      "type": ["string", "null"],
+      "default": null
+    },
+    "required_dq_dimensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
     }
   },
   "$defs": {

@@ -1,6 +1,6 @@
 {
   "id": "druckenmiller_dem_reunification_long_1989",
-  "status": "review",
+  "status": "approved",
   "decision_type": "macro_stance",
   "as_of_date": "1989-11-10",
   "user_question": "Using the immediate post-Berlin-Wall setup in November 1989, should buying Deutsche marks versus U.S. dollars have been actionable, watch, research, avoid, or do_nothing?",
@@ -207,5 +207,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical macro/FX example designed to teach fiscal-policy versus central-bank reaction-function reasoning and trade-after-the-trade setup."
+  "human_notes": "Review case. Historical macro/FX example designed to teach fiscal-policy versus central-bank reaction-function reasoning and trade-after-the-trade setup.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

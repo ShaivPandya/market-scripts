@@ -99,5 +99,20 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": ""
+  "human_notes": "",
+  "corpus_tags": ["structured_dq"],
+  "failure_type": null,
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }
