@@ -34,6 +34,55 @@ FAILURE_TYPES = frozenset(
     }
 )
 
+# Richer active-learning tags grouped by failure area. Each tag maps to a canonical failure_type.
+FAILURE_TAG_CATEGORIES: dict[str, frozenset[str]] = {
+    "routing": frozenset({"wrong_routing", "wrong_tools"}),
+    "hidden_dq": frozenset(
+        {
+            "missed_hidden_dq",
+            "missing_invalidation",
+            "missing_mispricing",
+            "missing_catalyst",
+            "generic_answer",
+        }
+    ),
+    "source_quality": frozenset({"source_freshness", "price_confirmation", "stale_data"}),
+    "opportunity_identification": frozenset({"missing_mispricing", "weak_opportunity_id"}),
+    "synthesis_quality": frozenset({"generic_answer", "bad_synthesis", "process_regression"}),
+    "policy_action_gating": frozenset(
+        {
+            "sizing_discipline",
+            "workflow_boundary_violation",
+            "overconfident_actionability",
+        }
+    ),
+}
+
+FAILURE_TAG_ALIASES: dict[str, str] = {
+    "generic": "generic_answer",
+    "stale_data": "source_freshness",
+    "missed_hidden_dq": "missed_hidden_dq",
+    "overconfident_actionability": "overconfident_actionability",
+    "weak_opportunity_id": "weak_opportunity_id",
+    "bad_synthesis": "bad_synthesis",
+}
+
+FAILURE_TAG_TO_TYPE: dict[str, str] = {
+    "missed_hidden_dq": "generic_answer",
+    "stale_data": "source_freshness",
+    "overconfident_actionability": "sizing_discipline",
+    "weak_opportunity_id": "missing_mispricing",
+    "bad_synthesis": "generic_answer",
+}
+
+FAILURE_TAGS = (
+    frozenset(tag for tags in FAILURE_TAG_CATEGORIES.values() for tag in tags)
+    | FAILURE_TYPES
+    | frozenset(FAILURE_TAG_ALIASES)
+)
+
+TRAINING_EXPORT_STATUSES = frozenset({"review", "approved"})
+
 STANDARD_CHAT_DQ_DIMENSIONS = (
     "simple_thesis",
     "mispricing",
@@ -92,6 +141,64 @@ def case_failure_type(case_data: dict[str, Any]) -> str | None:
     return str(value)
 
 
+def case_failure_tags(case_data: dict[str, Any]) -> list[str]:
+    raw = case_data.get("failure_tags")
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str) and item]
+
+
+def failure_tag_category(tag: str) -> str | None:
+    canonical = FAILURE_TAG_ALIASES.get(tag, tag)
+    for category, tags in FAILURE_TAG_CATEGORIES.items():
+        if canonical in tags:
+            return category
+    if canonical in FAILURE_TYPES:
+        return "routing" if canonical in {"wrong_routing", "wrong_tools"} else None
+    return None
+
+
+def failure_type_for_tag(tag: str) -> str:
+    canonical = FAILURE_TAG_ALIASES.get(tag, tag)
+    if canonical in FAILURE_TYPES:
+        return canonical
+    return FAILURE_TAG_TO_TYPE.get(canonical, "other")
+
+
+def normalize_failure_tags(tags: list[str]) -> tuple[list[str], str, list[str]]:
+    """Normalize CLI/user tags to canonical failure_tags and a primary failure_type."""
+    errors: list[str] = []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        tag = raw.strip()
+        if not tag:
+            continue
+        canonical = FAILURE_TAG_ALIASES.get(tag, tag)
+        if canonical not in FAILURE_TAGS and tag not in FAILURE_TAGS:
+            errors.append(f"unknown failure tag: {tag}")
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        normalized.append(canonical)
+    failure_type = failure_type_for_tag(normalized[0]) if normalized else "other"
+    return normalized, failure_type, errors
+
+
+def infer_corpus_tags_from_failure_tags(tags: list[str]) -> list[str]:
+    categories = {failure_tag_category(tag) for tag in tags if failure_tag_category(tag)}
+    inferred: list[str] = []
+    if "routing" in categories:
+        inferred.append("routing_tool_use")
+    if categories.intersection({"hidden_dq", "synthesis_quality", "policy_action_gating", "source_quality"}):
+        if "chat_behavior" not in inferred:
+            inferred.append("chat_behavior")
+    if "opportunity_identification" in categories:
+        inferred.append("opportunity_identification")
+    return inferred or ["chat_behavior"]
+
+
 def case_tool_pack(case_data: dict[str, Any]) -> str | None:
     value = case_data.get("tool_pack")
     if value is not None:
@@ -142,6 +249,52 @@ def case_result_metadata(case_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_failure_tags(case_data: dict[str, Any], errors: list[str]) -> None:
+    failure_tags = case_failure_tags(case_data)
+    if not failure_tags:
+        return
+    unknown = sorted({tag for tag in failure_tags if tag not in FAILURE_TAGS})
+    if unknown:
+        errors.append(f"unknown failure_tags: {', '.join(unknown)}")
+    failure = case_failure_type(case_data)
+    if failure is not None and failure not in FAILURE_TYPES:
+        errors.append(f"unknown failure_type: {failure}")
+    if failure_tags and failure and failure != failure_type_for_tag(failure_tags[0]):
+        errors.append("failure_type must match the primary failure_tags entry")
+
+
+def validate_review_case_metadata(case_data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    status = str(case_data.get("status") or "draft")
+    if status != "review":
+        return errors
+
+    if not str(case_data.get("user_message") or "").strip():
+        errors.append("review cases must include user_message")
+
+    failure_tags = case_failure_tags(case_data)
+    failure = case_failure_type(case_data)
+    if not failure_tags and failure is None:
+        errors.append("review cases must include failure_tags or failure_type")
+    _validate_failure_tags(case_data, errors)
+
+    tags = case_corpus_tags(case_data)
+    if not tags:
+        errors.append("review cases must include at least one corpus_tags entry")
+    unknown_tags = sorted(set(tags) - CORPUS_TAGS)
+    if unknown_tags:
+        errors.append(f"unknown corpus_tags: {', '.join(unknown_tags)}")
+
+    categories = {failure_tag_category(tag) for tag in failure_tags if failure_tag_category(tag)}
+    routing = case_data.get("routing_expectations")
+    needs_routing = "routing" in categories or "routing_tool_use" in tags
+    if needs_routing:
+        if not isinstance(routing, dict) or not routing.get("intent_class"):
+            errors.append("routing failures in review must include routing_expectations.intent_class")
+
+    return errors
+
+
 def validate_approved_case_metadata(case_data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     status = str(case_data.get("status") or "draft")
@@ -155,9 +308,7 @@ def validate_approved_case_metadata(case_data: dict[str, Any]) -> list[str]:
     if unknown_tags:
         errors.append(f"unknown corpus_tags: {', '.join(unknown_tags)}")
 
-    failure = case_failure_type(case_data)
-    if failure is not None and failure not in FAILURE_TYPES:
-        errors.append(f"unknown failure_type: {failure}")
+    _validate_failure_tags(case_data, errors)
 
     dims = case_required_dq_dimensions(case_data)
     routing_only = tags == ["routing_tool_use"] or (

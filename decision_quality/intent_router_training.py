@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from decision_quality.chat_eval_runner import CASES_DIR, ChatEvalCase, load_cases
+from decision_quality.eval_corpus import (
+    TRAINING_EXPORT_STATUSES,
+    case_corpus_tags,
+    case_failure_tags,
+    case_failure_type,
+)
 from decision_quality.intent_router_supervised import extract_label_from_row, featurize_training_row, write_model_card
 
 logger = logging.getLogger(__name__)
@@ -44,11 +50,35 @@ def _dedupe_key(row: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def eval_fixture_to_training_row(case: ChatEvalCase) -> dict[str, Any]:
+def _active_learning_failure_metadata(case: ChatEvalCase) -> dict[str, Any]:
+    return {
+        "eval_status": case.status,
+        "failure_type": case_failure_type(case.data),
+        "failure_tags": case_failure_tags(case.data),
+        "corpus_tags": case_corpus_tags(case.data),
+        "source_session_id": case.data.get("source_session_id"),
+        "source_turn_index": case.data.get("source_turn_index"),
+        "bad_answer": case.data.get("bad_answer"),
+        "observed_tool_calls": case.data.get("observed_tool_calls"),
+    }
+
+
+def _case_ready_for_router_export(case: ChatEvalCase) -> bool:
+    routing_expectations = case.data.get("routing_expectations")
+    if not isinstance(routing_expectations, dict):
+        return False
+    return bool(routing_expectations.get("intent_class"))
+
+
+def eval_fixture_to_training_row(
+    case: ChatEvalCase,
+    *,
+    include_failure_metadata: bool = False,
+) -> dict[str, Any]:
     screen_context = case.data.get("screen_context")
     routing_expectations = case.data.get("routing_expectations") or {}
     label_tools = routing_expectations.get("required_tool_names") or case.data.get("expected_tool_names") or []
-    return {
+    row = {
         "row_id": f"fixture:{case.case_id}",
         "source": "eval_fixture",
         "case_id": case.case_id,
@@ -64,6 +94,16 @@ def eval_fixture_to_training_row(case: ChatEvalCase) -> dict[str, Any]:
         "label_reviewer": "eval_fixture",
         "labeled_at": datetime.now(UTC).isoformat(),
     }
+    if include_failure_metadata:
+        row.update(_active_learning_failure_metadata(case))
+    return row
+
+
+def iter_active_learning_router_cases(
+    *,
+    statuses: frozenset[str] = TRAINING_EXPORT_STATUSES,
+) -> list[ChatEvalCase]:
+    return [case for case in load_cases(statuses=set(statuses)) if _case_ready_for_router_export(case)]
 
 
 def export_training_dataset(
@@ -74,19 +114,28 @@ def export_training_dataset(
     include_db_rows: bool = True,
     labeled_only: bool = False,
     limit: int = 5000,
+    active_learning_only: bool = False,
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    if include_db_rows:
+    if include_db_rows and not active_learning_only:
         from api.intent_router_training_store import list_training_rows
 
         rows.extend(list_training_rows(limit=limit, labeled_only=labeled_only))
 
     if include_fixtures:
-        selectors = None
-        if fixture_prefix:
-            selectors = [path.stem for path in sorted(CASES_DIR.glob("*.json")) if path.stem.startswith(fixture_prefix)]
-        for case in load_cases(case_selectors=selectors, statuses={"review", "approved", "draft"}):
-            rows.append(eval_fixture_to_training_row(case))
+        if active_learning_only:
+            fixture_cases = iter_active_learning_router_cases()
+        else:
+            selectors = None
+            if fixture_prefix:
+                selectors = [
+                    path.stem for path in sorted(CASES_DIR.glob("*.json")) if path.stem.startswith(fixture_prefix)
+                ]
+            fixture_cases = load_cases(case_selectors=selectors, statuses={"review", "approved", "draft"})
+        for case in fixture_cases:
+            if active_learning_only and case.status not in TRAINING_EXPORT_STATUSES:
+                continue
+            rows.append(eval_fixture_to_training_row(case, include_failure_metadata=active_learning_only))
 
     deduped: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -96,7 +145,8 @@ def export_training_dataset(
     version = _now_tag()
     export_dir = output_dir / version
     export_dir.mkdir(parents=True, exist_ok=True)
-    dataset_path = export_dir / "dataset.jsonl"
+    dataset_name = "active_learning_router.jsonl" if active_learning_only else "dataset.jsonl"
+    dataset_path = export_dir / dataset_name
     with dataset_path.open("w", encoding="utf-8") as handle:
         for row in dataset_rows:
             handle.write(json.dumps(row, ensure_ascii=True, default=str) + "\n")
@@ -108,6 +158,8 @@ def export_training_dataset(
         "row_count": len(dataset_rows),
         "labeled_row_count": label_coverage,
         "dataset_path": str(dataset_path),
+        "active_learning_only": active_learning_only,
+        "training_export_statuses": sorted(TRAINING_EXPORT_STATUSES) if active_learning_only else None,
         "sources": Counter(str(row.get("source") or "telemetry") for row in dataset_rows),
     }
     manifest["sources"] = dict(manifest["sources"])
@@ -345,6 +397,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     export_parser.add_argument("--no-db", action="store_true")
     export_parser.add_argument("--labeled-only", action="store_true")
     export_parser.add_argument("--limit", type=int, default=5000)
+    export_parser.add_argument(
+        "--active-learning",
+        action="store_true",
+        help="Export review/approved chat eval cases with router labels and failure metadata (excludes drafts).",
+    )
 
     train_parser = subparsers.add_parser("train", help="Train baseline supervised classifier")
     train_parser.add_argument("--dataset", default=None)
@@ -357,13 +414,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "export":
+        include_db_rows = not args.no_db and not args.active_learning
         manifest = export_training_dataset(
             output_dir=Path(args.output_dir),
             include_fixtures=not args.no_fixtures,
             fixture_prefix=args.fixture_prefix or None,
-            include_db_rows=not args.no_db,
+            include_db_rows=include_db_rows,
             labeled_only=args.labeled_only,
             limit=args.limit,
+            active_learning_only=args.active_learning,
         )
         print(json.dumps(manifest, indent=2, ensure_ascii=True, default=str))
         return 0

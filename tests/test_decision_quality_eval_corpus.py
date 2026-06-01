@@ -9,8 +9,11 @@ from decision_quality.chat_eval_runner import load_cases as load_chat_cases
 from decision_quality.eval_corpus import (
     compare_reports,
     filter_cases,
+    infer_corpus_tags_from_failure_tags,
+    normalize_failure_tags,
     summarize_case_result,
     validate_approved_case_metadata,
+    validate_review_case_metadata,
 )
 from decision_quality.eval_runner import load_cases as load_structured_cases
 
@@ -76,6 +79,38 @@ def test_filter_cases_by_corpus_tag_and_tool_pack(tmp_path: Path):
     filtered = filter_cases(cases, corpus_tags={"routing_tool_use"}, tool_pack="catalyst_status")
 
     assert [case.case_id for case in filtered] == ["a"]
+
+
+def test_normalize_failure_tags_and_infer_corpus_tags():
+    tags, failure_type, errors = normalize_failure_tags(["stale_data", "wrong_routing"])
+    assert errors == []
+    assert tags == ["source_freshness", "wrong_routing"]
+    assert failure_type == "source_freshness"
+    assert infer_corpus_tags_from_failure_tags(tags) == ["routing_tool_use", "chat_behavior"]
+
+
+def test_validate_review_case_metadata_requires_routing_labels():
+    errors = validate_review_case_metadata(
+        {
+            "status": "review",
+            "user_message": "route this",
+            "failure_tags": ["wrong_routing"],
+            "corpus_tags": ["routing_tool_use"],
+        }
+    )
+    assert any("routing_expectations" in error for error in errors)
+
+    clean = validate_review_case_metadata(
+        {
+            "status": "review",
+            "user_message": "route this",
+            "failure_tags": ["wrong_routing"],
+            "failure_type": "wrong_routing",
+            "corpus_tags": ["routing_tool_use"],
+            "routing_expectations": {"intent_class": "catalyst_status"},
+        }
+    )
+    assert clean == []
 
 
 def test_validate_approved_case_metadata_requires_tags_and_dimensions():
