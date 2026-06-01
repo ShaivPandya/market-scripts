@@ -1896,7 +1896,7 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(replacement))
             return refs
         if action_id in {"create_monitor_definition", "update_monitor_definition", "disable_monitor_definition"}:
-            existing: dict[str, Any] = {}
+            existing = {}
             if action_id == "create_monitor_definition":
                 monitor_uid = monitor_definition_id(
                     payload.get("monitor_id") or payload.get("name") or _stable_hash(payload)[:12]
