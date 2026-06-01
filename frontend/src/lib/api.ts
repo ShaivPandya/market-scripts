@@ -2817,6 +2817,53 @@ export const dismissWorkspaceThesisPressure = (body: { ticker: string; pressure_
     pressure_key: string
   })
 
+export interface OpportunityCandidateRecord {
+  id: string
+  object_uid?: string
+  candidate_id: string
+  ticker?: string | null
+  source_kind: string
+  trigger: string
+  opportunity_type: string
+  consensus?: string
+  variant_view?: string
+  why_now?: string
+  price_confirmation?: string
+  crowding?: string
+  payoff_asymmetry?: string
+  missing_inputs: string[]
+  next_action: string
+  summary?: string
+  status?: string
+  decision_state?: string
+  gate_status?: string
+  gate_final_action?: string
+  should_graduate?: boolean
+  rank_score?: number
+  created_at?: string | null
+  updated_at?: string | null
+  source_refs?: Array<Record<string, unknown>>
+}
+
+export const dismissOpportunityCandidate = (body: { candidate_id: string; note?: string }) =>
+  client.post("/workspace/opportunity-candidates/dismiss", body).then(r => r.data)
+
+export const watchOpportunityCandidate = (body: { candidate_id: string; condition?: string; note?: string }) =>
+  client.post("/workspace/opportunity-candidates/watch", body).then(r => r.data)
+
+export const requestResearchForOpportunityCandidate = (body: { candidate_id: string; note?: string }) =>
+  client.post("/workspace/opportunity-candidates/request-research", body).then(r => r.data)
+
+export const promoteOpportunityCandidate = (body: { candidate_id: string; note?: string }) =>
+  client.post("/workspace/opportunity-candidates/promote", body).then(r => r.data)
+
+export const createMonitorForOpportunityCandidate = (body: {
+  candidate_id: string
+  name?: string
+  condition?: string
+  note?: string
+}) => client.post("/workspace/opportunity-candidates/create-monitor", body).then(r => r.data)
+
 // Continuous Optimization
 export interface OptimizationMission {
   id: string

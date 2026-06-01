@@ -65,6 +65,9 @@ jobs:
             tests/test_decision_quality_chat_eval_runner.py \
             tests/test_agent_decision_quality_chat.py \
             tests/test_opportunity_candidate_model.py \
+            tests/test_opportunity_scout.py \
+            tests/test_opportunity_scout_integration.py \
+            tests/test_opportunity_scout_workspace.py \
             -q --tb=short
       - name: Run approved structured eval dry-run
         run: python -m decision_quality.eval_runner --approved-only --dry-run --no-judge

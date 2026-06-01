@@ -1,0 +1,53 @@
+{
+  "id": "opportunity_candidate_proactive_scan_no_action_2026",
+  "status": "review",
+  "decision_type": "opportunity_candidate",
+  "as_of_date": "2026-06-01",
+  "user_question": "Scan the portfolio for anything that changed overnight.",
+  "input_refs": [
+    {
+      "type": "other",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic proactive scan with no ticker-specific thesis.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "Proactive scan should create triage candidates without actionable recommendations.",
+    "No graduation or buy/sell language should appear in the candidate output."
+  ],
+  "gold_output": {
+    "ticker": null,
+    "source": "workflow",
+    "trigger": "Proactive portfolio scan detected monitor and catalyst changes overnight.",
+    "opportunity_type": "unclear",
+    "consensus": "No single consensus view established from overnight changes alone.",
+    "variant_view": "One or more names may warrant follow-up, but no thesis is confirmed.",
+    "why_now": "Overnight monitor and catalyst changes require review before acting.",
+    "price_confirmation": "Not verified automatically from scan context.",
+    "crowding": "",
+    "payoff_asymmetry": "",
+    "missing_inputs": [
+      "Ticker shortlist",
+      "Updated price action",
+      "Catalyst validation",
+      "Portfolio fit"
+    ],
+    "source_refs": [
+      {
+        "label": "Synthetic proactive scan",
+        "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_proactive_scan_no_action_2026.json"
+      }
+    ],
+    "next_action": "research",
+    "summary": "Worth research, but not action-ready."
+  },
+  "expected_graduation": false,
+  "rubric_scores": {
+    "trigger_clarity": 4,
+    "why_now": 4,
+    "missing_inputs": 4,
+    "triage_discipline": 5
+  }
+}

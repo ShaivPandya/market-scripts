@@ -139,6 +139,8 @@ class OntologyRuntimeReadService:
             "active_monitor_definitions": self._project_read_model_rows(bundle.get("active_monitor_definitions", [])),
             "active_mission_definitions": self._project_read_model_rows(bundle.get("active_mission_definitions", [])),
             "active_watch_triggers": self._project_read_model_rows(bundle.get("active_watch_triggers", [])),
+            "recent_monitor_hits": self._project_read_model_rows(bundle.get("recent_monitor_hits", [])),
+            "open_opportunity_candidates": self._project_read_model_rows(bundle.get("open_opportunity_candidates", [])),
             "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": self._project_read_model_rows(bundle.get("recent_report_runs", [])),
             "challenged_claims": self._project_read_model_rows(bundle.get("challenged_claims", [])),
@@ -291,6 +293,22 @@ class OntologyRuntimeReadService:
         rows = self.list_objects("MonitorHit", filters=filters, limit=limit)
         return sorted(rows, key=lambda row: str(row.get("detected_at") or ""), reverse=True)
 
+    def opportunity_candidates(
+        self,
+        *,
+        ticker: str | None = None,
+        status: str | None = "open",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        filters = _clean_filters(
+            {
+                "ticker": _ticker(ticker) if ticker else None,
+                "status": status,
+            }
+        )
+        rows = self.list_objects("OpportunityCandidate", filters=filters, limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
+
     def approvals(
         self,
         *,
@@ -398,6 +416,7 @@ class OntologyRuntimeReadService:
             "optimizer_alerts": self.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5),
             "active_watch_triggers": self.watch_triggers(status="active"),
             "recent_monitor_hits": self.monitor_hits(status="open", limit=20),
+            "open_opportunity_candidates": self.opportunity_candidates(status="open", limit=50),
             "recent_workflow_runs": self.workflow_runs(limit=3),
             "recent_report_runs": self.report_runs(limit=5),
             "challenged_claims": self.thesis_claims(status="challenged", limit=5),

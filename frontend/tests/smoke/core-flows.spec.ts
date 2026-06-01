@@ -107,6 +107,20 @@ test("shows decision learning review queue on workspace", async ({ page }) => {
   await expect(dialog).toBeHidden()
 })
 
+test("renders OpportunityScout queue and stages dismiss feedback", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByRole("heading", { name: "OpportunityScout" })).toBeVisible()
+  await expect(page.getByText("Kill condition monitor hit: Margin compression threshold")).toBeVisible()
+  await expect(page.getByText("Why now:")).toBeVisible()
+  await expect(page.getByText("Missing:")).toBeVisible()
+  await expect(page.getByRole("link", { name: "NVDA" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Dismiss NVDA" }).click()
+  await expect(page.getByText("Dismiss staged. Approval is required before app state changes.")).toBeVisible()
+})
+
 test("runs an ontology workbench query with mocked async results", async ({ page }) => {
   await authenticate(page)
   await page.goto("/ontology")

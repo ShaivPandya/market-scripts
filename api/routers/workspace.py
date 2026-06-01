@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.action_execution import stage_api_action
 from api.decision_state import (
     normalize_action_item,
     normalize_approval,
@@ -21,6 +22,10 @@ from api.decision_state import (
 )
 from api.llm_settings import get_setting, set_setting
 from api.source_health import build_approval_source_health_review, build_workspace_source_health
+from decision_quality.opportunity_scout import (
+    normalize_candidate_queue_item,
+    rank_opportunity_candidates,
+)
 from ontology.change_summary import ChangeSummaryInputError, build_workspace_change_summary
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
@@ -33,6 +38,34 @@ MAX_THESIS_PRESSURE_DISMISSALS = 1000
 class DismissThesisPressureRequest(BaseModel):
     ticker: str
     pressure_key: str
+    note: str | None = None
+
+
+class OpportunityCandidateFeedbackRequest(BaseModel):
+    candidate_id: str
+    note: str | None = None
+
+
+class OpportunityCandidateWatchRequest(BaseModel):
+    candidate_id: str
+    condition: str | None = None
+    note: str | None = None
+
+
+class OpportunityCandidateResearchRequest(BaseModel):
+    candidate_id: str
+    note: str | None = None
+
+
+class OpportunityCandidatePromoteRequest(BaseModel):
+    candidate_id: str
+    note: str | None = None
+
+
+class OpportunityCandidateMonitorRequest(BaseModel):
+    candidate_id: str
+    name: str | None = None
+    condition: str | None = None
     note: str | None = None
 
 
@@ -118,6 +151,191 @@ def dismiss_thesis_pressure(body: DismissThesisPressureRequest):
     }
     _save_pressure_dismissals(dismissals)
     return {"status": "dismissed", "ticker": ticker, "pressure_key": pressure_key}
+
+
+def _find_opportunity_candidate(candidate_id: str) -> dict[str, Any]:
+    reads = OntologyRuntimeReadService()
+    normalized = str(candidate_id or "").strip()
+    for row in reads.opportunity_candidates(status=None, limit=200):
+        if str(row.get("candidate_id") or row.get("id") or row.get("object_uid") or "") == normalized:
+            return row
+        if str(row.get("object_uid") or "").endswith(normalized.split(":")[-1]):
+            return row
+    raise HTTPException(status_code=404, detail=f"Opportunity candidate not found: {candidate_id}")
+
+
+def _stage_candidate_status_update(
+    candidate: dict[str, Any],
+    *,
+    status: str,
+    next_action: str | None = None,
+    source_suffix: str,
+    reason: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "candidate_id": candidate.get("candidate_id") or candidate.get("id") or candidate.get("object_uid"),
+        "status": status,
+        "feedback_note": note,
+    }
+    if next_action:
+        payload["next_action"] = next_action
+    return stage_api_action(
+        "update_opportunity_candidate_status",
+        payload,
+        source_id=f"workspace.opportunity_scout.{source_suffix}",
+        reason=reason,
+    )
+
+
+@router.post("/workspace/opportunity-candidates/dismiss")
+def dismiss_opportunity_candidate(body: OpportunityCandidateFeedbackRequest):
+    candidate = _find_opportunity_candidate(body.candidate_id)
+    approval = _stage_candidate_status_update(
+        candidate,
+        status="dismissed",
+        source_suffix="dismiss",
+        reason=body.note or f"Dismiss opportunity candidate {body.candidate_id}",
+        note=body.note,
+    )
+    return {"status": "proposal_created", "candidate_id": body.candidate_id, "approval": approval}
+
+
+@router.post("/workspace/opportunity-candidates/watch")
+def watch_opportunity_candidate(body: OpportunityCandidateWatchRequest):
+    candidate = _find_opportunity_candidate(body.candidate_id)
+    ticker = str(candidate.get("ticker") or "").strip().upper() or None
+    condition = body.condition or f"Watch candidate: {candidate.get('trigger') or body.candidate_id}"
+    watch_proposal = stage_api_action(
+        "create_watch_trigger",
+        {
+            "ticker": ticker,
+            "condition": condition,
+            "trigger_type": "custom",
+            "status": "active",
+        },
+        source_id=f"workspace.opportunity_scout.watch:{body.candidate_id}",
+        reason=body.note or f"Watch opportunity candidate {body.candidate_id}",
+    )
+    status_proposal = _stage_candidate_status_update(
+        candidate,
+        status="watching",
+        next_action="watch",
+        source_suffix="watch",
+        reason=body.note or f"Mark candidate {body.candidate_id} as watching",
+        note=body.note,
+    )
+    return {
+        "status": "proposal_created",
+        "candidate_id": body.candidate_id,
+        "watch_proposal": watch_proposal,
+        "status_proposal": status_proposal,
+    }
+
+
+@router.post("/workspace/opportunity-candidates/request-research")
+def request_research_for_opportunity_candidate(body: OpportunityCandidateResearchRequest):
+    candidate = _find_opportunity_candidate(body.candidate_id)
+    ticker = str(candidate.get("ticker") or "").strip().upper() or None
+    research_proposal = stage_api_action(
+        "create_action_item",
+        {
+            "description": body.note
+            or f"Research opportunity candidate: {candidate.get('trigger') or body.candidate_id}",
+            "action_type": "research",
+            "ticker": ticker,
+            "urgency": "normal",
+            "alert_context": {
+                "source": "opportunity_candidate",
+                "candidate_id": body.candidate_id,
+                "trigger": candidate.get("trigger"),
+                "why_now": candidate.get("why_now"),
+            },
+        },
+        source_id=f"workspace.opportunity_scout.research:{body.candidate_id}",
+        reason=body.note or f"Request research for opportunity candidate {body.candidate_id}",
+    )
+    status_proposal = _stage_candidate_status_update(
+        candidate,
+        status="research_requested",
+        next_action="research",
+        source_suffix="research",
+        reason=body.note or f"Mark candidate {body.candidate_id} as research requested",
+        note=body.note,
+    )
+    return {
+        "status": "proposal_created",
+        "candidate_id": body.candidate_id,
+        "research_proposal": research_proposal,
+        "status_proposal": status_proposal,
+    }
+
+
+@router.post("/workspace/opportunity-candidates/promote")
+def promote_opportunity_candidate(body: OpportunityCandidatePromoteRequest):
+    candidate = _find_opportunity_candidate(body.candidate_id)
+    ticker = str(candidate.get("ticker") or "").strip().upper() or None
+    promote_proposal = stage_api_action(
+        "create_action_item",
+        {
+            "description": body.note
+            or f"Promote opportunity candidate to decision quality: {candidate.get('trigger') or body.candidate_id}",
+            "action_type": "research",
+            "ticker": ticker,
+            "urgency": "normal",
+            "alert_context": {
+                "source": "opportunity_candidate",
+                "candidate_id": body.candidate_id,
+                "next_action": "graduate_to_decision_quality",
+                "trigger": candidate.get("trigger"),
+                "why_now": candidate.get("why_now"),
+                "missing_inputs": candidate.get("missing_inputs") or [],
+            },
+        },
+        source_id=f"workspace.opportunity_scout.promote:{body.candidate_id}",
+        reason=body.note or f"Promote opportunity candidate {body.candidate_id} to decision quality",
+    )
+    status_proposal = _stage_candidate_status_update(
+        candidate,
+        status="promoted",
+        next_action="graduate_to_decision_quality",
+        source_suffix="promote",
+        reason=body.note or f"Mark candidate {body.candidate_id} as promoted to DQ",
+        note=body.note,
+    )
+    return {
+        "status": "proposal_created",
+        "candidate_id": body.candidate_id,
+        "promote_proposal": promote_proposal,
+        "status_proposal": status_proposal,
+    }
+
+
+@router.post("/workspace/opportunity-candidates/create-monitor")
+def create_monitor_for_opportunity_candidate(body: OpportunityCandidateMonitorRequest):
+    candidate = _find_opportunity_candidate(body.candidate_id)
+    ticker = str(candidate.get("ticker") or "").strip().upper() or None
+    monitor_name = body.name or f"Monitor: {candidate.get('trigger') or body.candidate_id}"[:120]
+    monitor_proposal = stage_api_action(
+        "create_monitor_definition",
+        {
+            "name": monitor_name,
+            "ticker": ticker,
+            "condition": body.condition or candidate.get("trigger") or monitor_name,
+            "trigger_type": "custom",
+            "status": "active",
+            "severity": "medium",
+            "scope": {"ticker": ticker} if ticker else {},
+            "definition": {"type": "custom", "condition": body.condition or candidate.get("trigger")},
+        },
+        source_id=f"workspace.opportunity_scout.monitor:{body.candidate_id}",
+        reason=body.note or f"Create monitor from opportunity candidate {body.candidate_id}",
+    )
+    return {
+        "status": "proposal_created",
+        "candidate_id": body.candidate_id,
+        "monitor_proposal": monitor_proposal,
+    }
 
 
 @router.get("/workspace")
@@ -347,6 +565,13 @@ def get_workspace(since: str | None = None):
     active_mission_definitions = ontology_bundle.get("active_mission_definitions", [])
     active_triggers = ontology_bundle.get("active_watch_triggers", [])
     monitor_hits = ontology_bundle.get("recent_monitor_hits", [])
+    opportunity_candidates = rank_opportunity_candidates(
+        [
+            normalize_candidate_queue_item(item)
+            for item in ontology_bundle.get("open_opportunity_candidates", [])
+            if isinstance(item, dict)
+        ]
+    )
 
     # Latest workflow run
     recent_runs = ontology_bundle.get("recent_workflow_runs", [])
@@ -423,6 +648,10 @@ def get_workspace(since: str | None = None):
         "monitor_hits": {
             "count": len(monitor_hits),
             "items": monitor_hits,
+        },
+        "opportunity_candidates": {
+            "count": len(opportunity_candidates),
+            "items": opportunity_candidates[:20],
         },
         "recent_workflow_runs": recent_runs,
         "recent_report_runs": recent_report_runs,

@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from decision_quality.opportunity_scout import maybe_create_candidate_from_monitor_hit
 from ontology.command_service import OntologyCommandContext, OntologyCommandService
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
@@ -235,6 +236,7 @@ def run_monitor_mission_runner(payload: dict[str, Any] | None = None) -> dict[st
                     source_id = f"{definition_uid}:{hit_payload['fingerprint']}"
                     hit = _create_monitor_hit(hit_payload, source_id=source_id)
                     hits += 1
+                    maybe_create_candidate_from_monitor_hit(hit_payload, source_id=source_id)
                     review = _stage_review_action(hit_payload, source_id=source_id)
                     approvals += 1 if review.get("id") else 0
                     hit_payload["approval_id"] = hit.get("id")
@@ -270,6 +272,7 @@ def run_monitor_mission_runner(payload: dict[str, Any] | None = None) -> dict[st
             source_id = f"{mission_uid}:{hit_payload['fingerprint']}"
             _create_monitor_hit(hit_payload, source_id=source_id)
             hits += 1
+            maybe_create_candidate_from_monitor_hit(hit_payload, source_id=source_id)
             review = _stage_review_action(hit_payload, source_id=source_id)
             approvals += 1 if review.get("id") else 0
         _write_workflow_artifact(run_id, "monitor_mission_results", artifacts)
