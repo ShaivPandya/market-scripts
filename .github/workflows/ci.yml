@@ -1,7 +1,8 @@
 name: CI
 
 on:
-  push:
+  # TEMP: push CI disabled — re-enable by uncommenting push below.
+  # push:
   # TEMP: PR CI disabled — re-enable by uncommenting pull_request below.
   # pull_request:
   workflow_dispatch:
