@@ -109,6 +109,25 @@ def _get_jwt_ttl_hours() -> int:
     return int(os.environ.get("JWT_TTL_HOURS", "12"))
 
 
+def _verify_production_config() -> None:
+    """Ensure production runtime has sufficient security configuration."""
+    env = (os.environ.get("ENVIRONMENT") or "").strip().lower()
+    if env != "production":
+        return
+
+    # 1. JWT_SECRET length
+    secret = (os.environ.get("JWT_SECRET") or "").strip()
+    if not secret or len(secret) < 32:
+        raise RuntimeError("In production, JWT_SECRET must be at least 32 characters.")
+
+    # 2. AUTH_PASSWORD_HASH should be a valid bcrypt string ($2b$ prefix, etc.)
+    pw_hash = (os.environ.get("AUTH_PASSWORD_HASH") or "").strip()
+    if not pw_hash.startswith("$2b$") or len(pw_hash) < 50:
+        raise RuntimeError("In production, AUTH_PASSWORD_HASH must be a valid bcrypt hash.")
+
+
+_verify_production_config()
+
 router = APIRouter(tags=["auth"])
 
 
@@ -117,11 +136,12 @@ router = APIRouter(tags=["auth"])
 
 def _create_token(subject: str = "admin") -> str:
     ttl_hours = _get_jwt_ttl_hours()
-    expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    now = datetime.now(UTC)
+    expire = now + timedelta(hours=ttl_hours)
     return cast(
         str,
         jwt.encode(
-            {"sub": subject, "exp": expire},
+            {"sub": subject, "iat": now, "exp": expire},
             _get_jwt_secret(),
             algorithm=_get_jwt_algorithm(),
         ),
@@ -215,10 +235,11 @@ def require_auth(access_token: str | None = Cookie(default=None, alias="__sessio
                 access_token,
                 _get_jwt_secret(),
                 algorithms=[_get_jwt_algorithm()],
+                options={"require_iat": True, "require_exp": True},
             ),
         )
         sub = payload.get("sub")
-        if isinstance(sub, str):
+        if isinstance(sub, str) and sub.strip():
             return sub
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

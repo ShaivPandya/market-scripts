@@ -1,9 +1,11 @@
 """Tests for authentication flow — login, logout, token validation."""
 
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.responses import JSONResponse
+from jose import jwt
 
 
 @pytest.fixture(autouse=True)
@@ -276,3 +278,60 @@ def test_wrong_smoke_password_rejected(client, monkeypatch):
 
     resp = client.post("/api/auth/login", json={"password": "totally-wrong"})
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Security hardening tests
+# ---------------------------------------------------------------------------
+
+
+def test_jwt_requires_iat_and_exp(client):
+    # Login to get a valid token
+    resp = client.post("/api/auth/login", json={"password": "testpass"})
+    assert resp.status_code == 200
+    token = resp.cookies.get("__session")
+
+    # Verify the token has iat and exp
+    secret = os.environ["JWT_SECRET"]
+    payload = jwt.decode(token, secret, algorithms=["HS256"])
+    assert "iat" in payload
+    assert "exp" in payload
+
+    # Manually create a token without iat and try to use it
+    bad_token = jwt.encode(
+        {"sub": "admin", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        secret,
+        algorithm="HS256",
+    )
+    client.cookies.set("__session", bad_token, domain="testserver.local", path="/")
+    resp = client.get("/api/auth/me")
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Invalid or expired token"
+
+
+def test_production_config_validation(monkeypatch):
+    from api.routers import auth
+
+    # Mock ENVIRONMENT to production
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    # Short JWT_SECRET
+    monkeypatch.setenv("JWT_SECRET", "too-short")
+    monkeypatch.setenv(
+        "AUTH_PASSWORD_HASH",
+        "$2b$12$43F.9axQmqL0Owf7Hsp4tub0wukaMzCmz8JlTz.UJD8emjTZUVy0C",
+    )
+
+    with pytest.raises(RuntimeError, match="JWT_SECRET must be at least 32 characters"):
+        auth._verify_production_config()
+
+    # Valid secret, invalid hash
+    monkeypatch.setenv("JWT_SECRET", "a" * 32)
+    monkeypatch.setenv("AUTH_PASSWORD_HASH", "not-a-bcrypt-hash")
+
+    with pytest.raises(RuntimeError, match="AUTH_PASSWORD_HASH must be a valid bcrypt hash"):
+        auth._verify_production_config()
+
+    # Both valid
+    monkeypatch.setenv("AUTH_PASSWORD_HASH", "$2b$12$" + "a" * 50)
+    auth._verify_production_config()  # Should not raise
