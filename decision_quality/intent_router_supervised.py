@@ -67,13 +67,16 @@ def featurize_training_row(row: dict[str, Any]) -> str:
 def extract_label_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve the gold label for one training row."""
     if row.get("label_intent_class"):
-        return cast(dict[str, Any], {
-            "intent_class": row.get("label_intent_class"),
-            "run_hidden_dq": row.get("label_run_hidden_dq"),
-            "run_opportunity_preflight": row.get("label_run_opportunity_preflight"),
-            "workflow_name": row.get("label_workflow_name"),
-            "tool_names": row.get("label_tool_names") or [],
-        })
+        return cast(
+            dict[str, Any],
+            {
+                "intent_class": row.get("label_intent_class"),
+                "run_hidden_dq": row.get("label_run_hidden_dq"),
+                "run_opportunity_preflight": row.get("label_run_opportunity_preflight"),
+                "workflow_name": row.get("label_workflow_name"),
+                "tool_names": row.get("label_tool_names") or [],
+            },
+        )
 
     routing_expectations = row.get("routing_expectations")
     if isinstance(routing_expectations, dict):
