@@ -228,6 +228,60 @@ def test_deterministic_score_fails_workflow_direct_write_and_bad_artifacts(tmp_p
     assert any(name.startswith("forbidden_") for name in failed)
 
 
+def test_deterministic_score_checks_tool_quality_expectations(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "expected_tool_names": ["run_chart"],
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "forbidden_patterns": [],
+            "tool_quality_expectations": {
+                "requires_tool_quality_meta": True,
+                "min_blocker_count": 1,
+                "expected_price_confirmation_status": "blocked",
+                "expected_critical_data_quality": "failed",
+                "required_blocking_reason_codes": ["CRITICAL_DATA_QUALITY", "MISSING_PRICE_CONFIRMATION"],
+                "forbid_actionable_language_when_blocked": True,
+                "required_missing_input_terms": ["chart", "blocked"],
+            },
+        },
+    )
+    run = AgentChatRun(
+        final_text="Bottom line: watch it until the blocked chart input is resolved.",
+        events=[],
+        tool_names=["run_chart"],
+        done_payload={
+            "decision_quality_chat": {
+                "ran": True,
+                "final_action": "watch",
+                "gate_status": "downgraded",
+                "tool_quality": {
+                    "blocker_count": 1,
+                    "warning_count": 0,
+                    "blocking_reason_codes": ["CRITICAL_DATA_QUALITY", "MISSING_PRICE_CONFIRMATION"],
+                    "price_confirmation_status": "blocked",
+                    "source_health_status": "blocked",
+                    "critical_data_quality": "failed",
+                },
+            }
+        },
+    )
+
+    score = deterministic_score(case, run)
+
+    assert score["passed"] is True
+    assert {check["name"] for check in score["checks"]} >= {
+        "tool_quality_meta_present",
+        "tool_quality_min_blocker_count",
+        "tool_quality_price_confirmation_status",
+        "tool_quality_critical_data_quality",
+        "tool_quality_blocking_reason_codes",
+        "tool_quality_no_actionable_language",
+        "tool_quality_missing_input_terms",
+    }
+
+
 def test_run_case_with_fake_agent_and_report(tmp_path):
     case = _case(
         tmp_path / "case.json",

@@ -560,6 +560,109 @@ def _append_workflow_expectation_checks(
         )
 
 
+def _tool_quality_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("tool_quality_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    dq_meta = run.done_payload.get("decision_quality_chat") if isinstance(run.done_payload, dict) else None
+    tool_quality = dq_meta.get("tool_quality") if isinstance(dq_meta, dict) else None
+    if expectations.get("requires_tool_quality_meta"):
+        checks.append(
+            _check(
+                "tool_quality_meta_present",
+                isinstance(tool_quality, dict),
+                "done payload missing decision_quality_chat.tool_quality",
+            )
+        )
+        if not isinstance(tool_quality, dict):
+            return
+
+    if not isinstance(tool_quality, dict):
+        return
+
+    if expectations.get("min_blocker_count") is not None:
+        expected = int(expectations["min_blocker_count"])
+        actual = int(tool_quality.get("blocker_count") or 0)
+        checks.append(
+            _check(
+                "tool_quality_min_blocker_count",
+                actual >= expected,
+                f"expected>={expected}, actual={actual}",
+            )
+        )
+
+    if expectations.get("max_blocker_count") is not None:
+        expected = int(expectations["max_blocker_count"])
+        actual = int(tool_quality.get("blocker_count") or 0)
+        checks.append(
+            _check(
+                "tool_quality_max_blocker_count",
+                actual <= expected,
+                f"expected<={expected}, actual={actual}",
+            )
+        )
+
+    for field in (
+        "expected_price_confirmation_status",
+        "expected_source_health_status",
+        "expected_critical_data_quality",
+    ):
+        expected = expectations.get(field)
+        if expected is None:
+            continue
+        key = field.removeprefix("expected_")
+        actual = str(tool_quality.get(key) or "")
+        checks.append(
+            _check(
+                f"tool_quality_{key}",
+                actual == str(expected),
+                f"expected={expected!r}, actual={actual!r}",
+            )
+        )
+
+    required_codes = [str(item) for item in expectations.get("required_blocking_reason_codes") or []]
+    if required_codes:
+        actual_codes = {str(item) for item in tool_quality.get("blocking_reason_codes") or []}
+        missing = [code for code in required_codes if code not in actual_codes]
+        checks.append(
+            _check(
+                "tool_quality_blocking_reason_codes",
+                not missing,
+                f"missing={missing}; actual={sorted(actual_codes)}",
+            )
+        )
+
+    if expectations.get("forbid_actionable_language_when_blocked"):
+        blocked = int(tool_quality.get("blocker_count") or 0) > 0 or str(
+            tool_quality.get("critical_data_quality") or ""
+        ).lower() in {"stale", "failed"}
+        if blocked:
+            checks.append(
+                _check(
+                    "tool_quality_no_actionable_language",
+                    not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                    "actionable language must be suppressed when tool quality blocks",
+                )
+            )
+
+    missing_input_terms = [str(item) for item in expectations.get("required_missing_input_terms") or []]
+    if missing_input_terms:
+        checks.append(
+            _check(
+                "tool_quality_missing_input_terms",
+                _contains_any(text, missing_input_terms),
+                f"expected any of {missing_input_terms}",
+            )
+        )
+
+
 def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]:
     text = run.final_text or ""
     checks: list[dict[str, Any]] = []
@@ -636,6 +739,7 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
 
     _append_workflow_expectation_checks(checks, case=case, run=run, text=text)
     _routing_expectation_checks(checks, case=case, run=run)
+    _tool_quality_expectation_checks(checks, case=case, run=run, text=text)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0

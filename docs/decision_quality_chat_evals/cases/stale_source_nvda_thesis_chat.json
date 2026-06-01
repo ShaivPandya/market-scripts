@@ -1,0 +1,169 @@
+{
+  "id": "stale_source_nvda_thesis_chat",
+  "status": "approved",
+  "as_of_date": "2026-05-28",
+  "user_message": "Here is my NVDA thesis? What do you think?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA",
+    "metrics": {
+      "stock_price": "$135.40"
+    },
+    "summary": "User is pressure-testing an NVDA thesis with stale dossier data.",
+    "corresponding_tools": []
+  },
+  "input_refs": [],
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 1,
+        "long_count": 1,
+        "short_count": 0
+      },
+      "positions": [
+        {
+          "ticker": "NVDA"
+        }
+      ]
+    },
+    "get_dossier": {
+      "ticker": "NVDA",
+      "summary": "Dossier snapshot is stale.",
+      "_meta": {
+        "source_status": "stale",
+        "stale": true,
+        "reliability_tier": "standard"
+      }
+    },
+    "get_thesis": {
+      "ticker": "NVDA",
+      "content": "NVDA AI platform thesis with memory-cycle upside."
+    },
+    "get_thesis_evaluations": {
+      "ticker": "NVDA",
+      "evaluations": []
+    },
+    "get_position_valuation": {
+      "ticker": "NVDA",
+      "price": 135.4
+    },
+    "run_chart": {
+      "ticker": "NVDA",
+      "technical_read": "Current chart read unavailable because price feed is stale.",
+      "_meta": {
+        "source_status": "stale",
+        "stale": true,
+        "reliability_tier": "critical"
+      }
+    },
+    "get_price_volume_signals": {
+      "status": "stale",
+      "note": "Price/volume feed is stale."
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "expected_tool_names": [
+    "get_dossier",
+    "get_thesis",
+    "run_chart"
+  ],
+  "required_points": [
+    {
+      "label": "stale or missing source",
+      "any_terms": [
+        "stale",
+        "missing input",
+        "missing inputs",
+        "not ready",
+        "before action",
+        "before sizing"
+      ]
+    },
+    {
+      "label": "price confirmation needed",
+      "all_terms": [
+        "price"
+      ],
+      "any_terms": [
+        "chart",
+        "confirmation",
+        "action",
+        "technical"
+      ]
+    }
+  ],
+  "required_decision_quality_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ],
+  "forbidden_patterns": [
+    "could be a good buy",
+    "buy now",
+    "add now",
+    "strong buy"
+  ],
+  "expected_stance": {
+    "label": "watch_or_research",
+    "any_terms": [
+      "watch",
+      "research",
+      "not ready",
+      "not actionable"
+    ],
+    "forbidden_terms": [
+      "buy now",
+      "add now",
+      "strong buy"
+    ]
+  },
+  "tool_quality_expectations": {
+    "requires_tool_quality_meta": true,
+    "min_blocker_count": 1,
+    "expected_critical_data_quality": "stale",
+    "expected_price_confirmation_status": "stale",
+    "required_blocking_reason_codes": [
+      "CRITICAL_DATA_QUALITY",
+      "MISSING_PRICE_CONFIRMATION"
+    ],
+    "forbid_actionable_language_when_blocked": true,
+    "required_missing_input_terms": [
+      "stale",
+      "missing input",
+      "missing inputs",
+      "chart",
+      "price"
+    ]
+  },
+  "judge_min_score": 14,
+  "corpus_tags": [
+    "chat_behavior"
+  ],
+  "failure_type": "source_freshness",
+  "tool_pack": "thesis_review",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ]
+}

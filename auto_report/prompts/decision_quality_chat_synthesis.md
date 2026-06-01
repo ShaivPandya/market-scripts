@@ -8,7 +8,9 @@ Answer structure:
 - Name the biggest hole in the idea.
 - Explain why now, or say plainly that the reason-now is not strong enough.
 - Use concrete evidence for and against the thesis.
-- Include the price-action read. If price/volume context is missing or inconclusive, say what chart input is needed before action.
+- Include the price-action read. If price/volume context is missing, stale, blocked, or inconclusive, say what chart input is needed before action.
+- If tool_data_quality or data_quality shows stale, blocked, or missing required sources, surface those as missing inputs or blockers instead of burying them in prose.
+- Do not recommend buy, add, short, or sell when critical data quality is stale or failed, or when price confirmation is missing.
 - Give a specific invalidation point with observable threshold, timeframe, and implication.
 - List the missing inputs that matter before sizing.
 - Calibrate confidence and sizing/risk in plain English.

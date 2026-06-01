@@ -50,6 +50,7 @@ from api.exceptions import ConfigurationError
 from api.job_events import append_job_event, list_job_events
 from api.job_queue import cancel_job, get_job
 from api.routers.auth import require_actor
+from api.tool_data_quality import aggregate_tool_data_quality
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from decision_quality.candidate_gates import apply_opportunity_candidate_gates
 from decision_quality.gates import apply_decision_quality_gates
@@ -1144,11 +1145,28 @@ def _build_decision_quality_chat_context(
     tool_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
     history = raw_conversation[-8:]
+    tool_data_quality = aggregate_tool_data_quality(tool_results)
     return {
         "user_message": user_text,
         "screen_context": screen_context.model_dump(mode="json") if screen_context else None,
         "recent_conversation": history,
         "tool_results": tool_results,
+        "tool_data_quality": tool_data_quality,
+        "data_quality": {
+            key: tool_data_quality.get(key)
+            for key in (
+                "critical_data_quality",
+                "source_quality",
+                "quality",
+                "overall_status",
+                "tool_errors",
+                "blocker_count",
+                "warning_count",
+                "blocking_reason_codes",
+                "price_confirmation_status",
+                "source_health_status",
+            )
+        },
     }
 
 
@@ -1158,6 +1176,8 @@ def _build_decision_quality_structured_prompt(context_bundle: dict[str, Any]) ->
         "Return exactly one DecisionQuality JSON object, not a wrapper and not markdown. "
         "If current price action, portfolio sizing, catalyst verification, or source data is missing, "
         "surface that in actionability.missing_inputs and price_action_read.data_needed instead of inventing it. "
+        "Treat tool_data_quality and data_quality as binding: stale, blocked, missing, or unconfirmed price "
+        "sources must keep recommended_action at watch or research and must not imply an actionable trade. "
         "Use watch or research when the evidence is not actionable yet.\n\n"
         f"Live chat context:\n{_json_for_prompt(context_bundle)}"
     )
@@ -1186,16 +1206,20 @@ def _run_decision_quality_structured_pass(
         parsed.get("decision_quality") if isinstance(parsed, dict) and "decision_quality" in parsed else parsed
     )
     decision_quality, parse_errors = parse_decision_quality(raw_decision_quality)
+    data_quality = context_bundle.get("data_quality") if isinstance(context_bundle.get("data_quality"), dict) else None
     gate = apply_decision_quality_gates(
         decision_quality,
         current_action=decision_quality.recommended_action if decision_quality else "watch",
         recommendation_status="clear",
+        data_quality=data_quality,
         parse_errors=parse_errors,
     )
     return {
         "decision_quality": decision_quality,
         "parse_errors": parse_errors,
         "gate": gate,
+        "data_quality": data_quality,
+        "tool_data_quality": context_bundle.get("tool_data_quality"),
         "raw": parsed,
         "citations": [{"title": title, "url": url} for title, url in citations],
         "usage": _usage_dict(response),
@@ -1217,7 +1241,9 @@ def _build_decision_quality_chat_synthesis_prompt(
         "The user asked Stan to pressure-test an investment idea.\n\n"
         "The DecisionQuality object and gate result below are private working state. "
         "The gate result is binding for the final stance: if final_action is watch, research, avoid, or do_nothing, "
-        "the answer must not sound like a confident buy/add/short.\n\n"
+        "the answer must not sound like a confident buy/add/short. "
+        "If tool_data_quality or data_quality shows stale, blocked, missing, or unconfirmed price sources, "
+        "surface those as missing inputs or blockers instead of burying them in prose.\n\n"
         f"User request:\n{user_text.strip()}\n\n"
         f"Context bundle:\n{_json_for_prompt(context_bundle)}\n\n"
         f"DecisionQuality:\n{_json_for_prompt(dq_payload)}\n\n"
@@ -1237,13 +1263,24 @@ def _decision_quality_chat_done_meta(dq_result: dict[str, Any] | None) -> dict[s
         missing_inputs_count = len(decision_quality.actionability.missing_inputs)
         missing_inputs_count += len(decision_quality.price_action_read.data_needed)
         confidence = decision_quality.confidence
-    return {
+    data_quality = dq_result.get("data_quality") if isinstance(dq_result.get("data_quality"), dict) else {}
+    meta: dict[str, Any] = {
         "ran": True,
         "gate_status": gate.status if isinstance(gate, DecisionQualityGate) else "invalid",
         "final_action": gate.final_action if isinstance(gate, DecisionQualityGate) else "watch",
         "confidence": confidence,
         "missing_inputs_count": missing_inputs_count,
     }
+    if data_quality:
+        meta["tool_quality"] = {
+            "blocker_count": data_quality.get("blocker_count", 0),
+            "warning_count": data_quality.get("warning_count", 0),
+            "blocking_reason_codes": list(data_quality.get("blocking_reason_codes") or []),
+            "price_confirmation_status": data_quality.get("price_confirmation_status"),
+            "source_health_status": data_quality.get("source_health_status"),
+            "critical_data_quality": data_quality.get("critical_data_quality"),
+        }
+    return meta
 
 
 def _build_opportunity_candidate_structured_prompt(context_bundle: dict[str, Any]) -> str:
