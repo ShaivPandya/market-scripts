@@ -1,0 +1,34 @@
+{
+  "active_model_path": "data/synthesis_supervised_models/20260601_150723/model.joblib",
+  "active_version": "20260601_150723",
+  "updated_at": "2026-06-01T15:07:23.061686+00:00",
+  "metrics": {
+    "count": 5,
+    "triage_accuracy": 1.0,
+    "graduate_recall": 1.0,
+    "stance_accuracy": 1.0,
+    "fallback_threshold": 0.7,
+    "train_rows": 33,
+    "holdout_rows": 5,
+    "triage_classes": [
+      "avoid",
+      "graduate_to_decision_quality",
+      "research",
+      "watch"
+    ],
+    "stance_classes": [
+      "actionable",
+      "avoid",
+      "do_nothing",
+      "graduate",
+      "research_only",
+      "unknown",
+      "watch_only"
+    ]
+  },
+  "rollout_gates": {
+    "min_triage_accuracy": 0.7,
+    "min_stance_accuracy": 0.65,
+    "max_gate_failure_regression": 0
+  }
+}

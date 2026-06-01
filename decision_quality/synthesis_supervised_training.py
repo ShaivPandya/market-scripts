@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from decision_quality.chat_eval_runner import CASES_DIR as CHAT_CASES_DIR
-from decision_quality.chat_eval_runner import ChatEvalCase, load_cases as load_chat_cases
+from decision_quality.chat_eval_runner import ChatEvalCase
+from decision_quality.chat_eval_runner import load_cases as load_chat_cases
 from decision_quality.eval_corpus import TRAINING_EXPORT_STATUSES
 from decision_quality.eval_runner import CASES_DIR as STRUCTURED_CASES_DIR
-from decision_quality.eval_runner import EvalCase, load_cases as load_structured_cases
+from decision_quality.eval_runner import EvalCase
+from decision_quality.eval_runner import load_cases as load_structured_cases
 from decision_quality.supervised_labels import (
     assign_split,
     build_row_provenance,
@@ -45,6 +47,13 @@ DEFAULT_ROLLOUT_GATES = {
 
 def _now_tag() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+
+
+def _repo_relative_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def _load_oc_cases(*, statuses: set[str]) -> list[dict[str, Any]]:
@@ -359,12 +368,7 @@ def train_baseline_classifier(
     stance_labels = [str(item.get("synthesis_stance") or "unknown") for item in labels]
     stance_classes = sorted(set(stance_labels))
     missing_vocab = sorted(
-        {
-            tag
-            for item in labels
-            for tag in item.get("missing_input_tags") or []
-            if isinstance(tag, str) and tag
-        }
+        {tag for item in labels for tag in item.get("missing_input_tags") or [] if isinstance(tag, str) and tag}
     )
 
     vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, max_features=5000)
@@ -432,7 +436,7 @@ def train_baseline_classifier(
     write_model_card(model_dir, metrics=metrics, dataset_manifest=dataset_manifest)
 
     registry = {
-        "active_model_path": str(artifact_path),
+        "active_model_path": _repo_relative_path(artifact_path),
         "active_version": version,
         "updated_at": datetime.now(UTC).isoformat(),
         "metrics": metrics,
@@ -538,8 +542,7 @@ def build_supervised_eval_summary(
         for key, bucket in metrics["by_opportunity_type"].items()
     }
     metrics["by_failure_type"] = {
-        key: _score_predictions(bucket["rows"], bucket["preds"])
-        for key, bucket in metrics["by_failure_type"].items()
+        key: _score_predictions(bucket["rows"], bucket["preds"]) for key, bucket in metrics["by_failure_type"].items()
     }
     return {
         "model_path": str(model_path),
