@@ -136,6 +136,8 @@ class OntologyRuntimeReadService:
             ),
             "open_action_items": self._project_read_model_rows(bundle.get("open_action_items", [])),
             "optimizer_alerts": self._project_read_model_rows(bundle.get("optimizer_alerts", [])),
+            "active_monitor_definitions": self._project_read_model_rows(bundle.get("active_monitor_definitions", [])),
+            "active_mission_definitions": self._project_read_model_rows(bundle.get("active_mission_definitions", [])),
             "active_watch_triggers": self._project_read_model_rows(bundle.get("active_watch_triggers", [])),
             "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": self._project_read_model_rows(bundle.get("recent_report_runs", [])),
@@ -250,6 +252,24 @@ class OntologyRuntimeReadService:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         return self.list_objects("WatchTrigger", filters=_ticker_status_filter(ticker, status), limit=limit)
+
+    def monitor_definitions(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        rows = self.list_objects("MonitorDefinition", filters=_clean_filters({"status": status}), limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
+
+    def mission_definitions(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        rows = self.list_objects("MissionDefinition", filters=_clean_filters({"status": status}), limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
 
     def monitor_hits(
         self,

@@ -59,7 +59,9 @@ from ontology.schemas.identity import (
     market_regime_snapshot_id,
     media_artifact_id,
     missing_information_requirement_id,
+    mission_definition_id,
     model_call_ref_id,
+    monitor_definition_id,
     monitor_hit_id,
     object_version_ref_id,
     observation_id,
@@ -153,7 +155,9 @@ from ontology.schemas.objects import (
     MarketRegimeSnapshot,
     MediaArtifact,
     MissingInformationRequirement,
+    MissionDefinition,
     ModelCallRef,
+    MonitorDefinition,
     MonitorHit,
     ObjectVersionRef,
     Observation,
@@ -244,6 +248,8 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Evidence": Evidence,
     "Citation": Citation,
     "ActionItem": ActionItem,
+    "MonitorDefinition": MonitorDefinition,
+    "MissionDefinition": MissionDefinition,
     "MonitorHit": MonitorHit,
     "WatchTrigger": WatchTrigger,
     "Approval": Approval,
@@ -314,6 +320,8 @@ OPTIONAL_NODE_TYPES = {
     "KillCondition",
     "ThesisClaim",
     "ActionItem",
+    "MonitorDefinition",
+    "MissionDefinition",
     "MonitorHit",
     "WatchTrigger",
     "Approval",
@@ -802,6 +810,10 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return factor_score_id(model.factor_score_id)
     if isinstance(model, MissingInformationRequirement):
         return missing_information_requirement_id(model.requirement_id)
+    if isinstance(model, MonitorDefinition):
+        return monitor_definition_id(model.monitor_id or model.name)
+    if isinstance(model, MissionDefinition):
+        return mission_definition_id(model.mission_id or model.name)
     if isinstance(model, OptimizationMission):
         return optimization_mission_id(model.mission_id)
     if isinstance(model, OptimizationRun):

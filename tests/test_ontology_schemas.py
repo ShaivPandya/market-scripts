@@ -28,6 +28,8 @@ from ontology.schemas.objects import (
     InvestmentIdea,
     ManagementQualityAssessment,
     MissingInformationRequirement,
+    MissionDefinition,
+    MonitorDefinition,
     OptimizationRun,
     Position,
     ProvenanceEvent,
@@ -176,6 +178,34 @@ def test_workflow_run_schema_accepts_persisted_timestamps():
     assert run.properties["ticker"] == "MU"
     assert run.properties["created_at"] == "2026-05-13T16:08:59.403662+00:00"
     assert run.properties["updated_at"] == "2026-05-13T16:08:59.403662+00:00"
+
+
+def test_monitor_and_mission_definition_schemas_are_registered():
+    monitor = MonitorDefinition(
+        monitor_id="monitor_definition:mu",
+        name="MU thesis monitor",
+        template_id="thesis_monitor",
+        scope={"ticker": "MU"},
+        trigger_type="fundamental_news",
+        condition="Watch MU source-backed thesis evidence",
+        source_requirements=[{"source_name": "trusted_news", "required": True}],
+        definition_hash="abc",
+    )
+    mission = MissionDefinition(
+        mission_id="mission_definition:risk",
+        name="Risk review mission",
+        mission_type="risk_review",
+        schedule={"label": "daily"},
+        steps=[{"kind": "query", "tool": "query_ontology"}],
+        definition_hash="def",
+    )
+
+    assert NODE_SCHEMAS["MonitorDefinition"] is MonitorDefinition
+    assert NODE_SCHEMAS["MissionDefinition"] is MissionDefinition
+    assert monitor.approval_behavior == "hit_only_then_human_review"
+    assert mission.approval_behavior == "hit_only_then_human_review"
+    assert "MonitorDefinition" in {definition.schema_name for definition in ontology_schema_definitions()}
+    assert "MissionDefinition" in {definition.schema_name for definition in ontology_schema_definitions()}
 
 
 def test_runtime_migration_schema_rejects_unregistered_fields():

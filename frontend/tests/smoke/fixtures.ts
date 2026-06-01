@@ -439,6 +439,31 @@ const baseWorkspaceResponse = {
       },
     ],
   },
+  monitor_builder: {
+    active_monitor_count: 1,
+    active_mission_count: 1,
+    active_monitors: [
+      {
+        id: "monitor_definition:smoke",
+        object_uid: "monitor_definition:smoke",
+        monitor_id: "monitor_definition:smoke",
+        name: "Smoke Thesis Monitor",
+        status: "active",
+        condition: "Watch for source-backed thesis evidence.",
+        trigger_type: "fundamental_news",
+      },
+    ],
+    active_missions: [
+      {
+        id: "mission_definition:smoke",
+        object_uid: "mission_definition:smoke",
+        mission_id: "mission_definition:smoke",
+        name: "Smoke Risk Mission",
+        status: "active",
+        mission_type: "risk_review",
+      },
+    ],
+  },
   thesis_claims: {
     challenged_count: 1,
     items: [
@@ -873,6 +898,37 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       status: "done",
       result: ontologyResultForRequest(state.ontologyQueryRequest),
     })
+  }
+  if (method === "GET" && path === "/api/monitor-builder/definitions") {
+    const workspace = baseWorkspaceResponse as { monitor_builder: { active_monitors: JsonValue[]; active_missions: JsonValue[] } }
+    return json(route, {
+      monitors: workspace.monitor_builder.active_monitors,
+      missions: workspace.monitor_builder.active_missions,
+    })
+  }
+  if (method === "POST" && path === "/api/monitor-builder/monitors") {
+    return json(route, {
+      status: "pending_approval_created",
+      approval_id: "approval:builder-monitor",
+      application_status: "pending",
+      action_id: "create_monitor_definition",
+      entity_type: "monitor_definition",
+      ticker: null,
+      proposed_change: JSON.parse(request.postData() || "{}") as JsonValue,
+    })
+  }
+  if (method === "POST" && path === "/api/monitor-builder/preview") {
+    return json(route, {
+      fired: false,
+      evidence: "Smoke preview: no matching source-backed hit yet.",
+      source_requirement_review: { status: "ok", blockers: [], warnings: [] },
+    })
+  }
+  if (method === "POST" && path === "/api/monitor-builder/run") {
+    return json(route, {
+      job_id: "monitor-builder-smoke-job",
+      status: "queued",
+    }, 202)
   }
 
   if (method === "GET" && path === "/api/agent/workflows") {

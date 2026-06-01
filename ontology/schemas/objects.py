@@ -1252,6 +1252,96 @@ class WatchTrigger(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class MonitorDefinition(OntologySchemaBase):
+    monitor_id: str | None = None
+    name: NonBlankStr
+    description: str | None = None
+    template_id: NonBlankStr = "custom"
+    status: NonBlankStr = "active"
+    scope: dict[str, Any] = Field(default_factory=dict)
+    trigger_type: NonBlankStr = "custom"
+    condition: NonBlankStr
+    definition: dict[str, Any] = Field(default_factory=dict)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    source_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    cadence: dict[str, Any] = Field(default_factory=dict)
+    severity: NonBlankStr = "medium"
+    output_policy: dict[str, Any] = Field(default_factory=dict)
+    approval_behavior: NonBlankStr = "hit_only_then_human_review"
+    owner_actor_id: str | None = None
+    definition_version: int = Field(default=1, ge=1)
+    definition_hash: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_run_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator(
+        "name", "template_id", "status", "trigger_type", "condition", "severity", "approval_behavior", mode="before"
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "description",
+        "monitor_id",
+        "owner_actor_id",
+        "definition_hash",
+        "created_at",
+        "updated_at",
+        "last_run_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class MissionDefinition(OntologySchemaBase):
+    mission_id: str | None = None
+    name: NonBlankStr
+    description: str | None = None
+    template_id: NonBlankStr = "custom"
+    status: NonBlankStr = "active"
+    mission_type: NonBlankStr = "monitor_review"
+    scope: dict[str, Any] = Field(default_factory=dict)
+    workflow_name: str | None = None
+    schedule: dict[str, Any] = Field(default_factory=dict)
+    source_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    output_policy: dict[str, Any] = Field(default_factory=dict)
+    approval_behavior: NonBlankStr = "hit_only_then_human_review"
+    owner_actor_id: str | None = None
+    definition_version: int = Field(default=1, ge=1)
+    definition_hash: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_run_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("name", "template_id", "status", "mission_type", "approval_behavior", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "description",
+        "mission_id",
+        "workflow_name",
+        "owner_actor_id",
+        "definition_hash",
+        "created_at",
+        "updated_at",
+        "last_run_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class Approval(OntologySchemaBase):
     entity_type: NonBlankStr
     entity_id: str | None = None
@@ -3453,6 +3543,8 @@ OntologyObject = (
     | Evidence
     | Citation
     | ActionItem
+    | MonitorDefinition
+    | MissionDefinition
     | MonitorHit
     | WatchTrigger
     | Approval

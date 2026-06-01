@@ -277,6 +277,102 @@ export interface TriggerMutationBody extends StagedMutationOptions {
   definition?: Record<string, unknown> | null
 }
 
+export interface BuilderSourceRequirement {
+  id?: string
+  source_name?: string
+  type?: string
+  description?: string
+  required?: boolean
+  freshness_days?: number | null
+}
+
+export interface MonitorDefinitionRecord {
+  id: string
+  object_uid?: string
+  monitor_id?: string
+  name: string
+  description?: string | null
+  template_id?: string | null
+  status: string
+  scope?: Record<string, unknown>
+  trigger_type?: string
+  condition: string
+  definition?: Record<string, unknown>
+  thresholds?: Record<string, unknown>
+  source_requirements?: BuilderSourceRequirement[]
+  cadence?: Record<string, unknown>
+  severity?: "low" | "medium" | "high" | string
+  output_policy?: Record<string, unknown>
+  approval_behavior?: string
+  definition_version?: number
+  definition_hash?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  last_run_at?: string | null
+}
+
+export interface MissionDefinitionRecord {
+  id: string
+  object_uid?: string
+  mission_id?: string
+  name: string
+  description?: string | null
+  template_id?: string | null
+  status: string
+  mission_type?: string
+  scope?: Record<string, unknown>
+  workflow_name?: string | null
+  schedule?: Record<string, unknown>
+  source_requirements?: BuilderSourceRequirement[]
+  thresholds?: Record<string, unknown>
+  steps?: Record<string, unknown>[]
+  output_policy?: Record<string, unknown>
+  approval_behavior?: string
+  definition_version?: number
+  definition_hash?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  last_run_at?: string | null
+}
+
+export interface MonitorDefinitionBody extends StagedMutationOptions {
+  monitor_id?: string | null
+  name: string
+  description?: string | null
+  template_id?: string
+  scope?: Record<string, unknown>
+  trigger_type?: string
+  condition: string
+  definition?: Record<string, unknown>
+  thresholds?: Record<string, unknown>
+  source_requirements?: BuilderSourceRequirement[]
+  cadence?: Record<string, unknown>
+  severity?: "low" | "medium" | "high"
+  output_policy?: Record<string, unknown>
+  approval_behavior?: "hit_only_then_human_review"
+}
+
+export interface MissionDefinitionBody extends StagedMutationOptions {
+  mission_id?: string | null
+  name: string
+  description?: string | null
+  template_id?: string
+  mission_type?: string
+  scope?: Record<string, unknown>
+  workflow_name?: string | null
+  schedule?: Record<string, unknown>
+  source_requirements?: BuilderSourceRequirement[]
+  thresholds?: Record<string, unknown>
+  steps?: Record<string, unknown>[]
+  output_policy?: Record<string, unknown>
+  approval_behavior?: "hit_only_then_human_review"
+}
+
+export interface MonitorBuilderDefinitions {
+  monitors: MonitorDefinitionRecord[]
+  missions: MissionDefinitionRecord[]
+}
+
 export interface ApprovalSummaryResponse {
   count: number
   items: ApprovalRecord[]
@@ -3082,6 +3178,26 @@ export const cancelTrigger = (id: number | string, options?: StagedMutationOptio
   client.put(`/triggers/${encodeURIComponent(String(id))}/cancel`, options ?? {}).then(r => r.data as StagedMutationResponse)
 export const replaceTrigger = (id: number | string, body: TriggerMutationBody) =>
   client.put(`/triggers/${encodeURIComponent(String(id))}/replace`, body).then(r => r.data as StagedMutationResponse)
+
+// Low-code monitor and mission builder
+export const fetchMonitorBuilderDefinitions = (params?: { status?: string }) =>
+  client.get("/monitor-builder/definitions", { params }).then(r => r.data as MonitorBuilderDefinitions)
+export const createMonitorDefinition = (body: MonitorDefinitionBody) =>
+  client.post("/monitor-builder/monitors", body).then(r => r.data as StagedMutationResponse)
+export const updateMonitorDefinition = (id: number | string, body: MonitorDefinitionBody) =>
+  client.put(`/monitor-builder/monitors/${encodeURIComponent(String(id))}`, body).then(r => r.data as StagedMutationResponse)
+export const disableMonitorDefinition = (id: number | string, options?: StagedMutationOptions) =>
+  client.post(`/monitor-builder/monitors/${encodeURIComponent(String(id))}/disable`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const createMissionDefinition = (body: MissionDefinitionBody) =>
+  client.post("/monitor-builder/missions", body).then(r => r.data as StagedMutationResponse)
+export const updateMissionDefinition = (id: number | string, body: MissionDefinitionBody) =>
+  client.put(`/monitor-builder/missions/${encodeURIComponent(String(id))}`, body).then(r => r.data as StagedMutationResponse)
+export const disableMissionDefinition = (id: number | string, options?: StagedMutationOptions) =>
+  client.post(`/monitor-builder/missions/${encodeURIComponent(String(id))}/disable`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const previewMonitorDefinition = (body: MonitorDefinitionBody) =>
+  client.post("/monitor-builder/preview", body).then(r => r.data as Record<string, unknown>)
+export const runMonitorBuilderDefinitions = (body?: { monitor_id?: string; mission_id?: string; source?: string }) =>
+  client.post("/monitor-builder/run", body ?? { source: "manual" }).then(r => r.data)
 
 // Catalysts
 export const fetchCatalysts = (ticker: string) =>

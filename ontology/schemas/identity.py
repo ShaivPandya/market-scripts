@@ -261,6 +261,20 @@ def monitor_hit_id(identifier: object) -> str:
     return f"monitor_hit:{slug(text)}"
 
 
+def monitor_definition_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("monitor_definition:"):
+        text = text.split(":", 1)[1]
+    return f"monitor_definition:{slug(text)}"
+
+
+def mission_definition_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("mission_definition:"):
+        text = text.split(":", 1)[1]
+    return f"mission_definition:{slug(text)}"
+
+
 def opportunity_candidate_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("opportunity_candidate:"):

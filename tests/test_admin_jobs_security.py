@@ -116,6 +116,46 @@ def test_scheduler_secret_can_enqueue_workspace_source_refresh_job(client, monke
     assert seen["reuse_completed"] is False
 
 
+def test_scheduler_secret_can_enqueue_monitor_mission_runner(client, monkeypatch):
+    from api.routers import admin_jobs
+
+    monkeypatch.setenv("SCHEDULER_SECRET", "scheduler-secret")
+    seen: dict[str, object] = {}
+
+    def fake_enqueue_registered_job(job_type, payload, **kwargs):
+        seen.update({"job_type": job_type, "payload": payload, **kwargs})
+        return (
+            {
+                "job_id": "monitor-mission-job",
+                "job_type": job_type,
+                "status": "queued",
+                "payload_json": payload,
+                "result_json": None,
+                "error": None,
+                "progress_json": None,
+            },
+            "created",
+        )
+
+    monkeypatch.setattr(admin_jobs, "enqueue_registered_job", fake_enqueue_registered_job)
+    monkeypatch.setattr(
+        admin_jobs,
+        "enqueue_response",
+        lambda row, poll_path: JSONResponse({"job_id": row["job_id"], "status": "queued"}, status_code=202),
+    )
+
+    resp = client.post(
+        "/api/admin/jobs/enqueue-monitor-mission-runner",
+        headers={"X-Scheduler-Secret": "scheduler-secret"},
+    )
+
+    assert resp.status_code == 202
+    assert resp.json() == {"job_id": "monitor-mission-job", "status": "queued"}
+    assert seen["job_type"] == "monitor_mission_runner"
+    assert seen["cache_key"] == "maintenance:monitor_mission_runner:v1"
+    assert seen["reuse_completed"] is False
+
+
 def test_scheduler_secret_cannot_poll_arbitrary_job_result(client, monkeypatch):
     from api.job_queue import clear_memory_jobs, complete_job, create_job
 

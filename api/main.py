@@ -396,6 +396,7 @@ from api.routers import (
     domain_actions,
     dossier,
     ideas,
+    monitor_builder,
     optimization,
     policy_gate,
     process_entities,
@@ -415,6 +416,7 @@ app.include_router(approvals.router, prefix=_API_PREFIX, dependencies=_auth_dep,
 app.include_router(domain_actions.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["domain-actions"])
 app.include_router(action_items.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["actions"])
 app.include_router(triggers.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["triggers"])
+app.include_router(monitor_builder.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["monitor-builder"])
 app.include_router(process_entities.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["process"])
 app.include_router(provenance.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["provenance"])
 app.include_router(recommendations.router, prefix=_API_PREFIX, dependencies=_auth_dep, tags=["recommendations"])

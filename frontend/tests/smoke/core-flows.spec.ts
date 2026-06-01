@@ -112,6 +112,7 @@ test("runs an ontology workbench query with mocked async results", async ({ page
   await page.goto("/ontology")
 
   await expect(page.getByRole("heading", { name: "Ontology Workbench" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Monitor And Mission Builder" })).toBeVisible()
 
   await page.getByPlaceholder("Which positions are in deteriorating macro conditions?").fill("Show elevated portfolio risks")
   await page.getByRole("button", { name: "Run Query" }).click()
@@ -121,6 +122,19 @@ test("runs an ontology workbench query with mocked async results", async ({ page
   await expect(page.getByRole("cell", { name: "MSFT" })).toBeVisible()
   await expect(page.getByText("Liquidity impulse")).toBeVisible()
   await expect(page.getByText("Source Health And Staleness")).toBeVisible()
+})
+
+test("stages a low-code monitor from ontology workbench", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/ontology")
+
+  await page.getByRole("textbox", { name: "Name" }).fill("Smoke Custom Monitor")
+  await page.getByRole("textbox", { name: "Ticker Scope" }).fill("MSFT")
+  await page.getByRole("textbox", { name: "Condition", exact: true }).fill("Watch MSFT evidence quality")
+  await page.getByRole("button", { name: "Preview Monitor" }).click()
+  await expect(page.getByText("Smoke preview")).toBeVisible()
+  await page.getByRole("button", { name: "Stage Definition" }).click()
+  await expect(page.getByText("Definition staged for approval")).toBeVisible()
 })
 
 test("runs a historical ontology workbench query with temporal context", async ({ page, apiMocks }) => {

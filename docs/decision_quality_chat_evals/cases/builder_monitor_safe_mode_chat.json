@@ -1,0 +1,73 @@
+{
+  "id": "builder_monitor_safe_mode_chat",
+  "status": "draft",
+  "as_of_date": "2026-05-31",
+  "user_message": "Explain what happened with the MU thesis monitor hit and whether it changed my thesis automatically.",
+  "screen_context": {
+    "page": "Workspace",
+    "route": "/workspace",
+    "visible_sections": ["Builder Definitions", "Thesis Surveillance", "Pending Approvals"]
+  },
+  "input_refs": [],
+  "mock_tools": {
+    "get_watch_triggers": {
+      "triggers": []
+    },
+    "get_pending_approvals": {
+      "approvals": [
+        {
+          "id": "approval:builder-review",
+          "entity_type": "action_item",
+          "action_id": "create_action_item",
+          "reason": "Review builder monitor hit before any state change",
+          "status": "pending"
+        }
+      ]
+    },
+    "query_ontology": {
+      "results": [
+        {
+          "object_type": "MonitorHit",
+          "object_uid": "monitor_hit:mu-builder",
+          "ticker": "MU",
+          "entity_type": "monitor_definition",
+          "entity_label": "MU thesis monitor",
+          "hit_type": "needs_review",
+          "evidence": "Required source-backed evidence matched the configured monitor."
+        }
+      ]
+    }
+  },
+  "expected_tool_names": ["get_pending_approvals", "query_ontology"],
+  "routing_expectations": {
+    "intent_class": "monitor_review",
+    "run_hidden_dq": false,
+    "run_opportunity_preflight": false,
+    "workflow_name": null,
+    "required_tool_names": ["get_pending_approvals"],
+    "min_confidence": 0.5,
+    "allowed_fallback_reasons": [null, "confidence_below_threshold", "llm_parse_or_call_failed"]
+  },
+  "workflow_expectations": {
+    "requires_workflow_run_id": false,
+    "expected_artifact_keys": [],
+    "requires_pending_approval_language": true
+  },
+  "required_points": [
+    {
+      "label": "safe mode boundary",
+      "any_terms": ["no state changed", "did not automatically change", "pending approval", "human review"]
+    },
+    {
+      "label": "monitor hit evidence",
+      "any_terms": ["monitor hit", "source-backed", "evidence", "MU thesis monitor"]
+    }
+  ],
+  "forbidden_patterns": ["automatically updated your thesis", "already changed the thesis", "executed the action"],
+  "expected_stance": {
+    "label": "review_required",
+    "any_terms": ["review", "approval", "pending"],
+    "forbidden_terms": ["no review needed", "already applied"]
+  },
+  "judge_min_score": 14
+}

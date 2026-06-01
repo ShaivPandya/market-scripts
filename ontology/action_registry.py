@@ -608,6 +608,95 @@ class CreateWatchTriggerInput(OptionalTickerMixin):
         return text
 
 
+class MonitorDefinitionPayload(BaseModel):
+    monitor_id: str | None = None
+    name: str
+    description: str | None = None
+    template_id: str = "custom"
+    scope: dict[str, Any] = Field(default_factory=dict)
+    trigger_type: str = "custom"
+    condition: str
+    definition: dict[str, Any] = Field(default_factory=dict)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    source_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    cadence: dict[str, Any] = Field(default_factory=dict)
+    severity: Literal["low", "medium", "high"] = "medium"
+    output_policy: dict[str, Any] = Field(default_factory=dict)
+    approval_behavior: Literal["hit_only_then_human_review"] = "hit_only_then_human_review"
+
+    @field_validator("name", "condition")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("name and condition are required.")
+        return text
+
+
+class MissionDefinitionPayload(BaseModel):
+    mission_id: str | None = None
+    name: str
+    description: str | None = None
+    template_id: str = "custom"
+    mission_type: str = "monitor_review"
+    scope: dict[str, Any] = Field(default_factory=dict)
+    workflow_name: str | None = None
+    schedule: dict[str, Any] = Field(default_factory=dict)
+    source_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    output_policy: dict[str, Any] = Field(default_factory=dict)
+    approval_behavior: Literal["hit_only_then_human_review"] = "hit_only_then_human_review"
+
+    @field_validator("name")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("name is required.")
+        return text
+
+
+class CreateMonitorDefinitionInput(MonitorDefinitionPayload):
+    pass
+
+
+class UpdateMonitorDefinitionInput(MonitorDefinitionPayload):
+    monitor_id: str
+
+
+class DisableMonitorDefinitionInput(BaseModel):
+    monitor_id: str
+
+    @field_validator("monitor_id")
+    @classmethod
+    def _required_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("monitor_id is required.")
+        return text
+
+
+class CreateMissionDefinitionInput(MissionDefinitionPayload):
+    pass
+
+
+class UpdateMissionDefinitionInput(MissionDefinitionPayload):
+    mission_id: str
+
+
+class DisableMissionDefinitionInput(BaseModel):
+    mission_id: str
+
+    @field_validator("mission_id")
+    @classmethod
+    def _required_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("mission_id is required.")
+        return text
+
+
 WatchTriggerIdentifier = int | str
 
 
@@ -662,15 +751,19 @@ class UpdateWatchTriggerDefinitionInput(BaseModel):
 
 
 class CreateMonitorHitInput(OptionalTickerMixin):
-    entity_type: Literal["catalyst", "kill_condition"]
+    entity_type: Literal[
+        "catalyst", "kill_condition", "watch_trigger", "monitor_definition", "mission_definition", "mission"
+    ]
     entity_id: str
     entity_label: str | None = None
-    hit_type: Literal["approaching", "triggered", "needs_review", "skipped", "ok"]
+    hit_type: Literal["approaching", "triggered", "needs_review", "skipped", "ok", "source_blocked"]
     severity: Literal["low", "medium", "high"] | None = None
+    status: Literal["open", "reviewed", "superseded", "resolved"] = "open"
     confidence: float | None = Field(default=None, ge=0, le=1)
     evidence: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     result: dict[str, Any] | None = None
+    detected_at: str | None = None
     fingerprint: str | None = None
     approval_id: str | None = None
     action_item_id: str | None = None
@@ -1591,6 +1684,16 @@ def _action_result_refs(
     }:
         if ref_id := _id("id", "trigger_id"):
             refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
+    elif action_id in {"create_monitor_definition", "update_monitor_definition", "disable_monitor_definition"}:
+        if ref_id := _id("id", "monitor_id"):
+            refs.append(
+                ("monitor_definition", ref_id, produced if action_id == "create_monitor_definition" else updated)
+            )
+    elif action_id in {"create_mission_definition", "update_mission_definition", "disable_mission_definition"}:
+        if ref_id := _id("id", "mission_id"):
+            refs.append(
+                ("mission_definition", ref_id, produced if action_id == "create_mission_definition" else updated)
+            )
     elif action_id in {"create_monitor_hit", "update_monitor_hit_status"}:
         if ref_id := _id("id", "hit_id"):
             refs.append(("monitor_hit", ref_id, produced if action_id == "create_monitor_hit" else updated))
@@ -1792,6 +1895,12 @@ _cancel_watch_trigger = _disabled_action_handler
 _replace_watch_trigger = _disabled_action_handler
 _update_watch_trigger_check = _disabled_action_handler
 _update_watch_trigger_definition = _disabled_action_handler
+_create_monitor_definition = _disabled_action_handler
+_update_monitor_definition = _disabled_action_handler
+_disable_monitor_definition = _disabled_action_handler
+_create_mission_definition = _disabled_action_handler
+_update_mission_definition = _disabled_action_handler
+_disable_mission_definition = _disabled_action_handler
 _create_monitor_hit = _disabled_action_handler
 _update_monitor_hit_status = _disabled_action_handler
 _save_thesis_content = _disabled_action_handler
@@ -1974,6 +2083,58 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_payload=_model_payload,
         precondition_builder=_hash_watch_trigger_status,
         base_state_hash_fields=("trigger_id", "status"),
+    ),
+    "create_monitor_definition": DomainAction(
+        action_id="create_monitor_definition",
+        input_model=CreateMonitorDefinitionInput,
+        handler=_create_monitor_definition,
+        approval_entity_type="monitor_definition",
+        approval_payload=_model_payload,
+        risk_class="low",
+    ),
+    "update_monitor_definition": DomainAction(
+        action_id="update_monitor_definition",
+        input_model=UpdateMonitorDefinitionInput,
+        handler=_update_monitor_definition,
+        approval_entity_type="monitor_definition",
+        approval_payload=_model_payload,
+        risk_class="low",
+        base_state_hash_fields=("monitor_id", "definition_hash", "status"),
+    ),
+    "disable_monitor_definition": DomainAction(
+        action_id="disable_monitor_definition",
+        input_model=DisableMonitorDefinitionInput,
+        handler=_disable_monitor_definition,
+        approval_entity_type="monitor_definition_status",
+        approval_payload=_model_payload,
+        risk_class="low",
+        base_state_hash_fields=("monitor_id", "status"),
+    ),
+    "create_mission_definition": DomainAction(
+        action_id="create_mission_definition",
+        input_model=CreateMissionDefinitionInput,
+        handler=_create_mission_definition,
+        approval_entity_type="mission_definition",
+        approval_payload=_model_payload,
+        risk_class="low",
+    ),
+    "update_mission_definition": DomainAction(
+        action_id="update_mission_definition",
+        input_model=UpdateMissionDefinitionInput,
+        handler=_update_mission_definition,
+        approval_entity_type="mission_definition",
+        approval_payload=_model_payload,
+        risk_class="low",
+        base_state_hash_fields=("mission_id", "definition_hash", "status"),
+    ),
+    "disable_mission_definition": DomainAction(
+        action_id="disable_mission_definition",
+        input_model=DisableMissionDefinitionInput,
+        handler=_disable_mission_definition,
+        approval_entity_type="mission_definition_status",
+        approval_payload=_model_payload,
+        risk_class="low",
+        base_state_hash_fields=("mission_id", "status"),
     ),
     "create_monitor_hit": DomainAction(
         action_id="create_monitor_hit",
