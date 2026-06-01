@@ -27,7 +27,6 @@ import {
   type ThesisClaim,
   type PolicyGateReason,
   type PolicyGateResult,
-  type ProvenanceSelector,
   type RecommendationRecord,
   type SourceHealth,
   type SourceHealthSource,
@@ -44,8 +43,9 @@ import {
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
-import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
+import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ApprovalProgressSummary } from "@/components/shared/ApprovalProgressSummary"
@@ -454,11 +454,11 @@ function ThesisClaimsPanel({ claims, claimCount }: { claims: ThesisClaim[]; clai
 function RecentActivityPanel({
   workflowRuns,
   reportRuns,
-  onViewWorkflowLineage,
+  onViewWorkflowTrace,
 }: {
   workflowRuns: WorkflowRun[]
   reportRuns: ReportRun[]
-  onViewWorkflowLineage?: (runId: string) => void
+  onViewWorkflowTrace?: (run: WorkflowRun) => void
 }) {
   if (workflowRuns.length === 0 && reportRuns.length === 0) return null
   return (
@@ -488,16 +488,12 @@ function RecentActivityPanel({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
-                      {runId && onViewWorkflowLineage && (
-                        <button
-                          type="button"
-                          onClick={() => onViewWorkflowLineage(runId)}
-                          className="theme-icon-button h-8 w-8"
-                          aria-label={`View workflow ${runId} lineage`}
-                          title="Lineage"
-                        >
-                          <GitBranch size={14} />
-                        </button>
+                      {runId && onViewWorkflowTrace && (
+                        <TraceTriggerButton
+                          compact
+                          label={`View workflow ${runId} trace`}
+                          onClick={() => onViewWorkflowTrace(run)}
+                        />
                       )}
                     </div>
                   </div>
@@ -934,7 +930,7 @@ export function Workspace() {
   const [processingIds, setProcessingIds] = useState<Set<number | string>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
-  const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const { openDecisionTrace } = useDecisionTrace()
   const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
   const [approvalReview, setApprovalReview] = useState<ApprovalRecord | null>(null)
   const [approvalNote, setApprovalNote] = useState("")
@@ -1315,6 +1311,12 @@ export function Workspace() {
         <OpportunityScoutQueuePanel
           items={data.opportunity_candidates?.items ?? []}
           onUpdated={() => void qc.invalidateQueries({ queryKey: ["workspace"] })}
+          onOpenTrace={candidate =>
+            openDecisionTrace({
+              kind: "opportunity_candidate",
+              record: candidate as unknown as Record<string, unknown>,
+            })
+          }
         />
       )}
 
@@ -1393,6 +1395,18 @@ export function Workspace() {
                   {coa.comparison_id && (
                     <p className="mt-1 text-[11px] text-subtle">Comparison: {coa.comparison_id}</p>
                   )}
+                  <div className="mt-2">
+                    <TraceTriggerButton
+                      compact
+                      label={`Trace course of action ${coa.action}`}
+                      onClick={() =>
+                        openDecisionTrace({
+                          kind: "course_of_action",
+                          record: coa as unknown as Record<string, unknown>,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -1435,6 +1449,18 @@ export function Workspace() {
                   <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
                   <RiskBindingLine record={rec!} />
                   {recommendationNeedsPolicyGate(rec!) && <PolicyGatePanel gate={policyGateFromRecommendation(rec!)} />}
+                  <div className="mt-2">
+                    <TraceTriggerButton
+                      compact
+                      label={`Trace ${rec!.report_type} recommendation`}
+                      onClick={() =>
+                        openDecisionTrace({
+                          kind: "recommendation",
+                          record: rec! as unknown as Record<string, unknown>,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -1470,6 +1496,18 @@ export function Workspace() {
                     <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
                     <RiskBindingLine record={rec} />
                     {recommendationNeedsPolicyGate(rec) && <PolicyGatePanel gate={policyGateFromRecommendation(rec)} />}
+                    <div className="mt-2">
+                      <TraceTriggerButton
+                        compact
+                        label={`Trace pending recommendation ${rec.action}`}
+                        onClick={() =>
+                          openDecisionTrace({
+                            kind: "recommendation",
+                            record: rec as unknown as Record<string, unknown>,
+                          })
+                        }
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1512,20 +1550,15 @@ export function Workspace() {
                     >
                       Review post-mortem
                     </button>
-                    <button
-                      type="button"
+                    <TraceTriggerButton
+                      label="Trace"
                       onClick={() =>
-                        setProvenanceSelector({
-                          recommendation_id: outcome.recommendation_id ?? undefined,
-                          ref_type: "DecisionOutcome",
-                          ref_id: String(outcome.decision_outcome_id || outcome.object_uid || outcome.id || ""),
+                        openDecisionTrace({
+                          kind: "decision_outcome",
+                          record: outcome as unknown as Record<string, unknown>,
                         })
                       }
-                      className="inline-flex items-center gap-1 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-muted hover:text-app"
-                    >
-                      <GitBranch size={12} />
-                      Lineage
-                    </button>
+                    />
                   </div>
                 </div>
               ))}
@@ -1539,6 +1572,17 @@ export function Workspace() {
                       {outcome.ticker && <span className="font-medium text-app">{outcome.ticker}</span>}
                       <span>{outcome.final_label_status}</span>
                       {outcome.finalized_at && <span>{outcome.finalized_at.slice(0, 10)}</span>}
+                      <TraceTriggerButton
+                        compact
+                        label={`Trace finalized outcome ${outcome.ticker || ""}`}
+                        className="ml-auto"
+                        onClick={() =>
+                          openDecisionTrace({
+                            kind: "decision_outcome",
+                            record: outcome as unknown as Record<string, unknown>,
+                          })
+                        }
+                      />
                     </div>
                     <p className="mt-1 line-clamp-2">{outcome.final_postmortem || outcome.lessons_learned}</p>
                   </div>
@@ -1685,15 +1729,16 @@ export function Workspace() {
                         <ApprovalProgressSummary approval={a} compact />
                       </div>
                       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setProvenanceSelector({ approval_id: a.id })}
-                          className="theme-icon-button h-11 w-11 shrink-0"
-                          aria-label={`View approval ${a.id} lineage`}
-                          title="Lineage"
-                        >
-                          <GitBranch size={14} />
-                        </button>
+                        <TraceTriggerButton
+                          compact
+                          label={`View approval ${a.id} trace`}
+                          onClick={() =>
+                            openDecisionTrace({
+                              kind: "approval",
+                              record: a as unknown as Record<string, unknown>,
+                            })
+                          }
+                        />
                         <button
                           type="button"
                           onClick={() => openApprovalReview(a)}
@@ -1875,6 +1920,18 @@ export function Workspace() {
                   <p className="mt-1 text-xs text-muted">{hit.entity_label || hit.entity_id}</p>
                   {hit.evidence && <p className="mt-1 text-xs text-subtle">{hit.evidence}</p>}
                   {hit.detected_at && <p className="mt-1 text-[11px] text-subtle">Detected {formatTime(hit.detected_at)}</p>}
+                  <div className="mt-2">
+                    <TraceTriggerButton
+                      compact
+                      label={`Trace monitor hit ${hit.ticker || hit.id}`}
+                      onClick={() =>
+                        openDecisionTrace({
+                          kind: "monitor_hit",
+                          record: hit as unknown as Record<string, unknown>,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -1884,7 +1941,12 @@ export function Workspace() {
         <RecentActivityPanel
           workflowRuns={data.recent_workflow_runs}
           reportRuns={recentReportRuns}
-          onViewWorkflowLineage={runId => setProvenanceSelector({ workflow_run_id: runId })}
+          onViewWorkflowTrace={run =>
+            openDecisionTrace({
+              kind: "workflow_run",
+              record: run as unknown as Record<string, unknown>,
+            })
+          }
         />
       </div>
 
@@ -2009,6 +2071,17 @@ export function Workspace() {
               </div>
             )}
             <ApprovalSourceHealthPanel review={approvalReview.source_health_review} />
+            <div className="flex flex-wrap gap-2">
+              <TraceTriggerButton
+                label="View decision trace"
+                onClick={() =>
+                  openDecisionTrace({
+                    kind: "approval",
+                    record: approvalReview as unknown as Record<string, unknown>,
+                  })
+                }
+              />
+            </div>
             <div>
               <label htmlFor="approval-note" className="theme-field-label">
                 Decision note
@@ -2106,13 +2179,6 @@ export function Workspace() {
         loading={triggerEditSubmitting}
         error={triggerEditError}
         onSubmit={handleSubmitTriggerEdit}
-      />
-      <ProvenanceTraceDialog
-        open={provenanceSelector !== null}
-        onOpenChange={open => {
-          if (!open) setProvenanceSelector(null)
-        }}
-        selector={provenanceSelector}
       />
       <PostMortemReviewDialog
         open={postMortemReview !== null}

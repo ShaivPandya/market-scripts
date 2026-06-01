@@ -79,6 +79,6 @@ test.describe("mobile responsive surfaces", () => {
 
     await expect(page.getByRole("heading", { name: "Evidence Ledger" })).toBeVisible()
     await expect(page.getByText("AI capex remains durable")).toBeVisible()
-    await expect(page.getByRole("button", { name: "Lineage" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Trace", exact: true }).first()).toBeVisible()
   })
 })

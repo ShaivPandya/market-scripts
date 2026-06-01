@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm"
 import type { ToolCall, EgressRecord, AgentMessage as AgentMessageType } from "@/hooks/useAgentChat"
 import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw, ShieldAlert } from "lucide-react"
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
 
 const MARKDOWN_COMPONENTS: Components = {
   table({ children, ...props }) {
@@ -260,7 +261,13 @@ function EgressChip({ group }: { group: EgressRecordGroup }) {
 // Message component
 // ---------------------------------------------------------------------------
 
-export function AgentMessage({ message }: { message: AgentMessageType }) {
+export function AgentMessage({
+  message,
+  onOpenTrace,
+}: {
+  message: AgentMessageType
+  onOpenTrace?: (message: AgentMessageType) => void
+}) {
   if (message.role === "user") {
     return (
       <div className="mb-4 flex justify-end">
@@ -282,9 +289,17 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
   return (
     <div className="mb-4 flex justify-start">
       <div className="max-w-[min(92%,48rem)] rounded-2xl rounded-bl-md border border-app bg-card px-4 py-3 text-sm leading-6 text-app shadow-sm">
-        <div className="mb-2 flex flex-wrap gap-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <DecisionStateBadge state={messageDecisionState} />
           <EffectScopeBadge scope={messageScope} />
+          {!message.isStreaming && onOpenTrace && (
+            <TraceTriggerButton
+              compact
+              label="Trace Stan response"
+              className="ml-auto"
+              onClick={() => onOpenTrace(message)}
+            />
+          )}
         </div>
         {/* Tool call indicators */}
         {message.toolCalls && message.toolCalls.length > 0 && (

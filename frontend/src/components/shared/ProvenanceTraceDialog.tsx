@@ -52,7 +52,7 @@ function statusClass(status: unknown): string {
   return "text-muted"
 }
 
-function TraceBody({ selector }: { selector: ProvenanceSelector }) {
+export function TraceBody({ selector }: { selector: ProvenanceSelector }) {
   const [direction, setDirection] = useState<"both" | "upstream" | "downstream">(selector.direction ?? "both")
   const [depth, setDepth] = useState<number>(selector.max_depth ?? 3)
   const querySelector = useMemo(
@@ -192,6 +192,10 @@ function TraceBody({ selector }: { selector: ProvenanceSelector }) {
       )}
     </div>
   )
+}
+
+export function ProvenanceTraceBody({ selector }: { selector: ProvenanceSelector }) {
+  return <TraceBody selector={selector} />
 }
 
 export function ProvenanceTraceDialog({ open, onOpenChange, selector, title }: ProvenanceTraceDialogProps) {

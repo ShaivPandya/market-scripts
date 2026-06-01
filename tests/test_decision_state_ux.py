@@ -529,14 +529,32 @@ def test_workspace_source_health_panel_is_wired():
 def test_dossier_evidence_ledger_panel_is_wired():
     dossier = (ROOT / "frontend/src/pages/PositionDossier.tsx").read_text()
     panel = (ROOT / "frontend/src/components/shared/EvidenceLedgerPanel.tsx").read_text()
+    layout = (ROOT / "frontend/src/components/layout/Layout.tsx").read_text()
     api_types = (ROOT / "frontend/src/lib/api.ts").read_text()
 
     assert "EvidenceLedgerPanel" in dossier
     assert '"Evidence"' in dossier or "'Evidence'" in dossier
     assert "Evidence Ledger" in panel
-    assert "ProvenanceTraceDialog" in panel
+    assert "useDecisionTrace" in panel
+    assert "DecisionTraceProvider" in layout
+    assert "DecisionTraceDrawer" in layout
     assert "evidence_ledger" in dossier
     assert "EvidenceLedgerSummary" in api_types
+
+
+def test_unified_decision_trace_drawer_is_wired():
+    workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
+    dossier = (ROOT / "frontend/src/pages/PositionDossier.tsx").read_text()
+    agent_chat = (ROOT / "frontend/src/components/agent/AgentChat.tsx").read_text()
+    trace_lib = (ROOT / "frontend/src/lib/decisionTrace.ts").read_text()
+
+    assert "useDecisionTrace" in workspace
+    assert "TraceTriggerButton" in workspace
+    assert "DecisionTraceDrawer" not in workspace
+    assert "useDecisionTrace" in dossier
+    assert "openDecisionTrace" in agent_chat
+    assert "buildApprovalTrace" in trace_lib
+    assert "buildAgentMessageTrace" in trace_lib
 
 
 def test_workspace_approval_source_health_review_is_wired():

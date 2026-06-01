@@ -9,6 +9,7 @@ interface AgentMessageStreamProps {
   isStreaming: boolean
   error: string | null
   onPrompt: (prompt: string) => void
+  onOpenTrace?: (message: AgentMessageType) => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
   messagesEndRef: RefObject<HTMLDivElement | null>
 }
@@ -18,6 +19,7 @@ export function AgentMessageStream({
   isStreaming,
   error,
   onPrompt,
+  onOpenTrace,
   scrollContainerRef,
   messagesEndRef,
 }: AgentMessageStreamProps) {
@@ -50,7 +52,7 @@ export function AgentMessageStream({
       ) : (
         <div className="mx-auto flex w-full max-w-[54rem] flex-col">
           {messages.map(message => (
-            <AgentMessage key={message.id} message={message} />
+            <AgentMessage key={message.id} message={message} onOpenTrace={onOpenTrace} />
           ))}
           {error && (
             <div

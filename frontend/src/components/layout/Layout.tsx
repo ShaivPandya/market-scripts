@@ -6,6 +6,8 @@ import { Sidebar, getRouteLabel } from "./Sidebar"
 import { SidebarSearchDialog } from "./SidebarSearchDialog"
 import { AgentChat } from "../agent/AgentChat"
 import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
+import { DecisionTraceProvider } from "@/contexts/DecisionTraceContext"
+import { DecisionTraceDrawer } from "@/components/shared/DecisionTraceDrawer"
 import { fetchApprovalSummary, type ApprovalRecord } from "@/lib/api"
 import { approvalSummaryQueryKey } from "@/lib/approvalQueries"
 import { STAN_OPEN_EVENT, type StanOpenDetail } from "@/lib/stanLauncher"
@@ -20,14 +22,17 @@ export function Layout() {
 
   return (
     <ScreenContextProvider>
-      <LayoutInner
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-        agentOpen={agentOpen}
-        setAgentOpen={setAgentOpen}
-        pageSearchOpen={pageSearchOpen}
-        setPageSearchOpen={setPageSearchOpen}
-      />
+      <DecisionTraceProvider>
+        <LayoutInner
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+          agentOpen={agentOpen}
+          setAgentOpen={setAgentOpen}
+          pageSearchOpen={pageSearchOpen}
+          setPageSearchOpen={setPageSearchOpen}
+        />
+        <DecisionTraceDrawer />
+      </DecisionTraceProvider>
     </ScreenContextProvider>
   )
 }

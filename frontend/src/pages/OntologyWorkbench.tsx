@@ -18,13 +18,13 @@ import {
   type OntologyEvidence,
   type OntologyResponse,
   type OntologyRunSummary,
-  type ProvenanceSelector,
 } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { ActionButton, SelectInput, SegmentedControl, TextInput, Toggle } from "@/components/shared/FormControls"
-import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
 import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 
 type Intent = "auto" | "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
@@ -367,7 +367,7 @@ export function OntologyWorkbench() {
   const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [elapsed, setElapsed] = useState(0)
-  const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const { openProvenanceTrace } = useDecisionTrace()
   const runsListId = "ontology-run-id-suggestions"
 
   const {
@@ -722,14 +722,10 @@ export function OntologyWorkbench() {
 
           {data.run_id && (
             <div className="mb-6 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setProvenanceSelector({ ontology_run_id: String(data.run_id) })}
-                className="theme-button-secondary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium"
-              >
-                <GitBranch size={14} />
-                Lineage
-              </button>
+              <TraceTriggerButton
+                label="Trace"
+                onClick={() => openProvenanceTrace({ ontology_run_id: String(data.run_id) }, "Ontology run lineage")}
+              />
             </div>
           )}
 
@@ -781,13 +777,6 @@ export function OntologyWorkbench() {
           </section>
         </>
       )}
-      <ProvenanceTraceDialog
-        open={provenanceSelector !== null}
-        onOpenChange={open => {
-          if (!open) setProvenanceSelector(null)
-        }}
-        selector={provenanceSelector}
-      />
     </div>
   )
 }

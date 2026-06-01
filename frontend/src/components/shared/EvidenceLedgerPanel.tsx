@@ -1,7 +1,7 @@
-import { useState } from "react"
 import { GitBranch } from "lucide-react"
 
-import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
+import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import type { EvidenceLedgerSummary, ProvenanceSelector } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -28,7 +28,7 @@ function EvidenceBundleList({
 }: {
   title: string
   items: EvidenceLedgerSummary["claims"][number]["supporting_evidence"]
-  onTrace: (selector: ProvenanceSelector) => void
+  onTrace: (selector: ProvenanceSelector, label?: string) => void
 }) {
   if (!items.length) return null
   return (
@@ -53,11 +53,11 @@ function EvidenceBundleList({
                 <button
                   type="button"
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-app px-2 py-1 text-xs text-muted hover:text-app"
-                  onClick={() => onTrace({ source_record_id: sourceRecordId })}
+                  onClick={() => onTrace({ source_record_id: sourceRecordId }, summary)}
                   title="Trace source lineage"
                 >
                   <GitBranch className="h-3.5 w-3.5" />
-                  Lineage
+                  Trace
                 </button>
               )}
             </div>
@@ -95,7 +95,16 @@ function EvidenceBundleList({
 }
 
 export function EvidenceLedgerPanel({ ledger, ticker }: { ledger: EvidenceLedgerSummary | null | undefined; ticker: string }) {
-  const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const { openDecisionTrace } = useDecisionTrace()
+
+  function handleTrace(selector: ProvenanceSelector, label?: string) {
+    const sourceRecordId = String(selector.source_record_id ?? "").trim()
+    if (!sourceRecordId) return
+    openDecisionTrace({
+      kind: "source_record",
+      record: { source_record_id: sourceRecordId, label },
+    })
+  }
 
   if (!ledger) {
     return <p className="text-sm text-muted">Evidence ledger unavailable for {ticker}.</p>
@@ -153,12 +162,12 @@ export function EvidenceLedgerPanel({ ledger, ticker }: { ledger: EvidenceLedger
                 <EvidenceBundleList
                   title="Supporting evidence"
                   items={claim.supporting_evidence}
-                  onTrace={setProvenanceSelector}
+                  onTrace={handleTrace}
                 />
                 <EvidenceBundleList
                   title="Disconfirming evidence"
                   items={claim.disconfirming_evidence}
-                  onTrace={setProvenanceSelector}
+                  onTrace={handleTrace}
                 />
               </div>
             </section>
@@ -178,17 +187,33 @@ export function EvidenceLedgerPanel({ ledger, ticker }: { ledger: EvidenceLedger
                           {recommendation.status}
                         </span>
                       )}
+                      {recommendation.recommendation_id && (
+                        <TraceTriggerButton
+                          compact
+                          label="Trace recommendation evidence"
+                          onClick={() =>
+                            openDecisionTrace({
+                              kind: "recommendation",
+                              record: {
+                                id: recommendation.recommendation_id,
+                                action: recommendation.action,
+                                as_of: recommendation.as_of,
+                              },
+                            })
+                          }
+                        />
+                      )}
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
                       <EvidenceBundleList
                         title="Supporting evidence"
                         items={recommendation.supporting_evidence}
-                        onTrace={setProvenanceSelector}
+                        onTrace={handleTrace}
                       />
                       <EvidenceBundleList
                         title="Disconfirming evidence"
                         items={recommendation.disconfirming_evidence}
-                        onTrace={setProvenanceSelector}
+                        onTrace={handleTrace}
                       />
                     </div>
                   </div>
@@ -198,14 +223,6 @@ export function EvidenceLedgerPanel({ ledger, ticker }: { ledger: EvidenceLedger
           )}
         </div>
       )}
-
-      <ProvenanceTraceDialog
-        open={provenanceSelector !== null}
-        onOpenChange={open => {
-          if (!open) setProvenanceSelector(null)
-        }}
-        selector={provenanceSelector}
-      />
     </div>
   )
 }

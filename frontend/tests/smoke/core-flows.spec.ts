@@ -115,7 +115,7 @@ test("renders OpportunityScout queue and stages dismiss feedback", async ({ page
   await expect(page.getByText("Kill condition monitor hit: Margin compression threshold")).toBeVisible()
   await expect(page.getByText("Why now:")).toBeVisible()
   await expect(page.getByText("Missing:")).toBeVisible()
-  await expect(page.getByRole("link", { name: "NVDA" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "NVDA" }).first()).toBeVisible()
 
   await page.getByRole("button", { name: "Dismiss NVDA" }).click()
   await expect(page.getByText("Dismiss staged. Approval is required before app state changes.")).toBeVisible()
@@ -240,6 +240,37 @@ test("renders position dossier evidence ledger tab", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Evidence Ledger" })).toBeVisible()
   await expect(page.getByText("AI capex remains durable")).toBeVisible()
   await expect(page.getByText("Azure growth re-accelerated in latest quarter")).toBeVisible()
-  await expect(page.getByRole("button", { name: "Lineage" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Trace", exact: true }).first()).toBeVisible()
   await expect(page.getByRole("link", { name: "Weekly report" })).toBeVisible()
+})
+
+test("opens unified decision trace drawer from workspace approval", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await page.getByRole("button", { name: "View approval smoke-approval trace" }).click()
+  const drawer = page.getByRole("dialog", { name: "Decision Trace" })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole("heading", { name: "Blockers" })).toBeVisible()
+  await expect(drawer.getByRole("heading", { name: "Gates" })).toBeVisible()
+  await expect(drawer.getByRole("heading", { name: "Provenance" })).toBeVisible()
+})
+
+test("opens decision trace drawer from OpportunityScout and dossier evidence", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await page.getByRole("heading", { name: "OpportunityScout" }).locator("xpath=ancestor::section[1]").getByRole("button", { name: "Trace", exact: true }).click()
+  const scoutDrawer = page.getByRole("dialog", { name: "Decision Trace" })
+  await expect(scoutDrawer).toBeVisible()
+  await expect(scoutDrawer.getByRole("heading", { name: "NVDA" })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(scoutDrawer).toBeHidden()
+
+  await page.goto("/dossier/MSFT")
+  await page.getByRole("button", { name: "Evidence", exact: true }).click()
+  await page.getByRole("button", { name: "Trace", exact: true }).first().click()
+  const evidenceDrawer = page.getByRole("dialog", { name: "Decision Trace" })
+  await expect(evidenceDrawer).toBeVisible()
+  await expect(evidenceDrawer.getByRole("heading", { name: "Provenance" })).toBeVisible()
 })

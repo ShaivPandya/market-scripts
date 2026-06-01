@@ -4,6 +4,7 @@ import { Eye, FlaskConical, Radar, Search, Sparkles, X } from "lucide-react"
 
 import { StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
 import { DecisionStateBadge } from "@/components/shared/DecisionStateBadge"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
 import {
   createMonitorForOpportunityCandidate,
   dismissOpportunityCandidate,
@@ -23,6 +24,7 @@ function formatTime(iso: string | null | undefined): string {
 interface OpportunityScoutQueuePanelProps {
   items: OpportunityCandidateRecord[]
   onUpdated?: () => void
+  onOpenTrace?: (candidate: OpportunityCandidateRecord) => void
 }
 
 type FeedbackResult = {
@@ -30,7 +32,7 @@ type FeedbackResult = {
   approval?: { approval_id?: string | number; decision_state?: string; effect_scope?: string; review_route?: string }
 }
 
-export function OpportunityScoutQueuePanel({ items, onUpdated }: OpportunityScoutQueuePanelProps) {
+export function OpportunityScoutQueuePanel({ items, onUpdated, onOpenTrace }: OpportunityScoutQueuePanelProps) {
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Record<string, FeedbackResult>>({})
 
@@ -112,6 +114,12 @@ export function OpportunityScoutQueuePanel({ items, onUpdated }: OpportunityScou
               )}
 
               <div className="mt-3 flex flex-wrap gap-2">
+                {onOpenTrace && (
+                  <TraceTriggerButton
+                    label="Trace"
+                    onClick={() => onOpenTrace(candidate)}
+                  />
+                )}
                 <button
                   type="button"
                   disabled={isPending}
@@ -157,7 +165,19 @@ export function OpportunityScoutQueuePanel({ items, onUpdated }: OpportunityScou
 
               {result && (
                 <div className="mt-2">
-                  <StagedProposalNotice proposal={result.approval} showReviewLink>
+                  <StagedProposalNotice
+                    proposal={
+                      result.approval?.approval_id
+                        ? {
+                            approval_id: String(result.approval.approval_id),
+                            decision_state: result.approval.decision_state,
+                            effect_scope: result.approval.effect_scope,
+                            review_route: result.approval.review_route,
+                          }
+                        : null
+                    }
+                    showReviewLink
+                  >
                     {result.label}. Approval is required before app state changes.
                   </StagedProposalNotice>
                 </div>

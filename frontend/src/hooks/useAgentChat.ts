@@ -20,6 +20,7 @@ import {
   writeSessionSnapshot,
   type ActiveAgentJobApiRow,
 } from "./agentChatSessionStore"
+import { extractAgentTraceSnapshot } from "@/lib/decisionTrace"
 
 export type {
   ActiveAgentJob,
@@ -821,6 +822,7 @@ export function useAgentChat() {
                   ? {
                       ...m,
                       toolCalls: mergeToolCalls(m.toolCalls, toolCallsFromDonePayload(data)),
+                      traceSnapshot: extractAgentTraceSnapshot(data),
                       isStreaming: false,
                       statusText: undefined,
                     }
