@@ -858,7 +858,14 @@ def _select_tool_names(user_text: str) -> list[str]:
             if name in _tool_names() and name not in selected:
                 selected.append(name)
 
-    if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
+    portfolio_terms = r"(?:my|portfolio|holding|holdings|position|positions)"
+    portfolio_risk_rx = rf"\b{portfolio_terms}\b.{{0,80}}\brisks?\b|\brisks?\b.{{0,80}}\b{portfolio_terms}\b"
+    if re.search(
+        r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure)\b", text
+    ) or re.search(
+        portfolio_risk_rx,
+        text,
+    ):
         add("get_portfolio", "get_portfolio_risk", "query_ontology")
     if re.search(r"\brecommendation\b.*\brisk\b|\brisk\b.*\brecommendation\b", text):
         add("get_recommendation_risk", "get_portfolio_risk")

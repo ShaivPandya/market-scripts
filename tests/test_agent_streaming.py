@@ -1007,12 +1007,26 @@ def test_agent_chat_normal_path_never_finalizes_blank(auth_client, monkeypatch):
     assert resp.status_code == 200
     parsed = _parse_sse(resp.text)
     fallback_delta = [
-        p.get("text")
-        for e, p in parsed
-        if e == "delta" and p.get("text") == agent_router.EMPTY_AGENT_RESPONSE_TEXT
+        p.get("text") for e, p in parsed if e == "delta" and p.get("text") == agent_router.EMPTY_AGENT_RESPONSE_TEXT
     ]
     assert fallback_delta
     assert finalized[0]["content"] == agent_router.EMPTY_AGENT_RESPONSE_TEXT
+
+
+def test_liquidity_risk_assets_prompt_does_not_route_as_portfolio_risk():
+    tools = agent_router._select_tool_names("How is global liquidity affecting risk assets?")
+
+    assert "get_liquidity" in tools
+    assert "get_signal_aggregator" in tools
+    assert "get_portfolio" not in tools
+    assert "get_portfolio_risk" not in tools
+
+
+def test_portfolio_risk_prompt_still_routes_to_portfolio_risk():
+    tools = agent_router._select_tool_names("What are my portfolio risks?")
+
+    assert "get_portfolio" in tools
+    assert "get_portfolio_risk" in tools
 
 
 def test_agent_chat_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
