@@ -171,6 +171,40 @@ def test_source_health_macro_cadence_windows_do_not_use_wall_clock_sla():
     assert sources["economic_growth:current:v1"]["status"] == "ok"
 
 
+def test_source_health_prefers_newer_snapshot_over_stale_embedded_risk_status():
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+    portfolio_risk = _portfolio_risk(now)
+    portfolio_risk["source_status"]["liquidity"].update(
+        {
+            "status": "stale",
+            "quality": "degraded",
+            "as_of": "2026-05-20",
+            "fetched_at": "2026-05-20T20:00:00+00:00",
+            "freshness": {
+                "fresh": False,
+                "observed_as_of_date": "2026-05-20",
+                "oldest_acceptable_date": "2026-05-22",
+                "reason": "snapshot as-of 2026-05-20 is older than freshness window 2026-05-22",
+            },
+            "detail": "snapshot as-of 2026-05-20 is older than freshness window 2026-05-22",
+        }
+    )
+
+    payload = build_workspace_source_health(
+        now=now,
+        portfolio_risk=portfolio_risk,
+        snapshot_records=[
+            _snapshot("liquidity:current:v1", fetched_at=now - timedelta(hours=1), as_of_date="2026-05-27"),
+            _snapshot("signal_aggregator:current:v1", fetched_at=now - timedelta(hours=1), as_of_date="2026-05-29"),
+        ],
+    )
+
+    source = _sources(payload)["liquidity:current:v1"]
+    assert source["status"] == "ok"
+    assert source["stale"] is False
+    assert source["observed_as_of_date"] == "2026-05-27"
+
+
 def test_source_health_missing_required_source_does_not_throw():
     now = datetime(2026, 5, 14, 18, 0)
     payload = build_workspace_source_health(now=now, snapshot_records=[])

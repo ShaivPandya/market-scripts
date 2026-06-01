@@ -28,7 +28,7 @@ from ontology.sources.reliability import (
     tier_counts,
 )
 from ontology.sources.source_registry import source_registry_metadata, source_registry_metadata_for_snapshot
-from utils.market_freshness import SourceFreshnessState, evaluate_source_freshness
+from utils.market_freshness import SourceFreshnessState, evaluate_source_freshness, parse_market_date
 
 _SNAPSHOT_SOURCE_NAMES = {
     SNAPSHOT_MARKET_BREADTH: "market_breadth",
@@ -257,6 +257,7 @@ def _source_from_snapshot(record: SnapshotRecord, *, required: bool, now: dateti
         "calendar_id": freshness.get("calendar_id"),
         "freshness_reason": freshness.get("reason"),
         "payload_hash": record.payload_hash,
+        "record_source": "snapshot_store",
         "source_registry": registry,
     }
 
@@ -295,6 +296,7 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
         "observed_as_of_date": freshness.get("observed_as_of_date") if freshness else None,
         "calendar_id": freshness.get("calendar_id") if freshness else None,
         "freshness_reason": freshness.get("reason") if freshness else None,
+        "record_source": "embedded_status",
         "source_registry": registry,
     }
 
@@ -302,6 +304,20 @@ def _source_from_risk_status(module: str, state: dict[str, Any], *, required: bo
 def _merge_source(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
     if existing is None:
         return incoming
+    existing_date = _source_observed_date(existing)
+    incoming_date = _source_observed_date(incoming)
+    existing_is_snapshot = existing.get("record_source") == "snapshot_store"
+    incoming_is_snapshot = incoming.get("record_source") == "snapshot_store"
+    if (
+        existing_date is not None
+        and incoming_date is not None
+        and existing_date != incoming_date
+        and existing_is_snapshot != incoming_is_snapshot
+    ):
+        winner = existing if existing_is_snapshot else incoming
+        loser = incoming if winner is existing else existing
+        return _merge_preserving_source(winner, loser)
+
     out = dict(existing)
     out["required"] = bool(existing.get("required")) or bool(incoming.get("required"))
     status = _worse_status(str(existing.get("status") or "missing"), str(incoming.get("status") or "missing"))
@@ -325,6 +341,29 @@ def _merge_source(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> 
     out["domain"] = existing.get("domain") or incoming.get("domain")
     out["source_name"] = incoming.get("source_name") or existing.get("source_name")
     return out
+
+
+def _merge_preserving_source(winner: dict[str, Any], loser: dict[str, Any]) -> dict[str, Any]:
+    out = dict(winner)
+    out["required"] = bool(winner.get("required")) or bool(loser.get("required"))
+    for key in ("domain", "source_name", "snapshot_key", "source_registry"):
+        if out.get(key) in (None, "") and loser.get(key) not in (None, ""):
+            out[key] = loser[key]
+    out["quality_state"] = _quality_state(str(out.get("status") or "missing"), required=bool(out["required"]))
+    return out
+
+
+def _source_observed_date(source: dict[str, Any]) -> Any:
+    for key in ("observed_as_of_date", "as_of", "freshness_timestamp", "fetched_at"):
+        parsed = parse_market_date(source.get(key))
+        if parsed is not None:
+            return parsed
+    freshness = source.get("freshness")
+    if isinstance(freshness, dict):
+        parsed = parse_market_date(freshness.get("observed_as_of_date"))
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _sources_from_regime_data(
