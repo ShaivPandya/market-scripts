@@ -27,7 +27,10 @@ def test_compare_reports_detects_new_and_fixed_failures():
     current = {
         "generated_at": "2026-01-02T00:00:00+00:00",
         "cases": [
-            {"case_id": "pass_to_fail", "deterministic": {"passed": False, "checks": [{"name": "recommended_action", "passed": False}]}},
+            {
+                "case_id": "pass_to_fail",
+                "deterministic": {"passed": False, "checks": [{"name": "recommended_action", "passed": False}]},
+            },
             {"case_id": "fail_to_pass", "deterministic": {"passed": True, "checks": []}},
             {"case_id": "stable_pass", "deterministic": {"passed": True, "checks": []}},
             {"case_id": "new_case", "deterministic": {"passed": True, "checks": []}},

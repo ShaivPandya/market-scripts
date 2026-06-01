@@ -81,7 +81,9 @@ def _context_pack_blocks_graduation(
         )
         is_complete = False
 
-    blocking_codes = [str(item) for item in context_pack.get("blocking_reason_codes") or dq.get("blocking_reason_codes") or []]
+    blocking_codes = [
+        str(item) for item in context_pack.get("blocking_reason_codes") or dq.get("blocking_reason_codes") or []
+    ]
     if blocking_codes:
         reasons.append(
             _reason(
@@ -190,9 +192,7 @@ def apply_opportunity_candidate_gates(
         )
         final_action = "research"
 
-    combined_missing_inputs = list(
-        dict.fromkeys([*(candidate.missing_inputs or []), *pack_missing_inputs])
-    )
+    combined_missing_inputs = list(dict.fromkeys([*(candidate.missing_inputs or []), *pack_missing_inputs]))
     if final_action == GRADUATE_ACTION and original_action == GRADUATE_ACTION and len(combined_missing_inputs) >= 3:
         if not any(reason.code == "TOO_MANY_MISSING_INPUTS" for reason in reasons):
             reasons.append(

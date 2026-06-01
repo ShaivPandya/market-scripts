@@ -125,11 +125,7 @@ def filter_cases(
 ) -> list[_CaseLike]:
     filtered = cases
     if corpus_tags:
-        filtered = [
-            case
-            for case in filtered
-            if corpus_tags.intersection(case_corpus_tags(case.data))
-        ]
+        filtered = [case for case in filtered if corpus_tags.intersection(case_corpus_tags(case.data))]
     if failure_type:
         filtered = [case for case in filtered if case_failure_type(case.data) == failure_type]
     if tool_pack:

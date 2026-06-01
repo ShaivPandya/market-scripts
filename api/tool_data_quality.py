@@ -156,9 +156,9 @@ def normalize_tool_quality(tool_result: dict[str, Any]) -> dict[str, Any]:
     tool_status = str(tool_result.get("status") or "ok").strip().lower()
     result = _as_dict(tool_result.get("result"))
     meta = _as_dict(result.get("_meta"))
-    reliability_tier = _first_str(meta.get("reliability_tier"), result.get("reliability_tier")) or TOOL_RELIABILITY_TIERS.get(
-        name, "standard"
-    )
+    reliability_tier = _first_str(
+        meta.get("reliability_tier"), result.get("reliability_tier")
+    ) or TOOL_RELIABILITY_TIERS.get(name, "standard")
     source_status = _source_status(result, meta, tool_status)
     gate_action = gate_action_for_tier(reliability_tier, source_status)
     if tool_status in BLOCKING_TOOL_STATUSES and reliability_tier == "critical":
@@ -213,9 +213,7 @@ def aggregate_tool_data_quality(tool_results: list[dict[str, Any]]) -> dict[str,
     ]
 
     price_states = [
-        str(item.get("price_confirmation"))
-        for item in summaries
-        if item.get("price_confirmation") is not None
+        str(item.get("price_confirmation")) for item in summaries if item.get("price_confirmation") is not None
     ]
     if any(state in {"blocked", "missing"} for state in price_states):
         price_confirmation_status = "blocked" if "blocked" in price_states else "missing"
@@ -229,7 +227,10 @@ def aggregate_tool_data_quality(tool_results: list[dict[str, Any]]) -> dict[str,
         price_confirmation_status = "missing"
 
     if blockers:
-        if any(item.get("source_status") in {"failed", "missing"} or item.get("tool_status") in {"blocked", "error"} for item in blockers):
+        if any(
+            item.get("source_status") in {"failed", "missing"} or item.get("tool_status") in {"blocked", "error"}
+            for item in blockers
+        ):
             critical_data_quality = "failed"
         else:
             critical_data_quality = "stale"

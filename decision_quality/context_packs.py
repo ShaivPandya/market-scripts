@@ -411,7 +411,9 @@ def assess_context_pack(
         str(item.get("name")): item for item in tool_results if isinstance(item, dict) and item.get("name")
     }
     required_tools = list(pack.required_tools)
-    satisfied_tools = [name for name in required_tools if name in results_by_name and _tool_is_satisfied(results_by_name[name])]
+    satisfied_tools = [
+        name for name in required_tools if name in results_by_name and _tool_is_satisfied(results_by_name[name])
+    ]
     missing_tools = [name for name in required_tools if name not in satisfied_tools]
 
     missing_inputs: list[str] = []
