@@ -164,14 +164,6 @@ def _stage_review_action(hit_payload: dict[str, Any], *, source_id: str) -> dict
             "ticker": hit_payload.get("ticker"),
         },
     }
-    from decision_quality.proactive_alert_gate import apply_proactive_alert_gate
-
-    payload, _gate_result = apply_proactive_alert_gate(
-        "create_action_item",
-        payload,
-        source_type=context.source_type,
-        alert_context=payload.get("alert_context"),
-    )
     return service.propose_action(
         "create_action_item",
         payload,

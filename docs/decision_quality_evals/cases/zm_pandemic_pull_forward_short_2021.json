@@ -1,0 +1,273 @@
+{
+  "id": "zm_pandemic_pull_forward_short_2021",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2021-08-13",
+  "user_question": "Using the ZM setup as of the August 13, 2021 close, should this new high-conviction short have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json",
+      "sha256": "656eeafac690525d41b464a91002659f7403938eb44e7e4ddad0a74b8f538292",
+      "description": "User-provided Zoom short research distilled to point-in-time decision facts, with post-August 13 outcome material excluded.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json",
+      "sha256": "089afa6b6582ec7b8888aeff459277814bf9e724b8188324a11f0ece16aeecba",
+      "description": "ZM price-action snapshot through the 2021-08-13 close: close, moving averages, ROC, relative-performance context, drawdown from high, and short-interest notes.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/zm_portfolio_context_2021-08-13.json",
+      "sha256": "200427928b89bbe3a02aa8fb7308c7bf910c8e5ff643217abfafbd968730672b",
+      "description": "Portfolio context: ZM was a new high-conviction short with a 3% starter-size frame and risk controls.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/zm_initiation_notes_2021-08-13.json",
+      "sha256": "08ad46ee52b7d49b431f89edde72f230c532661ef4c209ba5afa834dd5b08867",
+      "description": "Initiation rationale: guidance-implied revenue plateau, Microsoft Teams competition, reopening risk, Five9 concerns, and weak relative price action.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The decision date is 2021-08-13 after the market close.",
+    "The decision type is a new high-conviction short idea.",
+    "The user specified the recommended action should be short.",
+    "The source markdown contains later outcome-confirming material; this case excludes post-2021-08-13 results, Five9 termination, later stock decline, and later analyst revisions.",
+    "The research file's S-4/proxy references appear to include post-decision filings, so the case uses the pre-decision July 2021 acquisition announcement and merger-agreement mechanics instead.",
+    "Price-action metrics were generated from historical daily market data and should be replaced with a stable vendor snapshot before approval.",
+    "Portfolio context assumes a 3% gross short starter position because no actual portfolio book, borrow, or option-chain input was provided."
+  ],
+  "gold_output": {
+    "simple_thesis": "Short ZM because the market was still valuing Zoom as a durable pandemic-era hypergrowth platform even though management's own FY22 guide implied sequential revenue flattening, Microsoft Teams was commoditizing video through bundled enterprise distribution, reopening threatened low-end demand, and the $14.7B all-stock Five9 deal added defensive M&A and integration risk.",
+    "opportunity_type": "unsustainable_process",
+    "embedded_macro_exposure": "Short pandemic-pull-forward beneficiaries, high-growth software duration, expensive SaaS multiples, pure-play video communications, and return-to-office normalization; partially long bundled mega-cap enterprise software competition through the Microsoft Teams threat.",
+    "mispricing": {
+      "consensus_view": "Zoom was a category-defining communications platform whose pandemic adoption, brand, profitability, enterprise NRR, Zoom Phone expansion, hybrid-work durability, and Five9 TAM expansion could sustain premium growth and valuation.",
+      "variant_view": "The market was extrapolating a one-time pandemic demand surge. Core Meetings growth was likely normalizing, low-end subscriptions were vulnerable as work and school reopened, Microsoft Teams was turning video into a bundled feature, and Five9 looked like a large all-stock attempt to buy adjacent growth before core deceleration became visible.",
+      "pricing_evidence": "ZM closed at $355.24, implying roughly $108B of equity value and about 26x guided FY22 revenue after netting Q1 cash and marketable securities, while the Q1 release's FY22 guide implied only about $1.01B of quarterly revenue for the remaining three quarters. The stock was also below the 200D, 40W, and 10M moving averages and about 37.5% below its 2020 high while broad technology benchmarks were strong.",
+      "why_consensus_is_wrong": "Consensus overemphasized headline 191% YoY Q1 growth, trailing NRR above 130%, and hybrid-work narratives, while underweighting the forward guidance math, the lagging nature of trailing NRR, the Microsoft bundling threat, the churn risk in lower-end cohorts, and the defensive signal embedded in a large all-stock acquisition."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "Upcoming Q2 FY22 earnings and guidance, continued market digestion of the Five9 acquisition, and post-Labor Day reopening/return-to-office normalization.",
+      "expected_timeframe": "Immediate initiation on 2021-08-13, with validation over the next one to two quarters.",
+      "why_now": "The setup was actionable before the next earnings report because the June 2021 guide already implied a sharp sequential slowdown, Microsoft had just reported massive Teams scale, the July Five9 deal had shifted the narrative toward diversification and integration risk, and ZM price action showed relative weakness versus Nasdaq/software peers.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json: Q1 results, Q2/FY22 guidance, Five9 deal, Teams competition, valuation context, and excluded future information",
+        "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json: close, moving averages, ROC, relative performance, drawdown from high, and short-interest notes",
+        "docs/decision_quality_evals/inputs/zm_initiation_notes_2021-08-13.json: high-conviction short framing, catalysts, evidence for and against, and risk controls"
+      ]
+    },
+    "invalidation": {
+      "observable": "The expected Zoom deceleration fails to appear, or the market begins treating Zoom as a durable enterprise platform again despite the short thesis.",
+      "metric_or_event": "Q2/Q3 FY22 reported revenue and guidance, NRR/customer growth, Zoom Phone/platform traction, Five9 deal reception and regulatory progress, Microsoft/competitive commentary, return-to-office disruption, borrow/option conditions, and price behavior around thesis-relevant news.",
+      "threshold": "Force review or cover if Q2 or Q3 revenue grows more than 10% sequentially, management guides to sustained revenue materially above the roughly $1.0B quarterly plateau, NRR stays above 130% while enterprise customer growth offsets low-end churn, Zoom Phone or platform revenue becomes material faster than expected, the Five9 deal is credibly reframed as near-term accretive platform expansion, or ZM sustains closes above $400 on heavy volume after thesis-relevant news.",
+      "timeframe": "Next one to two quarters after 2021-08-13, with first hard review at the upcoming Q2 FY22 earnings report.",
+      "implication": "The short thesis is wrong or early: Zoom's growth durability and platform optionality are better than the guidance math implied, and the short should be reduced or covered rather than pressed."
+    },
+    "evidence_for": [
+      {
+        "claim": "Management guidance implied a major sequential growth slowdown.",
+        "support": "Q1 FY22 revenue was $956.2M, Q2 guidance was $985.0M-$990.0M, and full-year FY22 guidance was $3.975B-$3.990B. Subtracting Q1 leaves roughly $3.02B for Q2-Q4, or about $1.01B per quarter.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Valuation still required durable hypergrowth.",
+        "support": "At the $355.24 close and roughly 305.4M diluted shares from Q1, ZM's equity value was about $108B, or about 26x guided FY22 revenue after netting $4.7B of cash and marketable securities.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json",
+          "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Microsoft Teams had reached scale large enough to pressure Zoom's standalone economics.",
+        "support": "Contemporaneous reporting cited Microsoft Teams at about 250M monthly active users by late July 2021, and the research file cited Teams Phone at about 80M monthly active users.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "The Five9 deal introduced defensive-growth and execution risk.",
+        "support": "Zoom agreed to buy Five9 for approximately $14.7B in stock, issuing 0.5533 Zoom shares per Five9 share and taking on a transaction expected to close in the first half of 2022 subject to approvals.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Zoom itself acknowledged reopening and demand-normalization risk.",
+        "support": "Zoom's Q1 release identified the tapering of COVID effects, vaccine availability, and users returning to work or school as factors that could affect demand and results.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Price action supported a short despite a strong broader tape.",
+        "support": "ZM was below its 200D, 40W, and 10M moving averages, had negative 1-month ROC of -0.44%, was about 37.5% below its 2020 high, and underperformed Nasdaq, IGV, WCLD, and MSFT over the prior month.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "The short did not appear crowded.",
+        "support": "The research file cited about 6.66M shares short, approximately 2.52% of float, and 1.12 days to cover.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Zoom remained highly profitable and cash generative.",
+        "support": "Q1 FY22 free cash flow was $454.2M, non-GAAP operating margin was 41.9%, and cash plus marketable securities were $4.7B.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Enterprise customer metrics were still strong.",
+        "support": "Customers with more than 10 employees grew 87% YoY, $100K-plus customers grew 160% YoY, and trailing-12-month NRR for customers with more than 10 employees remained above 130%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Hybrid work could be a durable tailwind rather than a temporary pandemic effect.",
+        "support": "Zoom management framed work as a flexible hybrid environment, and the research acknowledged that Delta-variant uncertainty could delay reopening and preserve remote-work demand.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json",
+          "docs/decision_quality_evals/inputs/zm_initiation_notes_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Zoom Phone, Zoom Rooms, Zoom Events, and Five9 could broaden the platform.",
+        "support": "The Five9 announcement framed the acquisition as an expansion into cloud contact center software and a way to enhance Zoom's enterprise platform and customer-engagement opportunity.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_source_case_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "The price action was not a clean all-timeframe breakdown.",
+        "support": "ZM remained above the 100D, 150D, and 20M moving averages, with positive 3-month ROC of 15.38% and 12-month ROC of 43.68%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_price_action_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Upcoming earnings created short gap risk.",
+        "support": "The short was intended before Q2 FY22 earnings, so an upside surprise or constructive guide could cause a sharp squeeze even if the position was not structurally crowded.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_initiation_notes_2021-08-13.json"
+        ]
+      },
+      {
+        "claim": "Borrow and option-chain inputs were incomplete.",
+        "support": "The research file cited low short interest, but exact borrow cost, borrow availability, implied volatility, and option skew were not selected as stable local inputs.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/zm_portfolio_context_2021-08-13.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "ZM closed at $355.24 on 2021-08-13 on about 1.75M shares. It was above the 100D SMA of $344.80, barely above the 150D SMA of $355.21, and above the 20M SMA of $288.63, but below the 200D SMA of $369.35, 40W SMA of $366.27, and 10M SMA of $375.98. ROC was -0.44% over one month, +15.38% over three months, and +43.68% over twelve months; the stock was about 37.5% below its October 2020 high while Nasdaq was near record highs.",
+      "interpretation": "For a short, this was sufficient but not perfect price confirmation. ZM was acting like a broken pandemic leader and lagging software/cloud peers over the prior month, but it had not yet collapsed across every timeframe. That supports a high-conviction but risk-controlled starter short rather than maximum sizing before earnings.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Stable vendor price snapshot to replace locally generated yfinance-derived metrics before approval",
+        "Official borrow availability and borrow cost as of 2021-08-13",
+        "Options implied volatility and skew for post-earnings expiries",
+        "Contemporaneous sell-side consensus estimates and rating distribution",
+        "Exact current portfolio exposure to software, pandemic winners, and short-book beta"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear mispricing, near-term earnings catalyst, identifiable competitive and reopening pressure, a weak enough price-action backdrop, and low apparent crowdedness; incomplete borrow/options/portfolio inputs should cap sizing rather than block the short.",
+      "missing_inputs": [
+        "Exact borrow availability and borrow cost",
+        "Options implied volatility and skew",
+        "Exact executed initial size",
+        "Current software, high-growth SaaS, and pandemic-winner exposure",
+        "Full short-book concentration and gross/net exposure",
+        "Contemporaneous consensus estimates and rating distribution",
+        "Detailed customer-cohort mix below the greater-than-10-employee metric"
+      ]
+    },
+    "recommended_action": "short",
+    "expression": {
+      "primary": "Short ZM common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [
+        "Use put spreads expiring after Q2 earnings if the portfolio requires defined risk through the catalyst",
+        "Pair short ZM against long MSFT to isolate standalone video weakness versus bundled enterprise software strength",
+        "Use a smaller common-equity short plus puts if borrow or option skew is unfavorable"
+      ],
+      "follow_on": "Press only after Q2/Q3 results or guidance confirm sequential deceleration and the stock fails to reclaim the 200D/40W/10M trend cluster."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": -0.03,
+      "upgrade_condition": "Upgrade toward 5 only if Q2/Q3 revenue confirms the roughly $1B quarterly plateau, NRR or customer commentary weakens, Five9 is received as defensive/dilutive, and price action remains below or rejects the 200D/40W/10M cluster."
+    },
+    "confidence": 0.8,
+    "confidence_reason": "High but not maximum confidence because the guidance math, valuation, Teams competition, Five9 signal, and relative weakness aligned; capped because Zoom was profitable, cash rich, still had strong enterprise metrics, and the trade faced earnings gap risk plus missing borrow/options inputs.",
+    "sizing_context": {
+      "starting_size": "New high-conviction short with a 3% gross target weight; do not size as a maximum short before earnings without borrow and option-chain confirmation.",
+      "add_conditions": "Add toward 4.5% only if Q2/Q3 results confirm sequential revenue deceleration, enterprise metrics begin to roll over, Five9 concerns persist, and ZM remains below or rejects the 200D/40W/10M trend cluster.",
+      "liquidity_constraints": "ZM was liquid, but exact ADV, borrow availability, borrow cost, and option liquidity were not selected as stable local inputs; final size should be constrained until those are checked.",
+      "portfolio_constraints": "Size against existing software duration, pandemic-winner, high-growth SaaS, and total short-book exposure. Avoid doubling up with other high-beta software shorts unless gross/net risk allows it.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": -0.03,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initiate a new ZM common-equity short after the 2021-08-13 close, with any add dependent on earnings and price confirmation."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If Zoom reports or guides to the expected sequential plateau and the stock weakens, press the short only after confirming borrow and liquidity, then look for adjacent pandemic-pull-forward and expensive SaaS names with similarly stale growth expectations.",
+      "if_wrong": "If revenue reaccelerates, NRR/customer metrics stay strong enough to offset low-end churn, Five9 is credibly reframed as accretive platform expansion, or the stock sustains closes above $400 on volume, cover or reduce rather than treating the move as only a squeeze.",
+      "next_review_trigger": "Review at the upcoming Q2 FY22 earnings report, any Five9 regulatory/shareholder update, material Microsoft Teams or competitive disclosure, borrow-cost deterioration, options-skew change, or sustained ZM close above $400 or below the 200D/40W/10M trend cluster."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Built from the user-provided Zoom deep research markdown. The gold output preserves the high-conviction short recommendation while correcting overconfident language, excluding post-decision material, and treating borrow/options/portfolio inputs as sizing constraints.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
+}

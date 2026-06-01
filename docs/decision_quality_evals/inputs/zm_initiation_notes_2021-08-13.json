@@ -1,0 +1,51 @@
+{
+  "ticker": "ZM",
+  "as_of_date": "2021-08-13",
+  "decision_context": "New high-conviction short initiation after market close.",
+  "recommended_action_constraint": "short",
+  "human_initiation_rationale": "The short was initiated because Zoom's reported Q1 strength and high valuation looked backward-looking, while FY22 guidance implied roughly flat sequential revenue, Microsoft Teams had reached huge bundled scale, reopening threatened pandemic-pulled-forward demand, and the Five9 deal looked like a large, all-stock, integration-heavy move to buy adjacent growth.",
+  "selected_inputs": [
+    "Zoom Q1 FY22 financial results and guidance",
+    "Zoom/Five9 acquisition announcement and merger mechanics",
+    "Microsoft Teams MAU update",
+    "Price-action snapshot through the 2021-08-13 close",
+    "Short-interest and borrow/crowdedness notes from the research file"
+  ],
+  "known_catalysts": [
+    {
+      "event_or_condition": "Upcoming Zoom Q2 FY22 earnings report",
+      "expected_date": "late August 2021",
+      "why_it_mattered": "The next earnings print and Q3 guide could expose whether the guidance-implied sequential revenue plateau was real."
+    },
+    {
+      "event_or_condition": "Market digestion of the Five9 transaction",
+      "expected_date": "August 2021 through first half of 2022",
+      "why_it_mattered": "Investors could reframe the deal from offensive TAM expansion to defensive, dilutive, integration-heavy revenue acquisition."
+    },
+    {
+      "event_or_condition": "Post-Labor Day return-to-office and hybrid-work normalization",
+      "expected_date": "September 2021 and following quarters",
+      "why_it_mattered": "Reopening could reduce low-end/prosumer urgency and increase subscription rationalization, especially for customers not deeply embedded in enterprise workflows."
+    }
+  ],
+  "evidence_for_short": [
+    "FY22 guide implied about $1.01B per quarter for Q2-Q4 after a $956.2M Q1, much slower than the 191% YoY headline.",
+    "The stock still traded at roughly 26x guided FY22 revenue after adjusting for cash, despite the implied sequential slowdown.",
+    "Microsoft Teams reached about 250M monthly active users, strengthening the bundled-competition argument.",
+    "The Five9 deal introduced a $14.7B all-stock transaction, delayed close, approval risk, integration risk, and a potential signal that core video growth needed adjacent M&A support.",
+    "ZM was below the 200D, 40W, and 10M averages and about 37.5% below its 2020 high while broad technology benchmarks were strong.",
+    "Short interest appeared low, reducing crowded-short and mechanical squeeze risk."
+  ],
+  "evidence_against_short": [
+    "Zoom was highly profitable and generated $454.2M of Q1 free cash flow.",
+    "Zoom had $4.7B of cash and marketable securities.",
+    "Customers with more than 10 employees, large customers, and NRR metrics were still strong.",
+    "Hybrid work could prove durable and extend paid usage.",
+    "Zoom Phone, Zoom Rooms, Zoom Events, and Five9 could broaden the platform beyond core Meetings.",
+    "Delta-variant uncertainty could delay reopening and preserve remote-work demand.",
+    "The stock was not technically broken across every timeframe because it was still above the 100D, 150D, and 20M moving averages.",
+    "Upcoming earnings created gap risk for a common-equity short."
+  ],
+  "price_confirmation_notes": "Price action supported the short as relative weakness and failed pandemic-leader recovery, but not as a completed downtrend. The setup required risk-controlled sizing and explicit invalidation.",
+  "human_notes": "Converted from the user's Deep Research output into point-in-time initiation notes."
+}

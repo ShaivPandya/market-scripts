@@ -1,0 +1,67 @@
+{
+  "ticker": "ZM",
+  "as_of_date": "2021-08-13",
+  "data_source": "Historical daily OHLCV via yfinance for local eval authoring; replace with a stable vendor snapshot before promoting beyond review.",
+  "close": 355.24,
+  "open": 362.22,
+  "high": 363.39,
+  "low": 353.59,
+  "volume": 1745600,
+  "moving_averages": {
+    "100d_sma": 344.8,
+    "150d_sma": 355.21,
+    "200d_sma": 369.35,
+    "40w_sma": 366.27,
+    "200w_sma": null,
+    "10m_sma": 375.98,
+    "20m_sma": 288.63
+  },
+  "rate_of_change": {
+    "1m_pct": -0.44,
+    "3m_pct": 15.38,
+    "12m_pct": 43.68
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": false,
+    "above_40w_sma": false,
+    "above_200w_sma": null,
+    "above_10m_sma": false,
+    "above_20m_sma": true
+  },
+  "relative_performance": {
+    "benchmarks": {
+      "nasdaq_composite_1m_pct": 1.92,
+      "nasdaq_composite_3m_pct": 10.37,
+      "nasdaq_composite_12m_pct": 34.24,
+      "igv_software_etf_1m_pct": 5.41,
+      "igv_software_etf_3m_pct": 19.34,
+      "igv_software_etf_12m_pct": 39.37,
+      "wcld_cloud_etf_1m_pct": 7.0,
+      "wcld_cloud_etf_3m_pct": 25.86,
+      "wcld_cloud_etf_12m_pct": 45.44,
+      "msft_1m_pct": 4.21,
+      "msft_3m_pct": 18.01,
+      "msft_12m_pct": 40.32
+    },
+    "notes": "ZM underperformed Nasdaq, IGV, WCLD, and MSFT over one month; underperformed IGV, WCLD, and MSFT over three months; and had only modest 12-month outperformance despite being far below its 2020 high."
+  },
+  "drawdown_from_high": {
+    "reference_high_close": 568.34,
+    "reference_high_date": "2020-10-19",
+    "from_high_pct": -37.5
+  },
+  "market_context": {
+    "nasdaq_composite_close": 14822.9,
+    "notes": "Nasdaq was near record highs while ZM remained well below its October 2020 high and below the 200D/40W/10M trend cluster."
+  },
+  "short_interest": {
+    "shares_short": 6657542,
+    "percent_float": 2.52,
+    "days_to_cover": 1.12,
+    "source_note": "From the user-provided research file's August 2021 short-interest citation; exact borrow cost and settlement-date source should be refreshed before approval."
+  },
+  "interpretation": "For a short setup, price action was confirmatory but not perfect. ZM was not in a clean multi-timeframe downtrend because it remained above the 100D, 150D, and 20M averages with positive 3-month and 12-month ROC. However, the stock was flat to negative over one month, below the 200D/40W/10M trend cluster, about 37.5% below its 2020 high, and lagging software/cloud peers into an upcoming earnings catalyst.",
+  "human_notes": "Generated locally for eval authoring from historical data through the 2021-08-13 close."
+}

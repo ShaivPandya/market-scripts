@@ -14,7 +14,10 @@ from decision_quality.actions import ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_A
 from decision_quality.actions import normalize_action
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.models import DecisionQualityGate, DecisionQualityGateReason, parse_decision_quality
-from decision_quality.proactive_alert_gate import apply_proactive_alert_gate
+from decision_quality.proactive_alert_gate import (
+    apply_proactive_alert_gate,
+    apply_recommendation_scout_skeptic_sizer_gate,
+)
 from ontology.approval_workflow import (
     approval_requirement_progress,
     normalize_approval_decisions,
@@ -3864,34 +3867,43 @@ def _normalize_create_recommendation_payload(action_id: str, payload: dict[str, 
     if action_id not in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         return
     record = _dict(payload.get("record") or payload)
-    action = normalize_action(record.get("action"))
-    record["action"] = action
+    original_action = normalize_action(record.get("action"))
+    record["action"] = original_action
     record["recommendation_status"] = _recommendation_status_value(record.get("recommendation_status"))
-    if action in ACTIONABLE_ACTIONS:
-        decision_quality, parse_errors = parse_decision_quality(record.get("decision_quality"))
-        gate = apply_decision_quality_gates(
-            decision_quality,
-            current_action=action,
-            recommendation_status=record["recommendation_status"],
-            data_quality=_recommendation_data_quality(record),
-            parse_errors=parse_errors,
-        )
-        gate = _add_required_recommendation_gate_reasons(gate, record, action)
-        _apply_recommendation_gate(record, gate, decision_quality)
+    decision_quality, parse_errors = parse_decision_quality(record.get("decision_quality"))
+    dq_gate = apply_decision_quality_gates(
+        decision_quality,
+        current_action=original_action,
+        recommendation_status=record["recommendation_status"],
+        data_quality=_recommendation_data_quality(record),
+        parse_errors=parse_errors,
+    )
+    if original_action in ACTIONABLE_ACTIONS:
+        dq_gate = _add_required_recommendation_gate_reasons(dq_gate, record, original_action)
+    apply_recommendation_scout_skeptic_sizer_gate(record)
+    action = normalize_action(record.get("action"))
+    scout_trace = record.get("scout_skeptic_sizer_gate")
+    scout_downgraded = (
+        isinstance(scout_trace, dict) and scout_trace.get("applied") and not scout_trace.get("action_allowed")
+    )
+    record["decision_quality"] = decision_quality.model_dump(mode="json") if decision_quality else None
+    if original_action in ACTIONABLE_ACTIONS or decision_quality is not None:
+        record["decision_quality_gate"] = dq_gate.model_dump(mode="json")
+    else:
+        record["decision_quality_gate"] = None
+    if scout_downgraded:
+        record["action"] = action
+        record["approval_required"] = False
+        if record["recommendation_status"] == "clear" and action not in ACTIONABLE_ACTIONS:
+            record["recommendation_status"] = "review_required"
+    elif action in ACTIONABLE_ACTIONS:
+        _apply_recommendation_gate(record, dq_gate, decision_quality)
     else:
         record["approval_required"] = False
         if _recommendation_has_blocking_data_quality(record) and record["recommendation_status"] == "clear":
             record["recommendation_status"] = "review_required"
         if isinstance(record.get("decision_quality"), Mapping):
-            decision_quality, parse_errors = parse_decision_quality(record.get("decision_quality"))
-            gate = apply_decision_quality_gates(
-                decision_quality,
-                current_action=action,
-                recommendation_status=record["recommendation_status"],
-                data_quality=_recommendation_data_quality(record),
-                parse_errors=parse_errors,
-            )
-            _apply_recommendation_gate(record, gate, decision_quality)
+            _apply_recommendation_gate(record, dq_gate, decision_quality)
             record["approval_required"] = False
     payload["record"] = record
 

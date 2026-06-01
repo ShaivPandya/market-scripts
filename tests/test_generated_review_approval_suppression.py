@@ -122,8 +122,20 @@ def test_continuous_optimizer_still_stages_non_review_action_items(monkeypatch):
 
     assert approval_id == "approval:1"
     assert [call["action_id"] for call in calls] == ["create_action_item"]
-    assert calls[0]["payload"]["action_type"] == "research"
-    assert "scout_skeptic_sizer_gate" in calls[0]["payload"]
+    assert calls[0]["payload"]["action_type"] == "resize"
+    assert calls[0]["payload"]["alert_context"]["change_summary"] == "Trim MU."
+    updated, gate = __import__(
+        "decision_quality.proactive_alert_gate", fromlist=["apply_proactive_alert_gate"]
+    ).apply_proactive_alert_gate(
+        "create_action_item",
+        calls[0]["payload"],
+        source_type="workflow",
+        alert_context=calls[0]["payload"].get("alert_context"),
+    )
+    assert updated["action_type"] == "research"
+    assert gate.scout.status == "pass"
+    assert gate.skeptic.status == "fail"
+    assert "scout_skeptic_sizer_gate" in updated
 
 
 def test_workflow_artifacts_skip_review_action_items_but_stage_research_items(monkeypatch):

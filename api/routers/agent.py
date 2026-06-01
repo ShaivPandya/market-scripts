@@ -80,6 +80,7 @@ from decision_quality.opportunity_candidate import (
     opportunity_candidate_schema,
     parse_opportunity_candidate,
 )
+from decision_quality.scout_skeptic_sizer_gate import build_chat_scout_skeptic_sizer_gate
 from decision_quality.synthesis_supervised import apply_supervised_triage_overlay
 from llm_utils import (
     MODEL_MID,
@@ -3532,6 +3533,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 }
                 if should_run_full_dq:
                     done_payload_data["decision_quality_chat"] = _decision_quality_chat_done_meta(dq_result)
+                done_payload_data["scout_skeptic_sizer_gate"] = build_chat_scout_skeptic_sizer_gate(
+                    oc_result=oc_result,
+                    dq_result=dq_result,
+                    context_bundle=context_bundle,
+                    should_run_full_dq=should_run_full_dq,
+                )
                 turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
                 assistant_msg = {

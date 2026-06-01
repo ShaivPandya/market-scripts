@@ -7,10 +7,14 @@ import pytest
 
 from decision_quality.proactive_alert_gate import (
     apply_proactive_alert_gate,
+    apply_recommendation_scout_skeptic_sizer_gate,
+    build_chat_scout_skeptic_sizer_gate,
     evaluate_proactive_alert_gate,
     is_high_stakes_action_item,
     proactive_alert_gate_enabled,
+    proactive_alert_llm_passes_enabled,
     should_apply_proactive_alert_gate,
+    should_apply_recommendation_gate,
 )
 
 OC_CASES = Path("docs/opportunity_candidate_evals/cases")
@@ -133,3 +137,94 @@ def test_gate_applies_only_to_high_stakes_action_items(action_type, expected_app
     payload = {"action_type": action_type, "description": "Alert", "ticker": "MU"}
     _, gate = apply_proactive_alert_gate("create_action_item", payload, source_type="workflow")
     assert gate.applied is expected_applied
+
+
+def test_recommendation_gate_downgrades_sparse_actionable_buy(monkeypatch):
+    monkeypatch.setenv("SCOUT_SKEPTIC_SIZER_GATE_ENABLED", "true")
+    record = {
+        "action": "buy",
+        "ticker": "MU",
+        "rationale": "Buy MU ahead of catalyst.",
+        "critical_data_quality": "ok",
+        "source_quality": "ok",
+    }
+    gate = apply_recommendation_scout_skeptic_sizer_gate(record)
+
+    assert gate is not None
+    assert gate.action_allowed is False
+    assert record["action"] == "watch"
+    assert record["scout_skeptic_sizer_gate"]["skeptic"]["status"] == "fail"
+
+
+def test_chat_gate_emits_skeptic_block_trace():
+    oc_case = _load_json(OC_CASES / "opportunity_candidate_scout_pass_skeptic_block_nvda_2026.json")
+    candidate, _errors = __import__(
+        "decision_quality.opportunity_candidate", fromlist=["parse_opportunity_candidate"]
+    ).parse_opportunity_candidate(oc_case["gold_output"])
+    oc_gate = __import__(
+        "decision_quality.candidate_gates", fromlist=["apply_opportunity_candidate_gates"]
+    ).apply_opportunity_candidate_gates(candidate)
+    trace = build_chat_scout_skeptic_sizer_gate(
+        oc_result={
+            "opportunity_candidate": candidate,
+            "gate": oc_gate,
+            "parse_errors": [],
+        },
+        dq_result=None,
+        context_bundle={"data_quality": {"overall_status": "ok"}},
+        should_run_full_dq=False,
+    )
+
+    assert trace["scout"]["status"] == "pass"
+    assert trace["skeptic"]["status"] == "fail"
+    assert trace["final_action_type"] == "research"
+
+
+def test_chat_gate_emits_sizer_watch_limit_trace():
+    oc_case = _load_json(OC_CASES / "opportunity_candidate_graduate_nvda_2026.json")
+    dq_case = _load_json(DQ_CASES / "cost_quality_asset_bad_entry_watch_2026.json")
+    candidate, _errors = __import__(
+        "decision_quality.opportunity_candidate", fromlist=["parse_opportunity_candidate"]
+    ).parse_opportunity_candidate(oc_case["gold_output"])
+    decision_quality, _dq_errors = __import__(
+        "decision_quality.models", fromlist=["parse_decision_quality"]
+    ).parse_decision_quality(dq_case["gold_output"])
+    oc_gate = __import__(
+        "decision_quality.candidate_gates", fromlist=["apply_opportunity_candidate_gates"]
+    ).apply_opportunity_candidate_gates(candidate)
+    dq_gate = __import__(
+        "decision_quality.gates", fromlist=["apply_decision_quality_gates"]
+    ).apply_decision_quality_gates(
+        decision_quality,
+        current_action="buy",
+        recommendation_status="clear",
+    )
+    trace = build_chat_scout_skeptic_sizer_gate(
+        oc_result={
+            "opportunity_candidate": candidate,
+            "gate": oc_gate,
+            "parse_errors": [],
+        },
+        dq_result={
+            "decision_quality": decision_quality,
+            "gate": dq_gate,
+            "parse_errors": [],
+        },
+        context_bundle={"data_quality": {"overall_status": "ok"}},
+        should_run_full_dq=True,
+    )
+
+    assert trace["scout"]["status"] == "pass"
+    assert trace["skeptic"]["status"] == "pass"
+    assert trace["sizer"]["status"] == "pass"
+    assert trace["final_action_type"] == "watch"
+    assert (trace["sizer"].get("max_sizing_delta_bps") or 0) <= 50
+
+
+def test_llm_proactive_passes_default_disabled():
+    assert proactive_alert_llm_passes_enabled() is False
+
+
+def test_recommendation_gate_flag():
+    assert should_apply_recommendation_gate("create_recommendation") is True
+    assert should_apply_recommendation_gate("create_action_item") is False

@@ -1,0 +1,22 @@
+{
+  "ticker": "ZM",
+  "as_of_date": "2021-08-13",
+  "position_status": "new_short_position",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "High-conviction structural short and pandemic-pull-forward normalization hedge.",
+  "intended_role_notes": "Short ZM as a single-name expression of revenue deceleration, video commoditization, and high-growth software multiple-compression risk.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": -0.03,
+  "post_confirmation_conviction": 5,
+  "post_confirmation_raw_target_weight": -0.045,
+  "target_size": "Initiate around a 3% gross short. Add toward 4.5% only after Q2/Q3 evidence confirms sequential revenue deceleration and price action remains weak.",
+  "initial_size": null,
+  "max_loss_or_review": "Review or reduce if ZM closes above $400 on thesis-relevant volume, if Q2/Q3 revenue grows more than 10% sequentially, or if borrow/option conditions deteriorate.",
+  "current_software_exposure": null,
+  "current_pandemic_winner_exposure": null,
+  "current_short_book_exposure": null,
+  "borrow_notes": "Research file suggests short interest was low and days-to-cover was about 1.12, but exact borrow availability and cost were not selected as stable local inputs.",
+  "liquidity_notes": "ZM was a liquid large-cap equity, but the 2021-08-13 volume snapshot of about 1.75M shares should be combined with current ADV and option-liquidity checks before final sizing.",
+  "risk_budget_notes": "Shorts have asymmetric loss. Use common equity only with hard review rules, or combine with defined-risk puts/put spreads around earnings if options pricing is acceptable.",
+  "human_notes": "Portfolio context reflects the user's high-conviction short framing and the research file's 3% starter-size suggestion."
+}

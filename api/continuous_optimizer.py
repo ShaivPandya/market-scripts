@@ -481,19 +481,12 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
         "action_type": action_type,
         "description": description,
         "urgency": urgency,
-    }
-    from decision_quality.proactive_alert_gate import apply_proactive_alert_gate
-
-    payload, _gate_result = apply_proactive_alert_gate(
-        "create_action_item",
-        payload,
-        source_type="workflow",
-        alert_context={
+        "alert_context": {
             "change_summary": alert.get("change_summary"),
             "source": "workflow",
             "ticker": ticker,
         },
-    )
+    }
     if should_suppress_generated_review_approval("create_action_item", payload, source_type="workflow"):
         return None
 
