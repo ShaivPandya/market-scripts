@@ -1322,7 +1322,8 @@
       "deterministic_passed": true,
       "failure_type": "overconfident_actionability",
       "judge_passed": null,
-      "judge_total": null
+      "judge_total": null,
+      "tool_pack": "thesis_review"
     },
     "scout_skeptic_pass_sizer_watch_cost_2026_chat": {
       "case_id": "scout_skeptic_pass_sizer_watch_cost_2026_chat",

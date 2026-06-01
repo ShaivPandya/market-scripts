@@ -293,6 +293,7 @@ def run_agent_chat_in_process(case: ChatEvalCase, *, auth_password: str | None =
     from fastapi.testclient import TestClient
 
     from api.main import app
+    from api.request_schema import schema_headers_for_path
 
     body: dict[str, Any] = {"message": str(case.data.get("user_message") or ""), "finalize_synchronously": True}
     screen_context = case.data.get("screen_context")
@@ -304,8 +305,16 @@ def run_agent_chat_in_process(case: ChatEvalCase, *, auth_password: str | None =
         with TestClient(app) as client:
             password = auth_password or os.environ.get("AUTH_PASSWORD")
             if password:
-                client.post("/api/auth/login", json={"password": password})
-            response = client.post("/api/agent/chat", json=body)
+                client.post(
+                    "/api/auth/login",
+                    json={"password": password},
+                    headers=schema_headers_for_path(app, "POST", "/api/auth/login"),
+                )
+            response = client.post(
+                "/api/agent/chat",
+                json=body,
+                headers=schema_headers_for_path(app, "POST", "/api/agent/chat"),
+            )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     if response.status_code != 200:
         return AgentChatRun(
