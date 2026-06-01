@@ -3,14 +3,22 @@ import { useNavigate } from "react-router-dom"
 import {
   Activity,
   ArrowRight,
+  Bot,
+  Brain,
   CheckCircle2,
   Cloud,
   Database,
+  Eye,
   FileText,
   GitBranch,
+  ListChecks,
   Lock,
+  MessageSquare,
+  Route,
   Server,
+  Shield,
   ShieldCheck,
+  Wrench,
   Workflow,
   type LucideIcon,
 } from "lucide-react"
@@ -28,11 +36,12 @@ import marketTechnicalsImg from "@/assets/market-technicals.jpg"
 import portfolioImg from "@/assets/portfolio.jpg"
 import sentimentImg from "@/assets/sentiment.jpg"
 
-type PublicTab = "product" | "architecture"
+type PublicTab = "product" | "architecture" | "agent"
 
 const publicTabs: { value: PublicTab; label: string }[] = [
   { value: "product", label: "Product" },
   { value: "architecture", label: "Architecture" },
+  { value: "agent", label: "Agent" },
 ]
 
 const features = [
@@ -148,6 +157,162 @@ const researchLoopSteps: {
     title: "Record",
     description: "The system writes the final version with evidence, timing, actor, and provenance attached.",
     icon: GitBranch,
+  },
+]
+
+const stanIdentityPanels: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Sharp co-PM, not a research assistant",
+    description:
+      "Stan has a view, leads with conclusions, and pushes back when a thesis has a hole. He tells you what would change his mind instead of hedging forever.",
+    icon: Bot,
+  },
+  {
+    title: "Finance-only domain",
+    description:
+      "Stan stays within markets, portfolio, macro, thesis, and Talisman workflow questions. Off-topic requests are declined politely.",
+    icon: Shield,
+  },
+  {
+    title: "Decision support, not execution",
+    description:
+      "Stan recommends and records. He does not place trades, size positions autonomously, or mutate your book without your approval.",
+    icon: Lock,
+  },
+]
+
+const agentPipelineSteps: {
+  label: string
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    label: "01",
+    title: "Domain check",
+    description: "Off-topic or mixed messages are filtered before any analysis runs.",
+    icon: Shield,
+  },
+  {
+    label: "02",
+    title: "Intent routing",
+    description:
+      "A classifier reads your message and screen context to decide what kind of question this is — thesis review, portfolio query, idea scan, and more.",
+    icon: Route,
+  },
+  {
+    label: "03",
+    title: "Hidden analysis",
+    description:
+      "For serious decisions, structured internal passes run before Stan answers. You see natural language; the rigor happens behind the scenes.",
+    icon: Brain,
+  },
+  {
+    label: "04",
+    title: "Tool loop",
+    description:
+      "Stan fetches live data from Talisman's analysis modules — portfolio, macro, charts, filings, ontology — and synthesizes an answer.",
+    icon: Wrench,
+  },
+  {
+    label: "05",
+    title: "Record",
+    description:
+      "Conversation history persists. Any state change becomes a proposal awaiting your approval, not a silent mutation.",
+    icon: GitBranch,
+  },
+]
+
+const intentClasses: { title: string; example: string }[] = [
+  { title: "Thesis review", example: "What do you think of my idea on X?" },
+  { title: "Opportunity discovery", example: "Scan for ideas in Y" },
+  { title: "Catalyst status", example: "Did this catalyst play out?" },
+  { title: "Portfolio query", example: "Holdings, exposure, and P&L" },
+  { title: "Workflow handoff", example: "Matches a named playbook like Morning Brief" },
+  { title: "General research", example: "Informational market or sector questions" },
+  { title: "Casual", example: "Greetings and light chat" },
+]
+
+const hiddenPasses: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Decision Quality pass",
+    description:
+      "A structured second opinion before Stan speaks: thesis clarity, mispricing, catalyst, evidence for and against, invalidation, actionability, and sizing. Gates can downgrade or block actionable recommendations when inputs are insufficient. Output is synthesized into conversational prose — you never see raw checklists.",
+    icon: ListChecks,
+  },
+  {
+    title: "Opportunity Candidate pass",
+    description:
+      "Lighter triage for discovery scans: ranks ideas and may graduate promising ones to full decision quality. Never issues buy or sell calls on its own.",
+    icon: Eye,
+  },
+]
+
+const toolPanels: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Read tools",
+    description:
+      "Portfolio, dossiers, market data, charts, and ontology queries. Stan must fetch before asserting prices, positions, or catalyst status.",
+    icon: Database,
+  },
+  {
+    title: "Proposal tools",
+    description:
+      "Thesis status changes, catalysts, action items, and watch triggers are staged as pending approvals. Stan drafts; he never writes directly to your book.",
+    icon: FileText,
+  },
+  {
+    title: "Quality gates",
+    description:
+      "Data-quality warnings and financial policy checks — concentration, liquidity, stale data — surface before anything actionable is staged for review.",
+    icon: ShieldCheck,
+  },
+]
+
+const agentWorkflows: { label: string; description: string }[] = [
+  { label: "Morning Brief", description: "Overnight moves, portfolio snapshot, and today's focus." },
+  { label: "Thesis Review", description: "Structured pressure-test of an active investment thesis." },
+  { label: "Pre-Earnings Prep", description: "Positioning and expectations ahead of an earnings event." },
+  { label: "Post-Earnings Review", description: "What changed, what held, and what to do next." },
+  { label: "Weekly Portfolio Review", description: "Cross-portfolio risk, P&L context, and action items." },
+  { label: "Thesis Invalidation Check", description: "Kill conditions, catalyst status, and thesis drift." },
+  { label: "Position Dossier Pressure Test", description: "Deep dive on a single holding with full context." },
+]
+
+const agentSafetyPanels: {
+  title: string
+  description: string
+  icon: LucideIcon
+}[] = [
+  {
+    title: "Approval-first writeback",
+    description:
+      "Stan drafts; you approve in the UI. Applied changes get versioned in the ontology — see the Architecture tab for the full trust model.",
+    icon: Lock,
+  },
+  {
+    title: "Model egress with audit",
+    description:
+      "Portfolio and thesis context may go to external LLMs. Talisman governs this with warnings and an audit trail so you know what left the boundary.",
+    icon: ShieldCheck,
+  },
+  {
+    title: "Durable async turns",
+    description:
+      "Long agent runs execute on warm worker pools so chat stays responsive while deeper analysis completes in the background.",
+    icon: Server,
   },
 ]
 
@@ -365,6 +530,218 @@ function ArchitectureShowcase() {
   )
 }
 
+function AgentShowcase() {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 pb-24 sm:px-6">
+      <div className="mb-10 text-center">
+        <p className="theme-eyebrow">AI agent</p>
+        <h2 className="page-title text-center !text-[clamp(1.7rem,1.4rem+1vw,2.3rem)]">
+          Stan — a research co-pilot with guardrails
+        </h2>
+        <p className="mx-auto mt-3 max-w-3xl body-copy">
+          Stan is not a generic chatbot or a trading bot. He is an investment research agent embedded in Talisman:
+          he reads live portfolio and market data, pressure-tests ideas, runs governed workflows, and proposes
+          changes — but never executes trades or mutates your book without approval.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-10">
+        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p className="theme-eyebrow">Who Stan is</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Built to think like a co-PM</h3>
+            <p className="mt-3 body-copy">
+              Stan starts from price action, reduces every idea to a simple thesis, names the asymmetry and kill
+              conditions, and locates the crowd. He is direct when you lack an edge and rigorous when the stakes
+              are high.
+            </p>
+          </div>
+
+          <div className="grid gap-3">
+            {stanIdentityPanels.map(panel => {
+              const Icon = panel.icon
+              return (
+                <div key={panel.title} className="theme-surface flex gap-3 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-app">{panel.title}</h4>
+                    <p className="mt-1 text-sm leading-6 text-muted">{panel.description}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-6 max-w-3xl">
+            <p className="theme-eyebrow">Request pipeline</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">What happens when you send a message</h3>
+            <p className="mt-3 body-copy">
+              Every chat turn follows the same governed path. Like a triage nurse, the intent router sorts your
+              question before Stan speaks — so the right analysis runs without you managing the plumbing.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            {agentPipelineSteps.map((step, index) => {
+              const Icon = step.icon
+              return (
+                <div key={step.title} className="theme-surface relative p-4">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <span className="rounded-full border border-app bg-card px-2.5 py-1 text-xs font-semibold text-subtle">
+                      {step.label}
+                    </span>
+                    <Icon className="h-5 w-5 text-[hsl(var(--accent))]" aria-hidden="true" />
+                  </div>
+                  <h4 className="text-base font-semibold text-app">{step.title}</h4>
+                  <p className="mt-2 text-sm leading-6 text-muted">{step.description}</p>
+                  {index < agentPipelineSteps.length - 1 && (
+                    <ArrowRight
+                      className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full bg-app text-subtle xl:block"
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr] lg:items-start">
+          <div>
+            <p className="theme-eyebrow">Routing and hidden passes</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">The right analysis for the question</h3>
+            <p className="mt-3 body-copy">
+              The intent router classifies each message into one of seven categories. When confidence is low, a
+              deterministic fallback takes over so routing stays reliable.
+            </p>
+
+            <div className="mt-5 grid gap-2">
+              {intentClasses.map(item => (
+                <div key={item.title} className="theme-surface flex flex-col gap-0.5 p-3 sm:flex-row sm:items-baseline sm:gap-3">
+                  <span className="shrink-0 text-sm font-semibold text-app">{item.title}</span>
+                  <span className="text-sm leading-6 text-muted">{item.example}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {hiddenPasses.map(panel => {
+              const Icon = panel.icon
+              return (
+                <div key={panel.title} className="theme-surface flex gap-3 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-app">{panel.title}</h4>
+                    <p className="mt-1 text-sm leading-6 text-muted">{panel.description}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p className="theme-eyebrow">Tools and context</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Live data, not stale memory</h3>
+            <p className="mt-3 body-copy">
+              Stan connects to Talisman's analysis modules through a governed tool layer. Read tools fetch facts;
+              proposal tools draft memos awaiting your signature.
+            </p>
+
+            <div className="mt-5 grid gap-3">
+              {toolPanels.map(panel => {
+                const Icon = panel.icon
+                return (
+                  <div key={panel.title} className="theme-surface flex gap-3 p-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-semibold text-app">{panel.title}</h4>
+                      <p className="mt-1 text-sm leading-6 text-muted">{panel.description}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="theme-surface flex flex-col gap-3 p-5">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+              <MessageSquare className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h4 className="text-base font-semibold text-app">Screen context</h4>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                Dashboards register what you are looking at — page, ticker, visible metrics. Stan receives this
+                with your message so he can answer from what is on screen without redundant fetches. Ask "explain
+                this chart" while viewing Market Technicals and he already knows which chart you mean.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-6 max-w-3xl">
+            <p className="theme-eyebrow">Governed workflows</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Deterministic playbooks, not ad-hoc prompts</h3>
+            <p className="mt-3 body-copy">
+              Workflows are fixed tool sequences plus a single synthesis step — launched from the UI or via
+              workflow commands. Each run is recorded as an ontology object with artifacts you can revisit.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {agentWorkflows.map(wf => (
+              <div key={wf.label} className="theme-surface p-4">
+                <h4 className="text-base font-semibold text-app">{wf.label}</h4>
+                <p className="mt-2 text-sm leading-6 text-muted">{wf.description}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p className="theme-eyebrow">Safety and memory</p>
+            <h3 className="text-2xl font-semibold tracking-[-0.03em] text-app">Useful AI stays accountable</h3>
+            <p className="mt-3 body-copy">
+              Stan remembers session history and can reference prior workflow runs, but every important belief
+              change leaves a trace. For the full backend trust model — versioning, provenance, and production
+              infrastructure — see the Architecture tab.
+            </p>
+          </div>
+
+          <div className="grid gap-3">
+            {agentSafetyPanels.map(panel => {
+              const Icon = panel.icon
+              return (
+                <div key={panel.title} className="theme-surface flex gap-3 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-app bg-card text-[hsl(var(--accent))]">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-app">{panel.title}</h4>
+                    <p className="mt-1 text-sm leading-6 text-muted">{panel.description}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
 function PublicShowcase() {
   const [activeTab, setActiveTab] = useState<PublicTab>("product")
 
@@ -373,7 +750,9 @@ function PublicShowcase() {
       <div className="mb-10 flex justify-center px-4 sm:px-6">
         <SegmentedControl options={publicTabs} value={activeTab} onChange={setActiveTab} />
       </div>
-      {activeTab === "product" ? <FeatureShowcase /> : <ArchitectureShowcase />}
+      {activeTab === "product" && <FeatureShowcase />}
+      {activeTab === "architecture" && <ArchitectureShowcase />}
+      {activeTab === "agent" && <AgentShowcase />}
     </div>
   )
 }

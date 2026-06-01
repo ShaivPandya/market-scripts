@@ -130,3 +130,97 @@ def test_monitor_normalizes_legacy_numeric_id_source_id(monkeypatch):
     assert [call["action_id"] for call in calls] == ["update_watch_trigger_check"]
     assert calls[0]["source_id"] == "watch_trigger:123"
     assert calls[0]["payload"]["trigger_id"] == "123"
+
+
+def test_builder_monitor_preview_wraps_watch_trigger_evaluation(monkeypatch):
+    import api.mission_runner as runner
+
+    monkeypatch.setattr(
+        monitor,
+        "evaluate_trigger",
+        lambda trigger: {
+            "fired": True,
+            "type": trigger["definition"]["type"],
+            "evidence": f"{trigger['ticker']} matched",
+            "source_ids": ["trusted_news"],
+        },
+    )
+
+    result = runner.evaluate_monitor_definition(
+        {
+            "object_uid": "monitor_definition:mu",
+            "name": "MU thesis monitor",
+            "scope": {"ticker": "MU"},
+            "trigger_type": "fundamental_news",
+            "condition": "Watch MU thesis evidence",
+            "definition": {"query": "MU demand"},
+            "source_requirements": [{"source_name": "trusted_news", "required": True}],
+        }
+    )
+
+    assert result["fired"] is True
+    assert result["type"] == "fundamental_news"
+    assert result["source_requirement_review"]["status"] == "ok"
+
+
+def test_builder_runner_records_hits_and_review_approvals(monkeypatch):
+    import api.mission_runner as runner
+    from api import workflows
+
+    class _FakeReads:
+        def monitor_definitions(self, *, status, limit):
+            assert status == "active"
+            return [
+                {
+                    "object_uid": "monitor_definition:mu",
+                    "name": "MU thesis monitor",
+                    "scope": {"ticker": "MU"},
+                    "trigger_type": "custom",
+                    "condition": "Watch MU",
+                    "definition_hash": "hash1",
+                }
+            ]
+
+        def mission_definitions(self, *, status, limit):
+            assert status == "active"
+            return []
+
+    class _FakeService:
+        def __init__(self):
+            pass
+
+        def propose_action(self, action_id, payload, context, *, reason):
+            calls.append({"action_id": action_id, "payload": payload, "source_id": context.source_id, "reason": reason})
+            return {"id": f"approval:{len(calls)}"}
+
+        def resolve_approval(self, approval_id, status, note, context):
+            return {"id": approval_id, "status": status, "application_status": "applied"}
+
+    calls: list[dict[str, Any]] = []
+    artifacts: list[tuple[str, str, Any]] = []
+    monkeypatch.setattr(runner, "OntologyRuntimeReadService", lambda: _FakeReads())
+    monkeypatch.setattr(runner, "OntologyCommandService", _FakeService)
+    monkeypatch.setattr(
+        runner, "evaluate_monitor_definition", lambda _definition: {"fired": True, "evidence": "matched"}
+    )
+    monkeypatch.setattr(
+        workflows, "create_workflow_run", lambda *_args, **_kwargs: {"run_id": "workflow:monitor_mission_runner:test"}
+    )
+    monkeypatch.setattr(
+        workflows,
+        "complete_workflow_run",
+        lambda run_id, synthesis, artifacts_arg=None, *_args, **_kwargs: {"run_id": run_id},
+    )
+    monkeypatch.setattr(workflows, "fail_workflow_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner, "_write_workflow_artifact", lambda run_id, key, value: artifacts.append((run_id, key, value))
+    )
+
+    summary = runner.run_monitor_mission_runner()
+
+    assert summary["checked"] == 1
+    assert summary["hits"] == 1
+    assert [call["action_id"] for call in calls] == ["create_monitor_hit", "create_action_item"]
+    assert calls[0]["payload"]["entity_type"] == "monitor_definition"
+    assert "monitor_definition:mu" in calls[0]["source_id"]
+    assert artifacts[0][1] == "monitor_mission_results"

@@ -1,0 +1,89 @@
+{
+  "ticker": "AMD",
+  "company_name": "Advanced Micro Devices",
+  "as_of_date": "2018-05-07",
+  "close": 11.59,
+  "volume": 54001700,
+  "moving_averages": {
+    "100d_sma": 11.28,
+    "10m_sma": 11.83,
+    "150d_sma": 11.51,
+    "200d_sma": 11.87,
+    "200w_sma": 6.65,
+    "20m_sma": 11.45,
+    "40w_sma": 11.72
+  },
+  "rate_of_change": {
+    "1m_pct": 20.6,
+    "3m_pct": 0.17,
+    "12m_pct": 13.74
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_10m_sma": false,
+    "above_150d_sma": true,
+    "above_200d_sma": false,
+    "above_200w_sma": true,
+    "above_20m_sma": true,
+    "above_40w_sma": false
+  },
+  "relative_performance": {
+    "benchmarks": [
+      {
+        "ticker": "^IXIC",
+        "name": "Nasdaq Composite",
+        "close": 7265.21,
+        "rate_of_change": {
+          "1m_pct": 5.06,
+          "3m_pct": 4.27,
+          "12m_pct": 19.09
+        }
+      },
+      {
+        "ticker": "SMH",
+        "name": "VanEck Semiconductor ETF",
+        "close": 50.67,
+        "rate_of_change": {
+          "1m_pct": 1.89,
+          "3m_pct": 3.12,
+          "12m_pct": 25.42
+        }
+      },
+      {
+        "ticker": "SPY",
+        "name": "SPDR S&P 500 ETF",
+        "close": 266.92,
+        "rate_of_change": {
+          "1m_pct": 2.77,
+          "3m_pct": 1.13,
+          "12m_pct": 11.36
+        }
+      },
+      {
+        "ticker": "INTC",
+        "name": "Intel",
+        "close": 53.33,
+        "rate_of_change": {
+          "1m_pct": 9.31,
+          "3m_pct": 19.79,
+          "12m_pct": 44.84
+        }
+      },
+      {
+        "ticker": "NVDA",
+        "name": "Nvidia",
+        "close": 6.22,
+        "rate_of_change": {
+          "1m_pct": 16.07,
+          "3m_pct": 16.37,
+          "12m_pct": 139.44
+        }
+      }
+    ],
+    "summary": "AMD outperformed the Nasdaq, SMH, SPY, and Intel on a 1-month basis and had strong post-earnings reversal momentum. It still lagged Nasdaq, SMH, Intel, and Nvidia on a 12-month basis, so this was early trend repair rather than mature relative leadership."
+  },
+  "price_action_summary": "AMD closed at $11.59 on May 7, 2018 with 54.0M shares traded. It was above the 100D, 150D, 200W, and 20M moving averages, but below the 200D, 40W, and 10M moving averages. The 1-month rate of change was strongly positive at 20.6%, while 3-month and 12-month momentum were positive but not dominant.",
+  "interpretation": "Price action supported an actionable starter buy because the stock was recovering sharply after the Q1 earnings and Intel 10nm-delay catalysts. Confirmation was incomplete because the stock had not reclaimed every long-term trend measure and still lagged several semiconductor peers over 12 months.",
+  "data_source": "Historical daily OHLCV and derived moving averages/ROC were generated locally with yfinance. Replace with a stable vendor snapshot before marking this case approved.",
+  "human_notes": "The user-provided research supplied the May 7 close. This file adds derived moving averages, ROC, volume, and relative-performance context for the eval."
+}

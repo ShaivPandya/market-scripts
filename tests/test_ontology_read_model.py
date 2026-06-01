@@ -98,10 +98,22 @@ def test_operational_read_model_recreate_migrations_project_final_label_status()
         "migrations/versions/20260515_0001_course_of_action_read_model.py",
         "migrations/versions/20260531_0001_monitor_hit_read_model.py",
         "migrations/versions/20260531_0002_opportunity_candidate_read_model.py",
+        "migrations/versions/20260531_0004_monitor_mission_definitions_read_model.py",
     ):
         migration = Path(migration_path).read_text(encoding="utf-8")
 
         assert "properties_json->>'final_label_status'" in migration
+
+
+def test_monitor_mission_definition_read_model_migration_contract():
+    migration = Path("migrations/versions/20260531_0004_monitor_mission_definitions_read_model.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'down_revision: str | None = "20260531_0003"' in migration
+    assert "MonitorDefinition" in migration
+    assert "MissionDefinition" in migration
+    assert "CREATE MATERIALIZED VIEW {OPERATIONAL_READ_MODEL_VIEW}" in migration
 
 
 class _Rows:
@@ -232,6 +244,8 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
                     {"parent_uid": "optimization_alert:1", "source_name": "risk", "status": "ok"},
                 )
             ],
+            [_op_row("MonitorDefinition", "monitor_definition:mu", {"name": "MU monitor", "status": "active"})],
+            [_op_row("MissionDefinition", "mission_definition:risk", {"name": "Risk mission", "status": "active"})],
             [_op_row("WatchTrigger", "watch_trigger:1", {"ticker": "MU", "status": "active"})],
             [],
             [_op_row("WorkflowRun", "workflow_run:1", {"ticker": "MU"})],
@@ -276,6 +290,8 @@ def test_workspace_bundle_uses_operational_read_model_and_groups_rows():
     assert bundle["open_course_of_action_comparisons"][0]["object_uid"] == "course_of_action_comparison:1"
     assert bundle["optimizer_alerts"][0]["current_snapshot"]["object_uid"] == "optimization_snapshot:1"
     assert bundle["optimizer_alerts"][0]["source_freshness"]["risk"]["status"] == "ok"
+    assert bundle["active_monitor_definitions"][0]["object_uid"] == "monitor_definition:mu"
+    assert bundle["active_mission_definitions"][0]["object_uid"] == "mission_definition:risk"
     assert bundle["challenged_claims"][0]["object_uid"] == "claim:1"
     assert bundle["disconfirmed_claims"][0]["object_uid"] == "claim:2"
     assert bundle["pending_draft_decision_outcomes"][0]["final_label_status"] == "draft"

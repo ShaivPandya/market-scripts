@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { GitBranch, Info } from "lucide-react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchOntologyRuns,
+  createMissionDefinition,
+  createMonitorDefinition,
+  disableMissionDefinition,
+  disableMonitorDefinition,
+  fetchMonitorBuilderDefinitions,
+  previewMonitorDefinition,
+  runMonitorBuilderDefinitions,
   runOntologyQueryAsync,
+  type MissionDefinitionRecord,
+  type MonitorDefinitionBody,
+  type MonitorDefinitionRecord,
   type OntologyEvidence,
   type OntologyResponse,
   type OntologyRunSummary,
@@ -13,7 +23,7 @@ import {
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { SelectInput, SegmentedControl, TextInput, Toggle } from "@/components/shared/FormControls"
+import { ActionButton, SelectInput, SegmentedControl, TextInput, Toggle } from "@/components/shared/FormControls"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 
@@ -103,6 +113,239 @@ const STATUS_COLUMNS: ColumnDef[] = [
   },
   { key: "detail", header: "Detail" },
 ]
+
+const BUILDER_TEMPLATES = [
+  { value: "thesis_monitor", label: "Thesis monitor", triggerType: "fundamental_news", condition: "Watch for thesis-changing evidence" },
+  { value: "risk_mission", label: "Risk mission", triggerType: "macro", condition: "Review risk posture when macro score deteriorates" },
+  { value: "catalyst_tracker", label: "Catalyst tracker", triggerType: "news_event", condition: "Track catalyst evidence from source-backed news" },
+  { value: "price_threshold", label: "Price threshold", triggerType: "price_level", condition: "Alert when price crosses threshold" },
+]
+
+function definitionId(row: MonitorDefinitionRecord | MissionDefinitionRecord): string {
+  const typed = row as MonitorDefinitionRecord & MissionDefinitionRecord
+  return String(row.object_uid || row.id || typed.monitor_id || typed.mission_id || "")
+}
+
+function MonitorMissionBuilder() {
+  const queryClient = useQueryClient()
+  const [kind, setKind] = useState<"monitor" | "mission">("monitor")
+  const [templateId, setTemplateId] = useState("thesis_monitor")
+  const [name, setName] = useState("Thesis Evidence Monitor")
+  const [ticker, setTicker] = useState("")
+  const [condition, setCondition] = useState(BUILDER_TEMPLATES[0].condition)
+  const [threshold, setThreshold] = useState("")
+  const [sourceName, setSourceName] = useState("trusted_news")
+  const [cadence, setCadence] = useState("hourly")
+  const [builderError, setBuilderError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null)
+
+  const definitionsQuery = useApiQuery(["monitor-builder-definitions"], () => fetchMonitorBuilderDefinitions({ status: "active" }), 60 * 1000)
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["monitor-builder-definitions"] })
+  const createMutation = useMutation({
+    mutationFn: (body: MonitorDefinitionBody) =>
+      kind === "monitor"
+        ? createMonitorDefinition(body)
+        : createMissionDefinition({
+            name: body.name,
+            description: body.description,
+            template_id: body.template_id,
+            mission_type: body.template_id === "risk_mission" ? "risk_review" : "monitor_review",
+            scope: body.scope,
+            schedule: body.cadence,
+            source_requirements: body.source_requirements,
+            thresholds: body.thresholds,
+            output_policy: body.output_policy,
+            approval_behavior: "hit_only_then_human_review",
+            reason: body.reason,
+          }),
+    onSuccess: () => invalidate(),
+  })
+  const previewMutation = useMutation({
+    mutationFn: previewMonitorDefinition,
+    onSuccess: result => setPreview(result),
+  })
+  const runMutation = useMutation({ mutationFn: runMonitorBuilderDefinitions })
+  const disableMonitorMutation = useMutation({ mutationFn: (id: string | number) => disableMonitorDefinition(id), onSuccess: () => invalidate() })
+  const disableMissionMutation = useMutation({ mutationFn: (id: string | number) => disableMissionDefinition(id), onSuccess: () => invalidate() })
+
+  const selectedTemplate = BUILDER_TEMPLATES.find(item => item.value === templateId) ?? BUILDER_TEMPLATES[0]
+
+  function applyTemplate(value: string) {
+    const template = BUILDER_TEMPLATES.find(item => item.value === value) ?? BUILDER_TEMPLATES[0]
+    setTemplateId(template.value)
+    setCondition(template.condition)
+    if (!name.trim() || BUILDER_TEMPLATES.some(item => name === item.label)) setName(template.label)
+  }
+
+  function buildBody(): MonitorDefinitionBody {
+    const thresholdNumber = Number.parseFloat(threshold)
+    return {
+      name: name.trim(),
+      template_id: templateId,
+      scope: { ticker: ticker.trim().toUpperCase() || undefined },
+      trigger_type: selectedTemplate.triggerType,
+      condition: condition.trim(),
+      definition: {
+        type: selectedTemplate.triggerType,
+        ticker: ticker.trim().toUpperCase() || undefined,
+        operator: ">=",
+        threshold: Number.isFinite(thresholdNumber) ? thresholdNumber : undefined,
+      },
+      thresholds: Number.isFinite(thresholdNumber) ? { primary: thresholdNumber } : {},
+      source_requirements: sourceName.trim()
+        ? [{ source_name: sourceName.trim(), required: true, freshness_days: 7 }]
+        : [],
+      cadence: { label: cadence },
+      severity: "medium",
+      output_policy: { safe_mode: true, creates_monitor_hit: true, stages_review_action: true },
+      approval_behavior: "hit_only_then_human_review",
+      reason: `Create ${kind} from ${selectedTemplate.label} template`,
+    }
+  }
+
+  async function submit() {
+    setBuilderError(null)
+    setPreview(null)
+    const body = buildBody()
+    if (!body.name || !body.condition) {
+      setBuilderError("Name and condition are required.")
+      return
+    }
+    await createMutation.mutateAsync(body)
+  }
+
+  async function previewCurrent() {
+    setBuilderError(null)
+    if (kind !== "monitor") {
+      setBuilderError("Preview is currently available for monitor definitions. Mission runs are safe-mode scheduled jobs.")
+      return
+    }
+    await previewMutation.mutateAsync(buildBody())
+  }
+
+  const monitors = definitionsQuery.data?.monitors ?? []
+  const missions = definitionsQuery.data?.missions ?? []
+
+  return (
+    <section className="theme-surface mb-6 rounded-xl p-4" aria-label="Low-code monitor and mission builder">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-app">Monitor And Mission Builder</h2>
+          <p className="mt-1 text-xs text-subtle">
+            Configure source-backed monitors and missions. Runs record hits and stage review work; no user-visible state changes before approval.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <DecisionStateBadge state="proposal" />
+          <EffectScopeBadge scope="internal_state" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <SegmentedControl
+          value={kind}
+          onChange={value => setKind(value as "monitor" | "mission")}
+          options={[
+            { value: "monitor", label: "Monitor" },
+            { value: "mission", label: "Mission" },
+          ]}
+        />
+        <SelectInput
+          id="builder-template"
+          label="Template"
+          value={templateId}
+          onChange={applyTemplate}
+          options={BUILDER_TEMPLATES.map(item => ({ value: item.value, label: item.label }))}
+        />
+        <TextInput id="builder-cadence" label="Cadence" value={cadence} onChange={setCadence} placeholder="hourly" />
+        <TextInput id="builder-name" label="Name" value={name} onChange={setName} placeholder="Monitor name" />
+        <TextInput id="builder-ticker" label="Ticker Scope" value={ticker} onChange={setTicker} uppercase placeholder="Optional" />
+        <TextInput id="builder-threshold" label="Primary Threshold" value={threshold} onChange={setThreshold} type="number" placeholder="Optional" />
+        <TextInput id="builder-source" label="Required Source" value={sourceName} onChange={setSourceName} placeholder="trusted_news" />
+        <TextInput
+          id="builder-condition"
+          label="Condition"
+          value={condition}
+          onChange={setCondition}
+          className="md:col-span-2"
+          placeholder="Condition to evaluate"
+        />
+      </div>
+
+      {builderError && <p className="mt-3 text-xs text-negative">{builderError}</p>}
+      {createMutation.isSuccess && (
+        <p className="mt-3 text-xs text-subtle">Definition staged for approval. Review it from Workspace before applying.</p>
+      )}
+      {preview && (
+        <pre className="mt-3 max-h-44 overflow-auto rounded-lg border border-app bg-card-muted p-3 text-xs text-muted">
+          {JSON.stringify(preview, null, 2)}
+        </pre>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <ActionButton onClick={submit} loading={createMutation.isPending} loadingText="Staging..." className="w-auto px-4">
+          Stage Definition
+        </ActionButton>
+        <button type="button" onClick={previewCurrent} className="theme-button-secondary rounded-lg px-3 py-2 text-sm font-medium">
+          Preview Monitor
+        </button>
+        <button
+          type="button"
+          onClick={() => runMutation.mutate({ source: "manual" })}
+          className="theme-button-secondary rounded-lg px-3 py-2 text-sm font-medium"
+        >
+          Run Active Definitions
+        </button>
+      </div>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Active Monitors</h3>
+          <div className="space-y-2">
+            {monitors.length === 0 && <p className="text-xs text-subtle">No active monitors.</p>}
+            {monitors.slice(0, 5).map(row => (
+              <div key={definitionId(row)} className="rounded-lg border border-app px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-app">{row.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => disableMonitorMutation.mutate(definitionId(row))}
+                    className="text-subtle hover:text-app"
+                  >
+                    Propose Disable
+                  </button>
+                </div>
+                <p className="mt-1 text-subtle">{row.condition}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Active Missions</h3>
+          <div className="space-y-2">
+            {missions.length === 0 && <p className="text-xs text-subtle">No active missions.</p>}
+            {missions.slice(0, 5).map(row => (
+              <div key={definitionId(row)} className="rounded-lg border border-app px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-app">{row.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => disableMissionMutation.mutate(definitionId(row))}
+                    className="text-subtle hover:text-app"
+                  >
+                    Propose Disable
+                  </button>
+                </div>
+                <p className="mt-1 text-subtle">{row.mission_type || "monitor_review"} | {row.status}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
 
 export function OntologyWorkbench() {
   const [showInfo, setShowInfo] = useState(false)
@@ -277,6 +520,8 @@ export function OntologyWorkbench() {
           </p>
         )}
       </div>
+
+      <MonitorMissionBuilder />
 
       <div className="theme-surface mb-6 grid grid-cols-1 gap-3 rounded-xl p-4 md:grid-cols-3">
         <TextInput

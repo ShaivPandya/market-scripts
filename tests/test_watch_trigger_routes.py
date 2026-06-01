@@ -124,3 +124,68 @@ def test_replace_pending_watch_trigger_approval_route(auth_client, monkeypatch):
     assert body["original"]["status"] == "rejected"
     assert body["replacement"]["id"] == "approval:new"
     assert body["replacement"]["proposed_change"]["condition"] == "New"
+
+
+def test_monitor_builder_create_route_stages_definition(auth_client, monkeypatch):
+    from api.routers import monitor_builder
+
+    calls: list[dict] = []
+
+    def fake_stage(action_id, payload, **kwargs):
+        calls.append({"action_id": action_id, "payload": payload, **kwargs})
+        return {
+            "status": "pending_approval_created",
+            "approval_id": "approval:monitor",
+            "application_status": "pending",
+            "action_id": action_id,
+            "entity_type": "monitor_definition",
+            "ticker": None,
+            "proposed_change": payload,
+        }
+
+    monkeypatch.setattr(monitor_builder, "stage_api_action", fake_stage)
+
+    response = auth_client.post(
+        "/api/monitor-builder/monitors",
+        json={
+            "name": "MU monitor",
+            "template_id": "thesis_monitor",
+            "scope": {"ticker": "MU"},
+            "trigger_type": "fundamental_news",
+            "condition": "Watch MU thesis evidence",
+            "definition": {"type": "fundamental_news", "query": "MU"},
+            "source_requirements": [{"source_name": "trusted_news", "required": True}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["action_id"] == "create_monitor_definition"
+    assert calls[0]["payload"]["condition"] == "Watch MU thesis evidence"
+    assert calls[0]["payload"]["approval_behavior"] == "hit_only_then_human_review"
+
+
+def test_monitor_builder_disable_route_stages_uid(auth_client, monkeypatch):
+    from api.routers import monitor_builder
+
+    calls: list[dict] = []
+
+    def fake_stage(action_id, payload, **kwargs):
+        calls.append({"action_id": action_id, "payload": payload, **kwargs})
+        return {
+            "status": "pending_approval_created",
+            "approval_id": "approval:disable-monitor",
+            "application_status": "pending",
+            "action_id": action_id,
+            "entity_type": "monitor_definition_status",
+            "ticker": None,
+            "proposed_change": payload,
+        }
+
+    monkeypatch.setattr(monitor_builder, "stage_api_action", fake_stage)
+
+    response = auth_client.post("/api/monitor-builder/monitors/monitor_definition%3Amu/disable", json={})
+
+    assert response.status_code == 200
+    assert calls[0]["action_id"] == "disable_monitor_definition"
+    assert calls[0]["payload"] == {"monitor_id": "monitor_definition:mu"}
+    assert calls[0]["entity_id"] == "monitor_definition:mu"

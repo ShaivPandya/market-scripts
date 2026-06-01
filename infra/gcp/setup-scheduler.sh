@@ -12,6 +12,7 @@
 #
 # Optional:
 #   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/admin/jobs/enqueue-watch-trigger-monitor
+#   monitor-mission-runner    35 14-22 * * 1-5 POST /api/admin/jobs/enqueue-monitor-mission-runner
 #   governance-outbox-drain   */5 * * * *   POST  /api/admin/jobs/enqueue-governance-outbox-drain
 #   enqueue-cache-warm        0 * * * *     POST  /api/admin/jobs/enqueue-cache-warm
 #
@@ -157,6 +158,12 @@ if is_truthy "${SCHEDULE_WATCH_TRIGGER_MONITOR:-0}"; then
   upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/admin/jobs/enqueue-watch-trigger-monitor
 else
   delete_scheduler_job_if_present watch-trigger-monitor
+fi
+
+if is_truthy "${SCHEDULE_MONITOR_MISSION_RUNNER:-0}"; then
+  upsert_api_job monitor-mission-runner "${MONITOR_MISSION_RUNNER_SCHEDULE:-35 14-22 * * 1-5}" /api/admin/jobs/enqueue-monitor-mission-runner
+else
+  delete_scheduler_job_if_present monitor-mission-runner
 fi
 
 if is_truthy "${SCHEDULE_CATALYST_KILL_MONITOR:-0}"; then

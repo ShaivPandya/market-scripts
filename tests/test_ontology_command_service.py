@@ -962,6 +962,84 @@ def test_create_monitor_hit_persists_first_class_object():
     assert props["evidence"] == "Price within 5% of threshold"
 
 
+def test_create_update_disable_monitor_definition_uses_governed_actions():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    create = service.propose_action(
+        "create_monitor_definition",
+        {
+            "name": "MU news monitor",
+            "template_id": "thesis_monitor",
+            "scope": {"ticker": "MU"},
+            "trigger_type": "fundamental_news",
+            "condition": "Watch for memory demand deterioration",
+            "definition": {"type": "fundamental_news", "query": "MU memory demand"},
+            "source_requirements": [{"source_name": "trusted_news", "required": True}],
+            "cadence": {"label": "hourly"},
+        },
+        context,
+        reason="Create builder monitor",
+    )
+    service.resolve_approval(create["id"], "approved", "approved", context)
+    monitor_uid = "monitor_definition:mu_news_monitor"
+    created = repo.objects[monitor_uid]["properties_json"]
+    assert create["entity_type"] == "monitor_definition"
+    assert created["definition_version"] == 1
+    assert created["approval_behavior"] == "hit_only_then_human_review"
+    assert created["definition_hash"]
+
+    update = service.propose_action(
+        "update_monitor_definition",
+        {
+            "monitor_id": monitor_uid,
+            "name": "MU news monitor",
+            "condition": "Watch for memory pricing deterioration",
+            "trigger_type": "fundamental_news",
+            "definition": {"type": "fundamental_news", "query": "MU memory pricing"},
+        },
+        context,
+        reason="Update builder monitor",
+    )
+    service.resolve_approval(update["id"], "approved", "approved", context)
+    updated = repo.objects[monitor_uid]["properties_json"]
+    assert update["target_object_uid"] == monitor_uid
+    assert updated["definition_version"] == 2
+    assert updated["condition"] == "Watch for memory pricing deterioration"
+
+    disable = service.propose_action(
+        "disable_monitor_definition",
+        {"monitor_id": monitor_uid},
+        context,
+        reason="Disable builder monitor",
+    )
+    service.resolve_approval(disable["id"], "approved", "approved", context)
+    assert repo.objects[monitor_uid]["properties_json"]["status"] == "disabled"
+
+    mission = service.propose_action(
+        "create_mission_definition",
+        {
+            "name": "Risk review mission",
+            "template_id": "risk_mission",
+            "mission_type": "risk_review",
+            "scope": {"portfolio_id": "default"},
+            "schedule": {"label": "daily"},
+            "source_requirements": [{"source_name": "portfolio_risk", "required": True}],
+            "thresholds": {"risk_score": 0.7},
+            "steps": [{"kind": "query", "tool": "query_ontology"}],
+        },
+        context,
+        reason="Create builder mission",
+    )
+    service.resolve_approval(mission["id"], "approved", "approved", context)
+    mission_uid = "mission_definition:risk_review_mission"
+    mission_props = repo.objects[mission_uid]["properties_json"]
+    assert mission["entity_type"] == "mission_definition"
+    assert mission_props["mission_type"] == "risk_review"
+    assert mission_props["definition_hash"]
+
+
 def test_update_watch_trigger_definition_accepts_uid_and_preserves_context():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]

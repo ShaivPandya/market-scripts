@@ -132,6 +132,12 @@ interface WorkspaceData {
     open_alert_count: number
     open_alerts: OptimizationAlert[]
   }
+  monitor_builder?: {
+    active_monitor_count: number
+    active_mission_count: number
+    active_monitors: BuilderDefinition[]
+    active_missions: BuilderDefinition[]
+  }
   thesis_claims?: {
     challenged_count: number
     items: ThesisClaim[]
@@ -178,6 +184,21 @@ interface MonitorHit {
   evidence?: string | null
   detected_at?: string | null
   approval_id?: string | null
+}
+
+interface BuilderDefinition {
+  id?: string | number
+  object_uid?: string
+  monitor_id?: string
+  mission_id?: string
+  name: string
+  status: string
+  condition?: string | null
+  trigger_type?: string | null
+  mission_type?: string | null
+  cadence?: Record<string, unknown> | null
+  schedule?: Record<string, unknown> | null
+  updated_at?: string | null
 }
 
 interface WorkflowRun {
@@ -1213,6 +1234,11 @@ export function Workspace() {
   ].filter(Boolean).join(" · ")
   const optimizerAlerts = data.continuous_optimization?.open_alerts ?? []
   const optimizerAlertCount = data.continuous_optimization?.open_alert_count ?? optimizerAlerts.length
+  const builderMonitors = data.monitor_builder?.active_monitors ?? []
+  const builderMissions = data.monitor_builder?.active_missions ?? []
+  const builderDefinitionCount =
+    (data.monitor_builder?.active_monitor_count ?? builderMonitors.length) +
+    (data.monitor_builder?.active_mission_count ?? builderMissions.length)
   const thesisClaimItems = data.thesis_claims?.items ?? []
   const thesisClaimCount = data.thesis_claims?.challenged_count ?? thesisClaimItems.length
   const recentReportRuns = data.recent_report_runs ?? []
@@ -1726,6 +1752,37 @@ export function Workspace() {
           </section>
         )}
 
+        {builderDefinitionCount > 0 && (
+          <section className="theme-surface flex min-h-0 max-h-[min(42rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <Database size={14} className="text-violet-500" />
+              Builder Definitions
+              <span className="ml-auto text-xs text-subtle">{builderDefinitionCount} active</span>
+            </h2>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+              {[...builderMonitors, ...builderMissions].slice(0, 8).map(definition => {
+                const id = String(definition.object_uid || definition.id || definition.monitor_id || definition.mission_id || definition.name)
+                const kind = definition.monitor_id || definition.condition ? "Monitor" : "Mission"
+                return (
+                  <div key={id} className="rounded-lg border border-app/60 px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-app">{definition.name}</span>
+                      <span className="text-xs uppercase tracking-wide text-subtle">{kind}</span>
+                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">
+                        safe mode
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      {definition.condition || definition.mission_type || definition.trigger_type || "Review mission outputs"}
+                    </p>
+                    <p className="mt-1 text-[11px] text-subtle">Hits are recorded and review actions are staged before state changes.</p>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         {/* Active Watch Triggers */}
         {data.active_triggers.count > 0 && (
           <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
@@ -1835,6 +1892,7 @@ export function Workspace() {
         !approvalCount &&
         !data.open_actions.count &&
         !data.active_triggers.count &&
+        builderDefinitionCount === 0 &&
         !data.monitor_hits.count &&
         !data.recent_workflow_runs.length &&
         !recentReportRuns.length &&

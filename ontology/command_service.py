@@ -45,6 +45,8 @@ from ontology.schemas.identity import (
     management_quality_assessment_id,
     management_quality_scorecard_row_id,
     management_quality_setback_id,
+    mission_definition_id,
+    monitor_definition_id,
     monitor_hit_id,
     policy_gate_result_id,
     portfolio_id,
@@ -93,6 +95,12 @@ RESEARCH_ACTION_IDS = {
     "replace_watch_trigger",
     "update_watch_trigger_check",
     "update_watch_trigger_definition",
+    "create_monitor_definition",
+    "update_monitor_definition",
+    "disable_monitor_definition",
+    "create_mission_definition",
+    "update_mission_definition",
+    "disable_mission_definition",
     "create_monitor_hit",
     "update_monitor_hit_status",
 }
@@ -1887,6 +1895,94 @@ class OntologyCommandService:
             )
             refs.append(_version_ref_from_row(replacement))
             return refs
+        if action_id in {"create_monitor_definition", "update_monitor_definition", "disable_monitor_definition"}:
+            existing: dict[str, Any] = {}
+            if action_id == "create_monitor_definition":
+                monitor_uid = monitor_definition_id(
+                    payload.get("monitor_id") or payload.get("name") or _stable_hash(payload)[:12]
+                )
+                status = str(payload.get("status") or "active")
+                version = 1
+            else:
+                monitor_uid = _normalize_monitor_definition_uid(payload.get("monitor_id"))
+                existing = _monitor_definition_context(self.objects, monitor_uid)
+                if not existing:
+                    raise OntologyCommandNotFound("MonitorDefinition", str(payload.get("monitor_id")))
+                status = (
+                    "disabled"
+                    if action_id == "disable_monitor_definition"
+                    else str(payload.get("status") or existing.get("status") or "active")
+                )
+                version = int(existing.get("definition_version") or 1) + (
+                    1 if action_id == "update_monitor_definition" else 0
+                )
+            merged_definition = _merge_definition_payload(existing, payload, kind="monitor")
+            definition_hash = _definition_hash(merged_definition)
+            row = self.objects.write_object(
+                "MonitorDefinition",
+                monitor_uid,
+                {
+                    **merged_definition,
+                    "monitor_id": monitor_uid,
+                    "status": status,
+                    "owner_actor_id": existing.get("owner_actor_id") or context.actor.actor_id,
+                    "definition_version": version,
+                    "definition_hash": definition_hash,
+                    "created_at": existing.get("created_at") or now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"create_mission_definition", "update_mission_definition", "disable_mission_definition"}:
+            existing = {}
+            if action_id == "create_mission_definition":
+                mission_uid = mission_definition_id(
+                    payload.get("mission_id") or payload.get("name") or _stable_hash(payload)[:12]
+                )
+                status = str(payload.get("status") or "active")
+                version = 1
+            else:
+                mission_uid = _normalize_mission_definition_uid(payload.get("mission_id"))
+                existing = _mission_definition_context(self.objects, mission_uid)
+                if not existing:
+                    raise OntologyCommandNotFound("MissionDefinition", str(payload.get("mission_id")))
+                status = (
+                    "disabled"
+                    if action_id == "disable_mission_definition"
+                    else str(payload.get("status") or existing.get("status") or "active")
+                )
+                version = int(existing.get("definition_version") or 1) + (
+                    1 if action_id == "update_mission_definition" else 0
+                )
+            merged_definition = _merge_definition_payload(existing, payload, kind="mission")
+            definition_hash = _definition_hash(merged_definition)
+            row = self.objects.write_object(
+                "MissionDefinition",
+                mission_uid,
+                {
+                    **merged_definition,
+                    "mission_id": mission_uid,
+                    "status": status,
+                    "owner_actor_id": existing.get("owner_actor_id") or context.actor.actor_id,
+                    "definition_version": version,
+                    "definition_hash": definition_hash,
+                    "created_at": existing.get("created_at") or now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
         if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
             record = _dict(payload.get("record") or payload)
             rec_key = str(record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record))
@@ -3620,6 +3716,16 @@ def _normalize_watch_trigger_uid(value: Any) -> str:
     return text if text.startswith("watch_trigger:") else watch_trigger_id(text)
 
 
+def _normalize_monitor_definition_uid(value: Any) -> str:
+    text = _non_blank(value, "monitor_id")
+    return text if text.startswith("monitor_definition:") else monitor_definition_id(text)
+
+
+def _normalize_mission_definition_uid(value: Any) -> str:
+    text = _non_blank(value, "mission_id")
+    return text if text.startswith("mission_definition:") else mission_definition_id(text)
+
+
 def _entity_type_for_action(action_id: str) -> str:
     if action_id == "update_portfolio_positions":
         return "portfolio_positions"
@@ -3639,6 +3745,14 @@ def _entity_type_for_action(action_id: str) -> str:
         return "watch_trigger_check"
     if action_id == "update_watch_trigger_definition":
         return "watch_trigger_definition"
+    if action_id == "create_monitor_definition":
+        return "monitor_definition"
+    if action_id in {"update_monitor_definition", "disable_monitor_definition"}:
+        return "monitor_definition_status" if action_id == "disable_monitor_definition" else "monitor_definition"
+    if action_id == "create_mission_definition":
+        return "mission_definition"
+    if action_id in {"update_mission_definition", "disable_mission_definition"}:
+        return "mission_definition_status" if action_id == "disable_mission_definition" else "mission_definition"
     if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         return "course_of_action"
     if action_id == "create_monitor_hit":
@@ -3670,6 +3784,14 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         trigger_id = payload.get("trigger_id") or payload.get("id")
         if trigger_id:
             return _normalize_watch_trigger_uid(trigger_id), "WatchTrigger"
+    if action_id in {"update_monitor_definition", "disable_monitor_definition"}:
+        monitor_id = payload.get("monitor_id") or payload.get("id")
+        if monitor_id:
+            return _normalize_monitor_definition_uid(monitor_id), "MonitorDefinition"
+    if action_id in {"update_mission_definition", "disable_mission_definition"}:
+        mission_id = payload.get("mission_id") or payload.get("id")
+        if mission_id:
+            return _normalize_mission_definition_uid(mission_id), "MissionDefinition"
     if action_id in COURSE_OF_ACTION_CREATE_ACTION_IDS:
         record = _dict(payload.get("record") or payload)
         ticker = _ticker_from_payload(record)
@@ -4086,6 +4208,86 @@ def _watch_trigger_context(objects: Any, trigger_id: Any) -> dict[str, Any]:
         return _object_context_by_uid(objects, _normalize_watch_trigger_uid(trigger_id))
     except OntologyCommandValidationError:
         return {}
+
+
+def _monitor_definition_context(objects: Any, monitor_id: Any) -> dict[str, Any]:
+    try:
+        return _object_context_by_uid(objects, _normalize_monitor_definition_uid(monitor_id))
+    except OntologyCommandValidationError:
+        return {}
+
+
+def _mission_definition_context(objects: Any, mission_id: Any) -> dict[str, Any]:
+    try:
+        return _object_context_by_uid(objects, _normalize_mission_definition_uid(mission_id))
+    except OntologyCommandValidationError:
+        return {}
+
+
+def _merge_definition_payload(existing: Mapping[str, Any], payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
+    monitor_fields = (
+        "name",
+        "description",
+        "template_id",
+        "scope",
+        "trigger_type",
+        "condition",
+        "definition",
+        "thresholds",
+        "source_requirements",
+        "cadence",
+        "severity",
+        "output_policy",
+        "approval_behavior",
+    )
+    mission_fields = (
+        "name",
+        "description",
+        "template_id",
+        "scope",
+        "mission_type",
+        "workflow_name",
+        "schedule",
+        "source_requirements",
+        "thresholds",
+        "steps",
+        "output_policy",
+        "approval_behavior",
+    )
+    fields = mission_fields if kind == "mission" else monitor_fields
+    merged: dict[str, Any] = {}
+    for field in fields:
+        if field in payload and payload.get(field) is not None:
+            value = payload.get(field)
+        else:
+            value = existing.get(field)
+        if value is not None:
+            merged[field] = value
+    merged.setdefault("template_id", "custom")
+    merged.setdefault("scope", {})
+    merged.setdefault("thresholds", {})
+    merged.setdefault("source_requirements", [])
+    merged.setdefault("output_policy", {})
+    merged.setdefault("approval_behavior", "hit_only_then_human_review")
+    if kind == "mission":
+        merged.setdefault("mission_type", "monitor_review")
+        merged.setdefault("schedule", {})
+        merged.setdefault("steps", [])
+    else:
+        merged.setdefault("trigger_type", "custom")
+        merged.setdefault("definition", {})
+        merged.setdefault("cadence", {})
+        merged.setdefault("severity", "medium")
+    return merged
+
+
+def _definition_hash(payload: Mapping[str, Any]) -> str:
+    hashed = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"created_at", "updated_at", "last_run_at", "definition_hash", "definition_version"}
+    }
+    return _stable_hash(hashed)[:24]
 
 
 def _merge_watch_trigger_context(payload: dict[str, Any], trigger: Mapping[str, Any]) -> None:

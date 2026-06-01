@@ -221,6 +221,7 @@ def test_compare_route_decisions_and_training_row():
         session_id="sess-1",
     )
     assert row["session_id"] == "sess-1"
+    assert row["schema_version"] == 1
     assert json.loads(json.dumps(row))["applied_source"] == "regex_shadow"
 
 

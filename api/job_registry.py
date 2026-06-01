@@ -336,6 +336,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Watch trigger monitor failed",
     ),
+    "monitor_mission_runner": JobSpec(
+        job_type="monitor_mission_runner",
+        request_model=None,
+        compute_func="api.mission_runner.run_monitor_mission_runner",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_MONITOR_MISSION_RUNNER_SECONDS", 10 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Monitor/mission runner failed",
+    ),
     "catalyst_kill_monitor": JobSpec(
         job_type="catalyst_kill_monitor",
         request_model=None,

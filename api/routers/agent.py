@@ -57,7 +57,10 @@ from decision_quality.intent_router import (
     RouteDecision,
     build_regex_route_decision,
     build_route_context,
+    intent_router_training_capture_mismatch_only,
     resolve_agent_route,
+    should_capture_training_row,
+    training_row_from_telemetry,
 )
 from decision_quality.models import (
     DecisionQuality,
@@ -1477,6 +1480,90 @@ def _resolve_chat_route(
     )
 
 
+def _load_recent_conversation_for_routing(session_id: str | None) -> list[dict[str, Any]]:
+    from api import memory_db
+
+    session = memory_db.get_or_create_session(session_id)
+    server_messages = session.get("server_messages") or []
+    if not isinstance(server_messages, list):
+        return []
+    return [item for item in server_messages[-6:] if isinstance(item, dict)]
+
+
+def _capture_intent_router_training_row(
+    *,
+    req: AgentChatRequest,
+    route_decision: RouteDecision,
+    route_meta: dict[str, Any],
+    recent_conversation: list[dict[str, Any]] | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
+) -> None:
+    should_capture, sampling_reason = should_capture_training_row(route_meta=route_meta)
+    if not should_capture:
+        return
+    try:
+        from api.intent_router_training_store import insert_training_row
+
+        route_context = build_route_context(
+            user_text=req.message,
+            screen_context=req.screen_context,
+            recent_conversation=recent_conversation,
+            opportunity_candidate_metadata=opportunity_candidate_metadata,
+        )
+        screen_context = route_context.screen_context
+        row = training_row_from_telemetry(
+            user_text=req.message,
+            route_meta=route_meta,
+            session_id=req.session_id,
+            client_turn_id=req.client_turn_id,
+            screen_context=screen_context,
+            recent_session_features=route_context.recent_session_features,
+            applied_route=route_decision.to_meta(),
+            opportunity_candidate_metadata=opportunity_candidate_metadata,
+            capture_policy="mismatch_only" if intent_router_training_capture_mismatch_only() else "shadow_all",
+            sampling_reason=sampling_reason,
+        )
+        insert_training_row(row)
+    except Exception:
+        logger.exception("intent_router_training_capture_failed session_id=%s", req.session_id)
+
+
+def _opportunity_candidate_metadata_from_result(oc_result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not oc_result:
+        return None
+    opportunity_candidate = oc_result.get("opportunity_candidate")
+    if isinstance(opportunity_candidate, OpportunityCandidate):
+        return opportunity_candidate.model_dump(mode="json")
+    if isinstance(opportunity_candidate, dict):
+        return opportunity_candidate
+    return None
+
+
+def _update_intent_router_training_oc_metadata(
+    *,
+    session_id: str | None,
+    client_turn_id: str | None,
+    oc_result: dict[str, Any] | None,
+) -> None:
+    metadata = _opportunity_candidate_metadata_from_result(oc_result)
+    if not metadata:
+        return
+    try:
+        from api.intent_router_training_store import update_opportunity_candidate_metadata
+
+        update_opportunity_candidate_metadata(
+            session_id=session_id,
+            client_turn_id=client_turn_id,
+            opportunity_candidate_metadata=metadata,
+        )
+    except Exception:
+        logger.exception(
+            "intent_router_training_oc_metadata_failed session_id=%s client_turn_id=%s",
+            session_id,
+            client_turn_id,
+        )
+
+
 def _tool_call_signature(name: str, args: dict) -> str:
     try:
         args_key = json.dumps(args, sort_keys=True, default=str, separators=(",", ":"))
@@ -2571,11 +2658,19 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         tool_defs = _tool_definitions_from_names(provider, active_tool_names)
         if not casual:
             llm_credentials = _read_llm_api_key()
+            recent_conversation = _load_recent_conversation_for_routing(req.session_id)
             route_decision, route_meta = _resolve_chat_route(
                 user_text=req.message,
                 screen_context=req.screen_context,
+                recent_conversation=recent_conversation,
                 llm_credentials=llm_credentials,
                 reasoning_effort=_chat_reasoning_effort(provider, req.response_preferences),
+            )
+            _capture_intent_router_training_row(
+                req=req,
+                route_decision=route_decision,
+                route_meta=route_meta,
+                recent_conversation=recent_conversation,
             )
             workflow_name = route_decision.workflow_name
             workflow_ticker = route_decision.workflow_ticker
@@ -3034,6 +3129,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             )
                             budget.record_model_usage(oc_result.get("usage") or {})
                             yield _sse("budget_update", budget.to_meta())
+                            _update_intent_router_training_oc_metadata(
+                                session_id=req.session_id,
+                                client_turn_id=req.client_turn_id,
+                                oc_result=oc_result,
+                            )
                             break
                         except Exception as retry_exc:
                             _record_model_timing(

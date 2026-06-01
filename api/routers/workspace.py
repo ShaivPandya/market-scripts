@@ -343,6 +343,8 @@ def get_workspace(since: str | None = None):
     optimizer_alerts = ontology_bundle.get("optimizer_alerts", [])
 
     # Active watch triggers
+    active_monitor_definitions = ontology_bundle.get("active_monitor_definitions", [])
+    active_mission_definitions = ontology_bundle.get("active_mission_definitions", [])
     active_triggers = ontology_bundle.get("active_watch_triggers", [])
     monitor_hits = ontology_bundle.get("recent_monitor_hits", [])
 
@@ -407,6 +409,12 @@ def get_workspace(since: str | None = None):
         "continuous_optimization": {
             "open_alert_count": len(optimizer_alerts),
             "open_alerts": optimizer_alerts[:5],
+        },
+        "monitor_builder": {
+            "active_monitor_count": len(active_monitor_definitions),
+            "active_mission_count": len(active_mission_definitions),
+            "active_monitors": active_monitor_definitions[:5],
+            "active_missions": active_mission_definitions[:5],
         },
         "active_triggers": {
             "count": len(active_triggers),

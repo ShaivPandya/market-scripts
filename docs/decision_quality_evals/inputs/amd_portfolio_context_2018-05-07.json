@@ -1,0 +1,20 @@
+{
+  "ticker": "AMD",
+  "as_of_date": "2018-05-07",
+  "position_status": "new_position",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "High-beta semiconductor turnaround and structural server CPU share-gain exposure.",
+  "intended_role_notes": "New long position intended to express the view that AMD's Zen/Ryzen/EPYC execution and Intel's 10nm delay created a multi-quarter rerating opportunity.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": 0.04,
+  "post_confirmation_target_weight": "5% to 6% if Q2/Q3 results confirm revenue, gross margin, and EPYC adoption.",
+  "target_size": "3% to 4% starter position, with add conditions tied to EESC sequential growth, gross margin, roadmap execution, and price-action follow-through.",
+  "initial_size": null,
+  "current_semiconductor_exposure": null,
+  "current_ai_infrastructure_exposure": null,
+  "current_cyclical_exposure": null,
+  "current_crypto_gpu_exposure": null,
+  "liquidity_notes": "AMD was highly liquid, with May 7 volume of about 54.0M shares, but the stock was volatile and should be sized for 15% to 20% intra-month drawdowns.",
+  "risk_budget_notes": "Sizing should account for high beta, semiconductor cyclicality, crypto GPU overhang, Intel competitive response, foundry execution risk, and portfolio concentration in technology or semiconductors.",
+  "human_notes": "Sizing and conviction are taken from the user-provided AMD research case. No actual portfolio holdings were provided."
+}

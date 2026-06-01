@@ -1,0 +1,35 @@
+{
+  "ticker": "AMD",
+  "as_of_date": "2018-05-07",
+  "decision_context": "Position initiation",
+  "recommended_action": "buy",
+  "human_initiation_rationale": "Initiate AMD because the market was over-indexing to transient crypto GPU risk and AMD's historical execution failures while underpricing the combination of Ryzen margin improvement, early EPYC server traction, Q2 guidance, and Intel's newly confirmed 10nm delay into 2019.",
+  "selected_inputs": [
+    "AMD Q1 2018 earnings release and 10-Q",
+    "Intel Q1 2018 earnings call 10nm delay",
+    "May 7, 2018 AMD price-action snapshot",
+    "User-provided AMD deep research case"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Dual late-April evidence: AMD Q1 beat/guidance and Intel 10nm volume-production delay.",
+    "expected_date": "Already occurred before May 7, with validation expected through Q2/Q3 2018 earnings and 2H 2018 EPYC/Rome roadmap updates.",
+    "why_it_mattered": "The catalyst converted AMD from a generic turnaround into a time-sensitive server CPU share-gain opportunity, while price action had begun to recover but had not yet fully re-rated."
+  },
+  "evidence_for_notes": [
+    "Q1 revenue grew 40% YoY and gross margin improved to 36%.",
+    "Computing and Graphics revenue grew 95% YoY, with Ryzen and Radeon driving mix.",
+    "EESC was down YoY but up 23% QoQ, with EPYC contributing to the sequential improvement.",
+    "AMD guided Q2 2018 revenue to about $1.725B plus or minus $50M and non-GAAP gross margin to about 37%.",
+    "Intel moved 10nm volume production from the second half of 2018 into 2019.",
+    "The May 7 close showed strong 1-month reversal momentum and partial moving-average confirmation."
+  ],
+  "evidence_against_notes": [
+    "Crypto-related GPU demand was real and could reverse quickly.",
+    "Intel remained financially strong and dominant in server CPUs.",
+    "EESC had not yet shown year-over-year growth, so server share gains were still early.",
+    "AMD carried debt, dilution, and foundry execution risk.",
+    "AMD's stock remained below some longer-term moving averages, so technical confirmation was incomplete."
+  ],
+  "price_confirmation_notes": "Price action was constructive enough for a starter buy, not clean enough for maximum size: AMD was above the 100D and 150D SMAs but below the 200D, 40W, and 10M averages.",
+  "human_notes": "Distilled from the user-provided AMD research case while excluding post-May 7 outcome evidence."
+}

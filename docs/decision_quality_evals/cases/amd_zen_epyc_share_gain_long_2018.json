@@ -1,0 +1,238 @@
+{
+  "id": "amd_zen_epyc_share_gain_long_2018",
+  "status": "review",
+  "decision_type": "new_idea",
+  "as_of_date": "2018-05-07",
+  "user_question": "Using the AMD setup as of the May 7, 2018 close, should this new buy have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json",
+      "sha256": "54151cf343f486b223f3f207fdf8ada99d492ed6c7c42fc29bad049dd0296360",
+      "description": "User-provided AMD May 2018 deep research distilled to as-of decision facts, with post-May 7 outcome material excluded.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/amd_price_action_2018-05-07.json",
+      "sha256": "abe4769534114f006f6958b147f97bd59594bc3a5575e01dfb9cc182c07507e6",
+      "description": "AMD price-action snapshot through the 2018-05-07 close: close, volume, moving averages, ROC, and relative-performance context.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/amd_portfolio_context_2018-05-07.json",
+      "sha256": "f2c7ee43ab65848d3adc60888f1c1a2fa2ba7d16ad722c490b5b812b6b9d0632",
+      "description": "Portfolio context: AMD was a new long with conviction 4 and a 3%-4% starter-size frame.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/amd_initiation_notes_2018-05-07.json",
+      "sha256": "9da401420250166723a99866d24bb3f5175367b8baee3b7a57c17eaddfe4d576",
+      "description": "Initiation rationale: AMD Q1 execution plus Intel 10nm delay and partial price confirmation.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "The decision date is 2018-05-07 after the market close.",
+    "The decision type is a new AMD buy expressed through common equity.",
+    "The user specified the recommended action should be buy.",
+    "The source markdown included several post-May 7 sources; this case excludes those future/outcome materials from the solver inputs.",
+    "The source markdown listed Q2 guidance as $1.55B in one place, but the official AMD April 25, 2018 earnings release guided Q2 revenue to approximately $1.725B plus or minus $50M.",
+    "Price-action metrics were generated from historical daily price data and should be replaced with a stable vendor snapshot before this case is marked approved.",
+    "Portfolio sizing uses the research file's 3%-4% starter-size frame; no actual current portfolio exposure was provided."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy AMD because Q1 2018 showed Ryzen/Radeon/EPYC-driven revenue growth and margin improvement just as Intel's 10nm delay created a credible window for AMD to win higher-margin CPU share, while the market still treated AMD primarily as a volatile crypto-GPU and failed-turnaround story.",
+    "opportunity_type": "regime_shift",
+    "embedded_macro_exposure": "Long semiconductor cyclicality, PC and server CPU demand, hyperscale/cloud capex, x86 share shifts, foundry/process-node execution, high-beta growth equities, and near-term crypto GPU sentiment.",
+    "mispricing": {
+      "consensus_view": "AMD was a high-beta, lower-margin semiconductor turnaround whose Q1 strength could prove temporary because GPU demand was crypto-inflated, Intel still dominated server CPUs, and AMD carried execution, debt, foundry, and cyclicality risks.",
+      "variant_view": "The market was over-penalizing transient crypto and AMD's prior execution history while underpricing a real competitive reset: Zen/Ryzen improved client economics, EPYC had early server traction, and Intel's 10nm delay extended AMD's window to win margin-accretive CPU share.",
+      "pricing_evidence": "AMD closed at $11.59, with an enterprise value framed in the source case around $11B-$12B and only partial long-term price confirmation: above the 100D and 150D SMAs but still below the 200D, 40W, and 10M averages. Contemporaneous skepticism around crypto GPU demand and AMD's history suggested the stock had not fully capitalized the server CPU option.",
+      "why_consensus_is_wrong": "Consensus treated Q1 as a potentially crypto-driven spike and assumed Intel's dominance would remain structurally intact. The variant view recognized that Q1 gross-margin improvement, Q2 guidance, named EPYC deployments, and Intel's 10nm delay made CPU share gain and operating leverage a time-sensitive probability, not only a distant option."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "AMD's April 25, 2018 Q1 earnings/guidance and Intel's April 26, 2018 10nm-delay disclosure, followed by constructive AMD price action into the May 7 close.",
+      "expected_timeframe": "Immediate initiation on 2018-05-07, with validation over the next one to three quarters through Q2/Q3 revenue, gross margin, EESC/EPYC traction, product-roadmap commentary, and price follow-through.",
+      "why_now": "The relevant facts had changed within the prior two weeks: AMD showed revenue growth and margin improvement from new products, guided Q2 to continued growth and higher non-GAAP gross margin, and Intel publicly moved 10nm volume production into 2019. May 7 offered a post-event entry after the initial earnings reaction but before the thesis was fully confirmed by later quarters.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json: AMD Q1 results, Q2 guidance, EPYC/Ryzen context, Intel 10nm delay, consensus and bear-case framing",
+        "docs/decision_quality_evals/inputs/amd_price_action_2018-05-07.json: May 7 close, moving-average position, ROC, volume, and relative-performance context",
+        "docs/decision_quality_evals/inputs/amd_initiation_notes_2018-05-07.json: buy framing, reason-now, evidence for, evidence against, and price-confirmation notes"
+      ]
+    },
+    "invalidation": {
+      "observable": "The thesis that AMD's CPU product cycle is offsetting crypto/GPU risk and opening a server share-gain window fails to show up in revenue, margin, EPYC adoption, roadmap execution, or price behavior.",
+      "metric_or_event": "Q2/Q3 2018 revenue versus guidance, non-GAAP gross margin, EESC sequential revenue and EPYC commentary, 7nm/Zen 2/Rome roadmap timing, crypto GPU inventory/channel commentary, debt/liquidity, and weekly price behavior around thesis-relevant news.",
+      "threshold": "Force review or reduce if Q2 revenue misses the low end of guidance by more than about 10%, non-GAAP gross margin falls below 34%, EESC fails to grow sequentially while management weakens EPYC/server-share commentary, management signals material delay to expected 7nm/Rome sampling or production timing, or AMD sustains a weekly close below $9.50 on thesis-relevant news.",
+      "timeframe": "Next one to three quarters after 2018-05-07, with the first hard review at Q2 2018 earnings.",
+      "implication": "The bear case that Q1 strength was crypto-inflated or that Intel/OEM/foundry constraints will block AMD's CPU share gains is more likely correct, so the new long should be reduced or exited rather than averaged down."
+    },
+    "evidence_for": [
+      {
+        "claim": "AMD had just delivered strong revenue growth and operating leverage.",
+        "support": "The source case records Q1 revenue of $1.65B, up 40% YoY, gross margin of 36%, GAAP operating income of $120M, and non-GAAP operating income of $152M.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "The margin improvement was tied to the new product mix, not only volume.",
+        "support": "AMD attributed gross-margin expansion to a greater percentage of revenue from Ryzen, Radeon, and EPYC products, with Computing and Graphics revenue up 95% YoY.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Q2 guidance supported continued execution after the Q1 print.",
+        "support": "AMD guided Q2 revenue to approximately $1.725B plus or minus $50M and non-GAAP gross margin to approximately 37%.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Intel's 10nm delay changed the competitive setup.",
+        "support": "Intel said 10nm volume production was moving from the second half of 2018 into 2019, extending the period in which Intel would rely on 14nm roadmap products.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "EPYC server optionality was early but observable.",
+        "support": "AMD cited new EPYC-powered platforms and deployments, and EESC revenue was up 23% QoQ despite being down YoY because of semi-custom comparisons.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Price action was beginning to confirm the change.",
+        "support": "AMD closed at $11.59 with 1-month ROC of 20.6%, above the 100D and 150D SMAs, and with 1-month outperformance versus Nasdaq, SMH, SPY, and Intel.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_price_action_2018-05-07.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Crypto GPU exposure was a real near-term risk.",
+        "support": "The source case notes blockchain-related revenue around 10% of Q1 revenue and contemporaneous concern that crypto-mining demand and GPU channel inventory could reverse.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Intel remained financially strong and strategically dangerous.",
+        "support": "The source case notes Intel's strong Q1 results and server dominance, so AMD still faced pricing, OEM relationship, and product-roadmap competition.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Reported server evidence was still early.",
+        "support": "EESC revenue was down 12% YoY even though it improved sequentially, meaning the EPYC thesis had not yet dominated reported segment results.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Debt, dilution, and liquidity risks had not disappeared.",
+        "support": "AMD had $223M of short-term debt and $1.165B of long-term debt, and its filings listed financing, debt-service, and dilution risks.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "Foundry and roadmap execution risk was central.",
+        "support": "AMD depended on third-party manufacturing, capacity, and yields, and the thesis required continued Zen/EPYC roadmap execution.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_source_case_2018-05-07.json"
+        ]
+      },
+      {
+        "claim": "The technical setup was not clean across all timeframes.",
+        "support": "AMD was above the 100D and 150D SMAs but remained below the 200D, 40W, and 10M moving averages; 12-month momentum also lagged several semiconductor peers.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/amd_price_action_2018-05-07.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "AMD closed at $11.59 on 2018-05-07 on 54.0M shares. It was above the 100D SMA of $11.28, 150D SMA of $11.51, 200W SMA of $6.65, and 20M SMA of $11.45, but below the 200D SMA of $11.87, 40W SMA of $11.72, and 10M SMA of $11.83. ROC was +20.6% over one month, +0.17% over three months, and +13.74% over twelve months.",
+      "interpretation": "Price action was constructive enough to support a starter buy after the late-April catalysts, but it was not a full-trend green light. The stock had repaired short/intermediate measures and outperformed on a one-month basis, while still needing to reclaim longer-term trend levels and prove relative leadership beyond the initial reversal.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Stable vendor price snapshot to replace locally generated yfinance-derived metrics before approval",
+        "Official short interest and borrow data as of early May 2018",
+        "Options implied volatility and skew around the post-earnings period",
+        "Detailed volume-by-price or institutional-flow evidence around the late-April gap"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The setup had a clear variant view, recent thesis-relevant catalysts, strong Q1/Q2 fundamental evidence, identified disconfirming risks, concrete invalidation, and enough price confirmation for a starter common-equity buy.",
+      "missing_inputs": [
+        "Stable vendor price-action snapshot",
+        "Official short interest and borrow cost as of May 7, 2018",
+        "Exact executed initial size",
+        "Full portfolio exposure to semiconductors, high-beta technology, and crypto/GPU cyclicality",
+        "Contemporaneous sell-side consensus estimate and rating distribution",
+        "Detailed GPU channel inventory and secondary-market GPU pricing evidence"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Buy AMD common equity",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [
+        "Use a smaller starter position if the portfolio already has large semiconductor or high-beta technology exposure",
+        "Use call spreads only with explicit premium-at-risk limits because server share validation may take multiple quarters",
+        "Pair with a semiconductor index hedge only if the desired expression is AMD-specific share gain rather than broad semiconductor beta"
+      ],
+      "follow_on": "Add only if Q2/Q3 revenue, gross margin, EESC/EPYC commentary, roadmap execution, and price action confirm the CPU share-gain thesis."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": 0.04,
+      "upgrade_condition": "Upgrade toward 5 only if AMD meets or beats Q2 expectations, gross margin remains at or above the guided path, EESC/EPYC commentary improves, and the stock reclaims the 200D/40W/10M trend cluster with relative strength."
+    },
+    "confidence": 0.78,
+    "confidence_reason": "Moderately high because the fundamental catalyst, variant view, and one-month price confirmation aligned; capped because crypto GPU risk, Intel's financial strength, early EPYC proof, debt/foundry risk, and incomplete long-term technical confirmation were still material.",
+    "sizing_context": {
+      "starting_size": "New conviction 4 buy with a 3%-4% starter-size frame; use 4% as the raw target weight for this fixture.",
+      "add_conditions": "Add toward 5%-6% only if Q2/Q3 results confirm revenue growth, non-GAAP gross margin stability or expansion, EESC/EPYC progress, roadmap execution, and price follow-through above the 200D/40W/10M trend cluster.",
+      "liquidity_constraints": "AMD was highly liquid, with May 7 volume of about 54.0M shares, but volatility and gap risk require sizing for 15%-20% intra-month drawdowns.",
+      "portfolio_constraints": "Final size should account for existing semiconductor, high-beta technology, PC/server cycle, and crypto/GPU exposure.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": 0.04,
+        "unit": "portfolio_weight",
+        "basis": "target_weight",
+        "condition": "Initiate a new AMD common-equity long after the May 7 close, with adds only after fundamental and price confirmation."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If AMD proves the CPU share-gain thesis through margin, EESC/EPYC traction, roadmap execution, and price strength, add to AMD and look for adjacent beneficiaries of a more competitive x86/server CPU market.",
+      "if_wrong": "If Q2/Q3 results show crypto-driven revenue quality, margin rollback, weak EESC/EPYC traction, roadmap delay, or a sustained price break on thesis-relevant news, reduce or exit instead of averaging down.",
+      "next_review_trigger": "Review at Q2 2018 earnings, any update to 7nm/Zen 2/Rome timing, material EPYC customer or server-share commentary, short-interest update, or a weekly close below $9.50 or above the 200D/40W/10M trend cluster."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Review case. Built from the user-provided AMD deep research markdown. The gold output intentionally softens overconfident language from the research file, corrects the Q2 guidance figure to the official AMD release, and excludes post-May 7 source material."
+}

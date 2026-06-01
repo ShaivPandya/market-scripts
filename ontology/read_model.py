@@ -299,6 +299,20 @@ class TemporalReadModelRepository:
                 order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
             )
             _attach_optimization_alert_context(conn, optimizer_alerts)
+            active_monitor_definitions = _fetch_operational_objects(
+                conn,
+                "MonitorDefinition",
+                filters={"status": "active"},
+                limit=100,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            active_mission_definitions = _fetch_operational_objects(
+                conn,
+                "MissionDefinition",
+                filters={"status": "active"},
+                limit=100,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
             active_watch_triggers = _fetch_operational_objects(
                 conn,
                 "WatchTrigger",
@@ -365,6 +379,8 @@ class TemporalReadModelRepository:
             "open_course_of_action_comparisons": open_course_of_action_comparisons,
             "open_action_items": open_action_items,
             "optimizer_alerts": optimizer_alerts,
+            "active_monitor_definitions": active_monitor_definitions,
+            "active_mission_definitions": active_mission_definitions,
             "active_watch_triggers": active_watch_triggers,
             "recent_monitor_hits": recent_monitor_hits,
             "recent_workflow_runs": recent_workflow_runs,
