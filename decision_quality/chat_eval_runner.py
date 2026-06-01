@@ -768,6 +768,84 @@ def _context_pack_expectation_checks(
             )
 
 
+def _scout_skeptic_sizer_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("scout_skeptic_sizer_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    gate_meta = run.done_payload.get("scout_skeptic_sizer_gate") if isinstance(run.done_payload, dict) else None
+    checks.append(
+        _check(
+            "scout_skeptic_sizer_gate_present",
+            isinstance(gate_meta, dict),
+            "done payload missing scout_skeptic_sizer_gate trace",
+        )
+    )
+    if not isinstance(gate_meta, dict):
+        return
+
+    for pass_name in ("scout", "skeptic", "sizer"):
+        expected = expectations.get(f"{pass_name}_pass")
+        if expected is None:
+            continue
+        pass_meta = gate_meta.get(pass_name) if isinstance(gate_meta.get(pass_name), dict) else {}
+        actual = str(pass_meta.get("status") or "").lower() == "pass"
+        checks.append(
+            _check(
+                f"scout_skeptic_sizer_{pass_name}_pass",
+                actual is bool(expected) and actual == expected,
+                f"expected {pass_name}_pass={expected}, status={pass_meta.get('status')!r}",
+            )
+        )
+
+    expected_final_action = expectations.get("expected_final_action")
+    if expected_final_action is not None:
+        actual_final = str(gate_meta.get("final_action_type") or gate_meta.get("sizer", {}).get("final_action") or "")
+        checks.append(
+            _check(
+                "scout_skeptic_sizer_final_action",
+                actual_final.lower() == str(expected_final_action).lower(),
+                f"expected={expected_final_action!r}, actual={actual_final!r}",
+            )
+        )
+
+    if expectations.get("no_actionable_when_skeptic_failed") and expectations.get("skeptic_pass") is False:
+        checks.append(
+            _check(
+                "scout_skeptic_sizer_no_actionable_when_skeptic_failed",
+                not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                "actionable language must be suppressed when skeptic pass fails",
+            )
+        )
+
+    max_bps = expectations.get("max_sizing_delta_bps")
+    if max_bps is not None:
+        sizer_meta = gate_meta.get("sizer") if isinstance(gate_meta.get("sizer"), dict) else {}
+        try:
+            actual_bps = int(sizer_meta.get("max_sizing_delta_bps"))
+            checks.append(
+                _check(
+                    "scout_skeptic_sizer_max_bps",
+                    actual_bps <= int(max_bps),
+                    f"expected<={max_bps}, actual={actual_bps}",
+                )
+            )
+        except (TypeError, ValueError):
+            checks.append(
+                _check(
+                    "scout_skeptic_sizer_max_bps",
+                    False,
+                    f"expected<={max_bps}, actual={sizer_meta.get('max_sizing_delta_bps')!r}",
+                )
+            )
+
+
 def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]:
     text = run.final_text or ""
     checks: list[dict[str, Any]] = []
@@ -846,6 +924,7 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
     _routing_expectation_checks(checks, case=case, run=run)
     _tool_quality_expectation_checks(checks, case=case, run=run, text=text)
     _context_pack_expectation_checks(checks, case=case, run=run, text=text)
+    _scout_skeptic_sizer_expectation_checks(checks, case=case, run=run, text=text)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0

@@ -113,6 +113,7 @@ def test_continuous_optimizer_still_stages_non_review_action_items(monkeypatch):
 
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(command_service, "OntologyCommandService", lambda: _FakeCommandService(calls))
+    monkeypatch.setenv("PROACTIVE_ALERT_DQ_GATE_ENABLED", "true")
 
     approval_id = continuous_optimizer._stage_action_item(  # noqa: SLF001 - focused regression coverage.
         {"id": "alert:2", "run_id": "run-1", "severity": "high", "change_summary": "Trim MU."},
@@ -121,7 +122,8 @@ def test_continuous_optimizer_still_stages_non_review_action_items(monkeypatch):
 
     assert approval_id == "approval:1"
     assert [call["action_id"] for call in calls] == ["create_action_item"]
-    assert calls[0]["payload"]["action_type"] == "resize"
+    assert calls[0]["payload"]["action_type"] == "research"
+    assert "scout_skeptic_sizer_gate" in calls[0]["payload"]
 
 
 def test_workflow_artifacts_skip_review_action_items_but_stage_research_items(monkeypatch):

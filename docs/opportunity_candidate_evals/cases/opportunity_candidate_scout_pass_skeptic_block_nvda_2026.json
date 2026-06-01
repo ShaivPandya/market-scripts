@@ -1,0 +1,53 @@
+{
+  "id": "opportunity_candidate_scout_pass_skeptic_block_nvda_2026",
+  "status": "review",
+  "decision_type": "opportunity_candidate",
+  "as_of_date": "2026-05-15",
+  "user_question": "NVDA pulled back — scout should find the setup but skeptic should block graduation without full pressure-test artifacts.",
+  "input_refs": [
+    {
+      "type": "thesis",
+      "path": null,
+      "sha256": null,
+      "description": "Synthetic NVDA pullback prompt with scout signal but incomplete skeptic inputs.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "Scout pass identifies trigger and variant view from the alert context.",
+    "Skeptic pass fails when decision_quality artifacts are missing for high-stakes graduation."
+  ],
+  "gold_output": {
+    "ticker": "NVDA",
+    "source": "monitor_hit",
+    "trigger": "NVDA pullback flagged by proactive alert.",
+    "opportunity_type": "quality_compounder",
+    "consensus": "Market still treats NVDA as the primary AI infrastructure winner.",
+    "variant_view": "Pullback may improve entry if AI demand remains intact.",
+    "why_now": "Proactive alert surfaced the setup after a recent drawdown.",
+    "price_confirmation": "Pullback noted; chart confirmation still incomplete.",
+    "crowding": "Crowded positioning remains a risk.",
+    "payoff_asymmetry": "Upside depends on sustained AI capex ROI.",
+    "missing_inputs": [
+      "Decision quality pressure-test",
+      "Portfolio sizing context",
+      "Confirmed invalidation plan"
+    ],
+    "source_refs": [
+      {
+        "label": "Synthetic proactive alert",
+        "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_scout_pass_skeptic_block_nvda_2026.json"
+      }
+    ],
+    "next_action": "graduate_to_decision_quality",
+    "summary": "Scout finds a candidate setup, but skeptic should block actionability until DQ artifacts exist."
+  },
+  "expected_graduation": false,
+  "expected_skeptic_block_reasons": ["MISSING_DECISION_QUALITY", "TOO_MANY_MISSING_INPUTS"],
+  "rubric_scores": {
+    "trigger_clarity": 4,
+    "why_now": 4,
+    "missing_inputs": 4,
+    "triage_discipline": 4
+  }
+}

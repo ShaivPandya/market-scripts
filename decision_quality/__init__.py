@@ -27,6 +27,14 @@ from decision_quality.opportunity_candidate import (
     opportunity_candidate_schema,
     parse_opportunity_candidate,
 )
+from decision_quality.proactive_alert_gate import (
+    ProactiveAlertGateResult,
+    apply_proactive_alert_gate,
+    evaluate_proactive_alert_gate,
+    is_high_stakes_action_item,
+    proactive_alert_gate_enabled,
+    should_apply_proactive_alert_gate,
+)
 
 __all__ = [
     "ACTIONABLE_ACTIONS",
@@ -48,4 +56,10 @@ __all__ = [
     "opportunity_candidate_schema",
     "parse_decision_quality",
     "parse_opportunity_candidate",
+    "ProactiveAlertGateResult",
+    "apply_proactive_alert_gate",
+    "evaluate_proactive_alert_gate",
+    "is_high_stakes_action_item",
+    "proactive_alert_gate_enabled",
+    "should_apply_proactive_alert_gate",
 ]

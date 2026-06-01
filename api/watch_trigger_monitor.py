@@ -747,7 +747,20 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                     "action_type": "review",
                     "ticker": trigger.get("ticker"),
                     "urgency": "high",
+                    "alert_context": {
+                        "change_summary": _action_description(trigger, result),
+                        "source": "monitor_hit",
+                        "ticker": trigger.get("ticker"),
+                    },
                 }
+                from decision_quality.proactive_alert_gate import apply_proactive_alert_gate
+
+                action_item_payload, _gate_result = apply_proactive_alert_gate(
+                    "create_action_item",
+                    action_item_payload,
+                    source_type="workflow",
+                    alert_context=action_item_payload.get("alert_context"),
+                )
                 if not should_suppress_generated_review_approval(
                     "create_action_item",
                     action_item_payload,

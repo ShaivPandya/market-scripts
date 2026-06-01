@@ -14,6 +14,7 @@ from decision_quality.actions import ACTIONABLE_ACTIONS as DECISION_ACTIONABLE_A
 from decision_quality.actions import normalize_action
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.models import DecisionQualityGate, DecisionQualityGateReason, parse_decision_quality
+from decision_quality.proactive_alert_gate import apply_proactive_alert_gate
 from ontology.approval_workflow import (
     approval_requirement_progress,
     normalize_approval_decisions,
@@ -259,6 +260,14 @@ class OntologyCommandService:
     ) -> dict[str, Any]:
         action_id = _non_blank(action_id, "action_id")
         payload_dict = dict(payload)
+        payload_dict, _gate_result = apply_proactive_alert_gate(
+            action_id,
+            payload_dict,
+            source_type=context.source_type,
+            alert_context=payload_dict.get("alert_context")
+            if isinstance(payload_dict.get("alert_context"), dict)
+            else None,
+        )
         _validate_governed_action(action_id, payload_dict)
         from ontology.runtime_read_service import runtime_object_service
 

@@ -189,6 +189,63 @@ def test_deterministic_score_checks_workflow_expectations(tmp_path):
     }
 
 
+def test_deterministic_score_checks_scout_skeptic_sizer_expectations(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "scout_skeptic_sizer_expectations": {
+                "scout_pass": True,
+                "skeptic_pass": False,
+                "expected_final_action": "research",
+                "no_actionable_when_skeptic_failed": True,
+            },
+        },
+    )
+    run = AgentChatRun(
+        final_text="Scout found the setup, but skeptic blocked actionability. Stay in research until missing inputs are filled.",
+        events=[],
+        tool_names=[],
+        done_payload={
+            "scout_skeptic_sizer_gate": {
+                "scout": {"status": "pass"},
+                "skeptic": {"status": "fail"},
+                "sizer": {"status": "fail"},
+                "final_action_type": "research",
+            }
+        },
+    )
+
+    score = deterministic_score(case, run)
+
+    assert score["passed"] is True
+    assert {check["name"] for check in score["checks"]} >= {
+        "scout_skeptic_sizer_gate_present",
+        "scout_skeptic_sizer_scout_pass",
+        "scout_skeptic_sizer_skeptic_pass",
+        "scout_skeptic_sizer_final_action",
+        "scout_skeptic_sizer_no_actionable_when_skeptic_failed",
+    }
+
+
+def test_deterministic_score_fails_when_scout_skeptic_sizer_gate_missing(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "scout_skeptic_sizer_expectations": {"scout_pass": True},
+        },
+    )
+    run = AgentChatRun(final_text="Answer without gate trace.", events=[], tool_names=[], done_payload={})
+
+    score = deterministic_score(case, run)
+
+    assert score["passed"] is False
+    assert any(check["name"] == "scout_skeptic_sizer_gate_present" and not check["passed"] for check in score["checks"])
+
+
 def test_deterministic_score_fails_workflow_direct_write_and_bad_artifacts(tmp_path):
     case = _case(
         tmp_path / "case.json",
