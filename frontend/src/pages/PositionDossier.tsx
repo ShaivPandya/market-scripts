@@ -317,7 +317,7 @@ export function PositionDossier() {
     ? { path: "/theses", label: "Theses" }
     : from === "portfolio"
     ? { path: "/", label: "Portfolio" }
-    : { path: "/workspace", label: "Workspace" }
+    : { path: "/workspace", label: "Portfolio Commander" }
   const [tab, setTab] = useState<Tab>("Overview")
   const qc = useQueryClient()
   const [processingIds, setProcessingIds] = useState<Set<number | string>>(new Set())

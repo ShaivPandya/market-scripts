@@ -21,6 +21,26 @@ test.describe("mobile responsive surfaces", () => {
     await expect(page.getByRole("button", { name: "Weekly Portfolio Review" })).toBeVisible()
   })
 
+  test("opens mobile sidebar and navigates via workflow link", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/")
+
+    const approvalAlert = page.getByRole("status").filter({ hasText: "Action item staged" })
+    if (await approvalAlert.isVisible()) {
+      await approvalAlert.getByRole("button", { name: "Dismiss action item alert" }).click()
+    }
+
+    await page.getByRole("button", { name: "Open navigation" }).click()
+
+    const nav = page.getByRole("navigation", { name: "Primary navigation" })
+    await expect(nav.getByText("Command Portfolio")).toBeVisible()
+    await nav.getByRole("link", { name: "Portfolio Commander" }).click()
+
+    await expect(page).toHaveURL(/\/workspace$/)
+    await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+    await expect(page.locator(".theme-floating").getByText("Portfolio Commander", { exact: true })).toBeVisible()
+  })
+
   test("reviews workspace approvals with stacked dialog actions", async ({ page }) => {
     await authenticate(page)
     await page.goto("/workspace")

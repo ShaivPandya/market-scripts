@@ -1041,6 +1041,25 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     return json(route, { ...session, title_source: "manual" })
   }
 
+  if (method === "GET" && path === "/api/settings/llm") {
+    return json(route, {
+      provider: "openai",
+      provider_mode: "single",
+      available_providers: [
+        { provider: "openai", configured: true, label: "OpenAI" },
+      ],
+    })
+  }
+  if (method === "GET" && path === "/api/optimization/missions") {
+    return json(route, { missions: [], count: 0 })
+  }
+  if (method === "GET" && path === "/api/optimization/runs") {
+    return json(route, { runs: [], count: 0 })
+  }
+  if (method === "GET" && path === "/api/optimization/alerts") {
+    return json(route, { alerts: [], count: 0 })
+  }
+
   const signature = `${method} ${path}${url.search}`
   state.unknownRequests.push(signature)
   return json(route, { detail: `Unmocked API request in smoke test: ${signature}` }, 599)

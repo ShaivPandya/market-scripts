@@ -12,22 +12,26 @@ interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   {
-    label: "Core",
+    label: "Command Portfolio",
     pages: [
       { label: "Portfolio Dashboard", path: "/" },
-      { label: "Workspace", path: "/workspace" },
+      { label: "Portfolio Commander", path: "/workspace" },
       { label: "Investment Theses", path: "/theses" },
+    ],
+  },
+  {
+    label: "Review Decisions",
+    pages: [
       { label: "Idea Watchlist", path: "/ideas" },
     ],
   },
   {
-    label: "Labs",
+    label: "Pressure-Test Positions",
     pages: [
       { label: "Portfolio Analyzer", path: "/analyzer" },
       { label: "Portfolio Sizer", path: "/sizer" },
       { label: "Hedging Tool", path: "/hedging-tool" },
       { label: "Chart", path: "/chart" },
-      { label: "Screeners", path: "/screeners" },
       { label: "Financials", path: "/financials" },
       { label: "DCF Model", path: "/dcf-model" },
       { label: "FX Model", path: "/fx-model" },
@@ -35,10 +39,16 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: "Monitors",
+    label: "Scout Opportunities",
+    pages: [
+      { label: "Screeners", path: "/screeners" },
+      { label: "Commodity Proxy Screener", path: "/commodity-research" },
+    ],
+  },
+  {
+    label: "Monitor Risks",
     pages: [
       { label: "Signal Aggregator", path: "/signal-aggregator" },
-      { label: "Ontology Workbench", path: "/ontology" },
       { label: "Market Technicals", path: "/market-technicals" },
       { label: "News Digests", path: "/portfolio-news" },
       { label: "Sentiment", path: "/sentiment" },
@@ -49,8 +59,9 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: "Macro",
+    label: "Inspect Data & Provenance",
     pages: [
+      { label: "Ontology Workbench", path: "/ontology" },
       { label: "Economic Growth", path: "/economic-growth" },
       { label: "Labor Market", path: "/labor-market" },
       { label: "Housing", path: "/housing" },
@@ -58,20 +69,14 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Yield Curve", path: "/yield-curve" },
       { label: "Bond Dashboard", path: "/bond-dashboard" },
       { label: "Country Dashboard", path: "/country-dashboard" },
-    ],
-  },
-  {
-    label: "Assets",
-    pages: [
       { label: "Index Dashboard", path: "/index-dashboard" },
       { label: "FX Dashboard", path: "/fx-dashboard" },
       { label: "Commodity Dashboard", path: "/commodities" },
       { label: "Commodities Curve", path: "/commodities-curve" },
-      { label: "Commodity Proxy Screener", path: "/commodity-research" },
     ],
   },
   {
-    label: "Settings",
+    label: "Administer",
     pages: [
       { label: "AI Settings", path: "/settings/ai" },
       { label: "Policy Matrix", path: "/settings/policy-matrix" },
@@ -91,6 +96,7 @@ export function getRouteLabel(pathname: string) {
     if (match) return match.label
   }
   if (pathname.startsWith("/dossier/")) return "Position Dossier"
+  if (pathname.startsWith("/ideas/") && pathname !== "/ideas") return "Idea Detail"
   return "Talisman"
 }
 
@@ -123,17 +129,17 @@ export function Sidebar({ isOpen, onClose, onOpenSearch }: SidebarProps) {
       aria-label="Primary navigation"
     >
       <div className="border-b border-app px-4 pb-4 pt-[max(1rem,var(--safe-top))]">
-        <p className="theme-eyebrow mb-2">Workspace</p>
+        <p className="theme-eyebrow mb-2">Operating</p>
         <p className="text-lg font-semibold tracking-[-0.03em] text-app">Talisman</p>
         <button
           type="button"
           onClick={onOpenSearch}
-          aria-label="Search pages"
+          aria-label="Search workflows"
           aria-keyshortcuts="Meta+J"
           className="mt-4 flex h-11 w-full items-center gap-2 rounded-[var(--radius-md)] border border-app bg-input px-3 text-left text-sm text-muted transition-colors hover:border-strong hover:bg-hover hover:text-app"
         >
           <Search size={15} className="shrink-0 text-subtle" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">Search pages</span>
+          <span className="min-w-0 flex-1 truncate">Search workflows</span>
           <kbd className="shrink-0 rounded-md border border-app bg-card-muted px-1.5 py-0.5 text-[10px] font-medium leading-none text-subtle">
             Cmd J
           </kbd>
