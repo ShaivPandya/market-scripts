@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Eye, FlaskConical, Radar, Search, Sparkles, X } from "lucide-react"
 
-import { StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
+import { StagedProposalNotice, type StagedProposal } from "@/components/shared/StagedProposalNotice"
 import { DecisionStateBadge } from "@/components/shared/DecisionStateBadge"
 import {
   createMonitorForOpportunityCandidate,
@@ -27,7 +27,7 @@ interface OpportunityScoutQueuePanelProps {
 
 type FeedbackResult = {
   label: string
-  approval?: { approval_id?: string | number; decision_state?: string; effect_scope?: string; review_route?: string }
+  approval?: StagedProposal
 }
 
 export function OpportunityScoutQueuePanel({ items, onUpdated }: OpportunityScoutQueuePanelProps) {
