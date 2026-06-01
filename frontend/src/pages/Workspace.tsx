@@ -53,6 +53,8 @@ import { approvalActionLabel } from "@/components/shared/approvalProgress"
 import { ActionButton } from "@/components/shared/FormControls"
 import { formatApprovalDisplayLabel } from "@/components/shared/StagedProposalNotice"
 import { WhatChangedPanel, type WhatChangedSummary } from "@/components/shared/WhatChangedPanel"
+import { OpportunityScoutQueuePanel } from "@/components/shared/OpportunityScoutQueuePanel"
+import type { OpportunityCandidateRecord } from "@/lib/api"
 import { WatchTriggerEditDialog, type EditableWatchTrigger } from "@/components/shared/WatchTriggerEditDialog"
 import {
   DecisionStateBadge,
@@ -127,6 +129,7 @@ interface WorkspaceData {
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   monitor_hits: { count: number; items: MonitorHit[] }
+  opportunity_candidates?: { count: number; items: OpportunityCandidateRecord[] }
   recent_workflow_runs: WorkflowRun[]
   continuous_optimization?: {
     open_alert_count: number
@@ -1307,6 +1310,13 @@ export function Workspace() {
       </div>
 
       <WhatChangedPanel summary={data.what_changed} className="mb-6" from="workspace" />
+
+      {(data.opportunity_candidates?.count ?? 0) > 0 && (
+        <OpportunityScoutQueuePanel
+          items={data.opportunity_candidates?.items ?? []}
+          onUpdated={() => void qc.invalidateQueries({ queryKey: ["workspace"] })}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (

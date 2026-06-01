@@ -1,9 +1,18 @@
 {
   "id": "opportunity_candidate_reject_crowded_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "opportunity_candidate",
   "as_of_date": "2026-05-15",
   "user_question": "Anything interesting in crowded mega-cap AI trades?",
+  "corpus_tags": ["opportunity_identification"],
+  "failure_type": "missing_mispricing",
+  "failure_tags": ["weak_opportunity_id"],
+  "required_oc_dimensions": [
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline"
+  ],
   "input_refs": [
     {
       "type": "other",
@@ -43,6 +52,8 @@
     "summary": "Crowded mega-cap AI ideas should be avoided until a specific variant view and catalyst appear."
   },
   "expected_graduation": false,
+  "expected_final_action": "avoid",
+  "expected_gate_status": "pass",
   "rubric_scores": {
     "trigger_clarity": 4,
     "why_now": 3,

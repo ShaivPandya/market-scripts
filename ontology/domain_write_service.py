@@ -506,6 +506,16 @@ def action_mutations(
                 _row_time(row, now),
             )
         ]
+    if action_id == "update_opportunity_candidate_status":
+        row = {**dict(input_payload), **dict(output)}
+        return [
+            OntologyMutation(
+                "OpportunityCandidate",
+                str(row.get("candidate_id") or row.get("id") or row.get("object_uid") or ""),
+                _opportunity_candidate_properties(row),
+                _row_time(row, now),
+            )
+        ]
     if action_id in {"create_thesis_claim", "update_thesis_claim"}:
         row = {**dict(input_payload), **dict(output)}
         return [
@@ -786,6 +796,36 @@ def _monitor_hit_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "approval_id": row.get("approval_id"),
         "action_item_id": row.get("action_item_id"),
         "fingerprint": row.get("fingerprint"),
+    }
+
+
+def _opportunity_candidate_properties(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "candidate_id": row.get("candidate_id") or row.get("id"),
+        "idempotency_key": row.get("idempotency_key"),
+        "source_kind": row.get("source_kind") or row.get("source") or "other",
+        "source_type": row.get("source_type"),
+        "source_id": row.get("source_id"),
+        "ticker": _optional_ticker(row.get("ticker")),
+        "trigger": row.get("trigger"),
+        "opportunity_type": row.get("opportunity_type") or "unclear",
+        "consensus": row.get("consensus"),
+        "variant_view": row.get("variant_view"),
+        "why_now": row.get("why_now"),
+        "price_confirmation": row.get("price_confirmation"),
+        "crowding": row.get("crowding"),
+        "payoff_asymmetry": row.get("payoff_asymmetry"),
+        "missing_inputs": _strings(row.get("missing_inputs")),
+        "next_action": row.get("next_action") or "research",
+        "summary": row.get("summary"),
+        "decision_state": row.get("decision_state") or "generated",
+        "status": row.get("status") or row.get("decision_state") or "generated",
+        "opportunity_candidate": _as_optional_dict(row.get("opportunity_candidate")),
+        "opportunity_candidate_gate": _as_optional_dict(row.get("opportunity_candidate_gate")),
+        "source_refs": row.get("source_refs") if isinstance(row.get("source_refs"), list) else [],
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "feedback_note": row.get("feedback_note"),
     }
 
 

@@ -52,6 +52,7 @@ from ontology.schemas.identity import (
     mission_definition_id,
     monitor_definition_id,
     monitor_hit_id,
+    opportunity_candidate_id,
     policy_gate_result_id,
     portfolio_id,
     portfolio_risk_snapshot_id,
@@ -107,6 +108,7 @@ RESEARCH_ACTION_IDS = {
     "disable_mission_definition",
     "create_monitor_hit",
     "update_monitor_hit_status",
+    "update_opportunity_candidate_status",
 }
 WATCH_TRIGGER_TARGET_ACTION_IDS = {
     "fire_watch_trigger",
@@ -1502,6 +1504,53 @@ class OntologyCommandService:
                     "approval_id": existing.get("approval_id"),
                     "action_item_id": existing.get("action_item_id"),
                     "fingerprint": existing.get("fingerprint"),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "update_opportunity_candidate_status":
+            candidate_uid = _normalize_opportunity_candidate_uid(payload.get("candidate_id"))
+            existing = _object_context_by_uid(self.objects, candidate_uid)
+            if not existing:
+                raise OntologyCommandNotFound("OpportunityCandidate", str(payload.get("candidate_id")))
+            status = str(payload.get("status") or existing.get("status") or "open")
+            next_action = str(payload.get("next_action") or existing.get("next_action") or "research")
+            row = self.objects.write_object(
+                "OpportunityCandidate",
+                candidate_uid,
+                {
+                    "candidate_id": existing.get("candidate_id") or candidate_uid.split(":", 1)[-1],
+                    "idempotency_key": existing.get("idempotency_key"),
+                    "source_kind": existing.get("source_kind") or "other",
+                    "source_type": existing.get("source_type"),
+                    "source_id": existing.get("source_id"),
+                    "ticker": existing.get("ticker"),
+                    "trigger": existing.get("trigger") or "Opportunity candidate update",
+                    "opportunity_type": existing.get("opportunity_type") or "unclear",
+                    "consensus": existing.get("consensus"),
+                    "variant_view": existing.get("variant_view"),
+                    "why_now": existing.get("why_now"),
+                    "price_confirmation": existing.get("price_confirmation"),
+                    "crowding": existing.get("crowding"),
+                    "payoff_asymmetry": existing.get("payoff_asymmetry"),
+                    "missing_inputs": _list(existing.get("missing_inputs")),
+                    "next_action": next_action,
+                    "summary": existing.get("summary"),
+                    "decision_state": str(
+                        payload.get("decision_state") or existing.get("decision_state") or "generated"
+                    ),
+                    "status": status,
+                    "opportunity_candidate": _dict(existing.get("opportunity_candidate") or existing),
+                    "opportunity_candidate_gate": _dict(existing.get("opportunity_candidate_gate")),
+                    "source_refs": _list(existing.get("source_refs")),
+                    "created_at": existing.get("created_at") or now,
+                    "updated_at": now,
+                    "feedback_note": payload.get("feedback_note"),
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -3723,6 +3772,11 @@ def _normalize_monitor_hit_uid(value: Any) -> str:
     return text if text.startswith("monitor_hit:") else monitor_hit_id(text)
 
 
+def _normalize_opportunity_candidate_uid(value: Any) -> str:
+    text = _non_blank(value, "candidate_id")
+    return text if text.startswith("opportunity_candidate:") else opportunity_candidate_id(text)
+
+
 def _normalize_watch_trigger_uid(value: Any) -> str:
     text = _non_blank(value, "trigger_id")
     return text if text.startswith("watch_trigger:") else watch_trigger_id(text)
@@ -3771,6 +3825,8 @@ def _entity_type_for_action(action_id: str) -> str:
         return "monitor_hit"
     if action_id == "update_monitor_hit_status":
         return "monitor_hit_status"
+    if action_id == "update_opportunity_candidate_status":
+        return "opportunity_candidate_status"
     if action_id == "create_recommendation":
         return "recommendation"
     if action_id == "create_portfolio_news_digest":
@@ -3843,6 +3899,10 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
         hit_id = payload.get("hit_id")
         if hit_id:
             return _normalize_monitor_hit_uid(hit_id), "MonitorHit"
+    if action_id == "update_opportunity_candidate_status":
+        candidate_id = payload.get("candidate_id") or payload.get("id")
+        if candidate_id:
+            return _normalize_opportunity_candidate_uid(candidate_id), "OpportunityCandidate"
     return None, None
 
 

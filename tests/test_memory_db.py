@@ -43,6 +43,63 @@ def test_append_messages_updates_transcript_for_v2_sessions(temp_memory_db):
     assert loaded["message_count"] == 2
 
 
+def test_begin_turn_and_complete_turn_messages(temp_memory_db):
+    session = memory_db.get_or_create_session(None)
+    sid = session["session_id"]
+    turn_id = "turn-begin-complete"
+    user = {"role": "user", "content": "hello", "timestamp": 1.0, "client_turn_id": turn_id}
+    assistant_placeholder = {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 2.0,
+        "client_turn_id": turn_id,
+        "is_streaming": True,
+    }
+
+    first = memory_db.begin_turn(sid, user, assistant_placeholder)
+    second = memory_db.begin_turn(sid, user, assistant_placeholder)
+    assert first == 2
+    assert second == 2
+
+    memory_db.update_assistant_message(sid, turn_id, {"content": "partial", "is_streaming": True})
+    loaded = memory_db.get_session(sid)
+    assert loaded is not None
+    assert loaded["transcript"][1]["content"] == "partial"
+
+    final_assistant = {
+        "role": "assistant",
+        "content": "done",
+        "timestamp": 3.0,
+        "client_turn_id": turn_id,
+    }
+    total = memory_db.complete_turn_messages(sid, turn_id, user, final_assistant)
+    loaded = memory_db.get_session(sid)
+    assert total == 2
+    assert loaded is not None
+    assert loaded["transcript"][1]["content"] == "done"
+    assert loaded["transcript"][1].get("is_streaming") is False
+
+
+def test_fail_turn_marks_assistant_cancelled(temp_memory_db):
+    session = memory_db.get_or_create_session(None)
+    sid = session["session_id"]
+    turn_id = "turn-fail"
+    user = {"role": "user", "content": "hi", "timestamp": 1.0, "client_turn_id": turn_id}
+    assistant_placeholder = {
+        "role": "assistant",
+        "content": "partial",
+        "timestamp": 2.0,
+        "client_turn_id": turn_id,
+        "is_streaming": True,
+    }
+    memory_db.begin_turn(sid, user, assistant_placeholder)
+    assert memory_db.fail_turn(sid, turn_id, status="cancelled", content="partial") is True
+    loaded = memory_db.get_session(sid)
+    assert loaded is not None
+    assert loaded["transcript"][1]["status"] == "cancelled"
+    assert loaded["transcript"][1].get("is_streaming") is False
+
+
 def test_append_messages_dedupes_client_turn_id(temp_memory_db):
     session = memory_db.get_or_create_session(None)
     sid = session["session_id"]

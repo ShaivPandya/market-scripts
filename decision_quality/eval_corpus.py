@@ -157,6 +157,13 @@ STRUCTURED_DQ_DIMENSIONS = (
     "sizing_risk_context",
 )
 
+STANDARD_OC_DIMENSIONS = (
+    "trigger_clarity",
+    "why_now",
+    "missing_inputs",
+    "triage_discipline",
+)
+
 
 class _CaseLike(Protocol):
     @property
@@ -266,8 +273,19 @@ def case_required_dq_dimensions(case_data: dict[str, Any]) -> list[str]:
     chat_dims = case_data.get("required_decision_quality_dimensions")
     if isinstance(chat_dims, list) and chat_dims:
         return [str(item) for item in chat_dims if isinstance(item, str) and item]
+    if case_data.get("decision_type") == "opportunity_candidate":
+        return []
     if "gold_output" in case_data:
         return list(STRUCTURED_DQ_DIMENSIONS)
+    return []
+
+
+def case_required_oc_dimensions(case_data: dict[str, Any]) -> list[str]:
+    raw = case_data.get("required_oc_dimensions")
+    if isinstance(raw, list) and raw:
+        return [str(item) for item in raw if isinstance(item, str) and item]
+    if case_data.get("decision_type") == "opportunity_candidate" and "gold_output" in case_data:
+        return list(STANDARD_OC_DIMENSIONS)
     return []
 
 
@@ -549,12 +567,19 @@ def validate_approved_case_metadata(case_data: dict[str, Any]) -> list[str]:
 
     _validate_failure_tags(case_data, errors)
 
-    dims = case_required_dq_dimensions(case_data)
-    routing_only = tags == ["routing_tool_use"] or (
-        "routing_tool_use" in tags and "chat_behavior" not in tags and "opportunity_identification" not in tags
-    )
-    if not dims and not routing_only:
-        errors.append("approved cases must declare required_dq_dimensions or chat dimension expectations")
+    if case_data.get("decision_type") == "opportunity_candidate":
+        oc_dims = case_required_oc_dimensions(case_data)
+        if not oc_dims:
+            errors.append("approved opportunity_candidate cases must declare required_oc_dimensions")
+        if "expected_graduation" not in case_data:
+            errors.append("approved opportunity_candidate cases must include expected_graduation")
+    else:
+        dims = case_required_dq_dimensions(case_data)
+        routing_only = tags == ["routing_tool_use"] or (
+            "routing_tool_use" in tags and "chat_behavior" not in tags and "opportunity_identification" not in tags
+        )
+        if not dims and not routing_only:
+            errors.append("approved cases must declare required_dq_dimensions or chat dimension expectations")
 
     refs = case_data.get("input_refs")
     if isinstance(refs, list):

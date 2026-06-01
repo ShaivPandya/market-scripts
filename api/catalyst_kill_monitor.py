@@ -8,6 +8,7 @@ from typing import Any
 
 from api.generated_approval_filters import should_suppress_generated_review_approval
 from api.watch_trigger_monitor import _canonical_hash, _compare, _latest_price
+from decision_quality.opportunity_scout import maybe_create_candidate_from_monitor_hit
 
 APPROACHING_DAYS = 14
 STATUS_PROPOSAL_CONFIDENCE = 0.75
@@ -356,6 +357,7 @@ def run_catalyst_kill_monitor(_payload: dict[str, Any] | None = None) -> dict[st
             }
             record_monitor_hit(hit_payload, source_id=hit_source_id)
             hits += 1
+            maybe_create_candidate_from_monitor_hit(hit_payload, source_id=hit_source_id)
 
             if not _should_propose_status(result):
                 continue

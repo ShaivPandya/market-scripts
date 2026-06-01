@@ -413,6 +413,38 @@ const baseWorkspaceResponse = {
     count: 0,
     items: [],
   },
+  opportunity_candidates: {
+    count: 1,
+    items: [
+      {
+        id: "candidate:smoke:nvda",
+        candidate_id: "candidate:smoke:nvda",
+        object_uid: "opportunity_candidate:candidate-smoke-nvda",
+        ticker: "NVDA",
+        source_kind: "monitor_hit",
+        trigger: "Kill condition monitor hit: Margin compression threshold",
+        opportunity_type: "unsustainable_process",
+        consensus: "Automated monitor surfaced a potential change; consensus not established.",
+        variant_view: "Margin compression threshold",
+        why_now: "High-severity monitor signal: Price crossed threshold",
+        price_confirmation: "Not verified automatically; review price action before acting.",
+        crowding: "",
+        payoff_asymmetry: "",
+        missing_inputs: ["decision_quality pressure-test", "Monitor follow-up review"],
+        next_action: "research",
+        summary: "Price crossed threshold",
+        status: "open",
+        decision_state: "generated",
+        gate_status: "pass",
+        gate_final_action: "research",
+        should_graduate: false,
+        rank_score: 42.5,
+        created_at: "2026-06-01T12:00:00Z",
+        updated_at: "2026-06-01T12:00:00Z",
+        source_refs: [{ label: "Margin compression threshold", source_path: "monitor_hit:smoke" }],
+      },
+    ],
+  },
   recent_workflow_runs: [
     {
       run_id: "workflow-smoke",
@@ -824,6 +856,34 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       status: "dismissed",
       ticker: body.ticker ?? "MSFT",
       pressure_key: body.pressure_key ?? smokePressureKey,
+    })
+  }
+  if (method === "POST" && path === "/api/workspace/opportunity-candidates/dismiss") {
+    const body = JSON.parse(request.postData() || "{}") as { candidate_id?: string }
+    return json(route, {
+      status: "proposal_created",
+      candidate_id: body.candidate_id ?? "candidate:smoke:nvda",
+      approval: {
+        id: "approval:opportunity-dismiss",
+        approval_id: "approval:opportunity-dismiss",
+        decision_state: "pending_approval",
+        effect_scope: "internal_state",
+        review_route: "/workspace?approval_id=approval:opportunity-dismiss",
+      },
+    })
+  }
+  if (method === "POST" && path.startsWith("/api/workspace/opportunity-candidates/")) {
+    const body = JSON.parse(request.postData() || "{}") as { candidate_id?: string }
+    return json(route, {
+      status: "proposal_created",
+      candidate_id: body.candidate_id ?? "candidate:smoke:nvda",
+      approval: {
+        id: "approval:opportunity-action",
+        approval_id: "approval:opportunity-action",
+        decision_state: "pending_approval",
+        effect_scope: "internal_state",
+        review_route: "/workspace?approval_id=approval:opportunity-action",
+      },
     })
   }
   if (method === "POST" && path.startsWith("/api/decision-outcomes/") && path.endsWith("/finalize")) {

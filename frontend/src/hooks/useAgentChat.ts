@@ -1,41 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import type { AgentResponsePreferences } from "@/lib/api"
+import type {
+  ActiveAgentJob,
+  AgentMessage,
+  AgentSendOptions,
+  EgressRecord,
+  QueuedAgentMessage,
+  ToolCall,
+} from "./agentChatShared"
+import {
+  combineQueuedPrompt,
+  readActiveJobs,
+  readMessageQueue,
+  readSessionSnapshot,
+  shouldCombineQueueEntries,
+  writeActiveJob,
+  writeMessageQueue,
+  writeSessionSnapshot,
+  type ActiveAgentJobApiRow,
+} from "./agentChatSessionStore"
+
+export type {
+  ActiveAgentJob,
+  AgentMessage,
+  AgentMessageDelivery,
+  AgentSendOptions,
+  EgressRecord,
+  QueuedAgentMessage,
+  ToolCall,
+} from "./agentChatShared"
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface ToolCall {
-  name: string
-  id: string
-  status: "pending" | "running" | "ok" | "error" | "blocked" | "timeout" | "retrying" | "partial" | "cancelled"
-  message?: string
-  policyDecisionId?: string
-  elapsedMs?: number
-}
-
-export interface EgressRecord {
-  id: string
-  decision: "allowed" | "allowed_with_warning" | "blocked" | string
-  decisionReason?: string
-  dataSensitivity?: string
-  provider?: string
-  model?: string
-  policyDecisionId?: string
-}
-
-export interface AgentMessage {
-  id: string
-  role: "user" | "assistant"
-  content: string
-  timestamp: number
-  clientTurnId?: string
-  toolCalls?: ToolCall[]
-  isStreaming?: boolean
-  statusText?: string
-  egressRecords?: EgressRecord[]
-}
 
 export interface SessionSummary {
   session_id: string
@@ -48,6 +46,7 @@ export interface SessionSummary {
   title: string | null
   title_source: string | null
   title_updated_at: string | null
+  has_active_job?: boolean
 }
 
 interface AgentChatState {
@@ -58,13 +57,7 @@ interface AgentChatState {
   sessionTitle: string | null
   sessionTitleSource: string | null
   activeJob: ActiveAgentJob | null
-}
-
-interface ActiveAgentJob {
-  jobId: string
-  assistantId: string
-  afterSeq: number
-  clientTurnId: string
+  queuedMessages: QueuedAgentMessage[]
 }
 
 interface AgentJobEvent {
@@ -101,10 +94,6 @@ interface AgentJobResponse {
 interface AgentStreamEvent {
   event_type: AgentJobEvent["event_type"] | "ping" | "handoff"
   payload: Record<string, unknown>
-}
-
-interface AgentSendOptions {
-  durable?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -336,25 +325,40 @@ function loadState(): AgentChatState {
       }
       if (Array.isArray(parsed.messages)) {
         const activeJob = parsed.activeJob ?? null
+        const sessionId = parsed.sessionId ?? null
+        let restoredJob = sessionId ? readActiveJobs()[sessionId] ?? activeJob : activeJob
+        if (restoredJob && sessionId && !restoredJob.sessionId) {
+          restoredJob = { ...restoredJob, sessionId }
+        }
         return {
           messages: parsed.messages.map(m => ({
             ...m,
-            isStreaming: activeJob?.assistantId === m.id,
-            statusText: activeJob?.assistantId === m.id ? (m.statusText || "Reconnecting...") : m.statusText,
+            isStreaming: restoredJob?.assistantId === m.id,
+            statusText: restoredJob?.assistantId === m.id ? (m.statusText || "Reconnecting...") : m.statusText,
           })),
-          isStreaming: Boolean(activeJob),
+          isStreaming: Boolean(restoredJob),
           error: null,
-          sessionId: parsed.sessionId ?? null,
+          sessionId,
           sessionTitle: parsed.sessionTitle ?? deriveSessionTitleFromMessages(parsed.messages),
           sessionTitleSource: parsed.sessionTitleSource ?? null,
-          activeJob,
+          activeJob: restoredJob,
+          queuedMessages: sessionId ? readMessageQueue(sessionId) : [],
         }
       }
     }
   } catch {
     /* ignore */
   }
-  return { messages: [], isStreaming: false, error: null, sessionId: null, sessionTitle: null, sessionTitleSource: null, activeJob: null }
+  return {
+    messages: [],
+    isStreaming: false,
+    error: null,
+    sessionId: null,
+    sessionTitle: null,
+    sessionTitleSource: null,
+    activeJob: null,
+    queuedMessages: [],
+  }
 }
 
 async function summarizeSession(sessionId: string): Promise<void> {
@@ -386,6 +390,7 @@ export async function fetchSession(sessionId: string): Promise<{
   title: string | null
   title_source: string | null
   title_updated_at: string | null
+  active_jobs: ActiveAgentJobApiRow[]
 } | null> {
   try {
     const resp = await fetch(`${BASE_URL}/memory/sessions/${sessionId}`, {
@@ -404,13 +409,22 @@ export async function fetchSession(sessionId: string): Promise<{
           ? m.client_turn_id
           : undefined,
       toolCalls: normalizeToolCalls(m.toolCalls ?? m.tool_calls),
-      isStreaming: false,
+      isStreaming: Boolean(m.is_streaming ?? m.isStreaming),
+      statusText: typeof m.status_text === "string"
+        ? m.status_text
+        : typeof m.statusText === "string"
+          ? m.statusText
+          : undefined,
     }))
+    const active_jobs = Array.isArray(data.active_jobs)
+      ? (data.active_jobs as ActiveAgentJobApiRow[])
+      : []
     return {
       transcript,
       title: typeof data.title === "string" ? data.title : null,
       title_source: typeof data.title_source === "string" ? data.title_source : null,
       title_updated_at: typeof data.title_updated_at === "string" ? data.title_updated_at : null,
+      active_jobs,
     }
   } catch {
     return null
@@ -573,10 +587,56 @@ function statusTextForPhase(data: Record<string, unknown>): string | undefined {
 
 export function useAgentChat() {
   const [state, setState] = useState<AgentChatState>(loadState)
-  const abortRef = useRef<AbortController | null>(null)
-  const inFlightRef = useRef(false)
+  const liveAbortRef = useRef<AbortController | null>(null)
+  const inFlightBySessionRef = useRef<Record<string, boolean>>({})
   const activeJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
   const initialActiveJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
+  const sessionSnapshotsRef = useRef<Record<string, AgentChatState>>({})
+  const jobPollControllersRef = useRef<Map<string, AbortController>>(new Map())
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  const persistActiveSessionSnapshot = useCallback((snapshot: AgentChatState) => {
+    if (!snapshot.sessionId) return
+    writeSessionSnapshot(snapshot.sessionId, {
+      messages: snapshot.messages,
+      sessionTitle: snapshot.sessionTitle,
+      sessionTitleSource: snapshot.sessionTitleSource,
+      error: snapshot.error,
+    })
+    writeMessageQueue(snapshot.sessionId, snapshot.queuedMessages)
+    if (snapshot.activeJob) writeActiveJob(snapshot.sessionId, snapshot.activeJob)
+    else writeActiveJob(snapshot.sessionId, null)
+  }, [])
+
+  const patchSessionState = useCallback((
+    sessionId: string,
+    patch: Partial<AgentChatState>,
+    options?: { persist?: boolean },
+  ) => {
+    const isActive = stateRef.current.sessionId === sessionId
+    if (isActive) {
+      setState(prev => {
+        const next = { ...prev, ...patch }
+        if (options?.persist !== false) persistActiveSessionSnapshot(next)
+        return next
+      })
+      return
+    }
+    const existing = sessionSnapshotsRef.current[sessionId] ?? {
+      messages: [],
+      isStreaming: false,
+      error: null,
+      sessionId,
+      sessionTitle: null,
+      sessionTitleSource: null,
+      activeJob: null,
+      queuedMessages: [],
+    }
+    const next = { ...existing, ...patch, sessionId }
+    sessionSnapshotsRef.current[sessionId] = next
+    if (options?.persist !== false) persistActiveSessionSnapshot(next)
+  }, [persistActiveSessionSnapshot])
 
   // Persist messages to localStorage. During streaming, debounce this work so
   // token updates do not synchronously serialize the whole transcript.
@@ -595,15 +655,33 @@ export function useAgentChat() {
           activeJob: state.activeJob,
         }),
       )
+      if (state.sessionId) {
+        writeMessageQueue(state.sessionId, state.queuedMessages)
+        if (state.activeJob) writeActiveJob(state.sessionId, state.activeJob)
+        else writeActiveJob(state.sessionId, null)
+      }
     }, state.isStreaming ? 1000 : 0)
     return () => window.clearTimeout(timer)
-  }, [state.messages, state.sessionId, state.sessionTitle, state.sessionTitleSource, state.activeJob, state.isStreaming])
+  }, [
+    state.messages,
+    state.sessionId,
+    state.sessionTitle,
+    state.sessionTitleSource,
+    state.activeJob,
+    state.isStreaming,
+    state.queuedMessages,
+  ])
+
+  const drainQueueRef = useRef<((sessionId: string) => Promise<void>) | null>(null)
 
   const applyJobEvents = useCallback((assistantId: string, events: AgentJobEvent[], fallbackSessionId?: string | null) => {
     if (!events.length && !fallbackSessionId) return
-    setState(prev => {
+    const targetSessionId = fallbackSessionId ?? stateRef.current.sessionId
+    if (!targetSessionId) return
+
+    const mutate = (prev: AgentChatState): AgentChatState => {
       let next = prev
-      let sessionId = fallbackSessionId ?? prev.sessionId
+      let sessionId = targetSessionId
 
       for (const event of events) {
         const data = event.payload ?? {}
@@ -754,82 +832,139 @@ export function useAgentChat() {
         }
       }
 
-      if (fallbackSessionId && next.sessionId !== fallbackSessionId) {
-        next = { ...next, sessionId: fallbackSessionId }
+      if (sessionId && next.sessionId !== sessionId) {
+        next = { ...next, sessionId }
       }
       return next
-    })
-  }, [])
+    }
 
-  const finishJobState = useCallback((assistantId: string, status: AgentJobResponse["status"], error?: string) => {
-    setState(prev => ({
-      ...prev,
-      error: status === "error" ? (error || "Agent job failed") : prev.error,
+    let shouldDrain = false
+    for (const event of events) {
+      if (event.event_type === "done") shouldDrain = true
+    }
+
+    if (stateRef.current.sessionId === targetSessionId) {
+      setState(prev => {
+        const next = mutate(prev)
+        persistActiveSessionSnapshot(next)
+        return next
+      })
+    } else {
+      const snap = sessionSnapshotsRef.current[targetSessionId] ?? {
+        messages: [],
+        isStreaming: false,
+        error: null,
+        sessionId: targetSessionId,
+        sessionTitle: null,
+        sessionTitleSource: null,
+        activeJob: null,
+        queuedMessages: readMessageQueue(targetSessionId),
+      }
+      const next = mutate(snap)
+      sessionSnapshotsRef.current[targetSessionId] = next
+      persistActiveSessionSnapshot(next)
+    }
+
+    if (shouldDrain) {
+      void drainQueueRef.current?.(targetSessionId)
+    }
+  }, [persistActiveSessionSnapshot])
+
+  const finishJobState = useCallback((
+    assistantId: string,
+    status: AgentJobResponse["status"],
+    error: string | undefined,
+    sessionId: string,
+  ) => {
+    const messages = (stateRef.current.sessionId === sessionId
+      ? stateRef.current.messages
+      : sessionSnapshotsRef.current[sessionId]?.messages ?? []
+    ).map(m =>
+      m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+    )
+    patchSessionState(sessionId, {
+      ...(status === "error" ? { error: error || "Agent job failed" } : {}),
       isStreaming: false,
       activeJob: null,
-      messages: prev.messages.map(m =>
-        m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
-      ),
-    }))
-    activeJobRef.current = null
-    inFlightRef.current = false
-  }, [])
+      messages,
+    })
+    if (activeJobRef.current?.sessionId === sessionId) activeJobRef.current = null
+    delete inFlightBySessionRef.current[sessionId]
+    writeActiveJob(sessionId, null)
+    void drainQueueRef.current?.(sessionId)
+  }, [patchSessionState])
 
   const pollJob = useCallback(async (job: ActiveAgentJob, controller: AbortController) => {
     let afterSeq = job.afterSeq
+    const sessionId = job.sessionId
     activeJobRef.current = job
+    inFlightBySessionRef.current[sessionId] = true
+    writeActiveJob(sessionId, job)
     try {
       for (;;) {
         if (controller.signal.aborted) throw new DOMException("Polling cancelled", "AbortError")
         const response = await fetchAgentJobEvents(job.jobId, afterSeq, controller.signal)
         const events = response.events ?? []
-        applyJobEvents(job.assistantId, events, response.session_id ?? null)
+        const eventSessionId = response.session_id ?? sessionId
+        applyJobEvents(job.assistantId, events, eventSessionId)
         afterSeq = response.next_seq ?? nextSeqFrom(events, afterSeq)
         if (!events.some(event => event.event_type === "status")) {
-          setState(prev => ({
-            ...prev,
-            messages: prev.messages.map(m => {
+          const currentMessages = stateRef.current.sessionId === eventSessionId
+            ? stateRef.current.messages
+            : sessionSnapshotsRef.current[eventSessionId]?.messages ?? []
+          patchSessionState(eventSessionId, {
+            messages: currentMessages.map(m => {
               if (m.id !== job.assistantId) return m
               const statusText = statusTextForPolledStatus(response.status, m.statusText)
               return statusText ? { ...m, statusText } : m
             }),
-          }))
+          })
         }
         if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
-          inFlightRef.current = false
+          delete inFlightBySessionRef.current[sessionId]
           return
         }
 
         if (response.status === "done" || response.status === "error" || response.status === "cancelled") {
           if (!events.some(event => event.event_type === "done" || event.event_type === "error")) {
-            finishJobState(job.assistantId, response.status, response.error)
+            finishJobState(job.assistantId, response.status, response.error, eventSessionId)
           } else {
-            inFlightRef.current = false
+            delete inFlightBySessionRef.current[sessionId]
           }
           return
         }
 
-        const nextJob = { ...job, afterSeq }
+        const nextJob = { ...job, afterSeq, sessionId: eventSessionId }
         activeJobRef.current = nextJob
-        setState(prev => ({ ...prev, activeJob: nextJob, isStreaming: true }))
+        writeActiveJob(eventSessionId, nextJob)
+        if (stateRef.current.sessionId === eventSessionId) {
+          setState(prev => ({ ...prev, activeJob: nextJob, isStreaming: true }))
+        } else {
+          const snap = sessionSnapshotsRef.current[eventSessionId]
+          if (snap) sessionSnapshotsRef.current[eventSessionId] = { ...snap, activeJob: nextJob, isStreaming: true }
+        }
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return
       const message = err instanceof Error ? err.message : String(err)
-      setState(prev => ({
-        ...prev,
+      const currentMessages = stateRef.current.sessionId === sessionId
+        ? stateRef.current.messages
+        : sessionSnapshotsRef.current[sessionId]?.messages ?? []
+      patchSessionState(sessionId, {
         error: message,
         isStreaming: false,
         activeJob: null,
-        messages: prev.messages.map(m =>
+        messages: currentMessages.map(m =>
           m.id === job.assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
         ),
-      }))
-      activeJobRef.current = null
+      })
+      if (activeJobRef.current?.sessionId === sessionId) activeJobRef.current = null
+      writeActiveJob(sessionId, null)
     } finally {
-      inFlightRef.current = false
+      delete inFlightBySessionRef.current[sessionId]
+      jobPollControllersRef.current.delete(sessionId)
     }
-  }, [applyJobEvents, finishJobState])
+  }, [applyJobEvents, finishJobState, patchSessionState])
 
   const beginDurableResponse = useCallback(async (
     assistantId: string,
@@ -841,13 +976,16 @@ export function useAgentChat() {
     applyJobEvents(assistantId, events, started.session_id ?? null)
     const afterSeq = started.next_seq ?? nextSeqFrom(events, 0)
 
+    const resolvedSessionId = started.session_id ?? stateRef.current.sessionId
+    if (!resolvedSessionId) return
+
     if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
-      inFlightRef.current = false
+      delete inFlightBySessionRef.current[resolvedSessionId]
       return
     }
 
     if (started.status === "done" || started.status === "error" || started.status === "cancelled") {
-      finishJobState(assistantId, started.status, started.error)
+      finishJobState(assistantId, started.status, started.error, resolvedSessionId)
       return
     }
 
@@ -856,35 +994,45 @@ export function useAgentChat() {
       assistantId,
       afterSeq,
       clientTurnId,
+      sessionId: resolvedSessionId,
     }
     activeJobRef.current = activeJob
+    const pollController = new AbortController()
+    jobPollControllersRef.current.set(resolvedSessionId, pollController)
     setState(prev => ({
       ...prev,
-      sessionId: started.session_id ?? prev.sessionId,
+      sessionId: resolvedSessionId,
       activeJob,
       isStreaming: true,
     }))
-    await pollJob(activeJob, controller)
+    await pollJob(activeJob, pollController)
   }, [applyJobEvents, finishJobState, pollJob])
 
   useEffect(() => {
     const activeJob = initialActiveJobRef.current
-    if (!activeJob || inFlightRef.current) return
+    if (!activeJob?.sessionId) return
+    if (inFlightBySessionRef.current[activeJob.sessionId]) return
     const controller = new AbortController()
-    abortRef.current = controller
-    inFlightRef.current = true
+    jobPollControllersRef.current.set(activeJob.sessionId, controller)
+    inFlightBySessionRef.current[activeJob.sessionId] = true
     pollJob(activeJob, controller)
   }, [pollJob])
 
-  // ------ sendMessage ------
-  const sendMessage = useCallback(async (
+  const sessionIsBusy = useCallback((sessionId: string | null) => {
+    if (!sessionId) return false
+    if (inFlightBySessionRef.current[sessionId]) return true
+    const job = activeJobRef.current
+    return Boolean(job && job.sessionId === sessionId)
+  }, [])
+
+  const executeSendMessage = useCallback(async (
     content: string,
     screenContext?: ScreenContext | null,
     responsePreferences?: AgentResponsePreferences | null,
     options?: AgentSendOptions,
   ) => {
-    if (inFlightRef.current || activeJobRef.current) return
-    inFlightRef.current = true
+    const targetSessionId = stateRef.current.sessionId
+    inFlightBySessionRef.current[targetSessionId ?? "pending"] = true
     const clientTurnId = crypto.randomUUID()
     const userMsg: AgentMessage = {
       id: crypto.randomUUID(),
@@ -907,19 +1055,29 @@ export function useAgentChat() {
 
     const assistantId = assistantMsg.id
     const controller = new AbortController()
-    abortRef.current = controller
+    liveAbortRef.current = controller
 
-    setState(prev => ({
-      ...prev,
-      messages: [...prev.messages, userMsg, assistantMsg],
-      isStreaming: true,
-      error: null,
-      sessionTitle: prev.sessionTitle ?? deriveSessionTitleFromText(content),
-      sessionTitleSource: prev.sessionTitleSource ?? (prev.sessionTitle ? null : "deterministic"),
-      activeJob: null,
-    }))
+    setState(prev => {
+      const next = {
+        ...prev,
+        messages: [...prev.messages, userMsg, assistantMsg],
+        isStreaming: true,
+        error: null,
+        sessionTitle: prev.sessionTitle ?? deriveSessionTitleFromText(content),
+        sessionTitleSource: prev.sessionTitleSource ?? (prev.sessionTitle ? null : "deterministic"),
+        activeJob: null,
+      }
+      if (next.sessionId) persistActiveSessionSnapshot(next)
+      return next
+    })
 
-    const body = buildAgentRequestBody(state.sessionId, clientTurnId, content, screenContext, responsePreferences)
+    const body = buildAgentRequestBody(
+      stateRef.current.sessionId,
+      clientTurnId,
+      content,
+      screenContext,
+      responsePreferences,
+    )
     let sawAssistantDelta = false
 
     const handleAbort = () => {
@@ -932,7 +1090,7 @@ export function useAgentChat() {
         ),
       }))
       activeJobRef.current = null
-      inFlightRef.current = false
+      if (targetSessionId) delete inFlightBySessionRef.current[targetSessionId]
     }
 
     const handleError = (message: string) => {
@@ -946,7 +1104,7 @@ export function useAgentChat() {
         ),
       }))
       activeJobRef.current = null
-      inFlightRef.current = false
+      if (targetSessionId) delete inFlightBySessionRef.current[targetSessionId]
     }
 
     try {
@@ -982,7 +1140,8 @@ export function useAgentChat() {
           m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
         ),
       }))
-      inFlightRef.current = false
+      if (targetSessionId) delete inFlightBySessionRef.current[targetSessionId]
+      void drainQueueRef.current?.(targetSessionId ?? "")
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         handleAbort()
@@ -1008,16 +1167,114 @@ export function useAgentChat() {
       const message = err instanceof Error ? err.message : String(err)
       handleError(`Agent stream interrupted after the response started. ${message}`)
     }
-  }, [applyJobEvents, beginDurableResponse, state.sessionId])
+  }, [applyJobEvents, beginDurableResponse, persistActiveSessionSnapshot, state.sessionId])
+
+  const drainQueueForSession = useCallback(async (sessionId: string) => {
+    if (sessionIsBusy(sessionId)) return
+    const queue = readMessageQueue(sessionId)
+    if (!queue.length) return
+    const [next, ...rest] = queue
+    writeMessageQueue(sessionId, rest)
+    if (stateRef.current.sessionId === sessionId) {
+      setState(prev => ({ ...prev, queuedMessages: rest }))
+    }
+    if (stateRef.current.sessionId !== sessionId) return
+    await executeSendMessage(
+      next.content,
+      next.screenContext,
+      next.responsePreferences,
+      next.options,
+    )
+  }, [executeSendMessage, sessionIsBusy])
+
+  drainQueueRef.current = drainQueueForSession
+
+  const sendMessage = useCallback(async (
+    content: string,
+    screenContext?: ScreenContext | null,
+    responsePreferences?: AgentResponsePreferences | null,
+    options?: AgentSendOptions,
+  ) => {
+    const mode = options?.mode ?? "enqueue"
+    const sessionId = stateRef.current.sessionId
+    if (sessionIsBusy(sessionId) && mode === "enqueue") {
+      const entry: QueuedAgentMessage = {
+        id: crypto.randomUUID(),
+        content,
+        createdAt: Date.now(),
+        screenContext,
+        responsePreferences,
+        options,
+      }
+      setState(prev => {
+        const queuedMessages = [...prev.queuedMessages, entry]
+        if (prev.sessionId) writeMessageQueue(prev.sessionId, queuedMessages)
+        return { ...prev, queuedMessages }
+      })
+      return
+    }
+    if (sessionIsBusy(sessionId) && mode === "immediate") {
+      const jobId = activeJobRef.current?.jobId
+      liveAbortRef.current?.abort()
+      if (jobId) await cancelAgentJob(jobId).catch(() => undefined)
+      if (sessionId) {
+        delete inFlightBySessionRef.current[sessionId]
+        writeActiveJob(sessionId, null)
+      }
+      activeJobRef.current = null
+      setState(prev => ({
+        ...prev,
+        isStreaming: false,
+        activeJob: null,
+        messages: prev.messages.map(m =>
+          m.isStreaming ? { ...m, isStreaming: false, statusText: undefined } : m,
+        ),
+      }))
+    }
+    await executeSendMessage(content, screenContext, responsePreferences, options)
+  }, [executeSendMessage, sessionIsBusy])
+
+  const removeQueuedMessage = useCallback((id: string) => {
+    setState(prev => {
+      const queuedMessages = prev.queuedMessages.filter(entry => entry.id !== id)
+      if (prev.sessionId) writeMessageQueue(prev.sessionId, queuedMessages)
+      return { ...prev, queuedMessages }
+    })
+  }, [])
+
+  const editQueuedMessage = useCallback((id: string) => {
+    const entry = stateRef.current.queuedMessages.find(item => item.id === id)
+    if (!entry) return null
+    removeQueuedMessage(id)
+    return entry.content
+  }, [removeQueuedMessage])
+
+  const clearQueuedMessages = useCallback(() => {
+    setState(prev => {
+      if (prev.sessionId) writeMessageQueue(prev.sessionId, [])
+      return { ...prev, queuedMessages: [] }
+    })
+  }, [])
+
+  const sendQueuedMessageNow = useCallback(async (id: string) => {
+    const entry = stateRef.current.queuedMessages.find(item => item.id === id)
+    if (!entry) return
+    removeQueuedMessage(id)
+    await sendMessage(entry.content, entry.screenContext, entry.responsePreferences, {
+      ...entry.options,
+      mode: "immediate",
+    })
+  }, [removeQueuedMessage, sendMessage])
 
   // ------ stopStreaming ------
   const stopStreaming = useCallback(() => {
     const jobId = activeJobRef.current?.jobId
-    abortRef.current?.abort()
+    liveAbortRef.current?.abort()
     if (jobId) {
       cancelAgentJob(jobId).catch(() => undefined)
     }
-    inFlightRef.current = false
+    const sessionId = activeJobRef.current?.sessionId ?? stateRef.current.sessionId
+    if (sessionId) delete inFlightBySessionRef.current[sessionId]
     activeJobRef.current = null
     setState(prev => ({
       ...prev,
@@ -1042,12 +1299,13 @@ export function useAgentChat() {
 
   // ------ clearChat ------
   const clearChat = useCallback(() => {
-    abortRef.current?.abort()
+    liveAbortRef.current?.abort()
     // Summarize the ending session before clearing
     if (state.sessionId) {
       summarizeSession(state.sessionId)
+      writeMessageQueue(state.sessionId, [])
+      writeActiveJob(state.sessionId, null)
     }
-    inFlightRef.current = false
     activeJobRef.current = null
     setState({
       messages: [],
@@ -1057,27 +1315,62 @@ export function useAgentChat() {
       sessionTitle: null,
       sessionTitleSource: null,
       activeJob: null,
+      queuedMessages: [],
     })
   }, [state.sessionId])
 
   // ------ loadSession ------
   const loadSession = useCallback(async (sessionId: string) => {
-    const data = await fetchSession(sessionId)
-    if (data && data.transcript.length > 0) {
-      abortRef.current?.abort()
-      inFlightRef.current = false
-      activeJobRef.current = null
-      setState({
-        messages: data.transcript,
-        isStreaming: false,
-        error: null,
-        sessionId,
-        sessionTitle: data.title ?? deriveSessionTitleFromMessages(data.transcript),
-        sessionTitleSource: data.title_source,
-        activeJob: null,
-      })
+    const previousSessionId = stateRef.current.sessionId
+    if (previousSessionId && previousSessionId !== sessionId) {
+      persistActiveSessionSnapshot(stateRef.current)
+      sessionSnapshotsRef.current[previousSessionId] = stateRef.current
+      liveAbortRef.current?.abort()
     }
-  }, [])
+
+    const cached = readSessionSnapshot(sessionId)
+    const data = await fetchSession(sessionId)
+    const transcript = data?.transcript ?? cached?.messages ?? []
+    const queuedMessages = readMessageQueue(sessionId)
+
+    let activeJob = readActiveJobs()[sessionId] ?? null
+    const activeRow = data?.active_jobs?.[0]
+    if (activeRow?.job_id) {
+      const assistant = transcript.find(
+        message =>
+          message.role === "assistant"
+          && (message.clientTurnId === activeRow.client_turn_id
+            || message.isStreaming),
+      )
+      activeJob = {
+        jobId: activeRow.job_id,
+        assistantId: assistant?.id ?? `assistant-${activeRow.job_id}`,
+        afterSeq: 0,
+        clientTurnId: activeRow.client_turn_id ?? assistant?.clientTurnId ?? "",
+        sessionId,
+      }
+    }
+
+    const nextState: AgentChatState = {
+      messages: transcript,
+      isStreaming: Boolean(activeJob),
+      error: cached?.error ?? null,
+      sessionId,
+      sessionTitle: data?.title ?? cached?.sessionTitle ?? deriveSessionTitleFromMessages(transcript),
+      sessionTitleSource: data?.title_source ?? cached?.sessionTitleSource ?? null,
+      activeJob,
+      queuedMessages,
+    }
+    setState(nextState)
+    persistActiveSessionSnapshot(nextState)
+
+    if (activeJob && !inFlightBySessionRef.current[sessionId]) {
+      const controller = new AbortController()
+      jobPollControllersRef.current.set(sessionId, controller)
+      activeJobRef.current = activeJob
+      void pollJob(activeJob, controller)
+    }
+  }, [persistActiveSessionSnapshot, pollJob])
 
   const applySessionTitle = useCallback((sessionId: string, title: string | null, source?: string | null) => {
     setState(prev => {
@@ -1097,10 +1390,15 @@ export function useAgentChat() {
     sessionId: state.sessionId,
     sessionTitle: state.sessionTitle,
     sessionTitleSource: state.sessionTitleSource,
+    queuedMessages: state.queuedMessages,
     sendMessage,
     stopStreaming,
     clearChat,
     loadSession,
     applySessionTitle,
+    removeQueuedMessage,
+    editQueuedMessage,
+    clearQueuedMessages,
+    sendQueuedMessageNow,
   }
 }

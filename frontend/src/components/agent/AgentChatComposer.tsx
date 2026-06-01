@@ -8,8 +8,10 @@ interface AgentChatComposerProps {
   onInputChange: (value: string) => void
   onInputSelectionChange: (start: number, end: number) => void
   onSend: () => void
+  onSteerNow?: () => void
   onStop: () => void
   isStreaming: boolean
+  queuedCount?: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
   compactWorkflowSlot?: ReactNode
   workflowsOpen?: boolean
@@ -21,8 +23,10 @@ export function AgentChatComposer({
   onInputChange,
   onInputSelectionChange,
   onSend,
+  onSteerNow,
   onStop,
   isStreaming,
+  queuedCount = 0,
   textareaRef,
   compactWorkflowSlot,
   workflowsOpen,
@@ -59,7 +63,10 @@ export function AgentChatComposer({
 
       {isStreaming && (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-app bg-card-muted px-3 py-2 text-xs text-muted" aria-live="polite">
-          <span>Generating response</span>
+          <span>
+            Generating response
+            {queuedCount > 0 ? ` · ${queuedCount} queued` : " · Enter queues follow-up"}
+          </span>
           <span className="h-2 w-2 rounded-full bg-[hsl(var(--accent))] animate-pulse" aria-hidden="true" />
         </div>
       )}
@@ -83,18 +90,30 @@ export function AgentChatComposer({
           rows={1}
           className="theme-input min-h-[44px] min-w-0 max-h-[120px] flex-1 resize-none overflow-x-hidden rounded-xl text-sm leading-5"
           style={{ height: "44px", overflowX: "hidden", overflowY: "hidden" }}
-          disabled={isStreaming}
         />
         {isStreaming ? (
-          <button
-            type="button"
-            onClick={onStop}
-            className="theme-button-destructive flex h-11 w-11 flex-none items-center justify-center rounded-full"
-            aria-label="Stop generating"
-            title="Stop generating"
-          >
-            <Square size={14} aria-hidden="true" />
-          </button>
+          <div className="flex flex-none flex-col gap-1.5">
+            {onSteerNow && input.trim() && (
+              <button
+                type="button"
+                onClick={onSteerNow}
+                className="theme-button-secondary h-9 rounded-full px-3 text-xs font-medium"
+                aria-label="Send now and steer"
+                title="Send now (interrupt and steer)"
+              >
+                Send now
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onStop}
+              className="theme-button-destructive flex h-11 w-11 items-center justify-center rounded-full"
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <Square size={14} aria-hidden="true" />
+            </button>
+          </div>
         ) : (
           <button
             type="button"

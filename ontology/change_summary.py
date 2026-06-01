@@ -81,6 +81,25 @@ CHANGE_OBJECT_CONFIGS: dict[str, ObjectChangeConfig] = {
         title_fields=("ticker", "report_type", "run_id", "id"),
         fields=("ticker", "report_type", "status", "as_of", "synced_at", "updated_at"),
     ),
+    "MonitorHit": ObjectChangeConfig(
+        category="monitor_hit",
+        title_fields=("entity_label", "hit_type", "ticker"),
+        fields=("ticker", "entity_type", "entity_id", "entity_label", "hit_type", "severity", "status", "evidence"),
+    ),
+    "OpportunityCandidate": ObjectChangeConfig(
+        category="opportunity_candidate",
+        title_fields=("trigger", "ticker", "candidate_id"),
+        fields=(
+            "ticker",
+            "trigger",
+            "opportunity_type",
+            "why_now",
+            "next_action",
+            "status",
+            "decision_state",
+            "updated_at",
+        ),
+    ),
 }
 
 

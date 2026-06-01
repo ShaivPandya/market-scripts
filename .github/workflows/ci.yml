@@ -42,6 +42,52 @@ jobs:
       - run: mypy api/ --ignore-missing-imports
 
   # ---------------------------------------------------------------------------
+  # Approved eval gates (TL-73)
+  # ---------------------------------------------------------------------------
+
+  eval-gates:
+    runs-on: ubuntu-latest
+    env:
+      JWT_SECRET: test-secret-for-ci
+      AUTH_PASSWORD_HASH: "$2b$12$LJ3m4ys3Lk0TSwHiRb0v5u1N6DpFV65WJUGAjhBrE8gFnLbMKqGTS"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt -c requirements-lock.txt
+      - name: Run approved eval offline tests
+        run: |
+          pytest tests/test_decision_quality_model.py \
+            tests/test_decision_quality_eval_runner.py \
+            tests/test_decision_quality_eval_corpus.py \
+            tests/test_decision_quality_chat_eval_runner.py \
+            tests/test_agent_decision_quality_chat.py \
+            tests/test_opportunity_candidate_model.py \
+            tests/test_opportunity_candidate_eval_runner.py \
+            tests/test_opportunity_scout.py \
+            tests/test_opportunity_scout_integration.py \
+            tests/test_opportunity_scout_workspace.py \
+            -q --tb=short
+      - name: Run approved structured eval dry-run
+        run: python -m decision_quality.eval_runner --approved-only --dry-run --no-judge
+      - name: Run approved chat eval dry-run
+        run: python -m decision_quality.chat_eval_runner --approved-only --dry-run
+      - name: Run approved opportunity candidate eval dry-run
+        run: python -m decision_quality.opportunity_candidate_eval_runner --approved-only --dry-run --no-judge
+      - name: Upload eval artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-gates-artifacts
+          path: |
+            outputs/decision_quality_evals/
+            outputs/decision_quality_chat_evals/
+            outputs/opportunity_candidate_evals/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
   # Security gates (SHA-35)
   # ---------------------------------------------------------------------------
 

@@ -81,6 +81,7 @@ function HistorySessionRow({
   onRenameSession,
 }: HistorySessionRowProps) {
   const title = displayTitle(session)
+  const running = Boolean(session.has_active_job)
   const [editing, setEditing] = useState(false)
   const [draftTitle, setDraftTitle] = useState(title)
   const [saving, setSaving] = useState(false)
@@ -152,7 +153,14 @@ function HistorySessionRow({
             <span className="block h-8" aria-hidden="true" />
           ) : (
             <>
-              <span className="block truncate text-sm font-semibold text-app">{title}</span>
+              <span className="flex items-center gap-2 text-sm font-semibold text-app">
+                <span className="truncate">{title}</span>
+                {running && (
+                  <span className="shrink-0 rounded-full bg-[hsl(var(--accent)/0.15)] px-2 py-0.5 text-[10px] font-medium text-[hsl(var(--accent))]">
+                    Running
+                  </span>
+                )}
+              </span>
               <span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">
                 {sessionSecondaryText(session)}
               </span>

@@ -345,6 +345,158 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
     }
 
 
+def _load_session_messages(conn: sqlite3.Connection | PostgresStateConnection, session_id: str) -> list[dict[str, Any]]:
+    row = conn.execute(
+        "SELECT server_messages, transcript FROM conversation_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Session {session_id} not found")
+    try:
+        existing = json.loads(row["server_messages"]) if row["server_messages"] else []
+    except Exception:
+        existing = []
+    if not existing:
+        try:
+            existing = json.loads(row["transcript"]) if row["transcript"] else []
+        except Exception:
+            existing = []
+    return [m for m in existing if isinstance(m, dict)]
+
+
+def _save_session_messages(
+    conn: sqlite3.Connection | PostgresStateConnection,
+    session_id: str,
+    messages: list[dict[str, Any]],
+) -> int:
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        UPDATE conversation_sessions
+        SET server_messages = ?, transcript = ?, message_count = ?, ended_at = ?
+        WHERE session_id = ?
+        """,
+        (json.dumps(messages, default=str), json.dumps(messages, default=str), len(messages), now, session_id),
+    )
+    return len(messages)
+
+
+def turn_exists(session_id: str, client_turn_id: str) -> bool:
+    """Return True if any message in the session carries this client_turn_id."""
+    if not client_turn_id:
+        return False
+    conn = _get_conn()
+    with _lock:
+        try:
+            messages = _load_session_messages(conn, session_id)
+        except ValueError:
+            return False
+    return any(str(m.get("client_turn_id")) == client_turn_id for m in messages)
+
+
+def begin_turn(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_placeholder: dict[str, Any],
+) -> int:
+    """Append user + streaming assistant for a turn. Idempotent per client_turn_id."""
+    client_turn_id = str(user_message.get("client_turn_id") or assistant_placeholder.get("client_turn_id") or "")
+    conn = _get_conn()
+    with _lock:
+        messages = _load_session_messages(conn, session_id)
+        if client_turn_id and any(str(m.get("client_turn_id")) == client_turn_id for m in messages):
+            return len(messages)
+        messages.append(user_message)
+        messages.append(assistant_placeholder)
+        total = _save_session_messages(conn, session_id, messages)
+        conn.commit()
+    return total
+
+
+def update_assistant_message(
+    session_id: str,
+    client_turn_id: str,
+    patch: dict[str, Any],
+) -> bool:
+    """Patch the assistant message for a turn. Returns True if updated."""
+    if not client_turn_id:
+        return False
+    conn = _get_conn()
+    with _lock:
+        try:
+            messages = _load_session_messages(conn, session_id)
+        except ValueError:
+            return False
+        updated = False
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            if str(msg.get("client_turn_id")) != client_turn_id:
+                continue
+            for key, value in patch.items():
+                msg[key] = value
+            updated = True
+            break
+        if not updated:
+            return False
+        _save_session_messages(conn, session_id, messages)
+        conn.commit()
+    return True
+
+
+def complete_turn_messages(
+    session_id: str,
+    client_turn_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+) -> int:
+    """Finalize an incremental turn in place. Idempotent if already complete."""
+    if not client_turn_id:
+        return append_messages(session_id, [user_message, assistant_message])
+    conn = _get_conn()
+    with _lock:
+        messages = _load_session_messages(conn, session_id)
+        found_turn = any(str(m.get("client_turn_id")) == client_turn_id for m in messages)
+        if not found_turn:
+            messages.extend([user_message, assistant_message])
+            total = _save_session_messages(conn, session_id, messages)
+            conn.commit()
+            return total
+
+        new_messages: list[dict[str, Any]] = []
+        replaced = False
+        for msg in messages:
+            if str(msg.get("client_turn_id")) != client_turn_id:
+                new_messages.append(msg)
+                continue
+            if msg.get("role") == "user":
+                merged = {**msg, **user_message}
+                new_messages.append(merged)
+            elif msg.get("role") == "assistant":
+                merged = {**msg, **assistant_message, "is_streaming": False}
+                new_messages.append(merged)
+                replaced = True
+        if not replaced:
+            new_messages.append(assistant_message)
+        total = _save_session_messages(conn, session_id, new_messages)
+        conn.commit()
+    return total
+
+
+def fail_turn(
+    session_id: str,
+    client_turn_id: str,
+    *,
+    status: str = "cancelled",
+    content: str | None = None,
+) -> bool:
+    """Mark an in-progress assistant turn as terminal without a full completion."""
+    patch: dict[str, Any] = {"is_streaming": False, "status": status}
+    if content is not None:
+        patch["content"] = content
+    return update_assistant_message(session_id, client_turn_id, patch)
+
+
 def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
     """Append messages to a session's server_messages. Returns new total count."""
     conn = _get_conn()

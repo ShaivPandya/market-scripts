@@ -37,11 +37,19 @@ RETRIEVAL_TOP_K = 3  # semantic retrieval hits to include
 # ---------------------------------------------------------------------------
 
 
+def _include_in_verbatim(msg: dict[str, Any]) -> bool:
+    """Exclude in-progress assistant placeholders from LLM context."""
+    if msg.get("role") == "assistant" and msg.get("is_streaming"):
+        return False
+    return True
+
+
 def build_conversation_context(
     session_id: str | None,
     new_user_message: str,
     *,
     enable_retrieval: bool = True,
+    client_turn_id: str | None = None,
 ) -> tuple[list[dict[str, object]], str]:
     """Build the ``messages`` list for a Claude API call.
 
@@ -58,10 +66,11 @@ def build_conversation_context(
     rolling_summary: str | None = session.get("rolling_summary")
 
     # Split into old (summarised) and recent (verbatim)
-    if len(server_msgs) > VERBATIM_WINDOW:
-        recent = server_msgs[-VERBATIM_WINDOW:]
+    verbatim_msgs = [m for m in server_msgs if _include_in_verbatim(m)]
+    if len(verbatim_msgs) > VERBATIM_WINDOW:
+        recent = verbatim_msgs[-VERBATIM_WINDOW:]
     else:
-        recent = server_msgs
+        recent = verbatim_msgs
 
     # --- Build optional context preamble ---
     preamble_parts: list[str] = []
@@ -94,8 +103,18 @@ def build_conversation_context(
     for msg in recent:
         conversation.append({"role": msg["role"], "content": msg["content"]})
 
-    # The new user message
-    conversation.append({"role": "user", "content": new_user_message})
+    # The new user message (skip if begin_turn already persisted it for this turn)
+    skip_duplicate_user = False
+    if client_turn_id and recent:
+        last = recent[-1]
+        if (
+            last.get("role") == "user"
+            and str(last.get("client_turn_id")) == client_turn_id
+            and str(last.get("content") or "") == new_user_message
+        ):
+            skip_duplicate_user = True
+    if not skip_duplicate_user:
+        conversation.append({"role": "user", "content": new_user_message})
 
     return conversation, sid
 
@@ -103,6 +122,136 @@ def build_conversation_context(
 # ---------------------------------------------------------------------------
 # Post-turn finalization
 # ---------------------------------------------------------------------------
+
+
+def begin_turn(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_placeholder: dict[str, Any],
+) -> None:
+    """Persist user message and streaming assistant placeholder at turn start."""
+    client_turn_id = str(user_message.get("client_turn_id") or "")
+    if not client_turn_id:
+        return
+    try:
+        placeholder = {
+            **assistant_placeholder,
+            "is_streaming": assistant_placeholder.get("is_streaming", True),
+        }
+        memory_db.begin_turn(session_id, user_message, placeholder)
+    except Exception:
+        logger.exception("Failed to begin turn for session %s", session_id)
+
+
+def begin_turn_async(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_placeholder: dict[str, Any],
+) -> None:
+    t = threading.Thread(
+        target=begin_turn,
+        args=(session_id, user_message, assistant_placeholder),
+        daemon=True,
+    )
+    t.start()
+
+
+def update_assistant_message(
+    session_id: str,
+    client_turn_id: str | None,
+    patch: dict[str, Any],
+) -> None:
+    if not client_turn_id:
+        return
+    try:
+        memory_db.update_assistant_message(session_id, client_turn_id, patch)
+    except Exception:
+        logger.debug("Failed to update assistant message for session %s", session_id, exc_info=True)
+
+
+def update_assistant_message_async(
+    session_id: str,
+    client_turn_id: str | None,
+    patch: dict[str, Any],
+) -> None:
+    t = threading.Thread(
+        target=update_assistant_message,
+        args=(session_id, client_turn_id, patch),
+        daemon=True,
+    )
+    t.start()
+
+
+def complete_turn(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+) -> None:
+    """Finalize a turn, using in-place update when incremental persistence exists."""
+    client_turn_id = str(user_message.get("client_turn_id") or assistant_message.get("client_turn_id") or "")
+    final_assistant = {**assistant_message, "is_streaming": False}
+    try:
+        if client_turn_id and memory_db.turn_exists(session_id, client_turn_id):
+            total = memory_db.complete_turn_messages(
+                session_id,
+                client_turn_id,
+                user_message,
+                final_assistant,
+            )
+        else:
+            total = memory_db.append_messages(session_id, [user_message, final_assistant])
+    except Exception:
+        logger.exception("Failed to complete turn for session %s", session_id)
+        return
+
+    _ensure_session_title(session_id, user_message, final_assistant, total)
+
+    if total >= SUMMARIZE_THRESHOLD:
+        _maybe_summarize(session_id)
+
+
+def complete_turn_async(
+    session_id: str,
+    user_message: dict[str, Any],
+    assistant_message: dict[str, Any],
+) -> None:
+    t = threading.Thread(
+        target=complete_turn,
+        args=(session_id, user_message, assistant_message),
+        daemon=True,
+    )
+    t.start()
+
+
+def fail_turn(
+    session_id: str,
+    client_turn_id: str | None,
+    *,
+    status: str = "cancelled",
+    content: str | None = None,
+) -> None:
+    if not client_turn_id:
+        return
+    try:
+        memory_db.fail_turn(session_id, client_turn_id, status=status, content=content)
+    except Exception:
+        logger.debug("Failed to mark turn failed for session %s", session_id, exc_info=True)
+
+
+def fail_turn_async(
+    session_id: str,
+    client_turn_id: str | None,
+    *,
+    status: str = "cancelled",
+    content: str | None = None,
+) -> None:
+    t = threading.Thread(
+        target=fail_turn,
+        args=(session_id, client_turn_id),
+        kwargs={"status": status, "content": content},
+        daemon=True,
+    )
+    t.start()
 
 
 def finalize_turn(
@@ -114,16 +263,7 @@ def finalize_turn(
 
     Designed to be called in a background thread so it doesn't block SSE.
     """
-    try:
-        total = memory_db.append_messages(session_id, [user_message, assistant_message])
-    except Exception:
-        logger.exception("Failed to append messages to session %s", session_id)
-        return
-
-    _ensure_session_title(session_id, user_message, assistant_message, total)
-
-    if total >= SUMMARIZE_THRESHOLD:
-        _maybe_summarize(session_id)
+    complete_turn(session_id, user_message, assistant_message)
 
 
 def finalize_turn_async(

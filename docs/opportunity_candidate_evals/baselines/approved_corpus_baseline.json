@@ -1,0 +1,267 @@
+{
+  "baseline_version": 1,
+  "calibration_summary": {
+    "by_actionability_stance": {},
+    "by_confidence_bin": {},
+    "by_data_quality_tier": {},
+    "by_opportunity_type": {},
+    "by_process_label": {},
+    "outcome_calibration_case_count": 0
+  },
+  "case_count": 5,
+  "cases": {
+    "opportunity_candidate_graduate_nvda_2026": {
+      "case_id": "opportunity_candidate_graduate_nvda_2026",
+      "corpus_tags": [
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "next_action",
+          "passed": true
+        },
+        {
+          "name": "should_graduate",
+          "passed": true
+        },
+        {
+          "name": "expected_final_action",
+          "passed": true
+        },
+        {
+          "name": "expected_gate_status",
+          "passed": true
+        },
+        {
+          "name": "non_actionable_next_action",
+          "passed": true
+        },
+        {
+          "name": "trigger_present",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "opportunity_candidate_proactive_scan_no_action_2026": {
+      "case_id": "opportunity_candidate_proactive_scan_no_action_2026",
+      "corpus_tags": [
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "next_action",
+          "passed": true
+        },
+        {
+          "name": "should_graduate",
+          "passed": true
+        },
+        {
+          "name": "expected_final_action",
+          "passed": true
+        },
+        {
+          "name": "expected_gate_status",
+          "passed": true
+        },
+        {
+          "name": "non_actionable_next_action",
+          "passed": true
+        },
+        {
+          "name": "trigger_present",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "opportunity_candidate_reject_crowded_2026": {
+      "case_id": "opportunity_candidate_reject_crowded_2026",
+      "corpus_tags": [
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "next_action",
+          "passed": true
+        },
+        {
+          "name": "should_graduate",
+          "passed": true
+        },
+        {
+          "name": "expected_final_action",
+          "passed": true
+        },
+        {
+          "name": "expected_gate_status",
+          "passed": true
+        },
+        {
+          "name": "non_actionable_next_action",
+          "passed": true
+        },
+        {
+          "name": "trigger_present",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "missing_mispricing",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "opportunity_candidate_scout_pass_skeptic_block_nvda_2026": {
+      "case_id": "opportunity_candidate_scout_pass_skeptic_block_nvda_2026",
+      "corpus_tags": [
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "next_action",
+          "passed": true
+        },
+        {
+          "name": "should_graduate",
+          "passed": true
+        },
+        {
+          "name": "expected_final_action",
+          "passed": true
+        },
+        {
+          "name": "expected_gate_status",
+          "passed": true
+        },
+        {
+          "name": "non_actionable_next_action",
+          "passed": true
+        },
+        {
+          "name": "trigger_present",
+          "passed": true
+        },
+        {
+          "name": "expected_scout_status",
+          "passed": true
+        },
+        {
+          "name": "expected_skeptic_status",
+          "passed": true
+        },
+        {
+          "name": "expected_skeptic_block_reasons",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "sizing_discipline",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "opportunity_candidate_watch_semiconductors_2026": {
+      "case_id": "opportunity_candidate_watch_semiconductors_2026",
+      "corpus_tags": [
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "next_action",
+          "passed": true
+        },
+        {
+          "name": "should_graduate",
+          "passed": true
+        },
+        {
+          "name": "expected_final_action",
+          "passed": true
+        },
+        {
+          "name": "expected_gate_status",
+          "passed": true
+        },
+        {
+          "name": "non_actionable_next_action",
+          "passed": true
+        },
+        {
+          "name": "trigger_present",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "missing_mispricing",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    }
+  },
+  "corpus_tags_filter": [],
+  "generated_at": "2026-06-01T17:51:16.756762+00:00",
+  "notes": "OpportunityCandidate approved corpus baseline.",
+  "status_filter": [
+    "approved"
+  ]
+}

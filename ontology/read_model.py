@@ -327,6 +327,13 @@ class TemporalReadModelRepository:
                 limit=20,
                 order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
             )
+            open_opportunity_candidates = _fetch_operational_objects(
+                conn,
+                "OpportunityCandidate",
+                filters={"status": "open"},
+                limit=50,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
             recent_workflow_runs = _fetch_operational_objects(
                 conn,
                 "WorkflowRun",
@@ -383,6 +390,7 @@ class TemporalReadModelRepository:
             "active_mission_definitions": active_mission_definitions,
             "active_watch_triggers": active_watch_triggers,
             "recent_monitor_hits": recent_monitor_hits,
+            "open_opportunity_candidates": open_opportunity_candidates,
             "recent_workflow_runs": recent_workflow_runs,
             "recent_report_runs": recent_report_runs,
             "challenged_claims": challenged_claims,
