@@ -74,6 +74,7 @@ from decision_quality.models import (
     decision_quality_schema,
     parse_decision_quality,
 )
+from decision_quality.synthesis_supervised import apply_supervised_triage_overlay
 from decision_quality.opportunity_candidate import (
     OpportunityCandidate,
     OpportunityCandidateGate,
@@ -1325,6 +1326,12 @@ def _run_opportunity_candidate_structured_pass(
     opportunity_candidate, parse_errors = parse_opportunity_candidate(raw_candidate)
     context_pack = context_bundle.get("context_pack") if isinstance(context_bundle.get("context_pack"), dict) else None
     data_quality = context_bundle.get("data_quality") if isinstance(context_bundle.get("data_quality"), dict) else None
+    user_text = str(context_bundle.get("user_message") or "")
+    opportunity_candidate, supervised_meta = apply_supervised_triage_overlay(
+        opportunity_candidate=opportunity_candidate,
+        context_bundle=context_bundle,
+        user_text=user_text,
+    )
     gate = apply_opportunity_candidate_gates(
         opportunity_candidate,
         parse_errors=parse_errors,
@@ -1336,6 +1343,7 @@ def _run_opportunity_candidate_structured_pass(
         "parse_errors": parse_errors,
         "gate": gate,
         "context_pack": context_pack,
+        "supervised_triage": supervised_meta,
         "raw": parsed,
         "citations": [{"title": title, "url": url} for title, url in citations],
         "usage": _usage_dict(response),
@@ -1378,7 +1386,7 @@ def _opportunity_candidate_done_meta(oc_result: dict[str, Any] | None) -> dict[s
     missing_inputs_count = 0
     if isinstance(opportunity_candidate, OpportunityCandidate):
         missing_inputs_count = len(opportunity_candidate.missing_inputs)
-    return {
+    meta = {
         "ran": True,
         "gate_status": gate.status if isinstance(gate, OpportunityCandidateGate) else "invalid",
         "final_action": gate.final_action if isinstance(gate, OpportunityCandidateGate) else "research",
@@ -1386,6 +1394,10 @@ def _opportunity_candidate_done_meta(oc_result: dict[str, Any] | None) -> dict[s
         "missing_inputs_count": missing_inputs_count,
         "context_pack": oc_result.get("context_pack") if isinstance(oc_result.get("context_pack"), dict) else None,
     }
+    supervised = oc_result.get("supervised_triage")
+    if isinstance(supervised, dict):
+        meta["supervised_triage"] = supervised
+    return meta
 
 
 def _opportunity_candidate_fallback(oc_result: dict[str, Any]) -> str:

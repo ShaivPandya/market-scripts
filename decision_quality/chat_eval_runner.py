@@ -1077,6 +1077,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Write the current run summary to the baseline path.",
     )
+    parser.add_argument(
+        "--supervised-model",
+        default=None,
+        help="Optional supervised synthesis model artifact for offline label comparison.",
+    )
+    parser.add_argument(
+        "--supervised-baseline-metrics",
+        default=None,
+        help="Optional baseline metrics JSON for supervised rollout gate comparison.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1112,6 +1122,22 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases
     ]
     report = build_report(results, fail_under_deterministic=args.fail_under_deterministic)
+    if args.supervised_model:
+        from decision_quality.synthesis_supervised_training import (
+            build_supervised_eval_summary,
+            rows_from_chat_cases,
+        )
+
+        baseline_metrics = None
+        if args.supervised_baseline_metrics:
+            baseline_metrics = json.loads(Path(args.supervised_baseline_metrics).read_text(encoding="utf-8"))
+        supervised_rows = rows_from_chat_cases(cases)
+        if supervised_rows:
+            report["supervised_eval"] = build_supervised_eval_summary(
+                rows=supervised_rows,
+                model_path=Path(args.supervised_model),
+                baseline_metrics=baseline_metrics,
+            )
     output_path = Path(args.output) if args.output else _default_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
@@ -1153,6 +1179,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failures = report["summary"]["deterministic_failures"] or report["summary"]["judge_failures"]
     if comparison and comparison["summary"]["regression_detected"]:
+        return 1
+    supervised_eval = report.get("supervised_eval")
+    if isinstance(supervised_eval, dict) and not supervised_eval.get("rollout_gates", {}).get("passed", True):
         return 1
     return 1 if failures else 0
 
