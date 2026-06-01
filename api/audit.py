@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from api.logging_config import request_id_var
+from api.optional_ontology_writes import should_attempt_optional_ontology_write
 from ontology.object_service import OntologyObjectService
 from ontology.schemas.identity import audit_event_id
 
@@ -183,6 +184,9 @@ def emit_audit_event(
     Operational callers keep best-effort behavior. Critical financial paths
     pass ``fail_closed=True`` so missing audit rows stop the business write.
     """
+
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
 
     actor_id, actor_type, parent_actor_id = _actor_fields(actor)
     refs = _normalize_object_refs(object_refs)

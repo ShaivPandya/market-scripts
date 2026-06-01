@@ -694,6 +694,9 @@ def _format_stream_error(exc: Exception) -> str:
     return raw
 
 
+EMPTY_AGENT_RESPONSE_TEXT = "I couldn't generate a response for that request. Please try again."
+
+
 def _extract_last_user_text(messages: list[ChatMessage]) -> str:
     for msg in reversed(messages):
         if msg.role == "user" and msg.content.strip():
@@ -4249,6 +4252,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 usage = _usage_dict(final_message)
                 # Finalize turn before last yield
                 full_text = "".join(text_parts)
+                if not full_text.strip():
+                    logger.warning("Agent chat model returned empty text; using deterministic empty-response fallback")
+                    full_text = EMPTY_AGENT_RESPONSE_TEXT
+                    yield _sse("delta", {"text": full_text})
                 _agent_turn_persist_delta(req, session_id, full_text)
                 turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}

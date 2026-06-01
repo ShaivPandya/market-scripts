@@ -971,6 +971,50 @@ def test_agent_chat_portfolio_summary_never_finalizes_blank(auth_client, monkeyp
     assert finalized[0]["content"] == fallback_delta[-1]
 
 
+def test_agent_chat_normal_path_never_finalizes_blank(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-empty-normal",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    streams = [
+        (
+            [],
+            SimpleNamespace(
+                content=[],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=10, output_tokens=0),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/agent/chat",
+        json={"message": "How is global liquidity affecting risk assets?"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    fallback_delta = [
+        p.get("text")
+        for e, p in parsed
+        if e == "delta" and p.get("text") == agent_router.EMPTY_AGENT_RESPONSE_TEXT
+    ]
+    assert fallback_delta
+    assert finalized[0]["content"] == agent_router.EMPTY_AGENT_RESPONSE_TEXT
+
+
 def test_agent_chat_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
