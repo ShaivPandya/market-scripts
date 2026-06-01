@@ -6,6 +6,27 @@ The chat runner sends each case through `/api/agent/chat`, consumes SSE, records
 
 ## Run
 
+### CI gate (offline, no LLM)
+
+The `eval-gates` job in `.github/workflows/ci.yml` runs the approved-corpus offline checks on every PR. To reproduce locally:
+
+```bash
+pytest tests/test_decision_quality_model.py \
+  tests/test_decision_quality_eval_runner.py \
+  tests/test_decision_quality_eval_corpus.py \
+  tests/test_decision_quality_chat_eval_runner.py \
+  tests/test_agent_decision_quality_chat.py \
+  tests/test_opportunity_candidate_model.py \
+  -q --tb=short
+
+python -m decision_quality.eval_runner --approved-only --dry-run --no-judge
+python -m decision_quality.chat_eval_runner --approved-only --dry-run
+```
+
+This gate validates gold outputs, input-ref hashes, committed baseline inventory sync, and prompt/input leakage checks. It does **not** call an LLM or compare live model output against baselines.
+
+### Offline tests
+
 Offline tests use mocked providers and mocked tools:
 
 ```bash
@@ -18,7 +39,9 @@ Workflow artifact and proposal boundary checks are deterministic and local:
 pytest tests/test_decision_quality_chat_eval_runner.py tests/test_generated_review_approval_suppression.py
 ```
 
-Manual model-backed runs:
+### Manual release check (LLM-backed)
+
+Manual model-backed runs (requires LLM API keys; not run in PR CI):
 
 ```bash
 python -m decision_quality.chat_eval_runner --judge
@@ -61,7 +84,7 @@ Reports are written to `outputs/decision_quality_chat_evals/`.
 5. Promote to `approved` once deterministic expectations are stable.
 6. Refresh `baselines/approved_corpus_baseline.json` with `--update-baseline`.
 
-Example approved-corpus commands:
+Example approved-corpus commands (manual release check; requires LLM API keys):
 
 ```bash
 python -m decision_quality.chat_eval_runner --approved-only --dry-run

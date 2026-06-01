@@ -69,13 +69,34 @@ After a prompt, router, or model change:
 
 ## Running Evals
 
+### CI gate (offline, no LLM)
+
+The `eval-gates` job in `.github/workflows/ci.yml` runs the approved-corpus offline checks on every PR. To reproduce locally:
+
+```bash
+pytest tests/test_decision_quality_model.py \
+  tests/test_decision_quality_eval_runner.py \
+  tests/test_decision_quality_eval_corpus.py \
+  tests/test_decision_quality_chat_eval_runner.py \
+  tests/test_agent_decision_quality_chat.py \
+  tests/test_opportunity_candidate_model.py \
+  -q --tb=short
+
+python -m decision_quality.eval_runner --approved-only --dry-run --no-judge
+python -m decision_quality.chat_eval_runner --approved-only --dry-run
+```
+
+This gate validates gold outputs, input-ref hashes, committed baseline inventory sync, and prompt/input leakage checks. It does **not** call an LLM or compare live model output against baselines.
+
+### Manual release check (LLM-backed)
+
 Use offline tests first. They validate that every case has a strict `DecisionQuality` gold output, clean input refs, and passing gate behavior without calling an LLM:
 
 ```bash
 .venv/bin/python -m pytest tests/test_decision_quality_model.py tests/test_decision_quality_eval_runner.py
 ```
 
-Run the approved regression corpus before and after prompt or model changes:
+Run the approved regression corpus before and after prompt or model changes (requires LLM API keys; not run in PR CI):
 
 ```bash
 .venv/bin/python -m decision_quality.eval_runner --approved-only --no-judge
@@ -88,7 +109,7 @@ Filter by corpus tag when debugging a subset:
 .venv/bin/python -m decision_quality.eval_runner --approved-only --corpus-tag structured_dq --no-judge
 ```
 
-Refresh the committed baseline after an intentional prompt/model improvement:
+Refresh the committed baseline after an intentional prompt/model improvement (local only; requires LLM runs):
 
 ```bash
 .venv/bin/python -m decision_quality.eval_runner --approved-only --no-judge --update-baseline
