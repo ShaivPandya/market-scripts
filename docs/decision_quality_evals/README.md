@@ -31,7 +31,7 @@ Use the `status` field to track authoring state:
 
 Approved cases must also include regression metadata:
 
-- `corpus_tags` - one or more of `structured_dq`, `chat_behavior`, `routing_tool_use`, `opportunity_identification`, `workflow_boundary`
+- `corpus_tags` - one or more of `structured_dq`, `chat_behavior`, `routing_tool_use`, `opportunity_identification`, `workflow_boundary`, `outcome_calibration`
 - `failure_type` - normalized failure taxonomy when the case guards a known regression class
 - `tool_pack` - optional routing/tool-pack label
 - `required_dq_dimensions` - rubric dimensions this case is meant to protect
@@ -112,7 +112,39 @@ Inspect sanitized prompts without calling an LLM:
 .venv/bin/python -m decision_quality.eval_runner --dry-run --no-judge
 ```
 
-Reports are written to `outputs/decision_quality_evals/` unless `--output` is supplied. The runner excludes gold outputs, human notes, and future outcome context from solver prompts.
+Reports are written to `outputs/decision_quality_evals/` unless `--output` is supplied. The runner excludes gold outputs, human notes, future outcome context, and outcome calibration authoring fields from solver prompts.
+
+## Outcome-to-Eval Export
+
+Finalized recommendation outcomes can be promoted into structured eval cases without leaking realized returns into solver prompts.
+
+1. Human review finalizes a `DecisionOutcome` via the post-mortem workflow (`confirm`, `correct`, or `reject`).
+2. Export a draft case from the finalized outcome:
+
+```bash
+.venv/bin/python -m decision_quality.outcome_eval_export \
+  --decision-outcome-id rec:example-id \
+  --lesson-tags timing_wrong,catalyst_failed \
+  --status review
+```
+
+3. The exporter writes:
+   - a draft case under `cases/` with `corpus_tags` including `outcome_calibration`
+   - an as-of `recommendation_snapshot` input under `inputs/` with no realized outcome fields
+   - `outcome_linkage` metadata for calibration grouping
+   - `outcome_context` for grading/calibration only (stripped from solver payloads)
+
+4. Run a dry-run leakage check before promotion:
+
+```bash
+.venv/bin/python -m decision_quality.eval_runner --case nvda_outcome_calibration_review_2026 --dry-run --no-judge
+```
+
+5. Fill rubric scores, verify SHA-256 hashes, and move the case to `approved` only after leakage checks pass.
+
+Example reviewed fixture: `cases/nvda_outcome_calibration_review_2026.json`.
+
+Eval reports and baselines include a `calibration_summary` rollup for `outcome_calibration` cases, grouped by opportunity type, confidence bin, actionability stance, data-quality tier, and process label.
 
 Interpret the report summary as follows:
 

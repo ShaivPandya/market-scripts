@@ -114,5 +114,31 @@
     "actionability_discipline",
     "confidence_calibration",
     "sizing_risk_context"
-  ]
+  ],
+  "outcome_linkage": {
+    "decision_outcome_id": null,
+    "recommendation_id": null,
+    "course_of_action_id": null,
+    "source_kind": null,
+    "process_label": null,
+    "process_attribution_tags": [],
+    "reviewed_lesson_tags": [],
+    "confidence_bin": null,
+    "actionability_stance": null,
+    "data_quality_tier": null,
+    "opportunity_type": null,
+    "final_label_status": null
+  },
+  "outcome_context": {
+    "available_as_of_date": false,
+    "decision_outcome_id": null,
+    "recommendation_id": null,
+    "final_label_status": null,
+    "process_label": null,
+    "metrics": {},
+    "final_postmortem": null,
+    "lessons_learned": null,
+    "reviewed_lesson_tags": [],
+    "notes": "Authoring/grading only. Never include in solver prompts."
+  }
 }

@@ -1,0 +1,21 @@
+{
+  "ticker": "NVDA",
+  "as_of_date": "2026-04-10",
+  "recommendation_action": "buy",
+  "confidence": 0.74,
+  "source_quality": "ok",
+  "approval_status": "approved",
+  "horizon": "1 month",
+  "decision_context": {
+    "simple_thesis": "Buy NVDA because it is the dominant full-stack AI accelerator platform, with hyperscaler capex, Blackwell/Rubin visibility, CUDA/software lock-in, and supply commitments supporting earnings power that the market may still underprice.",
+    "opportunity_type": "quality_compounder",
+    "recommended_action": "buy",
+    "actionability_status": "actionable",
+    "confidence": 0.74
+  },
+  "decision_quality_gate": {
+    "status": "pass",
+    "final_action": "buy"
+  },
+  "human_notes": "As-of recommendation snapshot exported from a reviewed post-mortem. No realized return or post-mortem outcome fields are included."
+}

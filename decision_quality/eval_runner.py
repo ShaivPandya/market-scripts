@@ -14,11 +14,13 @@ from typing import Any
 
 from decision_quality.actions import ACTIONABLE_ACTIONS
 from decision_quality.eval_corpus import (
+    OUTCOME_AUTHORING_FIELDS,
     build_baseline_report,
     case_result_metadata,
     compare_reports,
     filter_cases,
     load_baseline,
+    summarize_calibration,
     write_baseline,
 )
 from decision_quality.gates import apply_decision_quality_gates
@@ -66,7 +68,7 @@ ANSWER_KEY_FIELDS = {
     "target size",
     "raw_target_weight",
     "raw target weight",
-}
+} | OUTCOME_AUTHORING_FIELDS
 ANSWER_KEY_PREFIXES = ("selected_later_", "post_confirmation_")
 FUTURE_TEXT_MARKERS = (
     "future outcome",
@@ -651,6 +653,7 @@ def build_report(
             "judge_failures": [result["case_id"] for result in judge_failures],
             "fail_under_deterministic": fail_under_deterministic,
             "fail_under_judge": fail_under_judge,
+            "calibration_summary": summarize_calibration(results),
         },
         "cases": results,
     }

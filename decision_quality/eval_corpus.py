@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -14,6 +15,53 @@ CORPUS_TAGS = frozenset(
         "routing_tool_use",
         "opportunity_identification",
         "workflow_boundary",
+        "outcome_calibration",
+    }
+)
+
+PROCESS_ATTRIBUTION_TAGS = frozenset(
+    {
+        "thesis_right",
+        "thesis_wrong",
+        "timing_right",
+        "timing_wrong",
+        "risk_missed",
+        "catalyst_failed",
+        "source_stale",
+        "sizing_too_aggressive",
+        "trade_after_trade_poor",
+        "process_good",
+        "process_bad",
+        "outcome_good",
+        "outcome_bad",
+    }
+)
+
+OUTCOME_AUTHORING_FIELDS = frozenset(
+    {
+        "outcome_linkage",
+        "outcome_context",
+        "reviewed_outcome",
+        "decision_outcome_id",
+        "recommendation_id",
+        "course_of_action_id",
+        "process_label",
+        "process_attribution_tags",
+        "reviewed_lesson_tags",
+        "lessons_learned",
+        "final_postmortem",
+        "draft_postmortem",
+        "final_label_status",
+        "metrics",
+        "forward_return_pct",
+        "benchmark_return_pct",
+        "benchmark_relative_return_pct",
+        "directionally_right",
+        "relative_directionally_right",
+        "max_adverse_move_pct",
+        "max_favorable_move_pct",
+        "start_price",
+        "end_price",
     }
 )
 
@@ -240,13 +288,204 @@ def filter_cases(
     return filtered
 
 
-def case_result_metadata(case_data: dict[str, Any]) -> dict[str, Any]:
+def confidence_bin(confidence: float | None) -> str:
+    if confidence is None:
+        return "unknown"
+    if confidence >= 0.75:
+        return "high"
+    if confidence >= 0.5:
+        return "medium"
+    return "low"
+
+
+def data_quality_tier(source_quality: str | None) -> str:
+    normalized = str(source_quality or "").strip().lower()
+    mapping = {
+        "ok": "adequate",
+        "adequate": "adequate",
+        "degraded": "degraded",
+        "stale": "stale",
+        "missing": "missing",
+    }
+    return mapping.get(normalized, "unknown")
+
+
+def actionability_stance(decision_quality: dict[str, Any] | None) -> str:
+    if not isinstance(decision_quality, dict):
+        return "unknown"
+    actionability = decision_quality.get("actionability")
+    if isinstance(actionability, dict) and actionability.get("status"):
+        return str(actionability["status"])
+    recommended = decision_quality.get("recommended_action")
+    if isinstance(recommended, str) and recommended:
+        return recommended
+    return "unknown"
+
+
+def infer_process_attribution_tags(
+    outcome_row: dict[str, Any] | Mapping[str, Any],
+    parent_row: dict[str, Any] | Mapping[str, Any] | None = None,
+    *,
+    lesson_tags: list[str] | None = None,
+) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+
+    def add(tag: str) -> None:
+        if tag in PROCESS_ATTRIBUTION_TAGS and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+
+    for tag in lesson_tags or []:
+        add(str(tag))
+
+    metrics = outcome_row.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    process_label = str(outcome_row.get("process_label") or metrics.get("process_label") or "").lower()
+    if "good_process" in process_label:
+        add("process_good")
+    if "bad_process" in process_label:
+        add("process_bad")
+    if "good_outcome" in process_label:
+        add("outcome_good")
+    if "bad_outcome" in process_label:
+        add("outcome_bad")
+
+    timing = str(metrics.get("timing_vs_expected_onset") or outcome_row.get("timing_vs_expected_onset") or "")
+    if timing == "on_time":
+        add("timing_right")
+    elif timing in {"late", "too_early"}:
+        add("timing_wrong")
+
+    parent = parent_row or {}
+    source_quality = str(parent.get("source_quality") or "").lower()
+    if source_quality in {"stale", "degraded"}:
+        add("source_stale")
+
+    text_blob = " ".join(
+        str(value or "")
+        for value in (
+            outcome_row.get("lessons_learned"),
+            outcome_row.get("final_postmortem"),
+            outcome_row.get("draft_postmortem"),
+        )
+    ).lower()
+    keyword_map = {
+        "risk_missed": ("risk missed", "kill condition missed", "invalidation missed"),
+        "catalyst_failed": ("catalyst failed", "catalyst miss", "earnings miss"),
+        "source_stale": ("source stale", "stale data", "outdated source"),
+        "sizing_too_aggressive": ("sizing too aggressive", "oversized", "too large a position"),
+        "trade_after_trade_poor": ("trade after trade", "exit plan weak", "redeployment"),
+        "thesis_wrong": ("thesis wrong", "variant wrong", "mispricing wrong"),
+        "thesis_right": ("thesis right", "variant held", "thesis held"),
+    }
+    for tag, phrases in keyword_map.items():
+        if any(phrase in text_blob for phrase in phrases):
+            add(tag)
+
+    if metrics.get("directionally_right") is True:
+        add("thesis_right")
+    elif metrics.get("directionally_right") is False and "thesis_wrong" not in seen:
+        add("thesis_wrong")
+
+    return tags
+
+
+def case_calibration_dimensions(case_data: dict[str, Any]) -> dict[str, Any]:
+    linkage = case_data.get("outcome_linkage")
+    if not isinstance(linkage, dict):
+        linkage = {}
+    gold = case_data.get("gold_output")
+    if not isinstance(gold, dict):
+        gold = {}
+    confidence = gold.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        confidence = None
     return {
+        "opportunity_type": str(gold.get("opportunity_type") or linkage.get("opportunity_type") or "unclear"),
+        "confidence_bin": str(linkage.get("confidence_bin") or confidence_bin(confidence)),
+        "actionability_stance": str(linkage.get("actionability_stance") or actionability_stance(gold)),
+        "data_quality_tier": str(linkage.get("data_quality_tier") or "unknown"),
+        "process_label": linkage.get("process_label"),
+        "process_attribution_tags": linkage.get("process_attribution_tags") or [],
+    }
+
+
+def _accumulate_calibration_bucket(bucket: dict[str, Any], key: str, *, passed: bool | None) -> None:
+    normalized = str(key or "unknown")
+    entry = bucket.setdefault(
+        normalized,
+        {"case_count": 0, "deterministic_passed": 0, "deterministic_failed": 0, "dry_run_only": 0},
+    )
+    entry["case_count"] += 1
+    if passed is True:
+        entry["deterministic_passed"] += 1
+    elif passed is False:
+        entry["deterministic_failed"] += 1
+    else:
+        entry["dry_run_only"] += 1
+
+
+def summarize_calibration(results: list[dict[str, Any]]) -> dict[str, Any]:
+    grouped = {
+        "by_opportunity_type": {},
+        "by_confidence_bin": {},
+        "by_actionability_stance": {},
+        "by_data_quality_tier": {},
+        "by_process_label": {},
+    }
+    outcome_case_count = 0
+    for result in results:
+        tags = result.get("corpus_tags") or []
+        if "outcome_calibration" not in tags:
+            continue
+        outcome_case_count += 1
+        dims = result.get("calibration_dimensions")
+        if not isinstance(dims, dict):
+            dims = {}
+        passed = None
+        if not result.get("dry_run"):
+            deterministic = result.get("deterministic") or {}
+            if "passed" in deterministic:
+                passed = bool(deterministic["passed"])
+        for group_name, dim_name in (
+            ("by_opportunity_type", "opportunity_type"),
+            ("by_confidence_bin", "confidence_bin"),
+            ("by_actionability_stance", "actionability_stance"),
+            ("by_data_quality_tier", "data_quality_tier"),
+            ("by_process_label", "process_label"),
+        ):
+            _accumulate_calibration_bucket(
+                grouped[group_name],
+                str(dims.get(dim_name) or "unknown"),
+                passed=passed,
+            )
+    return {"outcome_calibration_case_count": outcome_case_count, **grouped}
+
+
+def case_result_metadata(case_data: dict[str, Any]) -> dict[str, Any]:
+    metadata = {
         "corpus_tags": case_corpus_tags(case_data),
         "failure_type": case_failure_type(case_data),
         "tool_pack": case_tool_pack(case_data),
         "required_dq_dimensions": case_required_dq_dimensions(case_data),
+        "calibration_dimensions": case_calibration_dimensions(case_data),
     }
+    linkage = case_data.get("outcome_linkage")
+    if isinstance(linkage, dict):
+        metadata["outcome_linkage"] = {
+            key: linkage.get(key)
+            for key in (
+                "decision_outcome_id",
+                "recommendation_id",
+                "course_of_action_id",
+                "process_label",
+                "process_attribution_tags",
+                "reviewed_lesson_tags",
+            )
+        }
+    return metadata
 
 
 def _validate_failure_tags(case_data: dict[str, Any], errors: list[str]) -> None:
@@ -372,6 +611,7 @@ def build_baseline_report(
         "status_filter": sorted(status_filter) if status_filter else [],
         "notes": notes,
         "case_count": len(summaries),
+        "calibration_summary": summarize_calibration(results),
         "cases": {summary["case_id"]: summary for summary in summaries if summary.get("case_id")},
     }
 

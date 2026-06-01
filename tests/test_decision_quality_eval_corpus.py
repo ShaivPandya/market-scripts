@@ -11,6 +11,7 @@ from decision_quality.eval_corpus import (
     filter_cases,
     infer_corpus_tags_from_failure_tags,
     normalize_failure_tags,
+    summarize_calibration,
     summarize_case_result,
     validate_approved_case_metadata,
     validate_review_case_metadata,
@@ -177,6 +178,75 @@ def test_summarize_case_result_prefers_explicit_fields():
     assert summary["deterministic_passed"] is False
     assert summary["judge_total"] == 18
     assert summary["deterministic_checks"] == [{"name": "recommended_action", "passed": False}]
+
+
+def test_summarize_calibration_groups_outcome_cases():
+    summary = summarize_calibration(
+        [
+            {
+                "case_id": "outcome_a",
+                "corpus_tags": ["structured_dq", "outcome_calibration"],
+                "calibration_dimensions": {
+                    "opportunity_type": "quality_compounder",
+                    "confidence_bin": "high",
+                    "actionability_stance": "actionable",
+                    "data_quality_tier": "adequate",
+                    "process_label": "good_process_bad_outcome",
+                },
+                "deterministic": {"passed": True},
+            },
+            {
+                "case_id": "outcome_b",
+                "corpus_tags": ["structured_dq", "outcome_calibration"],
+                "calibration_dimensions": {
+                    "opportunity_type": "quality_compounder",
+                    "confidence_bin": "medium",
+                    "actionability_stance": "missing_inputs",
+                    "data_quality_tier": "degraded",
+                    "process_label": "bad_process_good_outcome",
+                },
+                "deterministic": {"passed": False},
+            },
+            {
+                "case_id": "plain_structured",
+                "corpus_tags": ["structured_dq"],
+                "deterministic": {"passed": True},
+            },
+        ]
+    )
+
+    assert summary["outcome_calibration_case_count"] == 2
+    assert summary["by_opportunity_type"]["quality_compounder"]["case_count"] == 2
+    assert summary["by_confidence_bin"]["high"]["deterministic_passed"] == 1
+    assert summary["by_confidence_bin"]["medium"]["deterministic_failed"] == 1
+    assert summary["by_process_label"]["good_process_bad_outcome"]["case_count"] == 1
+
+
+def test_build_report_includes_calibration_summary():
+    from decision_quality.eval_runner import build_report
+
+    report = build_report(
+        [
+            {
+                "case_id": "outcome_a",
+                "corpus_tags": ["outcome_calibration"],
+                "calibration_dimensions": {
+                    "opportunity_type": "cyclical_upturn",
+                    "confidence_bin": "high",
+                    "actionability_stance": "actionable",
+                    "data_quality_tier": "adequate",
+                    "process_label": "good_process_good_outcome",
+                },
+                "deterministic": {"passed": True, "score": 100.0},
+            }
+        ],
+        fail_under_deterministic=80.0,
+        fail_under_judge=14.0,
+    )
+
+    calibration = report["summary"]["calibration_summary"]
+    assert calibration["outcome_calibration_case_count"] == 1
+    assert calibration["by_opportunity_type"]["cyclical_upturn"]["deterministic_passed"] == 1
 
 
 def test_committed_structured_baseline_matches_approved_inventory():
