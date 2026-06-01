@@ -1,0 +1,117 @@
+{
+  "ticker": "PYPL",
+  "company_name": "PayPal Holdings, Inc.",
+  "as_of_date": "2025-10-22",
+  "close": 68.07,
+  "volume": 8173400,
+  "moving_averages": {
+    "100d_sma": 70.81,
+    "10m_sma": 72.67,
+    "150d_sma": 69.51,
+    "200d_sma": 71.88,
+    "200w_sma": 77.23,
+    "20m_sma": 71.26,
+    "40w_sma": 71.3
+  },
+  "rate_of_change": {
+    "1m_pct": 1.13,
+    "3m_pct": -12.53,
+    "12m_pct": -15.9
+  },
+  "trend_position": {
+    "above_100d_sma": false,
+    "above_10m_sma": false,
+    "above_150d_sma": false,
+    "above_200d_sma": false,
+    "above_200w_sma": false,
+    "above_20m_sma": false,
+    "above_40w_sma": false
+  },
+  "relative_performance": {
+    "benchmarks": [
+      {
+        "ticker": "SPY",
+        "name": "SPDR S&P 500 ETF",
+        "close": 667.8,
+        "rate_of_change": {
+          "1m_pct": 0.69,
+          "3m_pct": 5.26,
+          "12m_pct": 14.23
+        }
+      },
+      {
+        "ticker": "QQQ",
+        "name": "Invesco QQQ Trust",
+        "close": 605.49,
+        "rate_of_change": {
+          "1m_pct": 1.22,
+          "3m_pct": 7.16,
+          "12m_pct": 22.45
+        }
+      },
+      {
+        "ticker": "V",
+        "name": "Visa",
+        "close": 345.36,
+        "rate_of_change": {
+          "1m_pct": 1.97,
+          "3m_pct": -2.43,
+          "12m_pct": 18.84
+        }
+      },
+      {
+        "ticker": "MA",
+        "name": "Mastercard",
+        "close": 571.36,
+        "rate_of_change": {
+          "1m_pct": 0.24,
+          "3m_pct": 1.39,
+          "12m_pct": 10.66
+        }
+      },
+      {
+        "ticker": "XYZ",
+        "name": "Block",
+        "close": 75.92,
+        "rate_of_change": {
+          "1m_pct": -0.81,
+          "3m_pct": -4.83,
+          "12m_pct": 1.69
+        }
+      },
+      {
+        "ticker": "SHOP",
+        "name": "Shopify",
+        "close": 162.01,
+        "rate_of_change": {
+          "1m_pct": 8.05,
+          "3m_pct": 32.71,
+          "12m_pct": 95.95
+        }
+      },
+      {
+        "ticker": "ADYEY",
+        "name": "Adyen ADR",
+        "close": 17.26,
+        "rate_of_change": {
+          "1m_pct": 7.2,
+          "3m_pct": -4.32,
+          "12m_pct": 12.08
+        }
+      }
+    ],
+    "summary": "PYPL slightly outperformed SPY over one month but lagged QQQ, Visa, Shopify, and Adyen. Over three and twelve months it materially underperformed SPY, QQQ, Visa, Mastercard, Shopify, and Adyen, supporting the view that the relief rally had not repaired relative leadership."
+  },
+  "short_interest": {
+    "source": "User-provided deep research markdown citing Fintel data dated 2025-10-15",
+    "shares_short": 43140000,
+    "percent_of_float": 4.9,
+    "days_to_cover": 4.05,
+    "borrow_cost": "Described as low or general-collateral with plentiful availability",
+    "interpretation": "The short was not obviously crowded, but the data should be replaced with a prime-broker or stable vendor snapshot before using this case for live-like sizing tests."
+  },
+  "price_action_summary": "PYPL closed at $68.07 on October 22, 2025 on 8.17M shares. It was below the selected 100D, 150D, 200D, 40W, 200W, 10M, and 20M moving averages. One-month ROC was slightly positive at 1.13%, but three-month and twelve-month ROC were negative at -12.53% and -15.90%.",
+  "interpretation": "Price action supported the short thesis. The stock had bounced enough to create pre-earnings optimism, but it still sat below every selected medium- and long-term moving average and had poor three- and twelve-month relative performance versus broad equity, growth, card-network, and commerce-platform benchmarks.",
+  "data_source": "Historical daily OHLCV and derived moving averages/ROC were generated locally with yfinance. Replace with a stable vendor snapshot before marking this case approved.",
+  "human_notes": "The source markdown listed a $69.66 close from Trading212. Locally generated historical OHLCV showed $68.07 for the October 22, 2025 close; this file uses the generated OHLCV value and flags the conflict for review."
+}

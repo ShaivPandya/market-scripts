@@ -1,0 +1,22 @@
+{
+  "ticker": "PYPL",
+  "as_of_date": "2025-10-22",
+  "position_status": "new_short",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "High-conviction catalyst short in a payments value-trap and turnaround-failure setup.",
+  "intended_role_notes": "New short intended to express the view that PYPL's apparent Q2 turnaround was low quality and vulnerable to a Q3/2026 guidance reset.",
+  "recommended_expression": "November 2025 PYPL put spread, such as a 67.50/60.00 bear put spread, to define earnings-event risk.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": -0.015,
+  "premium_at_risk_at_initiation": 0.015,
+  "max_premium_at_risk": 0.025,
+  "target_size": "Start with about 150 bps of portfolio NAV at risk through a defined-risk put spread; max about 250 bps of premium at risk if the pre-earnings setup and option pricing are favorable.",
+  "initial_size": null,
+  "current_fintech_exposure": null,
+  "current_consumer_credit_exposure": null,
+  "current_nasdaq_growth_exposure": null,
+  "current_short_book_exposure": null,
+  "liquidity_notes": "The common equity was liquid and borrow was described as available at low cost, but a direct common short would fight buybacks and binary earnings gap risk. Defined-risk options are preferred unless borrow, liquidity, and stop discipline are explicitly selected.",
+  "risk_budget_notes": "Size against fintech factor exposure, consumer-spending exposure, interest-rate sensitivity through customer-balance yield, Nasdaq/growth beta, and the possibility of a broad tech rally or earnings squeeze.",
+  "human_notes": "Sizing and expression are taken from the user-provided PYPL research case but normalized as premium-at-risk because the preferred expression is an option spread rather than a direct common-stock short."
+}

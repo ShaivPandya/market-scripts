@@ -1,0 +1,25 @@
+{
+  "ticker": "NVDA",
+  "company_name": "NVIDIA Corporation",
+  "as_of_date": "2026-03-15",
+  "decision_context": "New long idea evaluation",
+  "human_initiation_rationale": "Avoid initiating despite the dominant AI platform story. Consensus is fully positioned, the variant view is thin, valuation is demanding, and payoff asymmetry is poor after an extended run.",
+  "selected_inputs": [
+    "dominant AI platform narrative",
+    "crowded consensus positioning",
+    "demanding valuation",
+    "extended price action",
+    "thin variant view"
+  ],
+  "as_of_known_negatives": [
+    "The AI growth story is well owned and crowded.",
+    "No differentiated variant view beyond consensus.",
+    "Entry offers poor payoff asymmetry after a large prior move.",
+    "Momentum chasing would violate trade-quality discipline."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "Outcome context only. Not available to the model on 2026-03-15."
+  },
+  "human_notes": ""
+}
