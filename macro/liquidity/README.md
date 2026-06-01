@@ -101,7 +101,7 @@ The script fetches the following series from FRED:
 **Global Central Banks**
 - JPNASSETS: BoJ total assets
 - JPNMABMM301GYSAM: Japan M3 YoY growth
-- QJPPAM770A: Japan private-sector credit
+- CRDQJPAPABIS: Japan total private-sector credit, adjusted for breaks
 
 **Credit & Conditions**
 - BAMLC0A0CM: IG corporate OAS

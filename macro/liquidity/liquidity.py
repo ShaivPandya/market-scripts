@@ -55,7 +55,7 @@ SERIES = {
     # Japan central bank
     "boj_assets": "JPNASSETS",  # BoJ total assets, monthly (100 million JPY)
     "jpn_m3_yoy": "JPNMABMM301GYSAM",  # M3 YoY growth (monthly, OECD)
-    "jpn_credit_private": "QJPPAM770A",  # Credit to private sector (quarterly, BIS)
+    "jpn_credit_private": "CRDQJPAPABIS",  # Total private-sector credit, JPY level (quarterly, BIS)
     # Credit / conditions
     "ig_oas": "BAMLC0A0CM",  # ICE BofA US Corporate OAS
     "hy_oas": "BAMLH0A0HYM2",  # ICE BofA HY OAS
@@ -75,6 +75,12 @@ SERIES_META = {
     # FRED units differ across series; align on millions for H.4.1 when needed.
     "on_rrp": {"scale": 1000.0},  # RRPONTSYD is typically in billions; convert to millions
     "boj_assets": {"scale": 100.0},  # JPNASSETS is in 100m JPY; convert to millions
+}
+
+SOURCE_DATE_PERIOD_END = {
+    # FRED indexes quarterly observations by quarter start; show/evaluate them as period-end dates.
+    "gdp": "quarter",
+    "jpn_credit_private": "quarter",
 }
 
 # Regional component definitions (weights sum to 1.0 within each region)
@@ -510,6 +516,19 @@ def last_valid_date_asof(series, date):
     return pd.Timestamp(eligible.index[-1]).tz_localize(None).normalize()
 
 
+def source_as_of_date(source_col, source_date, latest_date):
+    period = SOURCE_DATE_PERIOD_END.get(source_col)
+    if period == "quarter":
+        source_date = (pd.Timestamp(source_date) + pd.offsets.QuarterEnd(0)).normalize()
+        latest = pd.Timestamp(latest_date)
+        if latest.tzinfo is not None:
+            latest = latest.tz_convert(None)
+        latest = latest.normalize()
+        if source_date > latest:
+            return latest
+    return pd.Timestamp(source_date).normalize()
+
+
 def component_source_date(df_raw, df_ecb, component_key, latest_date):
     source_columns = COMPONENT_SOURCE_COLUMNS.get(component_key, ())
     dates = []
@@ -521,7 +540,7 @@ def component_source_date(df_raw, df_ecb, component_key, latest_date):
         source_date = last_valid_date_asof(source_df[col], latest_date)
         if source_date is None:
             return None
-        dates.append(source_date)
+        dates.append(source_as_of_date(col, source_date, latest_date))
     if not dates:
         return None
     return min(dates)
