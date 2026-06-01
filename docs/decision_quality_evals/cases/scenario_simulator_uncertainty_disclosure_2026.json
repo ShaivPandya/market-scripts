@@ -1,6 +1,6 @@
 {
   "id": "scenario_simulator_uncertainty_disclosure_2026",
-  "status": "review",
+  "status": "approved",
   "decision_type": "scenario_simulation",
   "as_of_date": "2026-05-15",
   "user_question": "For an existing MU long, compare hold, add, trim, and exit under a downside scenario when liquidity and thesis-pressure inputs are incomplete.",
@@ -133,5 +133,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Synthetic SHA-25 eval fixture for simulator explanation quality: outputs should compare actions, disclose uncertainty, and avoid implying execution."
+  "human_notes": "Synthetic SHA-25 eval fixture for simulator explanation quality: outputs should compare actions, disclose uncertainty, and avoid implying execution.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

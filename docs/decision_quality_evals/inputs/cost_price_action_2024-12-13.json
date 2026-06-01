@@ -1,0 +1,31 @@
+{
+  "ticker": "COST",
+  "company_name": "Costco Wholesale",
+  "as_of_date": "2024-12-13",
+  "data_source": "Yahoo Finance historical prices",
+  "close": 989.35,
+  "moving_averages": {
+    "100d_sma": 898.9,
+    "150d_sma": 878.25,
+    "200d_sma": 842.02,
+    "40w_sma": 842.02
+  },
+  "rate_of_change": {
+    "1m_pct": 5.96,
+    "3m_pct": 8.97,
+    "12m_pct": 54.1
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": "XLP",
+    "outperformed_benchmark": true,
+    "notes": "COST outperformed staples peers into the as-of date while remaining at a premium valuation."
+  },
+  "interpretation": "Price action shows strong sponsorship and high asset quality, but extension and valuation leave weaker entry asymmetry for a new full-size long.",
+  "human_notes": "Derived from COST daily history through 2024-12-13."
+}

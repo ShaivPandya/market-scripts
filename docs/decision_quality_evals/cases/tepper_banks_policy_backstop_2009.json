@@ -1,6 +1,6 @@
 {
   "id": "tepper_banks_policy_backstop_2009",
-  "status": "review",
+  "status": "approved",
   "decision_type": "macro_stance",
   "as_of_date": "2009-02-10",
   "user_question": "Using the 2009 U.S. bank policy-backstop setup, should buying distressed bank securities have been actionable, watch, research, avoid, or do_nothing?",
@@ -204,5 +204,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical high-conviction distressed financials example designed to teach policy-backstop reasoning, capital-structure expression, and buying when bad price action is part of the opportunity rather than automatic invalidation."
+  "human_notes": "Review case. Historical high-conviction distressed financials example designed to teach policy-backstop reasoning, capital-structure expression, and buying when bad price action is part of the opportunity rather than automatic invalidation.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

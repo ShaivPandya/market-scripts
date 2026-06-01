@@ -1,6 +1,6 @@
 {
   "id": "ackman_covid_credit_hedge_2020",
-  "status": "review",
+  "status": "approved",
   "decision_type": "macro_stance",
   "as_of_date": "2020-02-28",
   "user_question": "Using the late-February 2020 COVID credit setup, should buying credit-index CDS protection have been actionable, watch, research, avoid, or do_nothing?",
@@ -226,5 +226,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical conviction 5 macro hedge designed to teach underpriced rate-of-change risk, direct instrument linkage, convex payoff, basis/liquidity risks, exit discipline, and trade-after-the-trade redeployment into equities/risk assets."
+  "human_notes": "Review case. Historical conviction 5 macro hedge designed to teach underpriced rate-of-change risk, direct instrument linkage, convex payoff, basis/liquidity risks, exit discipline, and trade-after-the-trade redeployment into equities/risk assets.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

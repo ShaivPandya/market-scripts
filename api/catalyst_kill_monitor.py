@@ -386,6 +386,11 @@ def run_catalyst_kill_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 "action_type": "review",
                 "ticker": result.get("ticker") or entity.get("ticker"),
                 "urgency": "high" if result.get("severity") == "high" else "normal",
+                "alert_context": {
+                    "change_summary": result.get("entity_label") or entity_id,
+                    "source": "monitor_hit",
+                    "ticker": result.get("ticker") or entity.get("ticker"),
+                },
             }
             if not should_suppress_generated_review_approval(
                 "create_action_item",

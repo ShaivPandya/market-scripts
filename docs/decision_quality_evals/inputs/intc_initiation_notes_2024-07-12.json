@@ -1,0 +1,27 @@
+{
+  "ticker": "INTC",
+  "company_name": "Intel Corporation",
+  "as_of_date": "2024-07-12",
+  "decision_context": "New long idea evaluation",
+  "source_type": "historical_market_snapshot",
+  "source_method": "Yahoo Finance historical OHLCV (ticker INTC) plus analyst-style thesis notes",
+  "human_initiation_rationale": "Research only despite cheap-looking valuation. As of 2024-07-12, Intel was still below major moving averages and lacked a clear reason-now catalyst for a durable turnaround.",
+  "selected_inputs": [
+    "depressed valuation relative to historical levels",
+    "foundry turnaround uncertainty",
+    "share loss and execution risk in core businesses",
+    "no observable near-term catalyst",
+    "mixed momentum without durable trend repair"
+  ],
+  "as_of_known_negatives": [
+    "Cheap valuation alone does not create a trade.",
+    "No credible reason-now beyond generic turnaround hope.",
+    "Price remained below key moving averages despite a short-term bounce.",
+    "Variant view was still underdeveloped versus consensus skepticism."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "Future performance after 2024-07-12 is outcome context only and must not be used as as-of evidence."
+  },
+  "human_notes": "Real as-of scenario for TL-63: cheap asset with weak catalyst."
+}

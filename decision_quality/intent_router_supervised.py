@@ -26,7 +26,7 @@ def _load_artifact(model_path: Path) -> dict[str, Any]:
     key = str(resolved)
     with _MODEL_LOCK:
         cached = _MODEL_CACHE.get(key)
-        if cached is not None:
+        if isinstance(cached, dict):
             return cached
 
     import joblib
@@ -42,7 +42,8 @@ def _load_artifact(model_path: Path) -> dict[str, Any]:
 
 def featurize_training_row(row: dict[str, Any]) -> str:
     """Build a compact text feature for sklearn training/inference."""
-    screen = row.get("screen_context") if isinstance(row.get("screen_context"), dict) else {}
+    screen_raw = row.get("screen_context")
+    screen: dict[str, Any] = screen_raw if isinstance(screen_raw, dict) else {}
     parts = [
         str(row.get("user_text") or ""),
         f"page={screen.get('page_name') or ''}",

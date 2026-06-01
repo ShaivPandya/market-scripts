@@ -1,0 +1,31 @@
+{
+  "ticker": "INTC",
+  "company_name": "Intel Corporation",
+  "as_of_date": "2024-07-12",
+  "data_source": "Yahoo Finance historical prices",
+  "close": 34.49,
+  "moving_averages": {
+    "100d_sma": 35.75,
+    "150d_sma": 39.1,
+    "200d_sma": 38.89,
+    "40w_sma": 38.89
+  },
+  "rate_of_change": {
+    "1m_pct": 11.55,
+    "3m_pct": -8.34,
+    "12m_pct": 1.5
+  },
+  "trend_position": {
+    "above_100d_sma": false,
+    "above_150d_sma": false,
+    "above_200d_sma": false,
+    "above_40w_sma": false
+  },
+  "relative_performance": {
+    "benchmark": "SOX",
+    "outperformed_benchmark": false,
+    "notes": "INTC lagged semiconductor peers on a 3-month basis into the as-of date and had not repaired the broader downtrend."
+  },
+  "interpretation": "Cheap stock, still weak trade setup. Short-term bounce existed, but price remained below major trend measures and no durable turnaround confirmation was present.",
+  "human_notes": "Derived from INTC daily history through 2024-07-12."
+}

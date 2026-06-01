@@ -1,6 +1,6 @@
 {
   "id": "teva_branded_transition_long_2025",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2025-08-14",
   "user_question": "Using the TEVA thesis as of its initiation date, should this have been actionable, watch, research, avoid, or do_nothing?",
@@ -208,5 +208,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Gold output reflects an actionable conviction 4 buy on 2025-08-14. Later Q3/Q4 2025 and 2026 evidence is future confirmation context only, not initiation-date evidence."
+  "human_notes": "Review case. Gold output reflects an actionable conviction 4 buy on 2025-08-14. Later Q3/Q4 2025 and 2026 evidence is future confirmation context only, not initiation-date evidence.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

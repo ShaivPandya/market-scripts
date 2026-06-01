@@ -15,6 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from decision_quality.eval_corpus import (
+    build_baseline_report,
+    case_result_metadata,
+    compare_reports,
+    filter_cases,
+    load_baseline,
+    write_baseline,
+)
 from llm_utils import MODEL_HIGH, call_llm_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +30,7 @@ CASES_DIR = ROOT / "docs" / "decision_quality_chat_evals" / "cases"
 INPUTS_DIR = ROOT / "docs" / "decision_quality_chat_evals" / "inputs"
 RUBRIC_PATH = ROOT / "docs" / "decision_quality_chat_evals" / "rubric.md"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "decision_quality_chat_evals"
+DEFAULT_BASELINE_PATH = ROOT / "docs" / "decision_quality_chat_evals" / "baselines" / "approved_corpus_baseline.json"
 
 DEFAULT_STATUSES = ("review", "approved")
 MODEL_BY_NAME = {"low": "low", "mid": "mid", "high": MODEL_HIGH}
@@ -104,6 +113,9 @@ def load_cases(
     *,
     case_selectors: list[str] | None = None,
     statuses: set[str] | None = None,
+    corpus_tags: set[str] | None = None,
+    failure_type: str | None = None,
+    tool_pack: str | None = None,
     cases_dir: Path = CASES_DIR,
 ) -> list[ChatEvalCase]:
     cases = [ChatEvalCase(path=path, data=_read_json(path)) for path in sorted(cases_dir.glob("*.json"))]
@@ -129,7 +141,13 @@ def load_cases(
             selected.append(match)
         cases = selected
     resolved_statuses = statuses if statuses is not None else set(DEFAULT_STATUSES)
-    return [case for case in cases if case.status in resolved_statuses]
+    cases = [case for case in cases if case.status in resolved_statuses]
+    return filter_cases(
+        cases,
+        corpus_tags=corpus_tags,
+        failure_type=failure_type,
+        tool_pack=tool_pack,
+    )
 
 
 def validate_case_input_refs(case: ChatEvalCase, *, root: Path = ROOT) -> list[str]:
@@ -275,6 +293,7 @@ def run_agent_chat_in_process(case: ChatEvalCase, *, auth_password: str | None =
     from fastapi.testclient import TestClient
 
     from api.main import app
+    from api.request_schema import schema_headers_for_path
 
     body: dict[str, Any] = {"message": str(case.data.get("user_message") or ""), "finalize_synchronously": True}
     screen_context = case.data.get("screen_context")
@@ -286,8 +305,16 @@ def run_agent_chat_in_process(case: ChatEvalCase, *, auth_password: str | None =
         with TestClient(app) as client:
             password = auth_password or os.environ.get("AUTH_PASSWORD")
             if password:
-                client.post("/api/auth/login", json={"password": password})
-            response = client.post("/api/agent/chat", json=body)
+                client.post(
+                    "/api/auth/login",
+                    json={"password": password},
+                    headers=schema_headers_for_path(app, "POST", "/api/auth/login"),
+                )
+            response = client.post(
+                "/api/agent/chat",
+                json=body,
+                headers=schema_headers_for_path(app, "POST", "/api/agent/chat"),
+            )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     if response.status_code != 200:
         return AgentChatRun(
@@ -542,6 +569,292 @@ def _append_workflow_expectation_checks(
         )
 
 
+def _tool_quality_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("tool_quality_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    dq_meta = run.done_payload.get("decision_quality_chat") if isinstance(run.done_payload, dict) else None
+    tool_quality = dq_meta.get("tool_quality") if isinstance(dq_meta, dict) else None
+    if expectations.get("requires_tool_quality_meta"):
+        checks.append(
+            _check(
+                "tool_quality_meta_present",
+                isinstance(tool_quality, dict),
+                "done payload missing decision_quality_chat.tool_quality",
+            )
+        )
+        if not isinstance(tool_quality, dict):
+            return
+
+    if not isinstance(tool_quality, dict):
+        return
+
+    if expectations.get("min_blocker_count") is not None:
+        expected = int(expectations["min_blocker_count"])
+        actual = int(tool_quality.get("blocker_count") or 0)
+        checks.append(
+            _check(
+                "tool_quality_min_blocker_count",
+                actual >= expected,
+                f"expected>={expected}, actual={actual}",
+            )
+        )
+
+    if expectations.get("max_blocker_count") is not None:
+        expected = int(expectations["max_blocker_count"])
+        actual = int(tool_quality.get("blocker_count") or 0)
+        checks.append(
+            _check(
+                "tool_quality_max_blocker_count",
+                actual <= expected,
+                f"expected<={expected}, actual={actual}",
+            )
+        )
+
+    for field in (
+        "expected_price_confirmation_status",
+        "expected_source_health_status",
+        "expected_critical_data_quality",
+    ):
+        expected = expectations.get(field)
+        if expected is None:
+            continue
+        key = field.removeprefix("expected_")
+        actual = str(tool_quality.get(key) or "")
+        checks.append(
+            _check(
+                f"tool_quality_{key}",
+                actual == str(expected),
+                f"expected={expected!r}, actual={actual!r}",
+            )
+        )
+
+    required_codes = [str(item) for item in expectations.get("required_blocking_reason_codes") or []]
+    if required_codes:
+        actual_codes = {str(item) for item in tool_quality.get("blocking_reason_codes") or []}
+        missing = [code for code in required_codes if code not in actual_codes]
+        checks.append(
+            _check(
+                "tool_quality_blocking_reason_codes",
+                not missing,
+                f"missing={missing}; actual={sorted(actual_codes)}",
+            )
+        )
+
+    if expectations.get("forbid_actionable_language_when_blocked"):
+        blocked = int(tool_quality.get("blocker_count") or 0) > 0 or str(
+            tool_quality.get("critical_data_quality") or ""
+        ).lower() in {"stale", "failed"}
+        if blocked:
+            checks.append(
+                _check(
+                    "tool_quality_no_actionable_language",
+                    not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                    "actionable language must be suppressed when tool quality blocks",
+                )
+            )
+
+    missing_input_terms = [str(item) for item in expectations.get("required_missing_input_terms") or []]
+    if missing_input_terms:
+        checks.append(
+            _check(
+                "tool_quality_missing_input_terms",
+                _contains_any(text, missing_input_terms),
+                f"expected any of {missing_input_terms}",
+            )
+        )
+
+
+def _context_pack_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("context_pack_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    context_pack = run.done_payload.get("context_pack") if isinstance(run.done_payload, dict) else None
+    oc_meta = run.done_payload.get("opportunity_candidate_preflight") if isinstance(run.done_payload, dict) else None
+    if expectations.get("requires_context_pack_meta"):
+        checks.append(
+            _check(
+                "context_pack_meta_present",
+                isinstance(context_pack, dict),
+                "done payload missing context_pack metadata",
+            )
+        )
+        if not isinstance(context_pack, dict):
+            return
+
+    if not isinstance(context_pack, dict):
+        context_pack = oc_meta.get("context_pack") if isinstance(oc_meta, dict) else None
+    if not isinstance(context_pack, dict):
+        checks.append(_check("context_pack_meta_present", False, "context_pack metadata missing"))
+        return
+
+    checks.append(_check("context_pack_meta_present", True, "context_pack metadata present"))
+
+    expected_pack = expectations.get("expected_context_pack")
+    if expected_pack is not None:
+        actual_pack = str(context_pack.get("pack_id") or "")
+        checks.append(
+            _check(
+                "context_pack_id",
+                actual_pack == str(expected_pack),
+                f"expected={expected_pack!r}, actual={actual_pack!r}",
+            )
+        )
+
+    expected_opportunity_type = expectations.get("expected_opportunity_type")
+    if expected_opportunity_type is not None:
+        actual_types = {str(item) for item in context_pack.get("opportunity_types") or []}
+        checks.append(
+            _check(
+                "context_pack_opportunity_type",
+                str(expected_opportunity_type) in actual_types,
+                f"expected={expected_opportunity_type!r}, actual_types={sorted(actual_types)}",
+            )
+        )
+
+    required_tools = [str(item) for item in expectations.get("required_tool_names") or []]
+    if required_tools:
+        seen_tools = [str(item) for item in run.tool_names]
+        missing = [name for name in required_tools if name not in seen_tools]
+        checks.append(
+            _check(
+                "context_pack_required_tool_names",
+                not missing,
+                f"missing={missing}; seen={seen_tools}",
+            )
+        )
+
+    if expectations.get("expect_complete") is True:
+        checks.append(
+            _check(
+                "context_pack_complete",
+                bool(context_pack.get("is_complete")),
+                f"is_complete={context_pack.get('is_complete')}",
+            )
+        )
+    if expectations.get("expect_complete") is False:
+        checks.append(
+            _check(
+                "context_pack_incomplete",
+                not bool(context_pack.get("is_complete")),
+                f"is_complete={context_pack.get('is_complete')}",
+            )
+        )
+
+    missing_input_terms = [str(item) for item in expectations.get("required_missing_input_terms") or []]
+    if missing_input_terms:
+        checks.append(
+            _check(
+                "context_pack_missing_input_terms",
+                _contains_any(text, missing_input_terms),
+                f"expected any of {missing_input_terms}",
+            )
+        )
+
+    if expectations.get("forbid_actionable_when_incomplete"):
+        incomplete = not bool(context_pack.get("is_complete"))
+        if incomplete:
+            checks.append(
+                _check(
+                    "context_pack_no_actionable_language",
+                    not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                    "actionable language must be suppressed when context pack is incomplete",
+                )
+            )
+
+
+def _scout_skeptic_sizer_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("scout_skeptic_sizer_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    gate_meta = run.done_payload.get("scout_skeptic_sizer_gate") if isinstance(run.done_payload, dict) else None
+    checks.append(
+        _check(
+            "scout_skeptic_sizer_gate_present",
+            isinstance(gate_meta, dict),
+            "done payload missing scout_skeptic_sizer_gate trace",
+        )
+    )
+    if not isinstance(gate_meta, dict):
+        return
+
+    for pass_name in ("scout", "skeptic", "sizer"):
+        expected = expectations.get(f"{pass_name}_pass")
+        if expected is None:
+            continue
+        pass_meta = gate_meta.get(pass_name) if isinstance(gate_meta.get(pass_name), dict) else {}
+        actual = str(pass_meta.get("status") or "").lower() == "pass"
+        checks.append(
+            _check(
+                f"scout_skeptic_sizer_{pass_name}_pass",
+                actual is bool(expected) and actual == expected,
+                f"expected {pass_name}_pass={expected}, status={pass_meta.get('status')!r}",
+            )
+        )
+
+    expected_final_action = expectations.get("expected_final_action")
+    if expected_final_action is not None:
+        actual_final = str(gate_meta.get("final_action_type") or gate_meta.get("sizer", {}).get("final_action") or "")
+        checks.append(
+            _check(
+                "scout_skeptic_sizer_final_action",
+                actual_final.lower() == str(expected_final_action).lower(),
+                f"expected={expected_final_action!r}, actual={actual_final!r}",
+            )
+        )
+
+    if expectations.get("no_actionable_when_skeptic_failed") and expectations.get("skeptic_pass") is False:
+        checks.append(
+            _check(
+                "scout_skeptic_sizer_no_actionable_when_skeptic_failed",
+                not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                "actionable language must be suppressed when skeptic pass fails",
+            )
+        )
+
+    max_bps = expectations.get("max_sizing_delta_bps")
+    if max_bps is not None:
+        sizer_meta = gate_meta.get("sizer") if isinstance(gate_meta.get("sizer"), dict) else {}
+        try:
+            actual_bps = int(sizer_meta.get("max_sizing_delta_bps"))
+            checks.append(
+                _check(
+                    "scout_skeptic_sizer_max_bps",
+                    actual_bps <= int(max_bps),
+                    f"expected<={max_bps}, actual={actual_bps}",
+                )
+            )
+        except (TypeError, ValueError):
+            checks.append(
+                _check(
+                    "scout_skeptic_sizer_max_bps",
+                    False,
+                    f"expected<={max_bps}, actual={sizer_meta.get('max_sizing_delta_bps')!r}",
+                )
+            )
+
+
 def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]:
     text = run.final_text or ""
     checks: list[dict[str, Any]] = []
@@ -618,6 +931,9 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
 
     _append_workflow_expectation_checks(checks, case=case, run=run, text=text)
     _routing_expectation_checks(checks, case=case, run=run)
+    _tool_quality_expectation_checks(checks, case=case, run=run, text=text)
+    _context_pack_expectation_checks(checks, case=case, run=run, text=text)
+    _scout_skeptic_sizer_expectation_checks(checks, case=case, run=run, text=text)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0
@@ -706,6 +1022,7 @@ def run_case(
         "case_path": str(case.path.relative_to(ROOT) if case.path.is_relative_to(ROOT) else case.path),
         "status": case.status,
         "as_of_date": case.data.get("as_of_date"),
+        **case_result_metadata(case.data),
         "input_ref_errors": ref_errors,
         "loaded_input_refs": load_input_ref_content(case),
     }
@@ -807,6 +1124,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Only run routing_* cases (shortcut for --case routing_).",
     )
     parser.add_argument("--status", default="review,approved", help="Comma-separated statuses to run.")
+    parser.add_argument(
+        "--approved-only",
+        action="store_true",
+        help="Run only approved cases (shortcut for --status approved).",
+    )
+    parser.add_argument(
+        "--corpus-tag",
+        action="append",
+        default=[],
+        help="Filter to cases containing this corpus tag. Repeatable.",
+    )
+    parser.add_argument("--failure-type", default=None, help="Filter to cases with this failure_type.")
+    parser.add_argument("--tool-pack", default=None, help="Filter to cases with this tool_pack.")
     parser.add_argument("--model", choices=sorted(MODEL_BY_NAME), default="high")
     parser.add_argument("--provider", choices=["anthropic", "openai", "gemini"], default=None)
     parser.add_argument("--judge", dest="judge", action="store_true", default=False)
@@ -815,7 +1145,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", default=None)
     parser.add_argument("--auth-password", default=None)
     parser.add_argument("--fail-under-deterministic", type=float, default=100.0)
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline JSON path to compare against after the run.",
+    )
+    parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="Alias for --baseline.",
+    )
+    parser.add_argument(
+        "--comparison-output",
+        default=None,
+        help="Optional path for the baseline comparison delta report.",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Write the current run summary to the baseline path.",
+    )
+    parser.add_argument(
+        "--supervised-model",
+        default=None,
+        help="Optional supervised synthesis model artifact for offline label comparison.",
+    )
+    parser.add_argument(
+        "--supervised-baseline-metrics",
+        default=None,
+        help="Optional baseline metrics JSON for supervised rollout gate comparison.",
+    )
     return parser.parse_args(argv)
+
+
+def _resolve_baseline_path(args: argparse.Namespace) -> Path:
+    baseline_arg = args.compare_to or args.baseline
+    if baseline_arg:
+        return Path(baseline_arg)
+    return DEFAULT_BASELINE_PATH
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -824,7 +1191,15 @@ def main(argv: list[str] | None = None) -> int:
     case_selectors = list(args.case or [])
     if args.routing_only and "routing_" not in case_selectors:
         case_selectors.append("routing_")
-    cases = load_cases(case_selectors=case_selectors or None, statuses=_parse_statuses(args.status))
+    statuses = {"approved"} if args.approved_only else _parse_statuses(args.status)
+    corpus_tags = set(args.corpus_tag or [])
+    cases = load_cases(
+        case_selectors=case_selectors or None,
+        statuses=statuses,
+        corpus_tags=corpus_tags or None,
+        failure_type=args.failure_type,
+        tool_pack=args.tool_pack,
+    )
     model = MODEL_BY_NAME[args.model]
 
     def runner(case: ChatEvalCase) -> AgentChatRun:
@@ -835,13 +1210,67 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases
     ]
     report = build_report(results, fail_under_deterministic=args.fail_under_deterministic)
+    if args.supervised_model:
+        from decision_quality.synthesis_supervised_training import (
+            build_supervised_eval_summary,
+            rows_from_chat_cases,
+        )
+
+        baseline_metrics = None
+        if args.supervised_baseline_metrics:
+            baseline_metrics = json.loads(Path(args.supervised_baseline_metrics).read_text(encoding="utf-8"))
+        supervised_rows = rows_from_chat_cases(cases)
+        if supervised_rows:
+            report["supervised_eval"] = build_supervised_eval_summary(
+                rows=supervised_rows,
+                model_path=Path(args.supervised_model),
+                baseline_metrics=baseline_metrics,
+            )
     output_path = Path(args.output) if args.output else _default_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Wrote decision-quality chat eval report: {output_path}")
+
+    baseline_path = _resolve_baseline_path(args)
+    comparison: dict[str, Any] | None = None
+    if args.update_baseline:
+        baseline = build_baseline_report(
+            results,
+            corpus_tags=corpus_tags or None,
+            status_filter=statuses,
+            notes="Decision-quality chat approved corpus baseline.",
+        )
+        write_baseline(baseline_path, baseline)
+        print(f"Updated chat eval baseline: {baseline_path}")
+
+    if (args.compare_to or args.baseline) and not args.dry_run:
+        baseline = load_baseline(baseline_path)
+        comparison = compare_reports(baseline, report)
+        comparison_output = (
+            Path(args.comparison_output)
+            if args.comparison_output
+            else output_path.with_name(output_path.stem + "_comparison.json")
+        )
+        comparison_output.parent.mkdir(parents=True, exist_ok=True)
+        comparison_output.write_text(
+            json.dumps(comparison, ensure_ascii=True, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        print(f"Wrote baseline comparison: {comparison_output}")
+        if comparison["summary"]["regression_detected"]:
+            print(
+                "Regression detected against baseline: "
+                + ", ".join(comparison["summary"]["new_deterministic_failures"])
+            )
+
     if args.dry_run:
         return 0
     failures = report["summary"]["deterministic_failures"] or report["summary"]["judge_failures"]
+    if comparison and comparison["summary"]["regression_detected"]:
+        return 1
+    supervised_eval = report.get("supervised_eval")
+    if isinstance(supervised_eval, dict) and not supervised_eval.get("rollout_gates", {}).get("passed", True):
+        return 1
     return 1 if failures else 0
 
 

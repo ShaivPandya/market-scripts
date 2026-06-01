@@ -117,6 +117,67 @@ def test_update_opportunity_candidate_metadata():
     assert rows[0]["opportunity_candidate_metadata"]["trigger"] == "earnings"
 
 
+def test_active_learning_export_excludes_drafts_and_includes_failure_metadata(tmp_path, monkeypatch):
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    (cases_dir / "draft_capture.json").write_text(
+        json.dumps(
+            {
+                "id": "draft_capture",
+                "status": "draft",
+                "user_message": "draft only",
+                "failure_tags": ["wrong_routing"],
+                "routing_expectations": {"intent_class": "thesis_review"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (cases_dir / "review_capture.json").write_text(
+        json.dumps(
+            {
+                "id": "review_capture",
+                "status": "review",
+                "user_message": "review me",
+                "failure_tags": ["wrong_routing"],
+                "failure_type": "wrong_routing",
+                "corpus_tags": ["routing_tool_use"],
+                "source_session_id": "sess-review",
+                "routing_expectations": {
+                    "intent_class": "thesis_review",
+                    "run_hidden_dq": True,
+                    "required_tool_names": ["get_thesis"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    from decision_quality import intent_router_training as training_module
+
+    original_load_cases = training_module.load_cases
+
+    def _load_cases(*args, **kwargs):
+        kwargs.setdefault("cases_dir", cases_dir)
+        return original_load_cases(*args, **kwargs)
+
+    monkeypatch.setattr(training_module, "load_cases", _load_cases)
+
+    manifest = export_training_dataset(
+        output_dir=tmp_path / "exports",
+        include_db_rows=False,
+        active_learning_only=True,
+    )
+    dataset_path = Path(manifest["dataset_path"])
+    assert dataset_path.name == "active_learning_router.jsonl"
+    rows = [json.loads(line) for line in dataset_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["case_id"] == "review_capture"
+    assert row["failure_tags"] == ["wrong_routing"]
+    assert row["eval_status"] == "review"
+    assert row["source_session_id"] == "sess-review"
+    assert row["label_intent_class"] == "thesis_review"
+
+
 def test_export_training_dataset_from_fixtures(tmp_path):
     manifest = export_training_dataset(
         output_dir=tmp_path,

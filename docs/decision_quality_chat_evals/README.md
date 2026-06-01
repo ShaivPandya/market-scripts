@@ -46,16 +46,83 @@ Reports are written to `outputs/decision_quality_chat_evals/`.
 - `mock_tools` should make replay deterministic where possible.
 - `required_points` should be concrete claims or risks that a good Stan answer must surface.
 - `forbidden_patterns` should catch lazy generic phrasing.
+- `corpus_tags`, `failure_type`, `tool_pack`, and `required_dq_dimensions` are required before promotion to `approved`.
 - `workflow_expectations` is optional. Use it for workflow cases that must include a `workflow_run_id`,
   emit parseable fenced `artifacts` JSON with expected keys, and describe generated actions as proposals or pending approvals.
+- Workflow/proposal boundary cases remain `draft` or `review` until TL-46 lands.
 - LLM judge scores are secondary; deterministic checks are the pass/fail gate.
 
-## Capturing Failures
+## Promotion Workflow
+
+1. Capture or author a case as `draft`.
+2. Fill `mock_tools`, `required_points`, routing/tool expectations, and hashed `input_refs`.
+3. Add regression metadata: `corpus_tags`, `failure_type`, `tool_pack`, `required_dq_dimensions`.
+4. Move to `review` and run offline chat eval tests.
+5. Promote to `approved` once deterministic expectations are stable.
+6. Refresh `baselines/approved_corpus_baseline.json` with `--update-baseline`.
+
+Example approved-corpus commands:
+
+```bash
+python -m decision_quality.chat_eval_runner --approved-only --dry-run
+python -m decision_quality.chat_eval_runner --approved-only --baseline docs/decision_quality_chat_evals/baselines/approved_corpus_baseline.json
+python -m decision_quality.chat_eval_runner --approved-only --corpus-tag routing_tool_use --no-judge
+python -m decision_quality.chat_eval_runner --approved-only --update-baseline
+```
+
+## Active-Learning Failure Loop (TL-65)
+
+Captured chat failures move through a file-backed review queue in `cases/`:
+
+1. **Capture** a real failure as `draft` with standardized `failure_tags`.
+2. **Review** by filling `mock_tools`, `required_points`, hashed `input_refs`, and `routing_expectations`.
+3. **Promote** to `approved` once deterministic checks are stable.
+4. **Export** reviewed/approved router-labeled rows for supervised training.
+5. **Refresh** the approved corpus baseline after prompt/model/router changes.
+
+Training export gate: rows only leave `review` or `approved` cases with human-reviewed
+`routing_expectations.intent_class`. Draft captures are never exported.
+
+### Failure tags
+
+Tags are grouped in `decision_quality.eval_corpus.FAILURE_TAG_CATEGORIES`:
+
+- `routing`: `wrong_routing`, `wrong_tools`
+- `hidden_dq`: `missed_hidden_dq`, `missing_invalidation`, `missing_mispricing`, `missing_catalyst`, `generic_answer`
+- `source_quality`: `source_freshness`, `price_confirmation`, `stale_data`
+- `opportunity_identification`: `missing_mispricing`, `weak_opportunity_id`
+- `synthesis_quality`: `generic_answer`, `bad_synthesis`, `process_regression`
+- `policy_action_gating`: `sizing_discipline`, `workflow_boundary_violation`, `overconfident_actionability`
+
+Common aliases: `generic` → `generic_answer`, `stale_data` → `source_freshness`.
+
+### Capturing failures
 
 Turn a bad real chat response into a draft case:
 
 ```bash
-python -m decision_quality.capture_chat_eval --session-id SESSION --turn-index 0 --failure-tags generic,missing_invalidation
+python -m decision_quality.capture_chat_eval \
+  --session-id SESSION \
+  --turn-index 0 \
+  --failure-tags generic,missing_invalidation
 ```
 
-The exporter reads `memory_db`, redacts obvious secrets, and writes a draft case for human completion.
+The exporter reads `memory_db`, redacts obvious secrets, seeds `observed_tool_calls` into
+`expected_tool_names`, and writes a draft case for human completion.
+
+### Router training export
+
+Export reviewed/approved chat eval cases with router labels and failure metadata:
+
+```bash
+python -m decision_quality.intent_router_training export --active-learning --no-db
+```
+
+Output lands in `outputs/intent_router_training/{version}/active_learning_router.jsonl` with fields such as
+`failure_tags`, `failure_type`, `corpus_tags`, `source_session_id`, and `eval_status`.
+
+Standard router fixture export (telemetry + `routing_*` fixtures) remains:
+
+```bash
+python -m decision_quality.intent_router_training export
+```

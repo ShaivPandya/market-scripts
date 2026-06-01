@@ -1,0 +1,101 @@
+{
+  "ticker": "ZM",
+  "company_name": "Zoom Video Communications, Inc.",
+  "as_of_date": "2021-08-13",
+  "source_type": "deep_research_markdown",
+  "source_path": "/Users/shaivpandya/Downloads/Zoom Short Case Research Request.md",
+  "source_sha256": "d3752baccab0c22d1915f23fb9fda378bded36e15eda0805bf4eddd4aee38141",
+  "decision_context": "High-conviction short initiation after the 2021-08-13 market close, before Zoom reported Q2 FY22 results.",
+  "source_summary": {
+    "setup": "Zoom was still reporting very strong trailing financial results after the pandemic demand surge, but the short case argued that the market was valuing the company as a durable hypergrowth platform even though management guidance already implied a sharp sequential growth slowdown.",
+    "reported_financials": "Zoom's Q1 FY22 release reported revenue of $956.2M, up 191% YoY, GAAP operating margin of 23.7%, non-GAAP operating margin of 41.9%, free cash flow of $454.2M, and $4.7B of cash and marketable securities as of 2021-04-30.",
+    "guidance_math": "Zoom guided Q2 FY22 revenue to $985.0M-$990.0M and full FY22 revenue to $3.975B-$3.990B. After Q1 revenue of $956.2M, the remaining annual guide implied about $3.02B of revenue over the final three quarters, or roughly $1.01B per quarter, a major sequential flattening versus the pandemic growth narrative.",
+    "customer_metrics": "Zoom reported approximately 497,000 customers with more than 10 employees, up 87% YoY; 1,999 customers contributing more than $100,000 in trailing-12-month revenue, up 160% YoY; and trailing-12-month net dollar expansion rate above 130% for customers with more than 10 employees for the 12th consecutive quarter.",
+    "risk_factors": "Zoom's own Q1 FY22 release warned that tapering COVID effects, vaccine availability, users returning to work or school, competition, service performance, and security issues could affect demand and results.",
+    "competition": "The short case emphasized Microsoft Teams scale and bundling. Contemporaneous reporting said Microsoft Teams had reached about 250M monthly active users by late July 2021, while Teams Phone had reached about 80M monthly active users.",
+    "five9_transaction": "Zoom announced on 2021-07-18 that it would acquire Five9 in an all-stock transaction valued at approximately $14.7B. Five9 holders would receive 0.5533 Zoom Class A shares for each Five9 share, and the transaction was expected to close in the first half of calendar 2022 subject to shareholder and regulatory approvals.",
+    "five9_short_interpretation": "The short research interpreted the Five9 deal as partly defensive: a large, complex, all-stock move into contact-center software that could diversify Zoom away from core Meetings just as video growth decelerated. The deal also introduced integration, regulatory, management-distraction, and dilution risks.",
+    "short_interest_and_borrow": "The research file cited August 2021 short-interest data of about 6.66M shares, about 2.52% of float, and 1.12 days to cover, supporting the view that the short was not crowded. Exact borrow cost and options skew were not independently selected as stable local inputs.",
+    "valuation_context": "Using the 2021-08-13 close of $355.24 and Q1 diluted share count of about 305.4M, Zoom's implied equity value was roughly $108B. Net of the $4.7B cash and marketable securities reported at Q1, enterprise value was roughly $104B, or about 26x FY22 guided revenue despite implied sequential revenue flattening."
+  },
+  "source_register": [
+    {
+      "source_name": "Zoom Q1 FY22 earnings release",
+      "publication_date": "2021-06-01",
+      "url": "https://www.globenewswire.com/news-release/2021/06/01/2239905/0/en/Zoom-Reports-Financial-Results-for-the-First-Quarter-of-Fiscal-Year-2022.html",
+      "source_type": "company_release",
+      "available_before_decision": true,
+      "key_facts": [
+        "Q1 FY22 revenue $956.2M, up 191% YoY.",
+        "Q2 FY22 revenue guidance $985.0M-$990.0M.",
+        "Full-year FY22 revenue guidance $3.975B-$3.990B.",
+        "Free cash flow $454.2M and cash plus marketable securities $4.7B.",
+        "Customers greater than 10 employees approximately 497,000; $100K-plus customers 1,999; NRR above 130% for the 12th consecutive quarter."
+      ]
+    },
+    {
+      "source_name": "Zoom Q1 FY22 prepared remarks",
+      "publication_date": "2021-06-01",
+      "url": "https://investors.zoom.us/static-files/85b4ecf0-32a3-49ff-8259-89a9b697c7ea",
+      "source_type": "company_transcript",
+      "available_before_decision": true,
+      "key_facts": [
+        "Management discussed strong operating cash flow and free cash flow.",
+        "Management noted ongoing data-center and localization investment needs."
+      ]
+    },
+    {
+      "source_name": "Zoom to acquire Five9 announcement",
+      "publication_date": "2021-07-18",
+      "url": "https://www.globenewswire.com/news-release/2021/07/19/2264531/0/en/Zoom-to-Acquire-Five9.html",
+      "source_type": "company_release",
+      "available_before_decision": true,
+      "key_facts": [
+        "Zoom entered a definitive agreement to acquire Five9 in an all-stock transaction valued at approximately $14.7B.",
+        "Five9 holders would receive 0.5533 Zoom Class A shares per Five9 share.",
+        "The deal added exposure to the cloud contact-center market and was expected to close in the first half of calendar 2022, subject to approvals."
+      ]
+    },
+    {
+      "source_name": "Zoom/Five9 merger agreement exhibit",
+      "publication_date": "2021-07-19",
+      "url": "https://www.sec.gov/Archives/edgar/data/1585521/000119312521218004/d159629dex21.htm",
+      "source_type": "sec_filing",
+      "available_before_decision": true,
+      "key_facts": [
+        "Filed merger agreement mechanics for the Five9 transaction.",
+        "Provided deal structure and exchange-ratio context."
+      ]
+    },
+    {
+      "source_name": "Microsoft Teams MAU update",
+      "publication_date": "2021-07-27",
+      "url": "https://www.zdnet.com/article/microsoft-teams-hits-250-million-monthly-active-user-milestone/",
+      "source_type": "company_news",
+      "available_before_decision": true,
+      "key_facts": [
+        "Microsoft Teams reached about 250M monthly active users.",
+        "Research file also cited Teams Phone at about 80M monthly active users."
+      ]
+    },
+    {
+      "source_name": "User-provided Zoom short research file",
+      "publication_date": "2026-06-01",
+      "url": "/Users/shaivpandya/Downloads/Zoom Short Case Research Request.md",
+      "source_type": "user_notes",
+      "available_before_decision": false,
+      "key_facts": [
+        "Used as an authoring artifact only.",
+        "Point-in-time case facts are restricted to underlying sources available by 2021-08-13."
+      ]
+    }
+  ],
+  "excluded_or_downweighted_material": [
+    "Zoom's 2021-08-30 Q2 FY22 earnings result and stock reaction.",
+    "Five9 shareholder rejection and termination of the merger after the decision date.",
+    "Later 2021 and 2022 growth deceleration proof points.",
+    "Post-decision analyst downgrades, outcome-confirming articles, and price-target revisions.",
+    "The research file's incomplete eval-ready JSON stub and any sources published after 2021-08-13."
+  ],
+  "human_notes": "Distilled from the user-provided Zoom short research markdown. Some cited materials in the research file were post-decision or weakly sourced, so this input emphasizes primary company releases, SEC deal mechanics, contemporaneous Microsoft Teams data, and the point-in-time short logic."
+}

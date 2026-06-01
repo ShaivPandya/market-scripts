@@ -747,6 +747,11 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                     "action_type": "review",
                     "ticker": trigger.get("ticker"),
                     "urgency": "high",
+                    "alert_context": {
+                        "change_summary": _action_description(trigger, result),
+                        "source": "monitor_hit",
+                        "ticker": trigger.get("ticker"),
+                    },
                 }
                 if not should_suppress_generated_review_approval(
                     "create_action_item",

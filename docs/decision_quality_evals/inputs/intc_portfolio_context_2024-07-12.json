@@ -1,0 +1,19 @@
+{
+  "ticker": "INTC",
+  "company_name": "Intel Corporation",
+  "as_of_date": "2024-07-12",
+  "position_status": "new_position_candidate",
+  "position_direction": "none",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "No position opened; idea remained in research.",
+  "intended_role_notes": "Depressed valuation without catalyst or durable technical confirmation did not clear the actionability bar.",
+  "conviction_at_evaluation": 2,
+  "raw_target_weight_at_evaluation": 0.0,
+  "conviction_mapping_source": "Conviction 2 reflects low confidence in acting before a clearer reason-now emerges.",
+  "target_size": "0%; research until catalyst and price confirmation appear.",
+  "initial_size": 0.0,
+  "current_semiconductor_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "Real as-of INTC context captured for TL-63 regression coverage."
+}

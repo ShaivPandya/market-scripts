@@ -1,6 +1,6 @@
 {
   "id": "paulson_subprime_cds_short_2006",
-  "status": "review",
+  "status": "approved",
   "decision_type": "macro_stance",
   "as_of_date": "2006-08-01",
   "user_question": "Using the August 2006 subprime setup, should buying CDS protection on BBB subprime mortgage exposure have been actionable, watch, research, avoid, or do_nothing?",
@@ -206,5 +206,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Historical conviction 5 structured-credit short dated after the July 2006 ABX launch to teach convex payoff, early-but-not-wrong timing, and the distinction between missing price confirmation and invalidation."
+  "human_notes": "Review case. Historical conviction 5 structured-credit short dated after the July 2006 ABX launch to teach convex payoff, early-but-not-wrong timing, and the distinction between missing price confirmation and invalidation.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

@@ -1,0 +1,26 @@
+{
+  "ticker": "COST",
+  "company_name": "Costco Wholesale",
+  "as_of_date": "2024-12-13",
+  "decision_context": "New long idea evaluation",
+  "source_type": "historical_market_snapshot",
+  "source_method": "Yahoo Finance historical OHLCV (ticker COST) plus analyst-style thesis notes",
+  "human_initiation_rationale": "Watch rather than initiate despite Costco's high-quality business. As of 2024-12-13, the stock had rallied strongly and traded at a premium multiple, leaving limited payoff asymmetry for a fresh full-size long.",
+  "selected_inputs": [
+    "high-quality membership retail franchise",
+    "strong prior 12-month run",
+    "premium valuation versus broad market and staples peers",
+    "limited dislocation or variant catalyst",
+    "entry risk after extension"
+  ],
+  "as_of_known_negatives": [
+    "No clear variant-view catalyst beyond consensus quality-compounder narrative.",
+    "Entry is less favorable after sustained outperformance.",
+    "Payoff asymmetry for a new full-size position is weaker at elevated valuation."
+  ],
+  "future_outcome_context": {
+    "available_as_of_date": false,
+    "notes": "Future performance after 2024-12-13 is outcome context only and must not be used as as-of evidence."
+  },
+  "human_notes": "Real as-of scenario for TL-63: quality asset, weak trade entry."
+}

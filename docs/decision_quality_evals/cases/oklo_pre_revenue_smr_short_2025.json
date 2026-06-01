@@ -1,6 +1,6 @@
 {
   "id": "oklo_pre_revenue_smr_short_2025",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2025-11-01",
   "user_question": "Using the OKLO short thesis as of its initiation date, should this have been actionable, watch, research, or do_nothing?",
@@ -187,5 +187,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Gold output reflects an actionable short at conviction 3, rising to conviction 5 if confirmed."
+  "human_notes": "Review case. Gold output reflects an actionable short at conviction 3, rising to conviction 5 if confirmed.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

@@ -54,6 +54,13 @@ def test_load_cases_defaults_to_review_and_approved():
     assert "scenario_simulator_uncertainty_disclosure_2026" in {case.case_id for case in cases}
 
 
+def test_load_cases_filters_by_corpus_tag():
+    cases = load_cases(statuses={"approved"}, corpus_tags={"structured_dq"})
+
+    assert cases
+    assert all("structured_dq" in case.data.get("corpus_tags", []) for case in cases)
+
+
 def test_dry_run_payload_omits_gold_and_future_outcome_context(monkeypatch):
     def fail_call(*_args, **_kwargs):
         raise AssertionError("dry-run should not call the LLM")
@@ -283,3 +290,17 @@ def test_build_solver_payload_keeps_null_path_ref_without_content():
 
     assert payload["input_refs"][0]["path"] is None
     assert "content" not in payload["input_refs"][0]
+
+
+def test_outcome_calibration_case_report_includes_calibration_dimensions(monkeypatch):
+    def fail_call(*_args, **_kwargs):
+        raise AssertionError("dry-run should not call the LLM")
+
+    monkeypatch.setattr("decision_quality.eval_runner.call_llm_text", fail_call)
+    case = _case("nvda_outcome_calibration_review_2026.json")
+    result = run_case(case, dry_run=True, judge=False)
+    report = build_report([result], fail_under_deterministic=80.0, fail_under_judge=14.0)
+
+    assert result["calibration_dimensions"]["opportunity_type"] == "quality_compounder"
+    assert result["outcome_linkage"]["process_label"] == "good_process_bad_outcome"
+    assert report["summary"]["calibration_summary"]["outcome_calibration_case_count"] == 1

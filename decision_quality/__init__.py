@@ -27,6 +27,21 @@ from decision_quality.opportunity_candidate import (
     opportunity_candidate_schema,
     parse_opportunity_candidate,
 )
+from decision_quality.proactive_alert_gate import (
+    ProactiveAlertGateResult,
+    ScoutSkepticSizerGateResult,
+    apply_proactive_alert_gate,
+    apply_recommendation_scout_skeptic_sizer_gate,
+    build_chat_scout_skeptic_sizer_gate,
+    evaluate_proactive_alert_gate,
+    evaluate_scout_skeptic_sizer_gate,
+    is_high_stakes_action_item,
+    proactive_alert_gate_enabled,
+    proactive_alert_llm_passes_enabled,
+    scout_skeptic_sizer_gate_enabled,
+    should_apply_proactive_alert_gate,
+    should_apply_recommendation_gate,
+)
 
 __all__ = [
     "ACTIONABLE_ACTIONS",
@@ -48,4 +63,17 @@ __all__ = [
     "opportunity_candidate_schema",
     "parse_decision_quality",
     "parse_opportunity_candidate",
+    "ProactiveAlertGateResult",
+    "ScoutSkepticSizerGateResult",
+    "apply_proactive_alert_gate",
+    "apply_recommendation_scout_skeptic_sizer_gate",
+    "build_chat_scout_skeptic_sizer_gate",
+    "evaluate_proactive_alert_gate",
+    "evaluate_scout_skeptic_sizer_gate",
+    "is_high_stakes_action_item",
+    "proactive_alert_gate_enabled",
+    "proactive_alert_llm_passes_enabled",
+    "scout_skeptic_sizer_gate_enabled",
+    "should_apply_proactive_alert_gate",
+    "should_apply_recommendation_gate",
 ]

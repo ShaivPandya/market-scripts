@@ -3,7 +3,30 @@
 Return a structured `decision_quality` object. Do not narrate a checklist or add conversational filler.
 Use the exact field names below. Do not rename fields.
 
-The object must make the decision testable:
+The object must make the decision testable.
+
+Before setting `recommended_action` or `actionability.status`, separate three layers explicitly in the reasoning (without adding new fields):
+
+- **Asset quality**: durability of the business, balance sheet, franchise, or instrument.
+- **Thesis quality**: whether the variant view is coherent, evidence-backed, and falsifiable.
+- **Trade quality**: whether there is enough mispricing, timing, payoff asymmetry, risk control, and source confidence to act now.
+
+A high-quality asset or plausible thesis does **not** justify `actionable` unless trade quality clears the bar. Strong asset quality with weak trade quality should map to `watch_only`, `missing_inputs`, or `do_nothing` — not a lazy buy/add/short.
+
+Required trade-quality checks before any actionable stance:
+
+- **Reason-now / catalyst**: populated in `catalyst_or_reason_now.why_now` and `event_or_condition`.
+- **Variant view**: populated in `mispricing.variant_view` and `why_consensus_is_wrong`.
+- **Price confirmation**: reflected in `price_action_read` with honest `confirms_thesis` and `interpretation`.
+- **Payoff asymmetry**: bounded downside and meaningful upside must be visible in evidence, invalidation, and sizing context.
+
+Examples:
+
+- Quality compounder + extended valuation or broken entry → `watch`/`research`, not `buy`/`add`.
+- Cheap valuation + no catalyst or price confirmation → `research`/`watch`, not `buy`.
+- Crowded consensus + thin variant view → `avoid`/`watch`/`do_nothing`, not momentum-chasing action.
+
+Field contract:
 
 - `simple_thesis`: one plain-English sentence.
 - `opportunity_type`: one of `undervalued_asset`, `regime_shift`, `reflexive_process`, `unsustainable_process`, `forced_liquidation`, `policy_inflection`, `quality_compounder`, `cyclical_upturn`, `crowded_narrative_avoid`, `unclear`.
@@ -25,7 +48,7 @@ The object must make the decision testable:
 
 `actionability.status` must match the action:
 
-- Use `actionable` only for `buy`, `add`, `short`, `sell`, `trim`, `reduce`, `exit`, `hedge`, or `rebalance`.
+- Use `actionable` only for `buy`, `add`, `short`, `sell`, `trim`, `reduce`, `exit`, `hedge`, or `rebalance` when trade quality clears the bar above. Do not use `actionable` merely because asset quality or thesis quality is strong.
 - Use `do_nothing` for `avoid` or `do_nothing`.
 - Use `watch_only` for `hold` or `watch`.
 - Use `missing_inputs` for `research`.

@@ -1,0 +1,1084 @@
+{
+  "baseline_version": 1,
+  "case_count": 16,
+  "cases": {
+    "ackman_covid_credit_hedge_2020": {
+      "case_id": "ackman_covid_credit_hedge_2020",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "amd_zen_epyc_share_gain_long_2018": {
+      "case_id": "amd_zen_epyc_share_gain_long_2018",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "cost_quality_asset_bad_entry_watch_2026": {
+      "case_id": "cost_quality_asset_bad_entry_watch_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "sizing_discipline",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "druckenmiller_dem_reunification_long_1989": {
+      "case_id": "druckenmiller_dem_reunification_long_1989",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "gbp_erm_break_short_1992": {
+      "case_id": "gbp_erm_break_short_1992",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "intc_cheap_value_weak_catalyst_research_2026": {
+      "case_id": "intc_cheap_value_weak_catalyst_research_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "missing_catalyst",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "mu_ai_memory_cycle_2025": {
+      "case_id": "mu_ai_memory_cycle_2025",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "nflx_icahn_streaming_transition_long_2012": {
+      "case_id": "nflx_icahn_streaming_transition_long_2012",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "nvda_ai_platform_long_2026": {
+      "case_id": "nvda_ai_platform_long_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "oklo_pre_revenue_smr_short_2025": {
+      "case_id": "oklo_pre_revenue_smr_short_2025",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "paulson_subprime_cds_short_2006": {
+      "case_id": "paulson_subprime_cds_short_2006",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "pltr_aip_commercial_inflection_long_2024": {
+      "case_id": "pltr_aip_commercial_inflection_long_2024",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "scenario_simulator_uncertainty_disclosure_2026": {
+      "case_id": "scenario_simulator_uncertainty_disclosure_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "tepper_banks_policy_backstop_2009": {
+      "case_id": "tepper_banks_policy_backstop_2009",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "teva_branded_transition_long_2025": {
+      "case_id": "teva_branded_transition_long_2025",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "vst_data_center_power_avoid_2025": {
+      "case_id": "vst_data_center_power_avoid_2025",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    }
+  },
+  "corpus_tags_filter": [],
+  "generated_at": "2026-06-01T10:42:28.162029+00:00",
+  "notes": "Structured decision-quality approved corpus baseline (offline gold deterministic pass).",
+  "status_filter": [
+    "approved"
+  ]
+}

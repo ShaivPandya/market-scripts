@@ -1,6 +1,6 @@
 {
   "id": "vst_data_center_power_avoid_2025",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2025-10-21",
   "user_question": "Using the Vistra setup as of its evaluation date, should this have been actionable, watch, research, avoid, or do_nothing?",
@@ -176,5 +176,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Gold output reflects a conviction 4 avoid decision for a new-position candidate. The later November 2025 EPS/revenue miss supports the case outcome but is deliberately excluded from source evidence available as of 2025-10-21."
+  "human_notes": "Review case. Gold output reflects a conviction 4 avoid decision for a new-position candidate. The later November 2025 EPS/revenue miss supports the case outcome but is deliberately excluded from source evidence available as of 2025-10-21.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

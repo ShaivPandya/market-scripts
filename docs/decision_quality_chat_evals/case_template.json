@@ -61,5 +61,48 @@
     "any_terms": ["watch", "research", "not ready to add"],
     "forbidden_terms": ["buy now", "add now"]
   },
-  "judge_min_score": 16
+  "tool_quality_expectations": {
+    "requires_tool_quality_meta": false,
+    "expected_price_confirmation_status": null,
+    "expected_source_health_status": null,
+    "expected_critical_data_quality": null,
+    "min_blocker_count": null,
+    "max_blocker_count": null,
+    "required_blocking_reason_codes": [],
+    "forbid_actionable_language_when_blocked": false,
+    "required_missing_input_terms": []
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": false,
+    "expected_context_pack": null,
+    "expected_opportunity_type": null,
+    "required_tool_names": [],
+    "expect_complete": null,
+    "required_missing_input_terms": [],
+    "forbid_actionable_when_incomplete": false
+  },
+  "scout_skeptic_sizer_expectations": {
+    "scout_pass": true,
+    "skeptic_pass": true,
+    "sizer_pass": true,
+    "expected_final_action": "research",
+    "max_sizing_delta_bps": null,
+    "no_actionable_when_skeptic_failed": false
+  },
+  "judge_min_score": 16,
+  "corpus_tags": ["chat_behavior", "opportunity_identification"],
+  "failure_type": null,
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_for",
+    "evidence_against",
+    "price_action",
+    "invalidation",
+    "missing_inputs",
+    "confidence_sizing",
+    "trade_after_trade"
+  ]
 }

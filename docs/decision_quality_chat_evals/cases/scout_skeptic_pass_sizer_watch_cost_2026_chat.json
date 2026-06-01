@@ -1,0 +1,64 @@
+{
+  "id": "scout_skeptic_pass_sizer_watch_cost_2026_chat",
+  "status": "approved",
+  "as_of_date": "2024-12-13",
+  "user_message": "Costco is a great business — should I buy here?",
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
+    "get_dossier": {"ticker": "COST", "summary": "Premium quality compounder trading near highs."},
+    "get_thesis": {"ticker": "COST", "content": "Membership model, durable comps, pricing power."},
+    "get_thesis_evaluations": {"ticker": "COST", "evaluations": []},
+    "get_position_valuation": {"ticker": "COST", "price": 989.35, "notes": "Premium multiple after strong run."},
+    "run_chart": {"ticker": "COST", "technical_read": "Extended above moving averages."},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": ["get_thesis", "run_chart", "get_position_valuation"]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "quality_entry",
+    "expected_opportunity_type": "quality_compounder",
+    "required_tool_names": ["get_thesis", "get_position_valuation", "run_chart"],
+    "expect_complete": false,
+    "required_missing_input_terms": ["entry", "valuation"],
+    "forbid_actionable_when_incomplete": true
+  },
+  "scout_skeptic_sizer_expectations": {
+    "scout_pass": true,
+    "skeptic_pass": true,
+    "sizer_pass": true,
+    "expected_final_action": "watch",
+    "max_sizing_delta_bps": 50,
+    "no_actionable_when_skeptic_failed": false
+  },
+  "required_points": [
+    {
+      "label": "asset_vs_trade",
+      "any_terms": ["good business", "not a good trade", "quality", "watch"]
+    },
+    {
+      "label": "sizer_limit",
+      "any_terms": ["watch", "starter", "asymmetry", "entry"]
+    }
+  ],
+  "forbidden_patterns": ["buy now", "full size", "strong buy"],
+  "expected_stance": {
+    "label": "watch_not_buy",
+    "any_terms": ["watch", "research", "wait"],
+    "forbidden_terms": ["buy now", "add now"]
+  },
+  "judge_min_score": 12,
+  "corpus_tags": ["chat_behavior", "opportunity_identification"],
+  "failure_type": "sizing_discipline",
+  "tool_pack": "quality_entry",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "price_action",
+    "missing_inputs",
+    "confidence_sizing"
+  ]
+}

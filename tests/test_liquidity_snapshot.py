@@ -7,6 +7,7 @@ import pytest
 
 from macro.liquidity.liquidity import (
     add_japan_derived_series,
+    build_component_as_of,
     build_data_quality,
     build_weekly_panel,
     cap_weekly_panel_to_completed_week,
@@ -80,3 +81,18 @@ def test_data_quality_warns_for_suppressed_future_bucket_and_lagged_component():
     assert quality["status"] == "degraded"
     assert any("Suppressed partial weekly bucket ending 2026-05-20" in warning for warning in quality["warnings"])
     assert any("M3 YoY is lagged" in warning for warning in quality["warnings"])
+
+
+def test_quarterly_source_dates_use_period_end_for_freshness():
+    raw = pd.DataFrame(
+        {"jpn_credit_private": [1_135_794.3]},
+        index=pd.to_datetime(["2025-07-01"]),
+    )
+
+    component_as_of = build_component_as_of(raw, None, pd.Timestamp("2026-05-27"))
+
+    assert component_as_of["jpn_credit_yoy"] == "2025-09-30"
+
+    quality = build_data_quality(pd.Timestamp("2026-05-27"), component_as_of)
+
+    assert quality == {"status": "ok", "warnings": []}

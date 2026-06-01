@@ -1,0 +1,138 @@
+{
+  "id": "asset_trade_intc_cheap_no_catalyst_2026_chat",
+  "status": "approved",
+  "as_of_date": "2024-07-12",
+  "user_message": "Intel looks cheap on a turnaround. Is it a buy here?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/intc",
+    "ticker": "INTC"
+  },
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 0
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "INTC",
+      "summary": "Intel dossier stub: depressed multiple and uncertain foundry turnaround as of 2024-07-12."
+    },
+    "get_thesis": {
+      "ticker": "INTC",
+      "content": "Cheap valuation, foundry turnaround hope, share loss risk."
+    },
+    "get_thesis_evaluations": {
+      "ticker": "INTC",
+      "evaluations": []
+    },
+    "get_position_valuation": {
+      "ticker": "INTC",
+      "price": 34.49,
+      "notes": "Real historical close on 2024-07-12 with depressed valuation and no clear catalyst."
+    },
+    "run_chart": {
+      "ticker": "INTC",
+      "technical_read": "Below moving averages with negative intermediate momentum."
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": [
+      "get_thesis",
+      "run_chart",
+      "get_position_valuation"
+    ]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "catalyst",
+    "expected_opportunity_type": "undervalued_asset",
+    "required_tool_names": [
+      "get_thesis",
+      "get_position_valuation",
+      "run_chart"
+    ],
+    "expect_complete": false,
+    "required_missing_input_terms": [
+      "catalyst",
+      "reason"
+    ],
+    "forbid_actionable_when_incomplete": true
+  },
+  "expected_tool_names": [
+    "get_thesis",
+    "run_chart",
+    "get_position_valuation"
+  ],
+  "required_points": [
+    {
+      "label": "cheap_not_enough",
+      "any_terms": [
+        "cheap",
+        "no reason",
+        "no catalyst",
+        "research"
+      ]
+    },
+    {
+      "label": "price_confirmation",
+      "any_terms": [
+        "price",
+        "confirmation",
+        "chart",
+        "momentum"
+      ]
+    },
+    {
+      "label": "non_actionable_stance",
+      "any_terms": [
+        "research",
+        "watch",
+        "not ready",
+        "wait"
+      ]
+    }
+  ],
+  "forbidden_patterns": [
+    "buy now",
+    "add now",
+    "cheap so buy",
+    "value trap buy"
+  ],
+  "expected_stance": {
+    "label": "research_not_buy",
+    "any_terms": [
+      "research",
+      "watch",
+      "not ready",
+      "wait"
+    ],
+    "forbidden_terms": [
+      "buy now",
+      "add now"
+    ]
+  },
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": "missing_catalyst",
+  "tool_pack": "catalyst",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "catalyst_or_reason_now",
+    "price_action",
+    "missing_inputs"
+  ]
+}

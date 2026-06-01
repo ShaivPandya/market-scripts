@@ -1,0 +1,102 @@
+{
+  "id": "context_pack_nvda_catalyst_hidden_2026",
+  "status": "approved",
+  "as_of_date": "2026-06-01",
+  "user_message": "NVDA export-license catalyst is my reason-now. Has it played out enough to add?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA"
+  },
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 0
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "NVDA",
+      "summary": "NVDA dossier stub."
+    },
+    "get_thesis": {
+      "ticker": "NVDA",
+      "content": "NVDA catalyst thesis."
+    },
+    "run_chart": {
+      "ticker": "NVDA",
+      "technical_read": "Price reaction still inconclusive."
+    },
+    "search_web": {
+      "results": [
+        {
+          "title": "Export license update",
+          "snippet": "License status still evolving."
+        }
+      ]
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": [
+      "search_web",
+      "run_chart"
+    ]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "catalyst",
+    "required_tool_names": [
+      "search_web",
+      "run_chart",
+      "get_dossier"
+    ],
+    "expect_complete": false,
+    "required_missing_input_terms": [
+      "catalyst",
+      "price"
+    ],
+    "forbid_actionable_when_incomplete": true
+  },
+  "expected_tool_names": [
+    "search_web",
+    "run_chart",
+    "get_dossier"
+  ],
+  "required_points": [
+    {
+      "label": "catalyst framing",
+      "any_terms": [
+        "catalyst",
+        "license",
+        "played",
+        "research",
+        "watch"
+      ]
+    }
+  ],
+  "forbidden_patterns": [
+    "add now",
+    "buy now"
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": "missing_catalyst",
+  "tool_pack": "catalyst",
+  "required_dq_dimensions": [
+    "catalyst_or_reason_now",
+    "price_action",
+    "missing_inputs"
+  ]
+}

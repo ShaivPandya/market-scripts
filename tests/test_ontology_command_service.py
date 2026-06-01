@@ -720,6 +720,7 @@ def test_sparse_actionable_recommendation_is_downgraded_and_persisted_without_ap
     assert recommendation["approval_required"] is False
     assert recommendation["payload"]["recommendation_status"] == "review_required"
     assert recommendation["decision_quality_gate"]["status"] == "downgraded"
+    assert recommendation["payload"]["scout_skeptic_sizer_gate"]["action_allowed"] is False
     assert any(
         reason["code"] == "MISSING_DECISION_QUALITY" for reason in recommendation["decision_quality_gate"]["reasons"]
     )

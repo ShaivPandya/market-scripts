@@ -1,0 +1,19 @@
+{
+  "ticker": "NVDA",
+  "company_name": "NVIDIA Corporation",
+  "as_of_date": "2026-03-15",
+  "position_status": "new_position_candidate",
+  "position_direction": "none",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "No position opened; crowded AI setup rejected for new initiation.",
+  "intended_role_notes": "Avoid chasing a consensus AI winner without a variant view or better entry.",
+  "conviction_at_evaluation": 4,
+  "raw_target_weight_at_evaluation": 0.0,
+  "conviction_mapping_source": "Conviction 4 reflects confidence in avoid rather than initiating a crowded trade.",
+  "target_size": "0%; avoid new initiation at current levels.",
+  "initial_size": 0.0,
+  "current_ai_infrastructure_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "User asked whether NVDA was actionable as a new long on 2026-03-15; correct answer was avoid."
+}

@@ -153,14 +153,20 @@ def _stage_review_action(hit_payload: dict[str, Any], *, source_id: str) -> dict
         source_id=source_id,
         request_mode="proposal",
     )
+    payload = {
+        "description": f"Review monitor hit: {hit_payload.get('entity_label') or hit_payload.get('entity_id')}",
+        "action_type": "review",
+        "ticker": hit_payload.get("ticker") if hit_payload.get("ticker") != "UNKNOWN" else None,
+        "urgency": "high" if hit_payload.get("severity") == "high" else "normal",
+        "alert_context": {
+            "change_summary": hit_payload.get("entity_label") or hit_payload.get("entity_id"),
+            "source": "monitor_hit",
+            "ticker": hit_payload.get("ticker"),
+        },
+    }
     return service.propose_action(
         "create_action_item",
-        {
-            "description": f"Review monitor hit: {hit_payload.get('entity_label') or hit_payload.get('entity_id')}",
-            "action_type": "review",
-            "ticker": hit_payload.get("ticker") if hit_payload.get("ticker") != "UNKNOWN" else None,
-            "urgency": "high" if hit_payload.get("severity") == "high" else "normal",
-        },
+        payload,
         context,
         reason="Review builder monitor hit before any state change",
     )

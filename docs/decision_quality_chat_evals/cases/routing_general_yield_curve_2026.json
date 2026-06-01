@@ -1,22 +1,51 @@
 {
   "id": "routing_general_yield_curve_2026",
-  "status": "review",
+  "status": "approved",
   "as_of_date": "2026-05-31",
   "user_message": "How is the yield curve shaping macro risk right now?",
   "screen_context": null,
   "mock_tools": {
-    "get_yield_curve": {"curve": "stub"},
-    "get_bond_dashboard": {"summary": "stub"},
-    "get_signal_aggregator": {"summary": "stub"},
-    "search_agent_capabilities": {"capabilities": []}
+    "get_yield_curve": {
+      "curve": "stub"
+    },
+    "get_bond_dashboard": {
+      "summary": "stub"
+    },
+    "get_signal_aggregator": {
+      "summary": "stub"
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
   },
   "routing_expectations": {
     "intent_class": "general_research",
     "run_hidden_dq": false,
     "run_opportunity_preflight": false,
-    "required_tool_names": ["get_yield_curve"]
+    "required_tool_names": [
+      "get_yield_curve"
+    ]
   },
-  "expected_tool_names": ["get_yield_curve"],
-  "required_points": [{"label": "macro framing", "any_terms": ["yield", "curve", "macro", "rates", "risk"]}],
-  "judge_min_score": 12
+  "expected_tool_names": [
+    "get_yield_curve"
+  ],
+  "required_points": [
+    {
+      "label": "macro framing",
+      "any_terms": [
+        "yield",
+        "curve",
+        "macro",
+        "rates",
+        "risk"
+      ]
+    }
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "routing_tool_use"
+  ],
+  "failure_type": "wrong_routing",
+  "tool_pack": "macro_stance",
+  "required_dq_dimensions": []
 }

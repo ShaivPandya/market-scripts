@@ -1,0 +1,30 @@
+{
+  "ticker": "NVDA",
+  "company_name": "NVIDIA Corporation",
+  "as_of_date": "2026-03-15",
+  "close": 142.8,
+  "moving_averages": {
+    "100d_sma": 128.4,
+    "150d_sma": 118.2,
+    "200d_sma": 104.6,
+    "40w_sma": 96.3
+  },
+  "rate_of_change": {
+    "1m_pct": 8.9,
+    "3m_pct": 19.4,
+    "12m_pct": 86.2
+  },
+  "trend_position": {
+    "above_100d_sma": true,
+    "above_150d_sma": true,
+    "above_200d_sma": true,
+    "above_40w_sma": true
+  },
+  "relative_performance": {
+    "benchmark": "SOX",
+    "outperformed_benchmark": true,
+    "notes": "NVDA remains extended and crowded after a strong AI-driven run."
+  },
+  "interpretation": "Strong asset and thesis quality in the AI platform, but poor trade quality for a new add at current levels because the setup is crowded and payoff asymmetry is limited.",
+  "human_notes": "Synthetic as-of snapshot for TL-63 crowded trade case."
+}

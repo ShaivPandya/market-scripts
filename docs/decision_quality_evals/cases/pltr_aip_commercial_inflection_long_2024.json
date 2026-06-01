@@ -1,6 +1,6 @@
 {
   "id": "pltr_aip_commercial_inflection_long_2024",
-  "status": "review",
+  "status": "approved",
   "decision_type": "new_idea",
   "as_of_date": "2024-08-08",
   "user_question": "Using the PLTR setup as of August 8, 2024, should this new buy have been actionable, watch, research, avoid, or do_nothing?",
@@ -207,5 +207,22 @@
     "total": null,
     "notes": ""
   },
-  "human_notes": "Review case. Gold output assumes conviction 4 because user specified a new buy with strong price confirmation but did not provide exact conviction or sizing."
+  "human_notes": "Review case. Gold output assumes conviction 4 because user specified a new buy with strong price confirmation but did not provide exact conviction or sizing.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "process_regression",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
 }

@@ -13,6 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from decision_quality.actions import ACTIONABLE_ACTIONS
+from decision_quality.eval_corpus import (
+    OUTCOME_AUTHORING_FIELDS,
+    build_baseline_report,
+    case_result_metadata,
+    compare_reports,
+    filter_cases,
+    load_baseline,
+    summarize_calibration,
+    write_baseline,
+)
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.models import DecisionQuality, decision_quality_schema, parse_decision_quality
 from llm_utils import MODEL_HIGH, call_llm_text, parse_json_text
@@ -23,6 +33,7 @@ INPUTS_DIR = ROOT / "docs" / "decision_quality_evals" / "inputs"
 PROMPTS_DIR = ROOT / "auto_report" / "prompts"
 RUBRIC_PATH = ROOT / "docs" / "decision_quality_evals" / "rubric.md"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "decision_quality_evals"
+DEFAULT_BASELINE_PATH = ROOT / "docs" / "decision_quality_evals" / "baselines" / "approved_corpus_baseline.json"
 
 DEFAULT_STATUSES = ("review", "approved")
 MODEL_BY_NAME = {"low": "low", "mid": "mid", "high": MODEL_HIGH}
@@ -57,7 +68,7 @@ ANSWER_KEY_FIELDS = {
     "target size",
     "raw_target_weight",
     "raw target weight",
-}
+} | OUTCOME_AUTHORING_FIELDS
 ANSWER_KEY_PREFIXES = ("selected_later_", "post_confirmation_")
 FUTURE_TEXT_MARKERS = (
     "future outcome",
@@ -116,6 +127,9 @@ def load_cases(
     *,
     case_selectors: list[str] | None = None,
     statuses: set[str] | None = None,
+    corpus_tags: set[str] | None = None,
+    failure_type: str | None = None,
+    tool_pack: str | None = None,
     cases_dir: Path = CASES_DIR,
 ) -> list[EvalCase]:
     cases = [EvalCase(path=path, data=_read_json(path)) for path in sorted(cases_dir.glob("*.json"))]
@@ -136,7 +150,12 @@ def load_cases(
         cases = selected
     resolved_statuses = statuses if statuses is not None else set(DEFAULT_STATUSES)
     cases = [case for case in cases if case.status in resolved_statuses]
-    return cases
+    return filter_cases(
+        cases,
+        corpus_tags=corpus_tags,
+        failure_type=failure_type,
+        tool_pack=tool_pack,
+    )
 
 
 def validate_case_input_refs(case: EvalCase, *, root: Path = ROOT) -> list[str]:
@@ -504,6 +523,7 @@ def run_case(
         "case_path": str(case.path.relative_to(ROOT) if case.path.is_relative_to(ROOT) else case.path),
         "status": case.status,
         "as_of_date": case.data.get("as_of_date"),
+        **case_result_metadata(case.data),
         "sanitized_payload": payload,
     }
     if dry_run:
@@ -633,6 +653,7 @@ def build_report(
             "judge_failures": [result["case_id"] for result in judge_failures],
             "fail_under_deterministic": fail_under_deterministic,
             "fail_under_judge": fail_under_judge,
+            "calibration_summary": summarize_calibration(results),
         },
         "cases": results,
     }
@@ -642,6 +663,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run decision-quality eval cases against the configured LLM.")
     parser.add_argument("--case", action="append", default=[], help="Case id, filename, or path. Repeatable.")
     parser.add_argument("--status", default="review,approved", help="Comma-separated statuses to run.")
+    parser.add_argument(
+        "--approved-only",
+        action="store_true",
+        help="Run only approved cases (shortcut for --status approved).",
+    )
+    parser.add_argument(
+        "--corpus-tag",
+        action="append",
+        default=[],
+        help="Filter to cases containing this corpus tag. Repeatable.",
+    )
+    parser.add_argument("--failure-type", default=None, help="Filter to cases with this failure_type.")
+    parser.add_argument("--tool-pack", default=None, help="Filter to cases with this tool_pack.")
     parser.add_argument("--model", choices=sorted(MODEL_BY_NAME), default="high")
     parser.add_argument("--provider", choices=["anthropic", "openai", "gemini"], default=None)
     parser.add_argument("--judge", dest="judge", action="store_true", default=True)
@@ -650,15 +684,57 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", default=None)
     parser.add_argument("--fail-under-deterministic", type=float, default=80.0)
     parser.add_argument("--fail-under-judge", type=float, default=14.0)
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline JSON path to compare against after the run.",
+    )
+    parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="Alias for --baseline.",
+    )
+    parser.add_argument(
+        "--comparison-output",
+        default=None,
+        help="Optional path for the baseline comparison delta report.",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Write the current run summary to the baseline path.",
+    )
+    parser.add_argument(
+        "--supervised-model",
+        default=None,
+        help="Optional supervised synthesis model artifact for offline label comparison.",
+    )
+    parser.add_argument(
+        "--supervised-baseline-metrics",
+        default=None,
+        help="Optional baseline metrics JSON for supervised rollout gate comparison.",
+    )
     return parser.parse_args(argv)
+
+
+def _resolve_baseline_path(args: argparse.Namespace) -> Path:
+    baseline_arg = args.compare_to or args.baseline
+    if baseline_arg:
+        return Path(baseline_arg)
+    return DEFAULT_BASELINE_PATH
 
 
 def main(argv: list[str] | None = None) -> int:
     _load_local_env()
     args = parse_args(argv)
+    statuses = {"approved"} if args.approved_only else _parse_statuses(args.status)
+    corpus_tags = set(args.corpus_tag or [])
     cases = load_cases(
         case_selectors=args.case or None,
-        statuses=_parse_statuses(args.status),
+        statuses=statuses,
+        corpus_tags=corpus_tags or None,
+        failure_type=args.failure_type,
+        tool_pack=args.tool_pack,
     )
     model = MODEL_BY_NAME[args.model]
     results = [
@@ -677,14 +753,67 @@ def main(argv: list[str] | None = None) -> int:
         fail_under_deterministic=args.fail_under_deterministic,
         fail_under_judge=args.fail_under_judge,
     )
+    if args.supervised_model:
+        from decision_quality.synthesis_supervised_training import (
+            build_supervised_eval_summary,
+            rows_from_structured_cases,
+        )
+
+        baseline_metrics = None
+        if args.supervised_baseline_metrics:
+            baseline_metrics = json.loads(Path(args.supervised_baseline_metrics).read_text(encoding="utf-8"))
+        supervised_rows = rows_from_structured_cases(cases)
+        if supervised_rows:
+            report["supervised_eval"] = build_supervised_eval_summary(
+                rows=supervised_rows,
+                model_path=Path(args.supervised_model),
+                baseline_metrics=baseline_metrics,
+            )
     output_path = Path(args.output) if args.output else _default_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Wrote decision-quality eval report: {output_path}")
 
+    baseline_path = _resolve_baseline_path(args)
+    comparison: dict[str, Any] | None = None
+    if args.update_baseline:
+        baseline = build_baseline_report(
+            results,
+            corpus_tags=corpus_tags or None,
+            status_filter=statuses,
+            notes="Structured decision-quality approved corpus baseline.",
+        )
+        write_baseline(baseline_path, baseline)
+        print(f"Updated structured eval baseline: {baseline_path}")
+
+    if (args.compare_to or args.baseline) and not args.dry_run:
+        baseline = load_baseline(baseline_path)
+        comparison = compare_reports(baseline, report)
+        comparison_output = (
+            Path(args.comparison_output)
+            if args.comparison_output
+            else output_path.with_name(output_path.stem + "_comparison.json")
+        )
+        comparison_output.parent.mkdir(parents=True, exist_ok=True)
+        comparison_output.write_text(
+            json.dumps(comparison, ensure_ascii=True, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        print(f"Wrote baseline comparison: {comparison_output}")
+        if comparison["summary"]["regression_detected"]:
+            print(
+                "Regression detected against baseline: "
+                + ", ".join(comparison["summary"]["new_deterministic_failures"])
+            )
+
     if args.dry_run:
         return 0
     failures = report["summary"]["deterministic_failures"] or report["summary"]["judge_failures"]
+    if comparison and comparison["summary"]["regression_detected"]:
+        return 1
+    supervised_eval = report.get("supervised_eval")
+    if isinstance(supervised_eval, dict) and not supervised_eval.get("rollout_gates", {}).get("passed", True):
+        return 1
     return 1 if failures else 0
 
 

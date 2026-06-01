@@ -1,0 +1,54 @@
+{
+  "id": "scout_pass_skeptic_blocks_nvda_2026_chat",
+  "status": "approved",
+  "as_of_date": "2026-05-15",
+  "user_message": "NVDA pulled back — is this a new long worth pressure-testing?",
+  "mock_tools": {
+    "get_portfolio": {"summary": {"position_count": 0}, "positions": []},
+    "get_dossier": {"ticker": "NVDA", "summary": "NVDA dossier stub after pullback."},
+    "get_thesis": {"ticker": "NVDA", "content": "AI infrastructure leader with cyclical memory exposure."},
+    "get_thesis_evaluations": {"ticker": "NVDA", "evaluations": []},
+    "get_position_valuation": {"ticker": "NVDA", "price": 120.0, "notes": "Pullback after extended run."},
+    "run_chart": {"ticker": "NVDA", "technical_read": "Pullback without confirmed base."},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": false,
+    "run_opportunity_preflight": true,
+    "required_tool_names": ["get_thesis", "run_chart", "get_position_valuation"]
+  },
+  "scout_skeptic_sizer_expectations": {
+    "scout_pass": true,
+    "skeptic_pass": false,
+    "sizer_pass": null,
+    "expected_final_action": "research",
+    "no_actionable_when_skeptic_failed": true
+  },
+  "required_points": [
+    {
+      "label": "scout_setup",
+      "any_terms": ["trigger", "variant", "why now", "pullback"]
+    },
+    {
+      "label": "skeptic_block",
+      "any_terms": ["missing", "research", "not ready", "pressure-test"]
+    }
+  ],
+  "forbidden_patterns": ["buy now", "add now", "graduate"],
+  "expected_stance": {
+    "label": "research_not_buy",
+    "any_terms": ["research", "watch"],
+    "forbidden_terms": ["buy now", "add now"]
+  },
+  "judge_min_score": 12,
+  "corpus_tags": ["chat_behavior", "opportunity_identification"],
+  "failure_type": "overconfident_actionability",
+  "tool_pack": "thesis_review",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "price_action",
+    "missing_inputs",
+    "confidence_sizing"
+  ]
+}
