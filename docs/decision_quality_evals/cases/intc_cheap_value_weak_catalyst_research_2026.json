@@ -1,0 +1,180 @@
+{
+  "id": "intc_cheap_value_weak_catalyst_research_2026",
+  "status": "approved",
+  "decision_type": "new_idea",
+  "as_of_date": "2024-07-12",
+  "user_question": "Using the Intel setup as of 2024-07-12, should this have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/intc_price_action_2024-07-12.json",
+      "sha256": "9b07bf94ec9eaa0670807024e6dc22c28a5ed746960abed507e475b4f1f18e45",
+      "description": "Historical INTC price-action snapshot through the 2024-07-12 close.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/intc_portfolio_context_2024-07-12.json",
+      "sha256": "74e08ca031a83c2f3a2af55e45d85ebe9090bd6594ffda47241adee85436313c",
+      "description": "Portfolio context: INTC remained a research candidate without initiation.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/intc_initiation_notes_2024-07-12.json",
+      "sha256": "0127ffffd399500226108a0675dfd0377a12906c03fe373fd8affacec667a381",
+      "description": "Human-provided evaluation rationale: cheap valuation without catalyst, variant evidence, or price confirmation.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This case uses a real historical as-of snapshot from 2024-07-12 for TL-63.",
+    "INTC was evaluated on 2024-07-12 as a possible value turnaround, but the correct decision was research.",
+    "Cheap valuation alone does not satisfy the trade-quality bar."
+  ],
+  "gold_output": {
+    "simple_thesis": "Research Intel rather than buy because the stock looks cheap, but there is no credible reason-now, weak variant evidence, and no price confirmation that the turnaround is working.",
+    "opportunity_type": "undervalued_asset",
+    "embedded_macro_exposure": "Long semiconductor manufacturing recovery, foundry turnaround, and PC/server demand stabilization.",
+    "mispricing": {
+      "consensus_view": "The market prices Intel as a challenged incumbent with foundry losses, share erosion, and uncertain turnaround timing.",
+      "variant_view": "A turnaround could eventually work, but the selected inputs do not yet provide a differentiated, evidence-backed variant view strong enough to act.",
+      "pricing_evidence": "Selected inputs cite a depressed valuation multiple, mixed momentum, and closes below all selected moving averages.",
+      "why_consensus_is_wrong": "Consensus skepticism may eventually prove too pessimistic, but cheapness without catalyst or price confirmation is not yet a trade."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "No observable near-term catalyst clears the actionability bar.",
+      "expected_timeframe": "Review around the next product roadmap update, foundry milestone, or earnings/guidance inflection.",
+      "why_now": "There is no reason-now beyond generic turnaround hope; valuation alone is insufficient without catalyst and price confirmation.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/intc_initiation_notes_2024-07-12.json: no clear reason-now and weak variant evidence",
+        "docs/decision_quality_evals/inputs/intc_price_action_2024-07-12.json: price below major moving averages despite mixed momentum",
+        "docs/decision_quality_evals/inputs/intc_portfolio_context_2024-07-12.json: new-position candidate kept in research"
+      ]
+    },
+    "invalidation": {
+      "observable": "Intel proves turnaround progress with observable product, foundry, or earnings evidence.",
+      "metric_or_event": "Foundry milestones, data-center share trends, gross margin trajectory, capex discipline, daily close versus moving-average cluster, and next earnings/guidance.",
+      "threshold": "Move from research to actionable buy only if a credible catalyst appears and price action confirms with reclaim of the 100D/150D cluster plus positive intermediate momentum.",
+      "timeframe": "Next 1-2 earnings cycles after 2024-07-12.",
+      "implication": "The research-only call may miss a bottom if the turnaround inflects faster than expected."
+    },
+    "evidence_for": [
+      {
+        "claim": "Valuation appears depressed.",
+        "support": "The human notes cite a cheap-looking multiple after foundry losses and share erosion.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/intc_initiation_notes_2024-07-12.json"
+        ]
+      },
+      {
+        "claim": "Turnaround optionality exists if execution improves.",
+        "support": "Intel still has scale in manufacturing and potential foundry recovery if milestones are hit.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/intc_initiation_notes_2024-07-12.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "There is no credible reason-now.",
+        "support": "The human notes say there is no observable near-term catalyst beyond generic turnaround hope.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/intc_initiation_notes_2024-07-12.json"
+        ]
+      },
+      {
+        "claim": "Price action does not confirm a working turnaround.",
+        "support": "INTC closed below all selected moving averages with mixed momentum (positive 1-month, negative 3-month, near-flat 12-month ROC).",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/intc_price_action_2024-07-12.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "INTC closed at $34.49 on 2024-07-12, below the 100D, 150D, 200D, and 40W moving averages, with 1-month ROC of 11.55%, 3-month ROC of -8.34%, and 12-month ROC of 1.5%.",
+      "interpretation": "Cheap stock, weak trade. Valuation looks depressed, but price action does not confirm turnaround progress.",
+      "confirms_thesis": false,
+      "data_needed": [
+        "Next earnings and foundry milestone evidence",
+        "Relative performance versus SOX and peer foundry names"
+      ]
+    },
+    "actionability": {
+      "status": "missing_inputs",
+      "reason": "Cheap valuation without catalyst, variant evidence, or price confirmation keeps the idea in research rather than actionable.",
+      "missing_inputs": [
+        "Credible near-term catalyst or reason-now",
+        "Foundry milestone evidence",
+        "Price confirmation via moving-average repair",
+        "Detailed turnaround financial bridge"
+      ]
+    },
+    "recommended_action": "research",
+    "expression": {
+      "primary": "Do not initiate INTC common equity until research resolves missing catalyst and price-confirmation inputs",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Upgrade to watch or buy only after catalyst and price confirmation align."
+    },
+    "conviction": {
+      "level": 2,
+      "max_level": 5,
+      "raw_target_weight": 0.0,
+      "upgrade_condition": "Upgrade only after a credible catalyst and price confirmation appear."
+    },
+    "confidence": 0.55,
+    "confidence_reason": "Low-to-moderate confidence because cheapness is visible but trade quality is weak without reason-now or confirmation.",
+    "sizing_context": {
+      "starting_size": "No existing position; this was a new-position candidate.",
+      "add_conditions": "Do not initiate until missing catalyst and price-confirmation inputs are resolved.",
+      "liquidity_constraints": "Liquidity is not the binding constraint in this case.",
+      "portfolio_constraints": "Avoid value-trap exposure without a reason-now catalyst.",
+      "sizing_delta": {
+        "direction": "not_applicable",
+        "amount": null,
+        "unit": "not_applicable",
+        "basis": "not_applicable",
+        "condition": "No position should be initiated under the selected inputs."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If the research call is right, avoid catching a cheap stock that keeps deteriorating before a real catalyst appears.",
+      "if_wrong": "If Intel inflects with a visible catalyst and price repair, move quickly from research to actionable review rather than anchoring on prior skepticism.",
+      "next_review_trigger": "Review on the next foundry milestone, earnings/guidance inflection, or reclaim of the 100D/150D cluster with positive momentum."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "TL-63 regression case: cheap asset with weak catalyst should resolve to research, not buy.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "missing_catalyst",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_or_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
+}

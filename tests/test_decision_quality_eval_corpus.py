@@ -148,7 +148,7 @@ def test_all_approved_cases_have_valid_metadata(cases_dir: Path, loader):
 
 def test_structured_approved_corpus_is_tagged_and_promoted():
     cases = load_structured_cases(statuses={"approved"})
-    assert len(cases) == 14
+    assert len(cases) == 16
     assert all("structured_dq" in case.data.get("corpus_tags", []) for case in cases)
 
 

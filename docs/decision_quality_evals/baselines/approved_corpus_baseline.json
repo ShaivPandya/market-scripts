@@ -1,6 +1,6 @@
 {
   "baseline_version": 1,
-  "case_count": 14,
+  "case_count": 16,
   "cases": {
     "ackman_covid_credit_hedge_2020": {
       "case_id": "ackman_covid_credit_hedge_2020",
@@ -136,6 +136,73 @@
       "status": "approved",
       "tool_pack": null
     },
+    "cost_quality_asset_bad_entry_watch_2026": {
+      "case_id": "cost_quality_asset_bad_entry_watch_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "sizing_discipline",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
     "druckenmiller_dem_reunification_long_1989": {
       "case_id": "druckenmiller_dem_reunification_long_1989",
       "corpus_tags": [
@@ -265,6 +332,73 @@
       "deterministic_passed": true,
       "deterministic_score": 100.0,
       "failure_type": "process_regression",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": null
+    },
+    "intc_cheap_value_weak_catalyst_research_2026": {
+      "case_id": "intc_cheap_value_weak_catalyst_research_2026",
+      "corpus_tags": [
+        "structured_dq"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "schema_valid",
+          "passed": true
+        },
+        {
+          "name": "gate_not_downgraded_or_blocked",
+          "passed": true
+        },
+        {
+          "name": "recommended_action",
+          "passed": true
+        },
+        {
+          "name": "actionability_status",
+          "passed": true
+        },
+        {
+          "name": "missing_inputs_alignment",
+          "passed": true
+        },
+        {
+          "name": "conviction_level",
+          "passed": true
+        },
+        {
+          "name": "confidence_calibration",
+          "passed": true
+        },
+        {
+          "name": "catalyst_complete",
+          "passed": true
+        },
+        {
+          "name": "invalidation_complete",
+          "passed": true
+        },
+        {
+          "name": "evidence_against_present",
+          "passed": true
+        },
+        {
+          "name": "sizing_context_complete",
+          "passed": true
+        },
+        {
+          "name": "trade_after_trade_complete",
+          "passed": true
+        },
+        {
+          "name": "actionability_action_consistency",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "missing_catalyst",
       "judge_passed": null,
       "judge_total": null,
       "status": "approved",

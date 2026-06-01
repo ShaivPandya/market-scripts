@@ -1,0 +1,19 @@
+{
+  "ticker": "COST",
+  "company_name": "Costco Wholesale",
+  "as_of_date": "2024-12-13",
+  "position_status": "new_position_candidate",
+  "position_direction": "none",
+  "existing_position_before_initiation": false,
+  "portfolio_role": "No position opened; evaluated as a potential new long and deferred to watch.",
+  "intended_role_notes": "Asset quality was strong, but trade entry and asymmetry did not clear the initiation bar.",
+  "conviction_at_evaluation": 3,
+  "raw_target_weight_at_evaluation": 0.0,
+  "conviction_mapping_source": "Conviction 3 reflects confidence in watch/research, not immediate initiation.",
+  "target_size": "0%; wait for improved entry asymmetry.",
+  "initial_size": 0.0,
+  "current_consumer_staples_exposure": null,
+  "liquidity_notes": "",
+  "risk_budget_notes": "",
+  "human_notes": "Real as-of COST context captured for TL-63 regression coverage."
+}

@@ -1,0 +1,180 @@
+{
+  "id": "cost_quality_asset_bad_entry_watch_2026",
+  "status": "approved",
+  "decision_type": "new_idea",
+  "as_of_date": "2024-12-13",
+  "user_question": "Using the Costco setup as of 2024-12-13, should this have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/cost_price_action_2024-12-13.json",
+      "sha256": "87dadb58ee478e46dc9b29aa2d5e3403483c7e66c818f04619f769795d6991c4",
+      "description": "Historical COST price-action snapshot through the 2024-12-13 close.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/cost_portfolio_context_2024-12-13.json",
+      "sha256": "3863648088f40567eb76d15526f866b2307fba3a1acbaa8ae31471050e15bdc0",
+      "description": "Portfolio context: COST was a new-position candidate deferred to watch.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/cost_initiation_notes_2024-12-13.json",
+      "sha256": "24be43789b723718589d99ac67081c784b5570795c542ffdedf32c26c8cc38e2",
+      "description": "Human-provided evaluation rationale: quality compounder with premium valuation and poor new-entry asymmetry.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This case uses a real historical as-of snapshot from 2024-12-13 for TL-63.",
+    "COST was evaluated on 2024-12-13 as a possible new long, but the correct decision was watch.",
+    "High asset quality does not imply actionable trade quality at current entry."
+  ],
+  "gold_output": {
+    "simple_thesis": "Watch Costco rather than initiate because the membership retail franchise is high quality, but current valuation and extended price action leave poor payoff asymmetry for a new long.",
+    "opportunity_type": "quality_compounder",
+    "embedded_macro_exposure": "Long consumer staples quality, membership retail pricing power, and U.S. consumer resilience.",
+    "mispricing": {
+      "consensus_view": "The market treats Costco as a premium quality compounder and rewards durable comps and membership growth with a rich multiple.",
+      "variant_view": "The business quality is real, but there is no fresh mispricing at current levels; the stock is already priced for excellence.",
+      "pricing_evidence": "Selected inputs cite a premium valuation setup, a close well above moving averages, and a 12-month ROC of 54.1%.",
+      "why_consensus_is_wrong": "Consensus is not necessarily wrong about business quality; the error would be treating admiration for the asset as a good trade at current entry."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "No new dislocation or variant catalyst justifies initiating at current levels.",
+      "expected_timeframe": "Review on a valuation reset, pullback, or clearer asymmetry.",
+      "why_now": "There is no strong reason-now to buy a new full-size position because the stock is extended after a strong run and payoff asymmetry is limited.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/cost_price_action_2024-12-13.json: extended above moving averages with strong 12-month ROC",
+        "docs/decision_quality_evals/inputs/cost_initiation_notes_2024-12-13.json: premium valuation and limited upside asymmetry",
+        "docs/decision_quality_evals/inputs/cost_portfolio_context_2024-12-13.json: new-position candidate deferred to watch"
+      ]
+    },
+    "invalidation": {
+      "observable": "Costco pulls back enough to restore payoff asymmetry or proves a new variant catalyst.",
+      "metric_or_event": "Forward valuation multiple, comp/membership trends, daily close versus moving-average cluster, and relative performance versus staples peers.",
+      "threshold": "Move from watch to research or buy only after a material valuation reset, pullback toward the 100D/150D cluster, or a new variant catalyst with price confirmation.",
+      "timeframe": "1-3 months after 2024-12-13 or on the next meaningful dislocation.",
+      "implication": "The watch call may have been too cautious if Costco compounds through a rich multiple without ever offering a better entry."
+    },
+    "evidence_for": [
+      {
+        "claim": "Asset quality is genuinely high.",
+        "support": "The human notes cite durable comp growth, loyal members, and pricing power in a best-in-class membership model.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/cost_initiation_notes_2024-12-13.json"
+        ]
+      },
+      {
+        "claim": "Price action confirms business quality.",
+        "support": "COST closed above all selected moving averages with positive 1-month, 3-month, and 12-month ROC.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/cost_price_action_2024-12-13.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Trade quality is weak at current entry.",
+        "support": "The stock trades at a premium multiple after a strong 12-month run with limited upside asymmetry for a new position.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/cost_initiation_notes_2024-12-13.json",
+          "docs/decision_quality_evals/inputs/cost_price_action_2024-12-13.json"
+        ]
+      },
+      {
+        "claim": "There is no fresh variant view beyond consensus admiration.",
+        "support": "The human notes say there is no differentiated mispricing beyond the market already paying up for quality.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/cost_initiation_notes_2024-12-13.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "COST closed at $989.35 on 2024-12-13, above the 100D, 150D, 200D, and 40W moving averages, with 1-month ROC of 5.96%, 3-month ROC of 8.97%, and 12-month ROC of 54.1%.",
+      "interpretation": "Price action confirms business quality but not a favorable new entry. The stock is extended and offers limited payoff asymmetry.",
+      "confirms_thesis": false,
+      "data_needed": [
+        "Forward valuation versus history and peers",
+        "Relative performance versus XLP on a pullback"
+      ]
+    },
+    "actionability": {
+      "status": "watch_only",
+      "reason": "Good business, not a good trade at current levels because valuation and entry timing fail the trade-quality bar.",
+      "missing_inputs": [
+        "Exact forward valuation multiple",
+        "Detailed comp and membership renewal data",
+        "Portfolio exposure to consumer staples quality names"
+      ]
+    },
+    "recommended_action": "watch",
+    "expression": {
+      "primary": "Do not initiate a new full-size COST common equity position at current levels",
+      "instrument_type": "single_name_equity",
+      "directness": "direct",
+      "alternatives": [],
+      "follow_on": "Revisit on a valuation reset, pullback, or clearer payoff asymmetry."
+    },
+    "conviction": {
+      "level": 3,
+      "max_level": 5,
+      "raw_target_weight": 0.0,
+      "upgrade_condition": "Upgrade from watch to research or buy only after a material dislocation or new variant evidence with price confirmation."
+    },
+    "confidence": 0.65,
+    "confidence_reason": "Moderate confidence because asset quality is clear but trade quality is weak at current entry; confidence is capped by limited dislocation and no fresh variant view.",
+    "sizing_context": {
+      "starting_size": "No existing position; this was a new-position candidate.",
+      "add_conditions": "Do not initiate until entry improves or a new catalyst creates asymmetry.",
+      "liquidity_constraints": "Liquidity is not the binding constraint in this case.",
+      "portfolio_constraints": "Avoid forcing a premium quality name into the book without trade-quality support.",
+      "sizing_delta": {
+        "direction": "not_applicable",
+        "amount": null,
+        "unit": "not_applicable",
+        "basis": "not_applicable",
+        "condition": "No position should be initiated under the selected inputs."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "If the watch call is right, preserve optionality and wait for a better entry rather than paying up for consensus quality.",
+      "if_wrong": "If Costco compounds through a rich multiple without pullback, reassess whether the opportunity cost of waiting exceeds the entry discipline.",
+      "next_review_trigger": "Review on a valuation reset, pullback toward the 100D/150D cluster, or a new variant catalyst with price confirmation."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "TL-63 regression case: high-quality asset with bad entry should resolve to watch, not buy.",
+  "corpus_tags": [
+    "structured_dq"
+  ],
+  "failure_type": "sizing_discipline",
+  "tool_pack": null,
+  "required_dq_dimensions": [
+    "thesis_clarity",
+    "mispricing",
+    "catalyst_reason_now",
+    "evidence_quality",
+    "disconfirming_evidence",
+    "invalidation",
+    "price_action_market_behavior",
+    "actionability_discipline",
+    "confidence_calibration",
+    "sizing_risk_context"
+  ]
+}

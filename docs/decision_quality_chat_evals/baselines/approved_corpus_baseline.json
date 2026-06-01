@@ -1,7 +1,394 @@
 {
   "baseline_version": 1,
-  "case_count": 18,
+  "case_count": 20,
   "cases": {
+    "asset_trade_cost_quality_bad_entry_2026_chat": {
+      "case_id": "asset_trade_cost_quality_bad_entry_2026_chat",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "failure_type": "sizing_discipline",
+      "judge_passed": null,
+      "judge_total": null,
+      "tool_pack": "quality_entry"
+    },
+    "asset_trade_intc_cheap_no_catalyst_2026_chat": {
+      "case_id": "asset_trade_intc_cheap_no_catalyst_2026_chat",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "failure_type": "missing_catalyst",
+      "judge_passed": null,
+      "judge_total": null,
+      "tool_pack": "catalyst"
+    },
+    "blocked_chart_mu_thesis_chat": {
+      "case_id": "blocked_chart_mu_thesis_chat",
+      "corpus_tags": [
+        "chat_behavior"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "required_point_1",
+          "passed": true
+        },
+        {
+          "name": "dimension_simple_thesis",
+          "passed": true
+        },
+        {
+          "name": "dimension_mispricing",
+          "passed": true
+        },
+        {
+          "name": "dimension_catalyst_or_reason_now",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_for",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_against",
+          "passed": true
+        },
+        {
+          "name": "dimension_price_action",
+          "passed": true
+        },
+        {
+          "name": "dimension_invalidation",
+          "passed": true
+        },
+        {
+          "name": "dimension_missing_inputs",
+          "passed": true
+        },
+        {
+          "name": "dimension_confidence_sizing",
+          "passed": true
+        },
+        {
+          "name": "dimension_trade_after_trade",
+          "passed": true
+        },
+        {
+          "name": "forbidden_could be a good buy",
+          "passed": true
+        },
+        {
+          "name": "forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "stance_watch_or_research",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "gate_action_consistency",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_meta_present",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_min_blocker_count",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_price_confirmation_status",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_critical_data_quality",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_blocking_reason_codes",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_no_actionable_language",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_missing_input_terms",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "price_confirmation",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": "thesis_review"
+    },
+    "context_pack_dislocation_mu_2026": {
+      "case_id": "context_pack_dislocation_mu_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_passed": null,
+      "judge_total": null
+    },
+    "context_pack_macro_rates_tlt_2026": {
+      "case_id": "context_pack_macro_rates_tlt_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_passed": null,
+      "judge_total": null
+    },
+    "context_pack_nvda_catalyst_hidden_2026": {
+      "case_id": "context_pack_nvda_catalyst_hidden_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_passed": null,
+      "judge_total": null
+    },
+    "context_pack_nvda_quality_entry_2026": {
+      "case_id": "context_pack_nvda_quality_entry_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_passed": null,
+      "judge_total": null
+    },
+    "context_pack_quality_entry_meta_2026": {
+      "case_id": "context_pack_quality_entry_meta_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_passed": null,
+      "judge_total": null
+    },
     "meta_ai_capex_2026_thesis_chat": {
       "case_id": "meta_ai_capex_2026_thesis_chat",
       "corpus_tags": [
@@ -121,6 +508,133 @@
       "deterministic_passed": true,
       "deterministic_score": 100.0,
       "failure_type": null,
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": "thesis_review"
+    },
+    "missing_price_confirmation_meta_thesis_chat": {
+      "case_id": "missing_price_confirmation_meta_thesis_chat",
+      "corpus_tags": [
+        "chat_behavior"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "required_point_1",
+          "passed": true
+        },
+        {
+          "name": "dimension_simple_thesis",
+          "passed": true
+        },
+        {
+          "name": "dimension_mispricing",
+          "passed": true
+        },
+        {
+          "name": "dimension_catalyst_or_reason_now",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_for",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_against",
+          "passed": true
+        },
+        {
+          "name": "dimension_price_action",
+          "passed": true
+        },
+        {
+          "name": "dimension_invalidation",
+          "passed": true
+        },
+        {
+          "name": "dimension_missing_inputs",
+          "passed": true
+        },
+        {
+          "name": "dimension_confidence_sizing",
+          "passed": true
+        },
+        {
+          "name": "dimension_trade_after_trade",
+          "passed": true
+        },
+        {
+          "name": "forbidden_could be a good buy",
+          "passed": true
+        },
+        {
+          "name": "forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "stance_watch_or_research",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "gate_action_consistency",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_meta_present",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_min_blocker_count",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_price_confirmation_status",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_blocking_reason_codes",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_no_actionable_language",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_missing_input_terms",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "price_confirmation",
       "judge_passed": null,
       "judge_total": null,
       "status": "approved",
@@ -345,6 +859,125 @@
       "judge_total": null,
       "status": "approved",
       "tool_pack": "position_monitor"
+    },
+    "permission_blocked_dossier_nvda_thesis_chat": {
+      "case_id": "permission_blocked_dossier_nvda_thesis_chat",
+      "corpus_tags": [
+        "chat_behavior"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "required_point_1",
+          "passed": true
+        },
+        {
+          "name": "dimension_simple_thesis",
+          "passed": true
+        },
+        {
+          "name": "dimension_mispricing",
+          "passed": true
+        },
+        {
+          "name": "dimension_catalyst_or_reason_now",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_for",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_against",
+          "passed": true
+        },
+        {
+          "name": "dimension_price_action",
+          "passed": true
+        },
+        {
+          "name": "dimension_invalidation",
+          "passed": true
+        },
+        {
+          "name": "dimension_missing_inputs",
+          "passed": true
+        },
+        {
+          "name": "dimension_confidence_sizing",
+          "passed": true
+        },
+        {
+          "name": "dimension_trade_after_trade",
+          "passed": true
+        },
+        {
+          "name": "forbidden_could be a good buy",
+          "passed": true
+        },
+        {
+          "name": "forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "stance_watch_or_research",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "gate_action_consistency",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_meta_present",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_min_blocker_count",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_source_health_status",
+          "passed": true
+        },
+        {
+          "name": "tool_quality_missing_input_terms",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "source_freshness",
+      "judge_passed": null,
+      "judge_total": null,
+      "status": "approved",
+      "tool_pack": "thesis_review"
     },
     "routing_catalyst_status_nvda_2026": {
       "case_id": "routing_catalyst_status_nvda_2026",
@@ -650,521 +1283,11 @@
       "status": "approved",
       "tool_pack": "opportunity_scan"
     },
-    "uber_av_platform_2026_thesis_chat": {
-      "case_id": "uber_av_platform_2026_thesis_chat",
-      "corpus_tags": [
-        "chat_behavior",
-        "opportunity_identification"
-      ],
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "required_point_1",
-          "passed": true
-        },
-        {
-          "name": "required_point_2",
-          "passed": true
-        },
-        {
-          "name": "required_point_3",
-          "passed": true
-        },
-        {
-          "name": "required_point_4",
-          "passed": true
-        },
-        {
-          "name": "required_point_5",
-          "passed": true
-        },
-        {
-          "name": "required_point_6",
-          "passed": true
-        },
-        {
-          "name": "dimension_simple_thesis",
-          "passed": true
-        },
-        {
-          "name": "dimension_mispricing",
-          "passed": true
-        },
-        {
-          "name": "dimension_catalyst_or_reason_now",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_for",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_against",
-          "passed": true
-        },
-        {
-          "name": "dimension_price_action",
-          "passed": true
-        },
-        {
-          "name": "dimension_invalidation",
-          "passed": true
-        },
-        {
-          "name": "dimension_missing_inputs",
-          "passed": true
-        },
-        {
-          "name": "dimension_confidence_sizing",
-          "passed": true
-        },
-        {
-          "name": "dimension_trade_after_trade",
-          "passed": true
-        },
-        {
-          "name": "forbidden_could be a good buy",
-          "passed": true
-        },
-        {
-          "name": "forbidden_depends on your risk tolerance",
-          "passed": true
-        },
-        {
-          "name": "forbidden_good business, good industry, go",
-          "passed": true
-        },
-        {
-          "name": "stance_pressure_test_not_lazy_buy",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_strong buy",
-          "passed": true
-        },
-        {
-          "name": "gate_action_consistency",
-          "passed": true
-        }
-      ],
-      "deterministic_passed": true,
-      "deterministic_score": 100.0,
-      "failure_type": null,
-      "judge_passed": null,
-      "judge_total": null,
-      "status": "approved",
-      "tool_pack": "thesis_review"
-    },
-    "blocked_chart_mu_thesis_chat": {
-      "case_id": "blocked_chart_mu_thesis_chat",
-      "status": "approved",
-      "corpus_tags": [
-        "chat_behavior"
-      ],
-      "failure_type": "price_confirmation",
-      "tool_pack": "thesis_review",
-      "deterministic_passed": true,
-      "deterministic_score": 100.0,
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "required_point_1",
-          "passed": true
-        },
-        {
-          "name": "dimension_simple_thesis",
-          "passed": true
-        },
-        {
-          "name": "dimension_mispricing",
-          "passed": true
-        },
-        {
-          "name": "dimension_catalyst_or_reason_now",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_for",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_against",
-          "passed": true
-        },
-        {
-          "name": "dimension_price_action",
-          "passed": true
-        },
-        {
-          "name": "dimension_invalidation",
-          "passed": true
-        },
-        {
-          "name": "dimension_missing_inputs",
-          "passed": true
-        },
-        {
-          "name": "dimension_confidence_sizing",
-          "passed": true
-        },
-        {
-          "name": "dimension_trade_after_trade",
-          "passed": true
-        },
-        {
-          "name": "forbidden_could be a good buy",
-          "passed": true
-        },
-        {
-          "name": "forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "stance_watch_or_research",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "gate_action_consistency",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_meta_present",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_min_blocker_count",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_price_confirmation_status",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_critical_data_quality",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_blocking_reason_codes",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_no_actionable_language",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_missing_input_terms",
-          "passed": true
-        }
-      ],
-      "judge_total": null,
-      "judge_passed": null
-    },
-    "missing_price_confirmation_meta_thesis_chat": {
-      "case_id": "missing_price_confirmation_meta_thesis_chat",
-      "status": "approved",
-      "corpus_tags": [
-        "chat_behavior"
-      ],
-      "failure_type": "price_confirmation",
-      "tool_pack": "thesis_review",
-      "deterministic_passed": true,
-      "deterministic_score": 100.0,
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "required_point_1",
-          "passed": true
-        },
-        {
-          "name": "dimension_simple_thesis",
-          "passed": true
-        },
-        {
-          "name": "dimension_mispricing",
-          "passed": true
-        },
-        {
-          "name": "dimension_catalyst_or_reason_now",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_for",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_against",
-          "passed": true
-        },
-        {
-          "name": "dimension_price_action",
-          "passed": true
-        },
-        {
-          "name": "dimension_invalidation",
-          "passed": true
-        },
-        {
-          "name": "dimension_missing_inputs",
-          "passed": true
-        },
-        {
-          "name": "dimension_confidence_sizing",
-          "passed": true
-        },
-        {
-          "name": "dimension_trade_after_trade",
-          "passed": true
-        },
-        {
-          "name": "forbidden_could be a good buy",
-          "passed": true
-        },
-        {
-          "name": "forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "stance_watch_or_research",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "gate_action_consistency",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_meta_present",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_min_blocker_count",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_price_confirmation_status",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_blocking_reason_codes",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_no_actionable_language",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_missing_input_terms",
-          "passed": true
-        }
-      ],
-      "judge_total": null,
-      "judge_passed": null
-    },
-    "permission_blocked_dossier_nvda_thesis_chat": {
-      "case_id": "permission_blocked_dossier_nvda_thesis_chat",
-      "status": "approved",
-      "corpus_tags": [
-        "chat_behavior"
-      ],
-      "failure_type": "source_freshness",
-      "tool_pack": "thesis_review",
-      "deterministic_passed": true,
-      "deterministic_score": 100.0,
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "required_point_1",
-          "passed": true
-        },
-        {
-          "name": "dimension_simple_thesis",
-          "passed": true
-        },
-        {
-          "name": "dimension_mispricing",
-          "passed": true
-        },
-        {
-          "name": "dimension_catalyst_or_reason_now",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_for",
-          "passed": true
-        },
-        {
-          "name": "dimension_evidence_against",
-          "passed": true
-        },
-        {
-          "name": "dimension_price_action",
-          "passed": true
-        },
-        {
-          "name": "dimension_invalidation",
-          "passed": true
-        },
-        {
-          "name": "dimension_missing_inputs",
-          "passed": true
-        },
-        {
-          "name": "dimension_confidence_sizing",
-          "passed": true
-        },
-        {
-          "name": "dimension_trade_after_trade",
-          "passed": true
-        },
-        {
-          "name": "forbidden_could be a good buy",
-          "passed": true
-        },
-        {
-          "name": "forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "stance_watch_or_research",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_buy now",
-          "passed": true
-        },
-        {
-          "name": "stance_forbidden_add now",
-          "passed": true
-        },
-        {
-          "name": "gate_action_consistency",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_meta_present",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_min_blocker_count",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_source_health_status",
-          "passed": true
-        },
-        {
-          "name": "tool_quality_missing_input_terms",
-          "passed": true
-        }
-      ],
-      "judge_total": null,
-      "judge_passed": null
-    },
     "stale_source_nvda_thesis_chat": {
       "case_id": "stale_source_nvda_thesis_chat",
-      "status": "approved",
       "corpus_tags": [
         "chat_behavior"
       ],
-      "failure_type": "source_freshness",
-      "tool_pack": "thesis_review",
-      "deterministic_passed": true,
-      "deterministic_score": 100.0,
       "deterministic_checks": [
         {
           "name": "http_ok",
@@ -1295,11 +1418,16 @@
           "passed": true
         }
       ],
+      "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": "source_freshness",
+      "judge_passed": null,
       "judge_total": null,
-      "judge_passed": null
+      "status": "approved",
+      "tool_pack": "thesis_review"
     },
-    "context_pack_quality_entry_meta_2026": {
-      "case_id": "context_pack_quality_entry_meta_2026",
+    "uber_av_platform_2026_thesis_chat": {
+      "case_id": "uber_av_platform_2026_thesis_chat",
       "corpus_tags": [
         "chat_behavior",
         "opportunity_identification"
@@ -1322,161 +1450,109 @@
           "passed": true
         },
         {
-          "name": "context_pack_meta_present",
+          "name": "required_point_1",
           "passed": true
         },
         {
-          "name": "context_pack_id",
+          "name": "required_point_2",
+          "passed": true
+        },
+        {
+          "name": "required_point_3",
+          "passed": true
+        },
+        {
+          "name": "required_point_4",
+          "passed": true
+        },
+        {
+          "name": "required_point_5",
+          "passed": true
+        },
+        {
+          "name": "required_point_6",
+          "passed": true
+        },
+        {
+          "name": "dimension_simple_thesis",
+          "passed": true
+        },
+        {
+          "name": "dimension_mispricing",
+          "passed": true
+        },
+        {
+          "name": "dimension_catalyst_or_reason_now",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_for",
+          "passed": true
+        },
+        {
+          "name": "dimension_evidence_against",
+          "passed": true
+        },
+        {
+          "name": "dimension_price_action",
+          "passed": true
+        },
+        {
+          "name": "dimension_invalidation",
+          "passed": true
+        },
+        {
+          "name": "dimension_missing_inputs",
+          "passed": true
+        },
+        {
+          "name": "dimension_confidence_sizing",
+          "passed": true
+        },
+        {
+          "name": "dimension_trade_after_trade",
+          "passed": true
+        },
+        {
+          "name": "forbidden_could be a good buy",
+          "passed": true
+        },
+        {
+          "name": "forbidden_depends on your risk tolerance",
+          "passed": true
+        },
+        {
+          "name": "forbidden_good business, good industry, go",
+          "passed": true
+        },
+        {
+          "name": "stance_pressure_test_not_lazy_buy",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_buy now",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_add now",
+          "passed": true
+        },
+        {
+          "name": "stance_forbidden_strong buy",
+          "passed": true
+        },
+        {
+          "name": "gate_action_consistency",
           "passed": true
         }
       ],
       "deterministic_passed": true,
+      "deterministic_score": 100.0,
+      "failure_type": null,
+      "judge_passed": null,
       "judge_total": null,
-      "judge_passed": null
-    },
-    "context_pack_dislocation_mu_2026": {
-      "case_id": "context_pack_dislocation_mu_2026",
-      "corpus_tags": [
-        "chat_behavior",
-        "opportunity_identification"
-      ],
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "context_pack_meta_present",
-          "passed": true
-        },
-        {
-          "name": "context_pack_id",
-          "passed": true
-        }
-      ],
-      "deterministic_passed": true,
-      "judge_total": null,
-      "judge_passed": null
-    },
-    "context_pack_macro_rates_tlt_2026": {
-      "case_id": "context_pack_macro_rates_tlt_2026",
-      "corpus_tags": [
-        "chat_behavior",
-        "opportunity_identification"
-      ],
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "context_pack_meta_present",
-          "passed": true
-        },
-        {
-          "name": "context_pack_id",
-          "passed": true
-        }
-      ],
-      "deterministic_passed": true,
-      "judge_total": null,
-      "judge_passed": null
-    },
-    "context_pack_nvda_quality_entry_2026": {
-      "case_id": "context_pack_nvda_quality_entry_2026",
-      "corpus_tags": [
-        "chat_behavior",
-        "opportunity_identification"
-      ],
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "context_pack_meta_present",
-          "passed": true
-        },
-        {
-          "name": "context_pack_id",
-          "passed": true
-        }
-      ],
-      "deterministic_passed": true,
-      "judge_total": null,
-      "judge_passed": null
-    },
-    "context_pack_nvda_catalyst_hidden_2026": {
-      "case_id": "context_pack_nvda_catalyst_hidden_2026",
-      "corpus_tags": [
-        "chat_behavior",
-        "opportunity_identification"
-      ],
-      "deterministic_checks": [
-        {
-          "name": "http_ok",
-          "passed": true
-        },
-        {
-          "name": "nonempty_answer",
-          "passed": true
-        },
-        {
-          "name": "no_raw_json",
-          "passed": true
-        },
-        {
-          "name": "expected_tool_coverage",
-          "passed": true
-        },
-        {
-          "name": "context_pack_meta_present",
-          "passed": true
-        },
-        {
-          "name": "context_pack_id",
-          "passed": true
-        }
-      ],
-      "deterministic_passed": true,
-      "judge_total": null,
-      "judge_passed": null
+      "status": "approved",
+      "tool_pack": "thesis_review"
     }
   },
   "corpus_tags_filter": [],
