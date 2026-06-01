@@ -72,6 +72,15 @@
     "forbid_actionable_language_when_blocked": false,
     "required_missing_input_terms": []
   },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": false,
+    "expected_context_pack": null,
+    "expected_opportunity_type": null,
+    "required_tool_names": [],
+    "expect_complete": null,
+    "required_missing_input_terms": [],
+    "forbid_actionable_when_incomplete": false
+  },
   "judge_min_score": 16,
   "corpus_tags": ["chat_behavior", "opportunity_identification"],
   "failure_type": null,

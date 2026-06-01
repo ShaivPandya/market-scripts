@@ -32,3 +32,8 @@ Routing rules:
 - Use `graduate_to_decision_quality` only when there is enough thesis context, trigger clarity, and evidence to justify a full pressure-test pass.
 
 If evidence is weak, keep the candidate non-actionable and list the gaps in `missing_inputs`.
+
+When `context_pack` is present in the live chat context, treat it as binding:
+- Use the pack's required inputs as the minimum viable evidence set for that opportunity type.
+- If `context_pack.is_complete` is false or `context_pack.missing_inputs` is non-empty, do not graduate to full decision quality.
+- Prefer the pack-specific missing inputs over generic thesis checklist language.

@@ -1,0 +1,98 @@
+{
+  "id": "context_pack_macro_rates_tlt_2026",
+  "status": "approved",
+  "as_of_date": "2026-06-01",
+  "user_message": "Should I add TLT as a rates hedge given the yield curve?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/tlt",
+    "ticker": "TLT"
+  },
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 2
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "TLT",
+      "summary": "TLT duration hedge stub."
+    },
+    "get_thesis": {
+      "ticker": "TLT",
+      "content": "Rates hedge thesis."
+    },
+    "get_position_valuation": {
+      "ticker": "TLT",
+      "valuation": "stub"
+    },
+    "run_chart": {
+      "ticker": "TLT",
+      "technical_read": "TLT stabilizing after prior selloff."
+    },
+    "get_price_volume_signals": {
+      "signals": []
+    },
+    "get_yield_curve": {
+      "curve": "inverted"
+    },
+    "get_bond_dashboard": {
+      "summary": "Rates dashboard stub."
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": [
+      "get_thesis"
+    ]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "hedge",
+    "required_tool_names": [
+      "get_portfolio",
+      "run_chart",
+      "get_price_volume_signals"
+    ],
+    "expect_complete": false
+  },
+  "expected_tool_names": [
+    "get_portfolio",
+    "run_chart",
+    "get_price_volume_signals"
+  ],
+  "required_points": [
+    {
+      "label": "rates hedge framing",
+      "any_terms": [
+        "yield",
+        "curve",
+        "rates",
+        "hedge",
+        "TLT",
+        "research",
+        "watch"
+      ]
+    }
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": null,
+  "tool_pack": "hedge",
+  "required_dq_dimensions": [
+    "missing_inputs",
+    "confidence_sizing"
+  ]
+}

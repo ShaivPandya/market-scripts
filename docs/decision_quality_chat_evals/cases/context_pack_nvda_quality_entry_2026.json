@@ -1,0 +1,91 @@
+{
+  "id": "context_pack_nvda_quality_entry_2026",
+  "status": "approved",
+  "as_of_date": "2026-06-01",
+  "user_message": "what do you think about nvidia as a long?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA"
+  },
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 0
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "NVDA",
+      "summary": "NVDA dossier stub."
+    },
+    "get_thesis": {
+      "ticker": "NVDA",
+      "content": "NVDA AI platform long thesis."
+    },
+    "get_thesis_evaluations": {
+      "ticker": "NVDA",
+      "evaluations": []
+    },
+    "get_position_valuation": {
+      "ticker": "NVDA",
+      "valuation": "stub"
+    },
+    "run_chart": {
+      "ticker": "NVDA",
+      "technical_read": "stub chart read"
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": [
+      "get_thesis",
+      "run_chart"
+    ]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "quality_entry",
+    "required_tool_names": [
+      "get_thesis",
+      "get_position_valuation",
+      "run_chart"
+    ]
+  },
+  "expected_tool_names": [
+    "get_thesis",
+    "run_chart",
+    "get_position_valuation"
+  ],
+  "required_points": [
+    {
+      "label": "nonempty",
+      "any_terms": [
+        "nvidia",
+        "NVDA",
+        "thesis",
+        "watch",
+        "research"
+      ]
+    }
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": null,
+  "tool_pack": "quality_entry",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "price_action"
+  ]
+}

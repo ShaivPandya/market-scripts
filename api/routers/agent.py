@@ -53,6 +53,11 @@ from api.routers.auth import require_actor
 from api.tool_data_quality import aggregate_tool_data_quality
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from decision_quality.candidate_gates import apply_opportunity_candidate_gates
+from decision_quality.context_packs import (
+    build_context_pack_metadata,
+    build_context_pack_tool_calls,
+    resolve_context_pack,
+)
 from decision_quality.gates import apply_decision_quality_gates
 from decision_quality.intent_router import (
     RouteDecision,
@@ -1080,41 +1085,24 @@ def _should_run_opportunity_candidate_preflight(
 def _decision_quality_chat_tool_calls(
     user_text: str,
     screen_context: ScreenContextModel | None = None,
+    *,
+    route_decision: RouteDecision | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    ticker = _extract_candidate_ticker(user_text, screen_context)
-    calls: list[dict[str, Any]] = []
-
-    def add(name: str, args: dict[str, Any]) -> None:
-        if name not in _tool_names():
-            return
-        calls.append(
-            {
-                "name": name,
-                "args": args,
-                "call_ids": [f"decision-quality-chat:{name}:{len(calls)}"],
-            }
-        )
-
-    add("get_portfolio", {})
-    if ticker:
-        add("get_dossier", {"ticker": ticker})
-        add("get_thesis", {"ticker": ticker})
-        add("get_thesis_evaluations", {"ticker": ticker, "limit": 5})
-        add("get_position_valuation", {"ticker": ticker})
-        add("run_chart", {"ticker": ticker, "lookback": "1y"})
-        add(
-            "search_knowledge_base",
-            {"query": f"{ticker} thesis catalysts risks invalidation", "tickers": ticker, "top_k": 5},
-        )
-    add("get_price_volume_signals", {})
-    if _wants_fresh_data(user_text) or re.search(
-        r"\b(catalyst|regulatory|approval|litigation|antitrust|launched|launch|latest|news|current)\b",
-        user_text or "",
-        flags=re.IGNORECASE,
-    ):
-        query = f"{ticker or ''} {user_text}".strip()
-        add("search_web", {"query": query[:300]})
-    return calls
+    screen_payload = screen_context.model_dump(mode="json") if screen_context else None
+    pack = resolve_context_pack(
+        user_text=user_text,
+        intent_class=route_decision.intent_class if route_decision else None,
+        tool_pack=route_decision.tool_pack if route_decision else None,
+        screen_context=screen_payload,
+        opportunity_candidate_metadata=opportunity_candidate_metadata,
+    )
+    return build_context_pack_tool_calls(
+        pack=pack,
+        user_text=user_text,
+        screen_context=screen_payload,
+        allowed_tool_names=_tool_names(),
+    )
 
 
 def _truncate_for_prompt(value: str, *, limit: int) -> str:
@@ -1143,30 +1131,44 @@ def _build_decision_quality_chat_context(
     screen_context: ScreenContextModel | None,
     raw_conversation: list[dict[str, object]],
     tool_results: list[dict[str, Any]],
+    route_decision: RouteDecision | None = None,
+    opportunity_candidate_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     history = raw_conversation[-8:]
     tool_data_quality = aggregate_tool_data_quality(tool_results)
+    screen_payload = screen_context.model_dump(mode="json") if screen_context else None
+    data_quality = {
+        key: tool_data_quality.get(key)
+        for key in (
+            "critical_data_quality",
+            "source_quality",
+            "quality",
+            "overall_status",
+            "tool_errors",
+            "blocker_count",
+            "warning_count",
+            "blocking_reason_codes",
+            "price_confirmation_status",
+            "source_health_status",
+        )
+    }
+    context_pack = build_context_pack_metadata(
+        user_text=user_text,
+        intent_class=route_decision.intent_class if route_decision else None,
+        tool_pack=route_decision.tool_pack if route_decision else None,
+        screen_context=screen_payload,
+        opportunity_candidate_metadata=opportunity_candidate_metadata,
+        tool_results=tool_results,
+        data_quality=data_quality,
+    )
     return {
         "user_message": user_text,
-        "screen_context": screen_context.model_dump(mode="json") if screen_context else None,
+        "screen_context": screen_payload,
         "recent_conversation": history,
         "tool_results": tool_results,
         "tool_data_quality": tool_data_quality,
-        "data_quality": {
-            key: tool_data_quality.get(key)
-            for key in (
-                "critical_data_quality",
-                "source_quality",
-                "quality",
-                "overall_status",
-                "tool_errors",
-                "blocker_count",
-                "warning_count",
-                "blocking_reason_codes",
-                "price_confirmation_status",
-                "source_health_status",
-            )
-        },
+        "data_quality": data_quality,
+        "context_pack": context_pack,
     }
 
 
@@ -1289,8 +1291,9 @@ def _build_opportunity_candidate_structured_prompt(context_bundle: dict[str, Any
         "Return exactly one OpportunityCandidate JSON object, not a wrapper and not markdown. "
         "This is a pre-decision triage pass only: do not recommend buy, add, short, sell, trim, reduce, "
         "exit, hedge, or rebalance. Use graduate_to_decision_quality only when a full pressure-test is warranted. "
-        "If current price action, catalyst clarity, or source data is missing, surface that in missing_inputs "
-        "instead of inventing it.\n\n"
+        "Treat context_pack, tool_data_quality, and data_quality as binding: if the selected context pack is "
+        "incomplete or required tools are missing/stale, keep next_action at research/watch and list the gaps "
+        "in missing_inputs instead of inventing them.\n\n"
         f"Live chat context:\n{_json_for_prompt(context_bundle)}"
     )
 
@@ -1320,11 +1323,19 @@ def _run_opportunity_candidate_structured_pass(
         else parsed
     )
     opportunity_candidate, parse_errors = parse_opportunity_candidate(raw_candidate)
-    gate = apply_opportunity_candidate_gates(opportunity_candidate, parse_errors=parse_errors)
+    context_pack = context_bundle.get("context_pack") if isinstance(context_bundle.get("context_pack"), dict) else None
+    data_quality = context_bundle.get("data_quality") if isinstance(context_bundle.get("data_quality"), dict) else None
+    gate = apply_opportunity_candidate_gates(
+        opportunity_candidate,
+        parse_errors=parse_errors,
+        context_pack=context_pack,
+        data_quality=data_quality,
+    )
     return {
         "opportunity_candidate": opportunity_candidate,
         "parse_errors": parse_errors,
         "gate": gate,
+        "context_pack": context_pack,
         "raw": parsed,
         "citations": [{"title": title, "url": url} for title, url in citations],
         "usage": _usage_dict(response),
@@ -1373,6 +1384,7 @@ def _opportunity_candidate_done_meta(oc_result: dict[str, Any] | None) -> dict[s
         "final_action": gate.final_action if isinstance(gate, OpportunityCandidateGate) else "research",
         "should_graduate": gate.should_graduate if isinstance(gate, OpportunityCandidateGate) else False,
         "missing_inputs_count": missing_inputs_count,
+        "context_pack": oc_result.get("context_pack") if isinstance(oc_result.get("context_pack"), dict) else None,
     }
 
 
@@ -3014,7 +3026,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         run_opportunity_preflight = not workflow_name and route_decision.run_opportunity_preflight
         run_decision_quality_chat = not workflow_name and route_decision.run_hidden_dq
         if run_opportunity_preflight or run_decision_quality_chat:
-            dq_tool_calls = _decision_quality_chat_tool_calls(req.message, req.screen_context)
+            dq_tool_calls = _decision_quality_chat_tool_calls(
+                req.message,
+                req.screen_context,
+                route_decision=route_decision,
+            )
             tool_payloads: list[dict[str, Any]] = []
             dq_tool_results: list[dict[str, Any]] = []
             oc_result: dict[str, Any] | None = None
@@ -3125,6 +3141,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     screen_context=req.screen_context,
                     raw_conversation=raw_conversation,
                     tool_results=dq_tool_results,
+                    route_decision=route_decision,
                 )
 
                 if run_opportunity_preflight:
@@ -3494,6 +3511,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     "session_id": session_id,
                     "tool_calls": tool_payloads,
                     "tools_used": [call["name"] for call in tool_payloads],
+                    "context_pack": context_bundle.get("context_pack"),
                     "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
                     "intent_router": {
                         "applied": route_decision.to_meta(),
@@ -3545,6 +3563,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             "session_id": session_id,
                             "tool_calls": tool_payloads,
                             "tools_used": [call["name"] for call in tool_payloads],
+                            "context_pack": locals().get("context_bundle", {}).get("context_pack")
+                            if isinstance(locals().get("context_bundle"), dict)
+                            else None,
                             "opportunity_candidate_preflight": _opportunity_candidate_done_meta(oc_result),
                             "decision_quality_chat": _decision_quality_chat_done_meta(dq_result),
                             "intent_router": {

@@ -1,6 +1,6 @@
 {
   "baseline_version": 1,
-  "case_count": 13,
+  "case_count": 18,
   "cases": {
     "meta_ai_capex_2026_thesis_chat": {
       "case_id": "meta_ai_capex_2026_thesis_chat",
@@ -1295,6 +1295,186 @@
           "passed": true
         }
       ],
+      "judge_total": null,
+      "judge_passed": null
+    },
+    "context_pack_quality_entry_meta_2026": {
+      "case_id": "context_pack_quality_entry_meta_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_total": null,
+      "judge_passed": null
+    },
+    "context_pack_dislocation_mu_2026": {
+      "case_id": "context_pack_dislocation_mu_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_total": null,
+      "judge_passed": null
+    },
+    "context_pack_macro_rates_tlt_2026": {
+      "case_id": "context_pack_macro_rates_tlt_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_total": null,
+      "judge_passed": null
+    },
+    "context_pack_nvda_quality_entry_2026": {
+      "case_id": "context_pack_nvda_quality_entry_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "judge_total": null,
+      "judge_passed": null
+    },
+    "context_pack_nvda_catalyst_hidden_2026": {
+      "case_id": "context_pack_nvda_catalyst_hidden_2026",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
       "judge_total": null,
       "judge_passed": null
     }

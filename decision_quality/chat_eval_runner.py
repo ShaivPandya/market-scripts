@@ -663,6 +663,111 @@ def _tool_quality_expectation_checks(
         )
 
 
+def _context_pack_expectation_checks(
+    checks: list[dict[str, Any]],
+    *,
+    case: ChatEvalCase,
+    run: AgentChatRun,
+    text: str,
+) -> None:
+    expectations = case.data.get("context_pack_expectations")
+    if not isinstance(expectations, dict):
+        return
+
+    context_pack = run.done_payload.get("context_pack") if isinstance(run.done_payload, dict) else None
+    oc_meta = run.done_payload.get("opportunity_candidate_preflight") if isinstance(run.done_payload, dict) else None
+    if expectations.get("requires_context_pack_meta"):
+        checks.append(
+            _check(
+                "context_pack_meta_present",
+                isinstance(context_pack, dict),
+                "done payload missing context_pack metadata",
+            )
+        )
+        if not isinstance(context_pack, dict):
+            return
+
+    if not isinstance(context_pack, dict):
+        context_pack = oc_meta.get("context_pack") if isinstance(oc_meta, dict) else None
+    if not isinstance(context_pack, dict):
+        checks.append(_check("context_pack_meta_present", False, "context_pack metadata missing"))
+        return
+
+    checks.append(_check("context_pack_meta_present", True, "context_pack metadata present"))
+
+    expected_pack = expectations.get("expected_context_pack")
+    if expected_pack is not None:
+        actual_pack = str(context_pack.get("pack_id") or "")
+        checks.append(
+            _check(
+                "context_pack_id",
+                actual_pack == str(expected_pack),
+                f"expected={expected_pack!r}, actual={actual_pack!r}",
+            )
+        )
+
+    expected_opportunity_type = expectations.get("expected_opportunity_type")
+    if expected_opportunity_type is not None:
+        actual_types = {str(item) for item in context_pack.get("opportunity_types") or []}
+        checks.append(
+            _check(
+                "context_pack_opportunity_type",
+                str(expected_opportunity_type) in actual_types,
+                f"expected={expected_opportunity_type!r}, actual_types={sorted(actual_types)}",
+            )
+        )
+
+    required_tools = [str(item) for item in expectations.get("required_tool_names") or []]
+    if required_tools:
+        seen_tools = [str(item) for item in run.tool_names]
+        missing = [name for name in required_tools if name not in seen_tools]
+        checks.append(
+            _check(
+                "context_pack_required_tool_names",
+                not missing,
+                f"missing={missing}; seen={seen_tools}",
+            )
+        )
+
+    if expectations.get("expect_complete") is True:
+        checks.append(
+            _check(
+                "context_pack_complete",
+                bool(context_pack.get("is_complete")),
+                f"is_complete={context_pack.get('is_complete')}",
+            )
+        )
+    if expectations.get("expect_complete") is False:
+        checks.append(
+            _check(
+                "context_pack_incomplete",
+                not bool(context_pack.get("is_complete")),
+                f"is_complete={context_pack.get('is_complete')}",
+            )
+        )
+
+    missing_input_terms = [str(item) for item in expectations.get("required_missing_input_terms") or []]
+    if missing_input_terms:
+        checks.append(
+            _check(
+                "context_pack_missing_input_terms",
+                _contains_any(text, missing_input_terms),
+                f"expected any of {missing_input_terms}",
+            )
+        )
+
+    if expectations.get("forbid_actionable_when_incomplete"):
+        incomplete = not bool(context_pack.get("is_complete"))
+        if incomplete:
+            checks.append(
+                _check(
+                    "context_pack_no_actionable_language",
+                    not re.search(r"\b(buy now|add now|strong buy|short now|sell now)\b", text, flags=re.IGNORECASE),
+                    "actionable language must be suppressed when context pack is incomplete",
+                )
+            )
+
+
 def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]:
     text = run.final_text or ""
     checks: list[dict[str, Any]] = []
@@ -740,6 +845,7 @@ def deterministic_score(case: ChatEvalCase, run: AgentChatRun) -> dict[str, Any]
     _append_workflow_expectation_checks(checks, case=case, run=run, text=text)
     _routing_expectation_checks(checks, case=case, run=run)
     _tool_quality_expectation_checks(checks, case=case, run=run, text=text)
+    _context_pack_expectation_checks(checks, case=case, run=run, text=text)
 
     passed_count = sum(1 for check in checks if check["passed"])
     score = round((passed_count / len(checks)) * 100, 2) if checks else 0.0

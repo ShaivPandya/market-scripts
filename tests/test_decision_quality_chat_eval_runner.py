@@ -282,6 +282,53 @@ def test_deterministic_score_checks_tool_quality_expectations(tmp_path):
     }
 
 
+def test_deterministic_score_checks_context_pack_expectations(tmp_path):
+    case = _case(
+        tmp_path / "case.json",
+        {
+            "expected_tool_names": ["run_chart", "search_web"],
+            "required_points": [],
+            "required_decision_quality_dimensions": [],
+            "forbidden_patterns": [],
+            "context_pack_expectations": {
+                "requires_context_pack_meta": True,
+                "expected_context_pack": "catalyst",
+                "expected_opportunity_type": "policy_inflection",
+                "required_tool_names": ["search_web", "run_chart"],
+                "expect_complete": False,
+                "required_missing_input_terms": ["catalyst"],
+                "forbid_actionable_when_incomplete": True,
+            },
+        },
+    )
+    run = AgentChatRun(
+        final_text="Bottom line: research until catalyst and price confirmation are clearer.",
+        events=[],
+        tool_names=["run_chart", "search_web", "get_dossier"],
+        done_payload={
+            "context_pack": {
+                "pack_id": "catalyst",
+                "opportunity_types": ["policy_inflection", "regime_shift"],
+                "is_complete": False,
+                "missing_inputs": ["price reaction to catalyst"],
+            }
+        },
+    )
+
+    score = deterministic_score(case, run)
+
+    assert score["passed"] is True
+    assert {check["name"] for check in score["checks"]} >= {
+        "context_pack_meta_present",
+        "context_pack_id",
+        "context_pack_opportunity_type",
+        "context_pack_required_tool_names",
+        "context_pack_incomplete",
+        "context_pack_missing_input_terms",
+        "context_pack_no_actionable_language",
+    }
+
+
 def test_run_case_with_fake_agent_and_report(tmp_path):
     case = _case(
         tmp_path / "case.json",

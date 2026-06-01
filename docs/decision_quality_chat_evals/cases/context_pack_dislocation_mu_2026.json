@@ -1,0 +1,97 @@
+{
+  "id": "context_pack_dislocation_mu_2026",
+  "status": "approved",
+  "as_of_date": "2026-06-01",
+  "user_message": "MU looks like a memory-cycle dislocation. Is this worth researching now?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/mu",
+    "ticker": "MU"
+  },
+  "mock_tools": {
+    "get_portfolio": {
+      "summary": {
+        "position_count": 0
+      },
+      "positions": []
+    },
+    "get_dossier": {
+      "ticker": "MU",
+      "summary": "MU memory cycle dossier stub."
+    },
+    "run_chart": {
+      "ticker": "MU",
+      "technical_read": "Pullback after prior memory upcycle."
+    },
+    "get_price_volume_signals": {
+      "ticker": "MU",
+      "signals": [
+        {
+          "name": "volume_spike",
+          "value": "elevated"
+        }
+      ]
+    },
+    "get_position_valuation": {
+      "ticker": "MU",
+      "valuation": "stub"
+    },
+    "get_thesis": {
+      "ticker": "MU",
+      "content": "Memory upcycle dislocation thesis."
+    },
+    "search_knowledge_base": {
+      "results": []
+    },
+    "search_agent_capabilities": {
+      "capabilities": []
+    }
+  },
+  "routing_expectations": {
+    "intent_class": "thesis_review",
+    "run_hidden_dq": true,
+    "run_opportunity_preflight": true,
+    "required_tool_names": [
+      "run_chart"
+    ]
+  },
+  "context_pack_expectations": {
+    "requires_context_pack_meta": true,
+    "expected_context_pack": "dislocation",
+    "expected_opportunity_type": "cyclical_upturn",
+    "required_tool_names": [
+      "run_chart",
+      "get_price_volume_signals"
+    ],
+    "expect_complete": true
+  },
+  "expected_tool_names": [
+    "run_chart",
+    "get_price_volume_signals",
+    "get_dossier"
+  ],
+  "required_points": [
+    {
+      "label": "dislocation framing",
+      "any_terms": [
+        "dislocation",
+        "memory",
+        "cycle",
+        "research",
+        "watch"
+      ]
+    }
+  ],
+  "judge_min_score": 12,
+  "corpus_tags": [
+    "chat_behavior",
+    "opportunity_identification"
+  ],
+  "failure_type": null,
+  "tool_pack": "dislocation",
+  "required_dq_dimensions": [
+    "mispricing",
+    "price_action",
+    "missing_inputs"
+  ]
+}
