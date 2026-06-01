@@ -54,6 +54,7 @@ class SessionListItem(BaseModel):
     title: str | None = None
     title_source: str | None = None
     title_updated_at: str | None = None
+    has_active_job: bool = False
 
 
 class UpdateSessionRequest(BaseModel):
@@ -123,20 +124,59 @@ def summarize_session(session_id: str):
     )
 
 
+def _agent_job_session_id(row: dict[str, Any]) -> str | None:
+    payload = row.get("payload_json") if isinstance(row, dict) else None
+    if isinstance(payload, dict):
+        session_id = payload.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
+def _active_agent_chat_session_ids() -> set[str]:
+    from api.job_queue import list_active_jobs
+
+    active: set[str] = set()
+    for row in list_active_jobs():
+        if str(row.get("job_type") or "") != "agent_chat_turn":
+            continue
+        sid = _agent_job_session_id(row)
+        if sid:
+            active.add(sid)
+    return active
+
+
 @router.get("/memory/sessions", response_model=list[SessionListItem])
 def list_sessions(limit: int = 20):
     """List recent sessions (without full transcripts)."""
     rows = memory_db.list_sessions(limit=min(limit, 100))
-    return [SessionListItem(**r) for r in rows]
+    active_sessions = _active_agent_chat_session_ids()
+    return [SessionListItem(**{**r, "has_active_job": r["session_id"] in active_sessions}) for r in rows]
 
 
 @router.get("/memory/sessions/{session_id}")
 def get_session(session_id: str):
-    """Load a full session including transcript."""
+    """Load a full session including transcript and any active agent job metadata."""
     session = memory_db.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    from api.job_queue import list_active_jobs
+
+    active_jobs: list[dict[str, Any]] = []
+    for row in list_active_jobs():
+        if str(row.get("job_type") or "") != "agent_chat_turn":
+            continue
+        if _agent_job_session_id(row) != session_id:
+            continue
+        payload = row.get("payload_json") if isinstance(row.get("payload_json"), dict) else {}
+        active_jobs.append(
+            {
+                "job_id": row.get("job_id"),
+                "status": row.get("status"),
+                "client_turn_id": payload.get("client_turn_id") if isinstance(payload, dict) else None,
+            }
+        )
+    return {**session, "active_jobs": active_jobs}
 
 
 @router.patch("/memory/sessions/{session_id}", response_model=SessionListItem)

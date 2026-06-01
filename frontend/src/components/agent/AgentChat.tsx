@@ -13,6 +13,7 @@ import { deleteSession, fetchSessionHistory, renameSessionTitle, useAgentChat, t
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import type { StanOpenDetail } from "@/lib/stanLauncher"
 import { AgentChatComposer } from "./AgentChatComposer"
+import { AgentChatQueuePanel } from "./AgentChatQueuePanel"
 import { AgentChatHeader } from "./AgentChatHeader"
 import { AgentContextPane } from "./AgentContextPane"
 import { AgentHistoryPanel } from "./AgentHistoryPanel"
@@ -105,11 +106,16 @@ export function AgentChat({
     error,
     sessionId,
     sessionTitle,
+    queuedMessages,
     sendMessage,
     stopStreaming,
     clearChat,
     loadSession,
     applySessionTitle,
+    removeQueuedMessage,
+    editQueuedMessage,
+    clearQueuedMessages,
+    sendQueuedMessageNow,
   } = useAgentChat()
   const queryClient = useQueryClient()
   const isDesktop = useMediaQuery("(min-width: 1024px)")
@@ -241,13 +247,16 @@ export function AgentChat({
   }, [pendingCommand])
 
   useEffect(() => {
-    if (!open || !pendingCommand?.command?.trim() || isStreaming) return
+    if (!open || !pendingCommand?.command?.trim()) return
     const command = pendingCommand.command.trim()
     if (lastConsumedCommandRef.current === command) return
     lastConsumedCommandRef.current = command
     pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(command)
     window.setTimeout(() => setActivePanel("chat"), 0)
-    sendMessage(command, screenContext, activePreferences, { durable: pendingCommand.durable ?? true })
+    sendMessage(command, screenContext, activePreferences, {
+      durable: pendingCommand.durable ?? true,
+      mode: isStreaming ? "enqueue" : undefined,
+    })
     onPendingCommandConsumed?.()
   }, [
     open,
@@ -266,7 +275,7 @@ export function AgentChat({
 
   function handleSend() {
     const trimmed = input.trim()
-    if (!trimmed || isStreaming) return
+    if (!trimmed) return
     pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(trimmed)
     inputValueRef.current = ""
     inputSelectionRef.current = { start: 0, end: 0 }
@@ -275,15 +284,24 @@ export function AgentChat({
     sendMessage(trimmed, screenContext, activePreferences)
   }
 
+  function handleSteerNow() {
+    const trimmed = input.trim()
+    if (!trimmed) return
+    pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(trimmed)
+    inputValueRef.current = ""
+    inputSelectionRef.current = { start: 0, end: 0 }
+    setInput("")
+    setActivePanel("chat")
+    void sendMessage(trimmed, screenContext, activePreferences, { mode: "immediate" })
+  }
+
   function handleQuickPrompt(prompt: string) {
-    if (isStreaming) return
     pendingWorkflowInvalidationRef.current = null
     setActivePanel("chat")
-    sendMessage(prompt, screenContext, activePreferences)
+    sendMessage(prompt, screenContext, activePreferences, isStreaming ? { mode: "enqueue" } : undefined)
   }
 
   function handleWorkflow(workflow: AgentWorkflow) {
-    if (isStreaming) return
     const ticker = workflowTicker.trim().toUpperCase()
     if (workflow.requiresTicker && !ticker) return
     const command = workflow.requiresTicker
@@ -291,7 +309,10 @@ export function AgentChat({
       : `/workflow:${workflow.name}`
     pendingWorkflowInvalidationRef.current = { workflowName: workflow.name, ticker: ticker || null }
     setActivePanel("chat")
-    sendMessage(command, screenContext, activePreferences, { durable: true })
+    sendMessage(command, screenContext, activePreferences, {
+      durable: true,
+      mode: isStreaming ? "enqueue" : undefined,
+    })
     setWorkflowTicker("")
     setShowCompactWorkflows(false)
   }
@@ -464,13 +485,25 @@ export function AgentChat({
                     scrollContainerRef={messagesScrollRef}
                     messagesEndRef={messagesEndRef}
                   />
+                  <AgentChatQueuePanel
+                    queuedMessages={queuedMessages}
+                    onSendNow={id => { void sendQueuedMessageNow(id) }}
+                    onEdit={id => {
+                      const text = editQueuedMessage(id)
+                      if (text != null) setInput(text)
+                    }}
+                    onRemove={removeQueuedMessage}
+                    onClear={clearQueuedMessages}
+                  />
                   <AgentChatComposer
                     input={input}
                     onInputChange={handleInputChange}
                     onInputSelectionChange={handleInputSelectionChange}
                     onSend={handleSend}
+                    onSteerNow={handleSteerNow}
                     onStop={stopStreaming}
                     isStreaming={isStreaming}
+                    queuedCount={queuedMessages.length}
                     textareaRef={textareaRef}
                     compactWorkflowSlot={compactWorkflowSlot}
                     workflowsOpen={showCompactWorkflows}
