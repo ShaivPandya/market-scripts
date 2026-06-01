@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from decision_quality.intent_router import (
     INTENT_CLASSES,
@@ -27,13 +27,14 @@ def _load_artifact(model_path: Path) -> dict[str, Any]:
     with _MODEL_LOCK:
         cached = _MODEL_CACHE.get(key)
         if cached is not None:
-            return cached
+            return cast(dict[str, Any], cached)
 
     import joblib
 
-    artifact = joblib.load(resolved)
-    if not isinstance(artifact, dict) or "pipeline" not in artifact:
+    artifact_raw = joblib.load(resolved)
+    if not isinstance(artifact_raw, dict) or "pipeline" not in artifact_raw:
         raise ValueError(f"Invalid supervised router artifact: {resolved}")
+    artifact = cast(dict[str, Any], artifact_raw)
 
     with _MODEL_LOCK:
         _MODEL_CACHE[key] = artifact
@@ -42,7 +43,8 @@ def _load_artifact(model_path: Path) -> dict[str, Any]:
 
 def featurize_training_row(row: dict[str, Any]) -> str:
     """Build a compact text feature for sklearn training/inference."""
-    screen = row.get("screen_context") if isinstance(row.get("screen_context"), dict) else {}
+    screen_raw = row.get("screen_context")
+    screen = cast(dict[str, Any], screen_raw if isinstance(screen_raw, dict) else {})
     parts = [
         str(row.get("user_text") or ""),
         f"page={screen.get('page_name') or ''}",
@@ -65,13 +67,16 @@ def featurize_training_row(row: dict[str, Any]) -> str:
 def extract_label_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve the gold label for one training row."""
     if row.get("label_intent_class"):
-        return {
-            "intent_class": row.get("label_intent_class"),
-            "run_hidden_dq": row.get("label_run_hidden_dq"),
-            "run_opportunity_preflight": row.get("label_run_opportunity_preflight"),
-            "workflow_name": row.get("label_workflow_name"),
-            "tool_names": row.get("label_tool_names") or [],
-        }
+        return cast(
+            dict[str, Any],
+            {
+                "intent_class": row.get("label_intent_class"),
+                "run_hidden_dq": row.get("label_run_hidden_dq"),
+                "run_opportunity_preflight": row.get("label_run_opportunity_preflight"),
+                "workflow_name": row.get("label_workflow_name"),
+                "tool_names": row.get("label_tool_names") or [],
+            },
+        )
 
     routing_expectations = row.get("routing_expectations")
     if isinstance(routing_expectations, dict):
@@ -123,9 +128,10 @@ def predict_route_decision(
         "opportunity_candidate_metadata": context.opportunity_candidate_metadata,
     }
     features = featurize_training_row(row)
-    prediction = pipeline.predict([features])[0]
-    if not isinstance(prediction, dict):
+    prediction_raw = pipeline.predict([features])[0]
+    if not isinstance(prediction_raw, dict):
         return None
+    prediction = cast(dict[str, Any], prediction_raw)
 
     intent_class = str(prediction.get("intent_class") or "general_research")
     if intent_class not in INTENT_CLASSES:
