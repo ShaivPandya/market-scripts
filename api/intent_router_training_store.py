@@ -163,7 +163,7 @@ def update_opportunity_candidate_metadata(
                     """,
                     (metadata_json, metadata_json, session_id, client_turn_id),
                 )
-                return cur.rowcount > 0
+                return bool(cur.rowcount > 0)
         with _sqlite_connect() as conn:
             cur = conn.execute(
                 """
@@ -180,7 +180,7 @@ def update_opportunity_candidate_metadata(
                 ),
             )
             conn.commit()
-            return cur.rowcount > 0
+            return bool(cur.rowcount > 0)
     except Exception:
         logger.exception(
             "intent_router_training_row_oc_update_failed session_id=%s client_turn_id=%s",
@@ -237,7 +237,7 @@ def apply_human_label(
                     ),
                 )
                 conn.commit()
-                return cur.rowcount > 0
+                return bool(cur.rowcount > 0)
         with _sqlite_connect() as conn:
             cur = conn.execute(
                 """
@@ -265,7 +265,7 @@ def apply_human_label(
                 ),
             )
             conn.commit()
-            return cur.rowcount > 0
+            return bool(cur.rowcount > 0)
     except Exception:
         logger.exception("intent_router_training_row_label_failed row_id=%s", row_id)
         return False

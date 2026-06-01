@@ -1328,11 +1328,14 @@ def _run_opportunity_candidate_structured_pass(
     context_pack = context_bundle.get("context_pack") if isinstance(context_bundle.get("context_pack"), dict) else None
     data_quality = context_bundle.get("data_quality") if isinstance(context_bundle.get("data_quality"), dict) else None
     user_text = str(context_bundle.get("user_message") or "")
-    opportunity_candidate, supervised_meta = apply_supervised_triage_overlay(
-        opportunity_candidate=opportunity_candidate,
-        context_bundle=context_bundle,
-        user_text=user_text,
-    )
+    if opportunity_candidate is not None:
+        opportunity_candidate, supervised_meta = apply_supervised_triage_overlay(
+            opportunity_candidate=opportunity_candidate,
+            context_bundle=context_bundle,
+            user_text=user_text,
+        )
+    else:
+        supervised_meta = {"skipped": True, "skip_reason": "missing_opportunity_candidate"}
     gate = apply_opportunity_candidate_gates(
         opportunity_candidate,
         parse_errors=parse_errors,

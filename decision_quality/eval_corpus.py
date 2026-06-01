@@ -428,7 +428,7 @@ def _accumulate_calibration_bucket(bucket: dict[str, Any], key: str, *, passed: 
 
 
 def summarize_calibration(results: list[dict[str, Any]]) -> dict[str, Any]:
-    grouped = {
+    grouped: dict[str, dict[str, Any]] = {
         "by_opportunity_type": {},
         "by_confidence_bin": {},
         "by_actionability_stance": {},

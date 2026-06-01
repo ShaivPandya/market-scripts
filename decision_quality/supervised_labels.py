@@ -229,9 +229,10 @@ def build_row_provenance(
 
 def labels_from_structured_dq_gold(gold: dict[str, Any]) -> dict[str, Any]:
     recommended = gold.get("recommended_action")
-    actionability = gold.get("actionability") if isinstance(gold.get("actionability"), dict) else {}
+    actionability_raw = gold.get("actionability")
+    actionability: dict[str, Any] = actionability_raw if isinstance(actionability_raw, dict) else {}
     stance_source = actionability.get("status") or recommended
-    missing_inputs = []
+    missing_inputs: list[str] = []
     if isinstance(actionability, dict):
         missing_inputs.extend(str(item) for item in actionability.get("missing_inputs") or [])
     price_action = gold.get("price_action_read")

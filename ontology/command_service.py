@@ -1908,7 +1908,7 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(replacement))
             return refs
         if action_id in {"create_monitor_definition", "update_monitor_definition", "disable_monitor_definition"}:
-            existing: dict[str, Any] = {}
+            monitor_existing: dict[str, Any] = {}
             if action_id == "create_monitor_definition":
                 monitor_uid = monitor_definition_id(
                     payload.get("monitor_id") or payload.get("name") or _stable_hash(payload)[:12]
@@ -1917,18 +1917,18 @@ class OntologyCommandService:
                 version = 1
             else:
                 monitor_uid = _normalize_monitor_definition_uid(payload.get("monitor_id"))
-                existing = _monitor_definition_context(self.objects, monitor_uid)
-                if not existing:
+                monitor_existing = _monitor_definition_context(self.objects, monitor_uid)
+                if not monitor_existing:
                     raise OntologyCommandNotFound("MonitorDefinition", str(payload.get("monitor_id")))
                 status = (
                     "disabled"
                     if action_id == "disable_monitor_definition"
-                    else str(payload.get("status") or existing.get("status") or "active")
+                    else str(payload.get("status") or monitor_existing.get("status") or "active")
                 )
-                version = int(existing.get("definition_version") or 1) + (
+                version = int(monitor_existing.get("definition_version") or 1) + (
                     1 if action_id == "update_monitor_definition" else 0
                 )
-            merged_definition = _merge_definition_payload(existing, payload, kind="monitor")
+            merged_definition = _merge_definition_payload(monitor_existing, payload, kind="monitor")
             definition_hash = _definition_hash(merged_definition)
             row = self.objects.write_object(
                 "MonitorDefinition",
@@ -1937,10 +1937,10 @@ class OntologyCommandService:
                     **merged_definition,
                     "monitor_id": monitor_uid,
                     "status": status,
-                    "owner_actor_id": existing.get("owner_actor_id") or context.actor.actor_id,
+                    "owner_actor_id": monitor_existing.get("owner_actor_id") or context.actor.actor_id,
                     "definition_version": version,
                     "definition_hash": definition_hash,
-                    "created_at": existing.get("created_at") or now,
+                    "created_at": monitor_existing.get("created_at") or now,
                     "updated_at": now,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },

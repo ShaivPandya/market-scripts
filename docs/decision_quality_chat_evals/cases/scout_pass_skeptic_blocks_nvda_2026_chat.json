@@ -43,5 +43,11 @@
   },
   "judge_min_score": 12,
   "corpus_tags": ["chat_behavior", "opportunity_identification"],
-  "failure_type": "overconfident_actionability"
+  "failure_type": "overconfident_actionability",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "price_action",
+    "missing_inputs",
+    "confidence_sizing"
+  ]
 }

@@ -53,5 +53,12 @@
   },
   "judge_min_score": 12,
   "corpus_tags": ["chat_behavior", "opportunity_identification"],
-  "failure_type": "sizing_discipline"
+  "failure_type": "sizing_discipline",
+  "tool_pack": "quality_entry",
+  "required_dq_dimensions": [
+    "simple_thesis",
+    "price_action",
+    "missing_inputs",
+    "confidence_sizing"
+  ]
 }

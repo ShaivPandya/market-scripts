@@ -1,6 +1,6 @@
 {
   "baseline_version": 1,
-  "case_count": 20,
+  "case_count": 22,
   "cases": {
     "asset_trade_cost_quality_bad_entry_2026_chat": {
       "case_id": "asset_trade_cost_quality_bad_entry_2026_chat",
@@ -1282,6 +1282,109 @@
       "judge_total": null,
       "status": "approved",
       "tool_pack": "opportunity_scan"
+    },
+    "scout_pass_skeptic_blocks_nvda_2026_chat": {
+      "case_id": "scout_pass_skeptic_blocks_nvda_2026_chat",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_gate_present",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_scout_pass",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_final_action",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "failure_type": "overconfident_actionability",
+      "judge_passed": null,
+      "judge_total": null
+    },
+    "scout_skeptic_pass_sizer_watch_cost_2026_chat": {
+      "case_id": "scout_skeptic_pass_sizer_watch_cost_2026_chat",
+      "corpus_tags": [
+        "chat_behavior",
+        "opportunity_identification"
+      ],
+      "deterministic_checks": [
+        {
+          "name": "http_ok",
+          "passed": true
+        },
+        {
+          "name": "nonempty_answer",
+          "passed": true
+        },
+        {
+          "name": "no_raw_json",
+          "passed": true
+        },
+        {
+          "name": "expected_tool_coverage",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_gate_present",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_scout_pass",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_final_action",
+          "passed": true
+        },
+        {
+          "name": "context_pack_meta_present",
+          "passed": true
+        },
+        {
+          "name": "context_pack_id",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_skeptic_pass",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_sizer_pass",
+          "passed": true
+        },
+        {
+          "name": "scout_skeptic_sizer_max_bps",
+          "passed": true
+        }
+      ],
+      "deterministic_passed": true,
+      "failure_type": "sizing_discipline",
+      "judge_passed": null,
+      "judge_total": null,
+      "tool_pack": "quality_entry"
     },
     "stale_source_nvda_thesis_chat": {
       "case_id": "stale_source_nvda_thesis_chat",

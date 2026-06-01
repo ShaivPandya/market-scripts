@@ -259,7 +259,7 @@ def _extract_ticker(user_text: str, screen_context: dict[str, Any] | None) -> st
     matches = re.findall(r"\b([A-Z]{1,5})\b", user_text or "")
     for match in matches:
         if match not in stop and len(match) >= 2:
-            return match
+            return str(match)
     return None
 
 

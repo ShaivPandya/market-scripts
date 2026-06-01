@@ -39,7 +39,7 @@
         "source_path": "docs/opportunity_candidate_evals/cases/opportunity_candidate_scout_pass_skeptic_block_nvda_2026.json"
       }
     ],
-    "next_action": "graduate_to_decision_quality",
+    "next_action": "research",
     "summary": "Scout finds a candidate setup, but skeptic should block actionability until DQ artifacts exist."
   },
   "expected_graduation": false,

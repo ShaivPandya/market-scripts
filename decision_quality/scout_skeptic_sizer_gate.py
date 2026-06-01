@@ -402,10 +402,12 @@ def _evaluate_sizer_pass(
     sizing_delta = dq_obj.sizing_context.sizing_delta
     max_bps: int | None = None
     if sizing_delta is not None and str(sizing_delta.unit or "").strip().lower() == "bps":
-        try:
-            max_bps = int(float(sizing_delta.amount))
-        except (TypeError, ValueError):
-            max_bps = None
+        amount = sizing_delta.amount
+        if amount is not None:
+            try:
+                max_bps = int(float(amount))
+            except (TypeError, ValueError):
+                max_bps = None
 
     if gate.status == "pass" and final_action in ACTIONABLE_ACTIONS:
         return SizerPassArtifact(
@@ -615,13 +617,10 @@ def build_chat_scout_skeptic_sizer_gate(
 
     scout = _evaluate_scout_pass_from_candidate(candidate, parse_errors=oc_parse_errors)
 
+    dq_obj = dq_payload.get("decision_quality")
     gate_payload = {
         "opportunity_candidate": candidate.model_dump(mode="json") if candidate else None,
-        "decision_quality": (
-            dq_payload.get("decision_quality").model_dump(mode="json")
-            if isinstance(dq_payload.get("decision_quality"), DecisionQuality)
-            else dq_payload.get("decision_quality")
-        ),
+        "decision_quality": (dq_obj.model_dump(mode="json") if isinstance(dq_obj, DecisionQuality) else dq_obj),
         "context_pack": context.get("context_pack") if isinstance(context.get("context_pack"), dict) else None,
         "data_quality": context.get("data_quality") if isinstance(context.get("data_quality"), dict) else None,
     }

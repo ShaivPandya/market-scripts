@@ -64,7 +64,7 @@ def _load_artifact(model_path: Path) -> dict[str, Any]:
     key = str(resolved)
     with _MODEL_LOCK:
         cached = _MODEL_CACHE.get(key)
-        if cached is not None:
+        if isinstance(cached, dict):
             return cached
 
     import joblib
@@ -90,8 +90,10 @@ class SupervisedTriagePrediction:
 
 def featurize_context_row(row: dict[str, Any]) -> str:
     """Build compact text features from a training or runtime context row."""
-    screen = row.get("screen_context") if isinstance(row.get("screen_context"), dict) else {}
-    context_features = row.get("context_features") if isinstance(row.get("context_features"), dict) else {}
+    screen_raw = row.get("screen_context")
+    screen: dict[str, Any] = screen_raw if isinstance(screen_raw, dict) else {}
+    context_features_raw = row.get("context_features")
+    context_features: dict[str, Any] = context_features_raw if isinstance(context_features_raw, dict) else {}
     parts = [
         str(row.get("user_text") or row.get("user_message") or row.get("user_question") or ""),
         f"page={screen.get('page_name') or ''}",
@@ -112,9 +114,11 @@ def featurize_context_row(row: dict[str, Any]) -> str:
 
 
 def build_context_features(context_bundle: dict[str, Any]) -> dict[str, Any]:
-    context_pack = context_bundle.get("context_pack") if isinstance(context_bundle.get("context_pack"), dict) else {}
-    data_quality = context_bundle.get("data_quality") if isinstance(context_bundle.get("data_quality"), dict) else {}
-    missing_inputs = []
+    context_pack_raw = context_bundle.get("context_pack")
+    context_pack: dict[str, Any] = context_pack_raw if isinstance(context_pack_raw, dict) else {}
+    data_quality_raw = context_bundle.get("data_quality")
+    data_quality: dict[str, Any] = data_quality_raw if isinstance(data_quality_raw, dict) else {}
+    missing_inputs: list[str] = []
     if isinstance(context_pack, dict):
         missing_inputs.extend(str(item) for item in context_pack.get("missing_inputs") or [])
     return {
