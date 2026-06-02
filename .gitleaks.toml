@@ -11,3 +11,9 @@ id = "generic-api-key"
     regexes = [
         '''^(historical_1y|stabilized_10d|pct_above_200dma|pct_above_20dma|pct_below_50dma|tickers_below_50dma|tickers_3plus_dist|pct_broke_20low|tickers_broke_20low|Pct_Above_200DMA|JPN\.B1_GE\.GYSA\.Q)$''',
     ]
+
+    [[rules.allowlists]]
+    description = "Synthetic Gemini API key used in tests"
+    regexes = [
+        '''^AIza-test-key-12345678901234567890$''',
+    ]
