@@ -48,13 +48,21 @@ def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str,
     if not password:
         return
 
+    username = (os.getenv("AUTH_DEFAULT_USERNAME") or "admin").strip() or "admin"
     response = session.post(
         f"{api_url}/api/auth/login",
-        json={"password": password},
+        json={"password": password, "username": username},
         headers={**headers, **_schema_headers("post:/api/auth/login")},
         timeout=30,
     )
     response.raise_for_status()
+    csrf = (
+        response.json().get("csrfToken")
+        if response.headers.get("content-type", "").startswith("application/json")
+        else None
+    )
+    if csrf:
+        session.headers.update({"X-CSRF-Token": csrf})
 
 
 def _fetch_portfolio_book_size(session: requests.Session, api_url: str, headers: dict[str, str]) -> float | None:

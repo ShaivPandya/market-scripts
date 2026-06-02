@@ -51,16 +51,16 @@ The frontend supports two auth strategies:
 
 - Set `VITE_AUTH_MODE=password` (or omit it; password is the default)
 - The UI shows a login form that calls:
-  - `POST /api/auth/login` (sets an HTTP-only `access_token` cookie)
-  - `GET /api/auth/me` (session validation)
-  - `POST /api/auth/logout` (clears cookie)
-- The Axios client is created with `withCredentials: true` so cookies are sent on API calls.
+  - `POST /api/auth/login` (sets HTTP-only `__session` cookie; returns `csrfToken`)
+  - `GET /api/auth/me` (session validation; refreshes `csrfToken`)
+  - `POST /api/auth/logout` (revokes session and clears cookie)
+- The Axios client uses `withCredentials: true` and sends `X-CSRF-Token` on mutating requests.
 
 Implementation:
 - `frontend/src/contexts/AuthContext.tsx`
 - `frontend/src/components/auth/ProtectedRoute.tsx`
 
-Note: password sessions are intentionally “tab-scoped” — the UI uses `sessionStorage` as a simple “this tab is logged in” flag.
+Note: password sessions are server-side and shared across tabs; the UI calls `/api/auth/me` on load to confirm the cookie is still valid.
 
 ### 2) Cloudflare Access mode
 

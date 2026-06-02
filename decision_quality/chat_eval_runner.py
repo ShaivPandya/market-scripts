@@ -304,16 +304,24 @@ def run_agent_chat_in_process(case: ChatEvalCase, *, auth_password: str | None =
     with _patched_agent_tools(case.data.get("mock_tools") if isinstance(case.data.get("mock_tools"), dict) else None):
         with TestClient(app) as client:
             password = auth_password or os.environ.get("AUTH_PASSWORD")
+            csrf_headers: dict[str, str] = {}
             if password:
-                client.post(
+                login = client.post(
                     "/api/auth/login",
-                    json={"password": password},
+                    json={
+                        "password": password,
+                        "username": (os.environ.get("AUTH_DEFAULT_USERNAME") or "admin").strip() or "admin",
+                    },
                     headers=schema_headers_for_path(app, "POST", "/api/auth/login"),
                 )
+                if login.status_code == 200:
+                    token = login.json().get("csrfToken")
+                    if token:
+                        csrf_headers = {"X-CSRF-Token": token}
             response = client.post(
                 "/api/agent/chat",
                 json=body,
-                headers=schema_headers_for_path(app, "POST", "/api/agent/chat"),
+                headers={**schema_headers_for_path(app, "POST", "/api/agent/chat"), **csrf_headers},
             )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     if response.status_code != 200:

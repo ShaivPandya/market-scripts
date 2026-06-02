@@ -19,6 +19,7 @@ import {
   type ActiveAgentJobApiRow,
 } from "./agentChatSessionStore"
 import { extractAgentTraceSnapshot } from "@/lib/decisionTrace"
+import { csrfHeaders } from "@/lib/csrfToken"
 
 export type {
   ActiveAgentJob,
@@ -102,6 +103,10 @@ interface AgentStreamEvent {
 const STORAGE_KEY = "agent-chat-current"
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, "")
 const EMPTY_AGENT_RESPONSE_TEXT = "I couldn't generate a response for that request. Please try again."
+
+function mutatingHeaders(method: string, url: string): Record<string, string> {
+  return { ...csrfHeaders(), ...schemaHeaders(method, url) }
+}
 
 function schemaHeaders(method: string, url: string): Record<string, string> {
   const parsed = new URL(url, window.location.origin)
@@ -365,7 +370,7 @@ async function summarizeSession(sessionId: string): Promise<void> {
   try {
     await fetch(`${BASE_URL}/memory/sessions/${sessionId}/summarize`, {
       method: "POST",
-      headers: schemaHeaders("POST", `${BASE_URL}/memory/sessions/${sessionId}/summarize`),
+      headers: mutatingHeaders("POST", `${BASE_URL}/memory/sessions/${sessionId}/summarize`),
       credentials: "include",
     })
   } catch {
@@ -435,7 +440,7 @@ export async function renameSessionTitle(sessionId: string, title: string): Prom
   const url = `${BASE_URL}/memory/sessions/${encodeURIComponent(sessionId)}`
   const resp = await fetch(url, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...schemaHeaders("PATCH", url) },
+    headers: { "Content-Type": "application/json", ...mutatingHeaders("PATCH", url) },
     credentials: "include",
     body: JSON.stringify({ title }),
   })
@@ -444,8 +449,10 @@ export async function renameSessionTitle(sessionId: string, title: string): Prom
 
 export async function deleteSession(sessionId: string): Promise<boolean> {
   try {
-    const resp = await fetch(`${BASE_URL}/memory/sessions/${sessionId}`, {
+    const url = `${BASE_URL}/memory/sessions/${sessionId}`
+    const resp = await fetch(url, {
       method: "DELETE",
+      headers: mutatingHeaders("DELETE", url),
       credentials: "include",
     })
     return resp.ok
@@ -466,7 +473,7 @@ async function startAgentJob(body: Record<string, unknown>, signal?: AbortSignal
   const url = `${BASE_URL}/agent/chat/async`
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...schemaHeaders("POST", url) },
+    headers: { "Content-Type": "application/json", ...mutatingHeaders("POST", url) },
     credentials: "include",
     body: JSON.stringify(body),
     signal,
@@ -482,7 +489,7 @@ async function startLiveAgentStream(
   const url = `${BASE_URL}/agent/chat`
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...schemaHeaders("POST", url) },
+    headers: { "Content-Type": "application/json", ...mutatingHeaders("POST", url) },
     credentials: "include",
     body: JSON.stringify(body),
     signal,
@@ -540,7 +547,7 @@ async function cancelAgentJob(jobId: string): Promise<void> {
   const url = `${BASE_URL}/agent/chat/async/${encodeURIComponent(jobId)}/cancel`
   const resp = await fetch(url, {
     method: "POST",
-    headers: schemaHeaders("POST", url),
+    headers: mutatingHeaders("POST", url),
     credentials: "include",
   })
   if (!resp.ok) {

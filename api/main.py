@@ -80,7 +80,7 @@ from api.routers import (
     thesis,
 )
 from api.routers import auth as auth_router
-from api.routers.auth import require_actor
+from api.routers.auth import is_machine_authenticated_request, require_actor, verify_request_csrf
 from ontology.policy import PolicyDenied
 
 # Optional routers — gracefully degrade if dependencies fail
@@ -222,6 +222,7 @@ async def _policy_denied_handler(request: Request, exc: PolicyDenied):
 # Middleware
 # ---------------------------------------------------------------------------
 _DOCS_PATHS = {"/api/docs", "/api/redoc", "/api/openapi.json"}
+_CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/health"}
 
 
 def _is_production_runtime() -> bool:
@@ -305,6 +306,28 @@ def _proxy_secret_required() -> bool:
 
 
 _WRITE_FREEZE = (os.environ.get("WRITE_FREEZE") or "").strip().lower() in ("1", "true", "yes")
+
+
+@app.middleware("http")
+async def _csrf_middleware(request: Request, call_next):
+    """Require CSRF token for mutating browser session requests."""
+    path = request.url.path
+    if (
+        path.startswith("/api/")
+        and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        and path not in _CSRF_EXEMPT_PATHS
+        and not is_machine_authenticated_request(request)
+        and not verify_request_csrf(request)
+    ):
+        emit_audit_event(
+            "permission.csrf_denied",
+            "permission",
+            "denied",
+            metadata={"method": request.method, "path": path},
+            error="CSRF validation failed",
+        )
+        return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")

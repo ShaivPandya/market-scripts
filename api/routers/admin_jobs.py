@@ -3,14 +3,17 @@ from __future__ import annotations
 import hmac
 import os
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
-from api.routers.auth import require_auth
+from api.routers.auth import require_actor
+from ontology.policy import Actor
 
 router = APIRouter()
+
+SESSION_COOKIE = "__session"
 
 
 class GovernanceOutboxRequeueRequest(BaseModel):
@@ -18,26 +21,32 @@ class GovernanceOutboxRequeueRequest(BaseModel):
     next_attempt_at: str | None = None
 
 
+def _require_admin_roles(actor: Actor) -> None:
+    roles = {role.lower() for role in actor.roles}
+    if actor.actor_type != "system" and "admin" not in roles and "owner" not in roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access is required.")
+
+
 def require_scheduler_or_job_admin(
-    access_token: str | None = Cookie(default=None, alias="__session"),
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
     scheduler_secret: str | None = Header(default=None, alias="X-Scheduler-Secret"),
 ) -> str:
     expected = (os.getenv("SCHEDULER_SECRET") or "").strip()
     if expected and scheduler_secret and hmac.compare_digest(scheduler_secret, expected):
         return "scheduler"
-    try:
-        return require_auth(access_token)
-    except HTTPException:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")  # noqa: B904
+    actor = require_actor(request, access_token)
+    _require_admin_roles(actor)
+    return actor.actor_id
 
 
 def require_job_admin(
-    access_token: str | None = Cookie(default=None, alias="__session"),
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> str:
-    try:
-        return require_auth(access_token)
-    except HTTPException:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")  # noqa: B904
+    actor = require_actor(request, access_token)
+    _require_admin_roles(actor)
+    return actor.actor_id
 
 
 @router.post("/admin/jobs/enqueue-cache-warm")
@@ -267,7 +276,6 @@ def deploy_smoke(_sub: str = Depends(require_job_admin)):
         if not passed:
             failed_checks.append(name)
 
-    # Include release metadata for debugging
     migration_head = (os.environ.get("TALISMAN_RELEASE_MIGRATION_HEAD") or "").strip()
     release_info: dict[str, str] = {}
     if migration_head:

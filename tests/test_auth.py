@@ -1,9 +1,6 @@
-"""Tests for authentication flow — login, logout, token validation."""
-
-import os
+"""Tests for authentication flow — login, logout, session validation, CSRF."""
 
 import pytest
-from fastapi.responses import JSONResponse
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +15,9 @@ def _reset_login_attempt_state():
 def test_login_success(client):
     resp = client.post("/api/auth/login", json={"password": "testpass"})
     assert resp.status_code == 200
-    assert resp.json() == {"detail": "ok"}
+    assert resp.json()["detail"] == "ok"
+    assert resp.json()["username"] == "admin"
+    assert resp.json()["csrfToken"]
     assert "__session" in resp.cookies
 
 
@@ -29,14 +28,11 @@ def test_login_wrong_password(client):
 
 def test_login_missing_password(client):
     resp = client.post("/api/auth/login", json={})
-    assert resp.status_code == 422  # Pydantic validation error
+    assert resp.status_code == 422
 
 
-def test_logout(client):
-    # Login first
-    client.post("/api/auth/login", json={"password": "testpass"})
-    # Logout
-    resp = client.post("/api/auth/logout")
+def test_logout(auth_client):
+    resp = auth_client.post("/api/auth/logout")
     assert resp.status_code == 200
     assert resp.json() == {"detail": "ok"}
 
@@ -49,7 +45,10 @@ def test_me_unauthenticated(client):
 def test_me_authenticated(auth_client):
     resp = auth_client.get("/api/auth/me")
     assert resp.status_code == 200
-    assert resp.json() == {"username": "admin"}
+    body = resp.json()
+    assert body["username"] == "admin"
+    assert "admin" in body["roles"]
+    assert body["csrfToken"]
 
 
 def test_health_no_auth_required(client):
@@ -60,7 +59,6 @@ def test_health_no_auth_required(client):
 
 def test_public_health_is_diagnostic_safe(client):
     resp = client.get("/api/health")
-
     assert resp.status_code == 200
     text = resp.text.lower()
     for forbidden in ("fred", "sqlite", "traceback", "/users/", "error:"):
@@ -68,6 +66,8 @@ def test_public_health_is_diagnostic_safe(client):
 
 
 def test_admin_health_requires_auth(client, monkeypatch):
+    from fastapi.responses import JSONResponse
+
     import api.main as main
 
     monkeypatch.setattr(main, "_detailed_health_response", lambda: JSONResponse({"status": "ok", "checks": {}}))
@@ -77,6 +77,7 @@ def test_admin_health_requires_auth(client, monkeypatch):
 
     login = client.post("/api/auth/login", json={"password": "testpass"})
     assert login.status_code == 200
+    client._csrf_token = login.json()["csrfToken"]  # type: ignore[attr-defined]
     authenticated = client.get("/api/admin/health")
     assert authenticated.status_code in {200, 503}
     assert "checks" in authenticated.json()
@@ -99,13 +100,11 @@ def test_global_request_body_limit_rejects_large_json_before_login_parse(client,
     monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "64")
 
     resp = client.post("/api/auth/login", json={"password": "x" * 100})
-
     assert resp.status_code == 413
 
 
 def test_login_password_length_is_limited(client):
     resp = client.post("/api/auth/login", json={"password": "x" * 513})
-
     assert resp.status_code == 422
 
 
@@ -183,96 +182,130 @@ def test_cloudflare_mode_requires_backend_proxy_secret(client, monkeypatch):
     assert health.status_code == 200
 
 
-def test_cloudflare_mode_enforces_proxy_secret_header(client, monkeypatch):
+def test_cloudflare_mode_enforces_proxy_secret_and_identity(client, monkeypatch):
     monkeypatch.setenv("AUTH_MODE", "cloudflare")
     monkeypatch.setenv("API_PROXY_SECRET", "proxy-secret")
 
     missing = client.get("/api/agent/workflows")
     assert missing.status_code == 403
 
-    allowed = client.get("/api/agent/workflows", headers={"X-Api-Proxy-Secret": "proxy-secret"})
+    missing_identity = client.get(
+        "/api/agent/workflows",
+        headers={"X-Api-Proxy-Secret": "proxy-secret"},
+    )
+    assert missing_identity.status_code == 401
+
+    allowed = client.get(
+        "/api/agent/workflows",
+        headers={
+            "X-Api-Proxy-Secret": "proxy-secret",
+            "Cf-Access-Authenticated-User-Email": "operator@example.com",
+        },
+    )
     assert allowed.status_code == 200
 
 
-# ---------------------------------------------------------------------------
-# SHA-34: Smoke password auth
-# ---------------------------------------------------------------------------
+def test_csrf_required_for_mutating_session_requests(client):
+    login = client.post("/api/auth/login", json={"password": "testpass"})
+    assert login.status_code == 200
+    session_cookie = login.cookies.get("__session")
+    assert session_cookie
+
+    blocked = client.post(
+        "/api/auth/logout",
+        cookies={"__session": session_cookie},
+    )
+    assert blocked.status_code == 403
+
+    allowed = client.post(
+        "/api/auth/logout",
+        cookies={"__session": session_cookie},
+        headers={"X-CSRF-Token": login.json()["csrfToken"]},
+    )
+    assert allowed.status_code == 200
 
 
 def test_smoke_password_login_succeeds_when_hash_configured(client, monkeypatch):
-    """Smoke password should authenticate successfully when AUTH_SMOKE_PASSWORD_HASH is set."""
     import bcrypt
 
     smoke_pw = "smoke-test-password"
     smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
     monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+    from api.auth_store import reset_auth_store_for_tests
 
-    resp = client.post("/api/auth/login", json={"password": smoke_pw})
+    reset_auth_store_for_tests()
+
+    resp = client.post("/api/auth/login", json={"password": smoke_pw, "username": "smoke"})
     assert resp.status_code == 200
-    assert resp.json() == {"detail": "ok"}
+    assert resp.json()["username"] == "smoke"
     assert "__session" in resp.cookies
 
 
 def test_smoke_password_creates_smoke_subject(client, monkeypatch):
-    """Smoke login should issue a token with subject 'smoke', not 'admin'."""
     import bcrypt
-    from jose import jwt as jose_jwt
 
     smoke_pw = "smoke-test-password"
     smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
     monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+    from api.auth_store import reset_auth_store_for_tests
 
-    resp = client.post("/api/auth/login", json={"password": smoke_pw})
+    reset_auth_store_for_tests()
+
+    resp = client.post("/api/auth/login", json={"password": smoke_pw, "username": "smoke"})
     assert resp.status_code == 200
-
-    token = resp.cookies.get("__session")
-    assert token
-    payload = jose_jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
-    assert payload["sub"] == "smoke"
+    client._csrf_token = resp.json()["csrfToken"]  # type: ignore[attr-defined]
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == "smoke"
 
 
 def test_admin_login_still_works_with_smoke_hash_configured(client, monkeypatch):
-    """Normal admin login must still work when smoke hash is configured."""
     import bcrypt
 
     smoke_pw = "different-smoke-password"
     smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
     monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+    from api.auth_store import reset_auth_store_for_tests
+
+    reset_auth_store_for_tests()
 
     resp = client.post("/api/auth/login", json={"password": "testpass"})
     assert resp.status_code == 200
-    assert resp.json() == {"detail": "ok"}
+    assert resp.json()["username"] == "admin"
 
 
 def test_admin_login_subject_is_admin(client, monkeypatch):
-    """When logging in with admin password, subject should still be 'admin'."""
-    from jose import jwt as jose_jwt
-
     monkeypatch.delenv("AUTH_SMOKE_PASSWORD_HASH", raising=False)
+    from api.auth_store import reset_auth_store_for_tests
+
+    reset_auth_store_for_tests()
 
     resp = client.post("/api/auth/login", json={"password": "testpass"})
     assert resp.status_code == 200
-
-    token = resp.cookies.get("__session")
-    payload = jose_jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
-    assert payload["sub"] == "admin"
+    client._csrf_token = resp.json()["csrfToken"]  # type: ignore[attr-defined]
+    me = client.get("/api/auth/me")
+    assert me.json()["username"] == "admin"
 
 
 def test_no_smoke_login_when_hash_absent(client, monkeypatch):
-    """Without AUTH_SMOKE_PASSWORD_HASH, any non-admin password should be rejected."""
     monkeypatch.delenv("AUTH_SMOKE_PASSWORD_HASH", raising=False)
+    from api.auth_store import reset_auth_store_for_tests
 
-    resp = client.post("/api/auth/login", json={"password": "some-random-password"})
+    reset_auth_store_for_tests()
+
+    resp = client.post("/api/auth/login", json={"password": "some-random-password", "username": "smoke"})
     assert resp.status_code == 401
 
 
 def test_wrong_smoke_password_rejected(client, monkeypatch):
-    """Wrong password should still be rejected even when smoke hash is configured."""
     import bcrypt
 
     smoke_pw = "smoke-test-password"
     smoke_hash = bcrypt.hashpw(smoke_pw.encode(), bcrypt.gensalt(12)).decode()
     monkeypatch.setenv("AUTH_SMOKE_PASSWORD_HASH", smoke_hash)
+    from api.auth_store import reset_auth_store_for_tests
 
-    resp = client.post("/api/auth/login", json={"password": "totally-wrong"})
+    reset_auth_store_for_tests()
+
+    resp = client.post("/api/auth/login", json={"password": "totally-wrong", "username": "smoke"})
     assert resp.status_code == 401
