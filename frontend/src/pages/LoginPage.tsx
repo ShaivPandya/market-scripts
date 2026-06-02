@@ -1465,13 +1465,6 @@ function LoginCard() {
           </form>
         </>
       )}
-      <p
-        className="mt-4"
-        style={{ color: "hsl(var(--foreground-tertiary))", fontSize: "0.78rem" }}
-      >
-        Scroll down to see how Talisman works — the product, the architecture, and Stan, the AI
-        agent.
-      </p>
     </div>
   )
 }
