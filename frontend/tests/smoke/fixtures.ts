@@ -392,13 +392,51 @@ const baseWorkspaceResponse = {
     items: [smokeApproval],
   },
   recommendations: {
-    latest_daily: null,
+    latest_daily: {
+      id: 101,
+      report_type: "daily",
+      as_of: "2026-05-14",
+      stance: "cautious",
+      recommendation_status: "actionable",
+      critical_data_quality: "ok",
+      action: "hold",
+      ticker: "MSFT",
+      instrument: "MSFT",
+      rationale: "Smoke daily recommendation awaiting review.",
+      confidence: 0.62,
+      approval_status: "none",
+      decision_state: "recommendation",
+      effect_scope: "read_only",
+      policy_state: "pass",
+      quality_state: "ok",
+    },
     latest_weekly: null,
     pending_actionable: {
       count: 0,
       items: [],
     },
     blocked_warnings: [],
+    pending_approval_count: 0,
+  },
+  course_of_actions: {
+    pending: {
+      count: 1,
+      items: [
+        {
+          id: "coa-smoke",
+          action: "trim",
+          ticker: "AAPL",
+          actionability: "actionable",
+          rationale_summary: "Smoke course of action for trace coverage.",
+          decision_state: "recommendation",
+          effect_scope: "internal_state",
+          quality_state: "ok",
+          policy_state: "pass",
+        },
+      ],
+    },
+    recent: { count: 0, items: [] },
+    comparisons: { count: 0, items: [] },
     pending_approval_count: 0,
   },
   open_actions: {
@@ -410,8 +448,21 @@ const baseWorkspaceResponse = {
     items: [],
   },
   monitor_hits: {
-    count: 0,
-    items: [],
+    count: 1,
+    items: [
+      {
+        id: "monitor-hit-smoke",
+        ticker: "AAPL",
+        entity_type: "kill_condition",
+        entity_id: "kill-smoke",
+        entity_label: "Margin compression threshold",
+        hit_type: "threshold_crossed",
+        severity: "high",
+        evidence: "Price crossed threshold",
+        detected_at: "2026-06-01T12:00:00Z",
+        approval_id: "smoke-approval",
+      },
+    ],
   },
   opportunity_candidates: {
     count: 1,
@@ -551,6 +602,36 @@ const baseWorkspaceResponse = {
       synced_at: "2026-05-14T14:20:00Z",
     },
   ],
+} satisfies JsonValue
+
+const provenanceTraceResponse = {
+  seed: { approval_id: "smoke-approval" },
+  selector: { approval_id: "smoke-approval" },
+  direction: "both",
+  max_depth: 3,
+  lineage_state: "partial",
+  nodes: [
+    {
+      id: "node-smoke-1",
+      node_type: "event",
+      event_type: "approval_created",
+      status: "succeeded",
+      timestamp: "2026-05-14T14:00:00Z",
+      label: "Approval created",
+    },
+  ],
+  edges: [],
+  timeline: [
+    {
+      kind: "node",
+      status: "succeeded",
+      timestamp: "2026-05-14T14:00:00Z",
+      label: "Approval created",
+    },
+  ],
+  counts: { nodes: 1, edges: 0, events: 1, references: 0, warnings: 0 },
+  truncated: false,
+  warnings: [],
 } satisfies JsonValue
 
 function workspaceResponse(state: ApiMockState) {
@@ -747,7 +828,16 @@ const dossierResponse = {
   catalysts: [],
   kill_conditions: [],
   ontology_risk: null,
-  workflow_runs: [],
+  workflow_runs: [
+    {
+      run_id: "dossier-workflow-smoke",
+      workflow_name: "position_dossier_pressure_test",
+      status: "completed",
+      started_at: "2026-05-14T13:00:00Z",
+      completed_at: "2026-05-14T13:02:00Z",
+      summary: { result: "Pressure test completed with watch recommendation." },
+    },
+  ],
   action_items: [],
   watch_triggers: [],
   pending_approvals: [],
@@ -849,6 +939,9 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     return json(route, { ticker: "MSFT", status: "unavailable", valuation: null })
   }
   if (method === "GET" && path === "/api/workspace") return json(route, workspaceResponse(state))
+  if (method === "GET" && (path === "/api/provenance/trace" || path.startsWith("/api/provenance/entity/"))) {
+    return json(route, provenanceTraceResponse)
+  }
   if (method === "POST" && path === "/api/workspace/thesis-pressure/dismiss") {
     const body = JSON.parse(request.postData() || "{}") as { ticker?: string; pressure_key?: string }
     if (body.pressure_key) state.dismissedPressureKeys.add(body.pressure_key)
@@ -991,6 +1084,34 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     }, 202)
   }
 
+  if (method === "POST" && path === "/api/agent/chat/async") {
+    return json(route, {
+      job_id: "agent-smoke-job",
+      status: "done",
+      session_id: "smoke-agent-session",
+      events: [
+        {
+          seq: 1,
+          event_type: "done",
+          payload: { session_id: "smoke-agent-session", text: "Smoke workflow command handled." },
+        },
+      ],
+      next_seq: 2,
+    })
+  }
+  if (method === "GET" && path.startsWith("/api/agent/chat/async/") && path.endsWith("/events")) {
+    return json(route, {
+      job_id: "agent-smoke-job",
+      status: "done",
+      session_id: "smoke-agent-session",
+      events: [],
+      next_seq: 2,
+    })
+  }
+  if (method === "POST" && path.startsWith("/api/agent/chat/async/") && path.endsWith("/cancel")) {
+    return json(route, { status: "cancelled" })
+  }
+
   if (method === "GET" && path === "/api/agent/workflows") {
     return json(route, [
       {
@@ -1039,6 +1160,25 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     state.agentHistoryTitle = String(body.title || state.agentHistoryTitle).trim()
     const session = (agentHistorySessions(state) as JsonValue[])[0] as Record<string, JsonValue>
     return json(route, { ...session, title_source: "manual" })
+  }
+
+  if (method === "GET" && path === "/api/settings/llm") {
+    return json(route, {
+      provider: "openai",
+      provider_mode: "single",
+      available_providers: [
+        { provider: "openai", configured: true, label: "OpenAI" },
+      ],
+    })
+  }
+  if (method === "GET" && path === "/api/optimization/missions") {
+    return json(route, { missions: [], count: 0 })
+  }
+  if (method === "GET" && path === "/api/optimization/runs") {
+    return json(route, { runs: [], count: 0 })
+  }
+  if (method === "GET" && path === "/api/optimization/alerts") {
+    return json(route, { alerts: [], count: 0 })
   }
 
   const signature = `${method} ${path}${url.search}`

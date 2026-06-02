@@ -1,6 +1,8 @@
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import type { AgentResponsePreferences } from "@/lib/api"
 
+import type { AgentTraceSnapshot } from "@/lib/decisionTrace"
+
 export interface ToolCall {
   name: string
   id: string
@@ -30,6 +32,7 @@ export interface AgentMessage {
   isStreaming?: boolean
   statusText?: string
   egressRecords?: EgressRecord[]
+  traceSnapshot?: AgentTraceSnapshot | null
 }
 
 export interface ActiveAgentJob {

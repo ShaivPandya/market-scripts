@@ -20,7 +20,7 @@ interface SidebarSearchPage {
 const SIDEBAR_PAGES: SidebarSearchPage[] = NAV_SECTIONS.flatMap(section =>
   section.pages.map(page => ({
     ...page,
-    section: section.label ?? "Navigation",
+    section: section.label ?? "Workflows",
   })),
 )
 
@@ -106,7 +106,7 @@ export function SidebarSearchDialog({ open, onOpenChange, onNavigate }: SidebarS
         <RadixDialog.Content
           className="theme-floating fixed left-1/2 top-[max(5rem,calc(4rem+var(--safe-top)))] z-[61] w-[min(calc(100vw-1.5rem),36rem)] -translate-x-1/2 overflow-hidden rounded-[1.1rem] focus:outline-none"
         >
-          <RadixDialog.Title className="sr-only">Search pages</RadixDialog.Title>
+          <RadixDialog.Title className="sr-only">Search workflows</RadixDialog.Title>
           <div className="flex items-center gap-3 border-b border-app px-4 py-3">
             <Search size={17} className="shrink-0 text-subtle" aria-hidden="true" />
             <input
@@ -115,7 +115,7 @@ export function SidebarSearchDialog({ open, onOpenChange, onNavigate }: SidebarS
               value={query}
               onChange={event => handleQueryChange(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search pages"
+              placeholder="Search workflows"
               className="h-10 min-w-0 flex-1 bg-transparent text-sm text-app outline-none placeholder:text-[hsl(var(--foreground-quaternary))] focus-visible:shadow-none"
             />
             <RadixDialog.Close asChild>
@@ -129,7 +129,7 @@ export function SidebarSearchDialog({ open, onOpenChange, onNavigate }: SidebarS
             </RadixDialog.Close>
           </div>
 
-          <div className="max-h-[min(60vh,28rem)] overflow-y-auto p-2" role="listbox" aria-label="Sidebar pages">
+          <div className="max-h-[min(60vh,28rem)] overflow-y-auto p-2" role="listbox" aria-label="Workflow pages">
             {filteredPages.length > 0 ? (
               filteredPages.map((page, index) => {
                 const isSelected = index === activeSelectedIndex

@@ -79,6 +79,8 @@ import { approvalDecisionState } from "@/lib/decisionState"
 import { ThesisUpload } from "@/components/ThesisUpload"
 import { OverviewUpload } from "@/components/OverviewUpload"
 import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
+import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
+import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import { cn } from "@/lib/utils"
 import { cleanDossierDisplayText } from "@/lib/dossierText"
 import { openStanWithCommand } from "@/lib/stanLauncher"
@@ -317,7 +319,7 @@ export function PositionDossier() {
     ? { path: "/theses", label: "Theses" }
     : from === "portfolio"
     ? { path: "/", label: "Portfolio" }
-    : { path: "/workspace", label: "Workspace" }
+    : { path: "/workspace", label: "Portfolio Commander" }
   const [tab, setTab] = useState<Tab>("Overview")
   const qc = useQueryClient()
   const [processingIds, setProcessingIds] = useState<Set<number | string>>(new Set())
@@ -333,6 +335,7 @@ export function PositionDossier() {
   const [triggerEditError, setTriggerEditError] = useState<string | null>(null)
   const [triggerEditSubmitting, setTriggerEditSubmitting] = useState(false)
   const [postMortemReview, setPostMortemReview] = useState<DecisionOutcomeRecord | null>(null)
+  const { openDecisionTrace } = useDecisionTrace()
 
   const { data, isLoading, error } = useApiQuery<DossierData>(
     ["dossier", ticker],
@@ -641,6 +644,12 @@ export function PositionDossier() {
           <DecisionLearningTab
             outcomes={decisionOutcomes}
             onReview={setPostMortemReview}
+            onOpenTrace={outcome =>
+              openDecisionTrace({
+                kind: "decision_outcome",
+                record: outcome as unknown as Record<string, unknown>,
+              })
+            }
           />
         )}
         {activeTab === "Workflows" && (
@@ -649,6 +658,12 @@ export function PositionDossier() {
             ticker={data.ticker}
             onRunPressureTest={() =>
               openStanWithCommand(`/workflow:position_dossier_pressure_test:${data.ticker}`)
+            }
+            onOpenTrace={run =>
+              openDecisionTrace({
+                kind: "workflow_run",
+                record: run as unknown as Record<string, unknown>,
+              })
             }
           />
         )}
@@ -697,6 +712,16 @@ export function PositionDossier() {
                       <ApprovalProgressSummary approval={a} compact />
                     </div>
                     <div className="flex flex-col gap-2 sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
+                      <TraceTriggerButton
+                        compact
+                        label={`View approval ${a.id} trace`}
+                        onClick={() =>
+                          openDecisionTrace({
+                            kind: "approval",
+                            record: a as unknown as Record<string, unknown>,
+                          })
+                        }
+                      />
                       <button
                         onClick={() => openApprovalReview(a, "approve")}
                         disabled={processingIds.has(a.id) || a.can_approve === false}
@@ -872,6 +897,15 @@ export function PositionDossier() {
                 {approvalReview.approval.base_state_message || "The underlying state changed after this proposal was created."}
               </div>
             )}
+            <TraceTriggerButton
+              label="View decision trace"
+              onClick={() =>
+                openDecisionTrace({
+                  kind: "approval",
+                  record: approvalReview.approval as unknown as Record<string, unknown>,
+                })
+              }
+            />
             <div>
               <label htmlFor="dossier-approval-note" className="theme-field-label">
                 {approvalReview.action === "approve" ? "Approval note" : "Rejection note"}
@@ -2264,9 +2298,11 @@ function RiskTab({ ticker }: { ticker: string }) {
 function DecisionLearningTab({
   outcomes,
   onReview,
+  onOpenTrace,
 }: {
   outcomes: DecisionOutcomeRecord[]
   onReview: (outcome: DecisionOutcomeRecord) => void
+  onOpenTrace?: (outcome: DecisionOutcomeRecord) => void
 }) {
   if (!outcomes.length) {
     return <p className="text-sm text-muted">No decision outcomes recorded for this position yet.</p>
@@ -2306,6 +2342,11 @@ function DecisionLearningTab({
               Review draft post-mortem
             </button>
           )}
+          {onOpenTrace && (
+            <div className="mt-3">
+              <TraceTriggerButton label="Trace" onClick={() => onOpenTrace(outcome)} />
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -2316,10 +2357,12 @@ function WorkflowsTab({
   runs,
   ticker,
   onRunPressureTest,
+  onOpenTrace,
 }: {
   runs: WorkflowRun[]
   ticker: string
   onRunPressureTest: () => void
+  onOpenTrace?: (run: WorkflowRun) => void
 }) {
   return (
     <div className="space-y-4">
@@ -2346,6 +2389,13 @@ function WorkflowsTab({
               <div className="flex items-center gap-3 text-xs text-subtle">
                 <span>{run.status ?? "unknown"}</span>
                 <span>{formatTime(run.started_at ?? run.completed_at)}</span>
+                {onOpenTrace && run.run_id && (
+                  <TraceTriggerButton
+                    compact
+                    label={`Trace workflow ${run.run_id}`}
+                    onClick={() => onOpenTrace(run)}
+                  />
+                )}
               </div>
             </div>
           ))}

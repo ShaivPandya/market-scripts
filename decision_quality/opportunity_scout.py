@@ -14,7 +14,7 @@ from decision_quality.opportunity_candidate import (
     parse_opportunity_candidate,
 )
 from ontology.decision_writeback import DecisionOntologyWriteback
-from ontology.policy import system_actor
+from ontology.policy import actor_to_dict, system_actor
 from ontology.schemas.identity import opportunity_candidate_id
 
 ACTIVE_QUEUE_STATUSES = frozenset({"open", "generated", "watching", "research_requested"})
@@ -320,7 +320,7 @@ def persist_proactive_opportunity_candidate(
         payload.setdefault("source_id", source_id)
     return DecisionOntologyWriteback().record_opportunity_candidate(
         record=payload,
-        actor=system_actor(actor_id),
+        actor=actor_to_dict(system_actor(actor_id)),
         provenance_id=f"pv:opportunity_scout:{payload.get('idempotency_key') or payload.get('candidate_id')}",
     )
 

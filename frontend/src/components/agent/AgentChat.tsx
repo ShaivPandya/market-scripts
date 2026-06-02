@@ -23,6 +23,7 @@ import { AgentWorkflowLauncher } from "./AgentWorkflowLauncher"
 import { QUICK_PROMPT_GROUPS } from "./agentChatPrompts"
 import { resizeChatTextarea } from "./agentChatTextarea"
 import { useMediaQuery } from "./useMediaQuery"
+import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import type { AgentPanel, AgentViewMode } from "./AgentChatTypes"
 
 const PREFERENCES_STORAGE_KEY = "agent-response-preferences"
@@ -117,6 +118,7 @@ export function AgentChat({
     clearQueuedMessages,
     sendQueuedMessageNow,
   } = useAgentChat()
+  const { openDecisionTrace } = useDecisionTrace()
   const queryClient = useQueryClient()
   const isDesktop = useMediaQuery("(min-width: 1024px)")
   const [viewModeOverride, setViewModeOverride] = useState<AgentViewMode | null>(null)
@@ -482,6 +484,14 @@ export function AgentChat({
                     isStreaming={isStreaming}
                     error={error}
                     onPrompt={handleQuickPrompt}
+                    onOpenTrace={message =>
+                      openDecisionTrace({
+                        kind: "agent_message",
+                        record: {},
+                        sessionId,
+                        message,
+                      })
+                    }
                     scrollContainerRef={messagesScrollRef}
                     messagesEndRef={messagesEndRef}
                   />

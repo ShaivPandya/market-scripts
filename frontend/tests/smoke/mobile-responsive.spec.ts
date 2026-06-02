@@ -1,4 +1,5 @@
 import { authenticate, expect, test } from "./fixtures"
+import { dismissFloatingAlerts, expectDecisionTraceDrawer, expectPrimaryControlsSeparated } from "./operatingWorkflow"
 
 test.describe("mobile responsive surfaces", () => {
   test.use({
@@ -21,11 +22,29 @@ test.describe("mobile responsive surfaces", () => {
     await expect(page.getByRole("button", { name: "Weekly Portfolio Review" })).toBeVisible()
   })
 
+  test("opens mobile sidebar and navigates via workflow link", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/")
+
+    await dismissFloatingAlerts(page)
+
+    await page.getByRole("button", { name: "Open navigation" }).click()
+
+    const nav = page.getByRole("navigation", { name: "Primary navigation" })
+    await expect(nav.getByText("Command Portfolio")).toBeVisible()
+    await dismissFloatingAlerts(page)
+    await nav.getByRole("link", { name: "Portfolio Commander" }).click()
+
+    await expect(page).toHaveURL(/\/workspace$/)
+    await expect(page.getByText("Here's where your book stands and the few things worth your attention.")).toBeVisible()
+    await expect(page.locator(".theme-floating").getByText("Portfolio Commander", { exact: true })).toBeVisible()
+  })
+
   test("reviews workspace approvals with stacked dialog actions", async ({ page }) => {
     await authenticate(page)
     await page.goto("/workspace")
 
-    await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
     await page.getByRole("button", { name: "Review", exact: true }).click()
 
     const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })
@@ -33,8 +52,79 @@ test.describe("mobile responsive surfaces", () => {
     await expect(reviewDialog.getByRole("button", { name: "Approve & Apply" })).toBeDisabled()
 
     await page.getByLabel("Decision note").fill("Reviewed staged research follow-up for mobile smoke coverage.")
-    await expect(reviewDialog.getByRole("button", { name: "Approve & Apply" })).toBeEnabled()
-    await expect(reviewDialog.getByRole("button", { name: "Reject Proposal" })).toBeVisible()
+    const approveButton = reviewDialog.getByRole("button", { name: "Approve & Apply" })
+    const rejectButton = reviewDialog.getByRole("button", { name: "Reject Proposal" })
+    await expect(approveButton).toBeEnabled()
+    await expect(rejectButton).toBeVisible()
+    await expectPrimaryControlsSeparated(approveButton, rejectButton)
+  })
+
+  test("renders OpportunityScout queue and opens decision trace on mobile", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/workspace")
+
+    await expect(page.getByRole("heading", { name: "OpportunityScout" })).toBeVisible()
+    await expect(page.getByText("Kill condition monitor hit: Margin compression threshold")).toBeVisible()
+
+    await page
+      .getByRole("heading", { name: "OpportunityScout" })
+      .locator("xpath=ancestor::section[1]")
+      .getByRole("button", { name: "Trace", exact: true })
+      .click()
+    await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
+  })
+
+  test("opens decision trace from workspace approval on mobile", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/workspace")
+
+    await page.getByRole("button", { name: "View approval smoke-approval trace" }).click()
+    await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
+  })
+
+  test("runs dossier pressure test and scenario comparison on mobile", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/dossier/MSFT")
+
+    await page.getByRole("button", { name: "Workflows", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Run pressure test" })).toBeVisible()
+    await page.getByRole("button", { name: "Run pressure test" }).click()
+    await expect(page.getByRole("dialog", { name: "Stan" })).toBeVisible()
+    await page.getByRole("button", { name: "Close Stan" }).click()
+
+    await page.getByRole("button", { name: "Scenarios", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "Action Scenario Comparison" })).toBeVisible()
+    await page.getByRole("button", { name: "Run comparison" }).click()
+    await expect(page.getByText("medium uncertainty")).toBeVisible()
+  })
+
+  test("stages monitor definition from ontology builder on mobile", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/ontology")
+
+    await expect(page.getByRole("heading", { name: "Monitor And Mission Builder" })).toBeVisible()
+    await page.getByRole("textbox", { name: "Name" }).fill("Mobile Smoke Monitor")
+    await page.getByRole("textbox", { name: "Ticker Scope" }).fill("MSFT")
+    await page.getByRole("textbox", { name: "Condition", exact: true }).fill("Watch MSFT evidence quality")
+    await page.getByRole("button", { name: "Preview Monitor" }).click()
+    await expect(page.getByText("Smoke preview")).toBeVisible()
+    await page.getByRole("button", { name: "Stage Definition" }).click()
+    await expect(page.getByText("Definition staged for approval")).toBeVisible()
+  })
+
+  test("runs historical ontology query with temporal context on mobile", async ({ page }) => {
+    await authenticate(page)
+    await page.goto("/ontology")
+
+    await page.getByRole("button", { name: "Historical" }).click()
+    await page.getByRole("textbox", { name: "As of", exact: true }).fill("2026-05-10T09:30")
+    await page.getByPlaceholder("Which positions are in deteriorating macro conditions?").fill("Show elevated portfolio risks as of last review")
+    await page.getByRole("button", { name: "Run Query" }).click()
+
+    const temporalContext = page.getByRole("region", { name: "Temporal query context" })
+    await expect(temporalContext).toBeVisible()
+    await expect(temporalContext.getByText("History Included")).toBeVisible()
+    await expect(page.getByText("Risk Analysis Results")).toBeVisible()
   })
 
   test("runs ontology workbench query with card-friendly results", async ({ page }) => {
@@ -59,6 +149,6 @@ test.describe("mobile responsive surfaces", () => {
 
     await expect(page.getByRole("heading", { name: "Evidence Ledger" })).toBeVisible()
     await expect(page.getByText("AI capex remains durable")).toBeVisible()
-    await expect(page.getByRole("button", { name: "Lineage" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Trace", exact: true }).first()).toBeVisible()
   })
 })
