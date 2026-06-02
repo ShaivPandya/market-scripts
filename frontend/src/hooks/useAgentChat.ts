@@ -10,11 +10,9 @@ import type {
   ToolCall,
 } from "./agentChatShared"
 import {
-  combineQueuedPrompt,
   readActiveJobs,
   readMessageQueue,
   readSessionSnapshot,
-  shouldCombineQueueEntries,
   writeActiveJob,
   writeMessageQueue,
   writeSessionSnapshot,
@@ -972,6 +970,7 @@ export function useAgentChat() {
     assistantId: string,
     clientTurnId: string,
     started: AgentJobResponse,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for caller signature parity
     controller: AbortController,
   ) => {
     const events = started.events ?? []
@@ -1169,7 +1168,7 @@ export function useAgentChat() {
       const message = err instanceof Error ? err.message : String(err)
       handleError(`Agent stream interrupted after the response started. ${message}`)
     }
-  }, [applyJobEvents, beginDurableResponse, persistActiveSessionSnapshot, state.sessionId])
+  }, [applyJobEvents, beginDurableResponse, persistActiveSessionSnapshot])
 
   const drainQueueForSession = useCallback(async (sessionId: string) => {
     if (sessionIsBusy(sessionId)) return

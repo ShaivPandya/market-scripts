@@ -519,10 +519,9 @@ def test_stale_approval_controls_are_wired_on_review_surfaces():
 def test_workspace_source_health_panel_is_wired():
     workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
 
-    assert "SourceHealthPanel" in workspace
-    assert "Source Health" in workspace
-    assert "critical stale" in workspace
-    assert "optional degraded" in workspace
+    assert "CollapsibleSourceHealth" in workspace
+    assert "Source health" in workspace
+    assert "optional_degraded" in workspace
     assert "theme-badge-error" in workspace
 
 

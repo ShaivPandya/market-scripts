@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { GitBranch, Info } from "lucide-react"
+import { Info } from "lucide-react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {

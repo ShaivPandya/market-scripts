@@ -43,8 +43,11 @@ export async function expectDecisionTraceDrawer(drawer: Locator) {
 
 export async function dismissFloatingAlerts(page: Page) {
   const dismiss = page.getByRole("button", { name: "Dismiss action item alert" })
-  if (await dismiss.isVisible().catch(() => false)) {
+  try {
+    await dismiss.waitFor({ state: "visible", timeout: 10_000 })
     await dismiss.click()
     await expect(page.getByRole("status").filter({ hasText: "Action item staged" })).toBeHidden()
+  } catch {
+    // Alert never appeared during this flow.
   }
 }

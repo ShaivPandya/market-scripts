@@ -32,6 +32,7 @@ test.describe("mobile responsive surfaces", () => {
 
     const nav = page.getByRole("navigation", { name: "Primary navigation" })
     await expect(nav.getByText("Command Portfolio")).toBeVisible()
+    await dismissFloatingAlerts(page)
     await nav.getByRole("link", { name: "Portfolio Commander" }).click()
 
     await expect(page).toHaveURL(/\/workspace$/)

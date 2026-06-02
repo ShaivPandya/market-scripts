@@ -67,6 +67,8 @@ export function DecisionTraceProvider({ children }: { children: ReactNode }) {
   return <DecisionTraceContext.Provider value={value}>{children}</DecisionTraceContext.Provider>
 }
 
+// Hooks are exported from the provider module for convenience; fast refresh treats them separately.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useDecisionTrace(): DecisionTraceContextValue {
   const context = useContext(DecisionTraceContext)
   if (!context) {
@@ -75,6 +77,7 @@ export function useDecisionTrace(): DecisionTraceContextValue {
   return context
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useOptionalDecisionTrace(): DecisionTraceContextValue | null {
   return useContext(DecisionTraceContext)
 }

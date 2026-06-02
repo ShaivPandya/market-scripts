@@ -351,7 +351,7 @@ export function buildRecommendationTrace(rec: RecommendationRecord): DecisionTra
     decisionQualityGateTrace(rec.decision_quality_gate),
   ].filter(Boolean) as DecisionTraceGate[]
   return {
-    summary: summaryFromFields(rec, "recommendation", rec.action.replace(/_/g, " "), {
+    summary: summaryFromFields(rec, "recommendation", (rec.action ?? "recommendation").replace(/_/g, " "), {
       subtitle: rec.report_type,
       ticker: rec.instrument,
       asOf: rec.as_of,
@@ -447,7 +447,6 @@ export function buildDecisionOutcomeTrace(outcome: DecisionOutcomeRecord): Decis
 }
 
 export function buildWorkflowRunTrace(run: Record<string, unknown>): DecisionTraceModel {
-  const runId = String(run.run_id ?? "")
   return {
     summary: {
       title: String(run.workflow_name ?? "Workflow run").replace(/_/g, " "),

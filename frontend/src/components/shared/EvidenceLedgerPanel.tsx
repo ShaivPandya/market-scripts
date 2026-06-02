@@ -187,7 +187,7 @@ export function EvidenceLedgerPanel({ ledger, ticker }: { ledger: EvidenceLedger
                           {recommendation.status}
                         </span>
                       )}
-                      {recommendation.recommendation_id && (
+                      {recommendation.recommendation_id && recommendation.action && (
                         <TraceTriggerButton
                           compact
                           label="Trace recommendation evidence"
