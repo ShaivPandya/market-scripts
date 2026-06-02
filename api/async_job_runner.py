@@ -32,6 +32,7 @@ from api.job_registry import (
     import_string,
     parse_request,
 )
+from api.observability import capture_exception, init_sentry
 
 logger = logging.getLogger("api.async_job_runner")
 
@@ -303,6 +304,11 @@ def enqueue_registered_job(
     except Exception as exc:
         detail = str(exc) or "Failed to enqueue async job"
         fail_job(str(row["job_id"]), detail, result_ttl_seconds=spec.failed_ttl_s)
+        capture_exception(
+            exc,
+            tags={"job_type": job_type, "backend": _dispatch_backend_for_job(job_type)},
+            context={"job_id": str(row.get("job_id") or ""), "phase": "dispatch"},
+        )
         failed = get_job(str(row["job_id"])) or row
         _emit_job_audit(
             "async_job.dispatch_failed",
@@ -423,6 +429,11 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             after_summary={"status": "failed"},
             error=error,
         )
+        capture_exception(
+            exc,
+            tags={"job_type": job_type, "backend": _env_backend()},
+            context={"job_id": job_id, "phase": "perform_job"},
+        )
         raise
 
 
@@ -475,6 +486,11 @@ def enqueue_response(row: dict[str, Any], poll_path: str) -> JSONResponse:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from api.logging_config import configure_logging
+
+    configure_logging(json_format=(os.getenv("ENVIRONMENT") or "").strip().lower() == "production")
+    init_sentry(component="async_job_runner")
+
     args = list(argv if argv is not None else sys.argv[1:])
     command = args.pop(0) if args else "run"
     if command != "run":
@@ -488,8 +504,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         perform_job(job_id)
-    except Exception:
+    except Exception as exc:
         logger.exception("async job execution failed job_id=%s", job_id)
+        capture_exception(exc, tags={"phase": "cloud_run_job"}, context={"job_id": job_id})
         return 1
     return 0
 

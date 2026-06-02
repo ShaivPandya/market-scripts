@@ -47,5 +47,8 @@ openai>=1.100.0
 # Rate limiting
 slowapi>=0.1.9
 
+# Observability (optional; activated when SENTRY_DSN is set)
+sentry-sdk[fastapi]>=2.0.0
+
 # Terminal formatting (used by liquidity dashboard CLI)
 rich>=13.0.0

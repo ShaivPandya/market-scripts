@@ -46,6 +46,10 @@ IS_PRODUCTION = ENVIRONMENT == "production"
 configure_logging(json_format=IS_PRODUCTION)
 logger = logging.getLogger("api")
 
+from api.observability import capture_exception, init_sentry, set_request_context
+
+init_sentry(component="api")
+
 # ---------------------------------------------------------------------------
 # Release identity (set by deploy-api.sh via TALISMAN_RELEASE_* env vars)
 # ---------------------------------------------------------------------------
@@ -180,6 +184,17 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 @app.exception_handler(AppError)
 async def _app_error_handler(request: Request, exc: AppError):
     logger.error("AppError [%s]: %s", exc.__class__.__name__, exc.message, exc_info=True)
+    if exc.status_code >= 500:
+        capture_exception(
+            exc,
+            tags={"error_type": exc.__class__.__name__},
+            context={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": exc.status_code,
+                "request_id": request_id_var.get(""),
+            },
+        )
     content = {"error": exc.message, "type": exc.__class__.__name__}
 
     if isinstance(exc, DataFetchError):
@@ -199,6 +214,15 @@ async def _app_error_handler(request: Request, exc: AppError):
 @app.exception_handler(Exception)
 async def _unhandled_error_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    capture_exception(
+        exc,
+        tags={"error_type": "InternalError"},
+        context={
+            "method": request.method,
+            "path": request.url.path,
+            "request_id": request_id_var.get(""),
+        },
+    )
     return JSONResponse(
         status_code=500,
         content={"error": "Internal server error", "type": "InternalError"},
@@ -234,7 +258,9 @@ async def _request_id_middleware(request: Request, call_next):
     """Assign a correlation ID to every request."""
     rid = request.headers.get("x-request-id") or generate_request_id()
     request_id_var.set(rid)
+    set_request_context(request_id=rid, method=request.method, path=request.url.path)
     response = await call_next(request)
+    set_request_context(status_code=response.status_code)
     response.headers["X-Request-Id"] = rid
     return response
 

@@ -72,6 +72,21 @@ Note: password sessions are server-side and shared across tabs; the UI calls `/a
 
 This mode is meant for deployments where Cloudflare Access gates the app at the edge and a trusted API proxy can inject `X-Api-Proxy-Secret`. The checked-in Firebase Hosting rewrite cannot inject that header, so do not combine `AUTH_MODE=cloudflare` with plain Firebase rewrites unless another proxy layer adds the secret.
 
+## Observability (optional Sentry)
+
+Frontend Sentry is opt-in via build-time env vars. When `VITE_SENTRY_DSN` is unset, `npm run dev` and `npm run build` behave as before.
+
+Suggested production build vars:
+
+```bash
+VITE_SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+VITE_SENTRY_ENVIRONMENT=production
+VITE_SENTRY_RELEASE=<git-sha>
+VITE_SENTRY_TRACES_SAMPLE_RATE=0.05
+```
+
+Route render errors are captured from `RouteErrorBoundary`. Chunk-load recovery reloads are excluded. Auth headers, CSRF tokens, API bodies, portfolio data, and agent prompts are scrubbed before events leave the browser.
+
 ## Production hosting
 
 In production the UI expects `/api/*` to exist on the same origin as the frontend.

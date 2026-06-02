@@ -46,6 +46,11 @@ elif [[ "${frontend_dir}/package-lock.json" -nt "${frontend_dir}/node_modules/.p
 fi
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
+  _full_sha="$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || true)"
+  _short_sha="$(git -C "${repo_root}" rev-parse --short HEAD 2>/dev/null || true)"
+  export VITE_SENTRY_ENVIRONMENT="${VITE_SENTRY_ENVIRONMENT:-production}"
+  export VITE_SENTRY_RELEASE="${VITE_SENTRY_RELEASE:-${_full_sha}}"
+  export VITE_TALISMAN_RELEASE_GIT_SHA_SHORT="${VITE_TALISMAN_RELEASE_GIT_SHA_SHORT:-${_short_sha}}"
   (cd "${frontend_dir}" && npm run build)
 else
   echo "SKIP_BUILD=1; deploying existing frontend/dist."

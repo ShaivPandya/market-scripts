@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { Layout } from "@/components/layout/Layout"
 import { isChunkLoadError, maybeReloadForChunkLoadError } from "@/lib/chunkRecovery"
+import { captureRouteError } from "@/lib/observability"
 
 const PAGE_LOAD_RETRY_DELAYS_MS = [300, 1_000, 2_000] as const
 
@@ -56,6 +57,12 @@ class RouteErrorBoundary extends Component<{ children: ReactNode; resetKey: stri
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
     if (maybeReloadForChunkLoadError(error, "route-lazy")) return
+    if (!isChunkLoadError(error)) {
+      captureRouteError(error, {
+        componentStack: info.componentStack,
+        route: this.props.resetKey,
+      })
+    }
     console.error("Unhandled route render error", error, info)
   }
 

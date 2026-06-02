@@ -13,6 +13,7 @@ from typing import Any
 from api.async_job_runner import perform_job
 from api.job_queue import claim_queued_job
 from api.logging_config import configure_logging
+from api.observability import capture_exception, init_sentry
 
 logger = logging.getLogger("api.job_worker_loop")
 
@@ -81,8 +82,13 @@ def run_once(*, job_type: str = DEFAULT_JOB_TYPE, queue_name: str = DEFAULT_QUEU
 
     try:
         perform_job(job_id)
-    except Exception:
+    except Exception as exc:
         logger.exception("warm worker failed job_type=%s queue=%s job_id=%s", job_type, queue_name, job_id)
+        capture_exception(
+            exc,
+            tags={"job_type": job_type, "queue": queue_name, "phase": "warm_worker"},
+            context={"job_id": job_id},
+        )
     return True
 
 
@@ -122,6 +128,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     configure_logging(json_format=(os.getenv("ENVIRONMENT") or "").strip().lower() == "production")
+    init_sentry(component="job_worker")
     args = _parser().parse_args(list(argv if argv is not None else sys.argv[1:]))
 
     if args.command == "run-once":

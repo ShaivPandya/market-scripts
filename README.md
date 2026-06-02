@@ -203,6 +203,24 @@ State backends:
 - Production additionally uses `STATE_STORAGE_BACKEND=gcs` and `GCS_STATE_BUCKET`.
 - Async work runs locally unless `ASYNC_JOB_BACKEND=cloud_run_jobs` or `CLOUD_RUN_JOBS_ENABLED=true` opts into dispatching the generic Cloud Run Job configured by `ASYNC_CLOUD_RUN_JOB=talisman-async-job`.
 
+## Observability (optional Sentry)
+
+Sentry is optional on both backend and frontend. When `SENTRY_DSN` / `VITE_SENTRY_DSN` are unset, the app starts normally and no events are sent.
+
+Backend (`api/observability.py`):
+
+- Set `SENTRY_DSN` to enable FastAPI, async job, worker, and workflow error capture.
+- Release/environment tags reuse `TALISMAN_RELEASE_*` when present.
+- Events are scrubbed before send: auth/session headers, CSRF tokens, request bodies, portfolio holdings, prompts, and model payloads are redacted.
+
+Frontend (`frontend/src/lib/observability.ts`):
+
+- Set `VITE_SENTRY_DSN` at build time for production browser error capture.
+- Route render errors are reported from `RouteErrorBoundary`; chunk-load reload paths are excluded.
+- Browser breadcrumbs and request metadata are scrubbed; session replay is not enabled.
+
+Intentionally **not** sent to Sentry: passwords, cookies, authorization headers, CSRF/session tokens, portfolio positions/holdings, thesis text, agent prompts, model request/response bodies, and async job payloads/results.
+
 ## Development Commands
 
 Python checks:

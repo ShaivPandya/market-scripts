@@ -21,6 +21,7 @@ from typing import Any
 
 from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
+from api.observability import capture_exception, capture_message
 from ontology.action_registry import get_tool_exposure
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.policy import Actor, admin_actor
@@ -155,6 +156,15 @@ def _exec_tool(
     except Exception as exc:
         elapsed = round((time.perf_counter() - started) * 1000, 1)
         logger.warning("Workflow tool %s failed: %s", name, exc)
+        capture_exception(
+            exc,
+            tags={"tool_name": name, "phase": "workflow_tool"},
+            context={
+                "workflow_run_id": (provenance_context or {}).get("workflow_run_id"),
+                "source": (provenance_context or {}).get("source"),
+                "duration_ms": elapsed,
+            },
+        )
         emit_audit_event(
             "workflow.tool.failed",
             "workflow",
@@ -995,6 +1005,11 @@ def complete_workflow_run(
 
 
 def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) -> dict[str, Any]:
+    capture_message(
+        (error or "workflow failed")[:500],
+        tags={"phase": "workflow_run"},
+        context={"workflow_run_id": run_id},
+    )
     now = datetime.now(UTC).isoformat()
     object_service = OntologyObjectService()
     existing = _get_workflow_run_object(object_service, run_id) or {}

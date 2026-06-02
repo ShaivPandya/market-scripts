@@ -212,6 +212,7 @@ sdmx1==2.25.0
 sentence-transformers==5.4.1
 setuptools==78.1.1
 sgmllib3k==1.0.0
+sentry-sdk==2.61.1
 six==1.16.0
 slowapi==0.1.9
 sly==0.5
