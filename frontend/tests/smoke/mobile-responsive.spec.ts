@@ -35,7 +35,7 @@ test.describe("mobile responsive surfaces", () => {
     await nav.getByRole("link", { name: "Portfolio Commander" }).click()
 
     await expect(page).toHaveURL(/\/workspace$/)
-    await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+    await expect(page.getByText("Here's where your book stands and the few things worth your attention.")).toBeVisible()
     await expect(page.locator(".theme-floating").getByText("Portfolio Commander", { exact: true })).toBeVisible()
   })
 
@@ -43,7 +43,7 @@ test.describe("mobile responsive surfaces", () => {
     await authenticate(page)
     await page.goto("/workspace")
 
-    await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
     await page.getByRole("button", { name: "Review", exact: true }).click()
 
     const reviewDialog = page.getByRole("dialog", { name: "Review Approval" })

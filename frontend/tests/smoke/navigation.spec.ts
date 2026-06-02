@@ -26,7 +26,7 @@ test("navigates via workflow sidebar links on desktop", async ({ page }) => {
 
   await nav.getByRole("link", { name: "Portfolio Commander" }).click()
   await expect(page).toHaveURL(/\/workspace$/)
-  await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
 
   await nav.getByRole("link", { name: "Portfolio Dashboard" }).click()
   await expect(page).toHaveURL(/\/$/)
@@ -52,7 +52,7 @@ test("navigates via command palette workflow search", async ({ page }) => {
   await page.getByRole("option", { name: /Portfolio Commander/ }).click()
 
   await expect(page).toHaveURL(/\/workspace$/)
-  await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
 })
 
 test("legacy portfolio path redirects to dashboard", async ({ page }) => {

@@ -1,6 +1,6 @@
 import { Link, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Bell, CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch, Database, FileText, X } from "lucide-react"
+import { Bell, CheckCircle, AlertTriangle, Play, Clock, GitBranch, Database, FileText, X, ChevronDown, Shield, Flag, RefreshCw } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
@@ -29,7 +29,6 @@ import {
   type PolicyGateResult,
   type RecommendationRecord,
   type SourceHealth,
-  type SourceHealthSource,
   type TriggerMutationBody,
 } from "@/lib/api"
 import {
@@ -40,7 +39,6 @@ import {
   patchResolvedApprovalSummaries,
   shouldRefetchApprovalSummariesAfterError,
 } from "@/lib/approvalQueries"
-import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { PostMortemReviewDialog } from "@/components/shared/PostMortemReviewDialog"
@@ -265,12 +263,6 @@ type TriggerEditState =
   | { kind: "active"; trigger: Trigger }
   | { kind: "approval"; approval: ApprovalRecord; trigger: EditableWatchTrigger }
 
-function formatPnl(value: number | null | undefined): string {
-  if (value == null) return "--"
-  const sign = value >= 0 ? "+" : ""
-  return `${sign}${value.toFixed(2)}%`
-}
-
 function formatRiskScore(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "--"
   return value.toFixed(2)
@@ -355,71 +347,6 @@ function alertSeverityClass(severity: string | null | undefined): string {
   return ALERT_SEVERITY_COLORS[String(severity || "normal").toLowerCase()] ?? ALERT_SEVERITY_COLORS.normal
 }
 
-function OptimizationAlertsPanel({
-  alerts,
-  alertCount,
-  processingIds,
-  onDismiss,
-  dismissError,
-}: {
-  alerts: OptimizationAlert[]
-  alertCount: number
-  processingIds: Set<number | string>
-  onDismiss: (alert: OptimizationAlert) => void
-  dismissError: string | null
-}) {
-  if (alertCount <= 0) return null
-  return (
-    <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
-      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-        <Bell size={14} className="text-purple-500" />
-        Optimizer Alerts
-        <Link to="/analyzer" className="ml-auto text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
-          Open analyzer
-        </Link>
-      </h2>
-      <p className="mb-3 text-xs text-subtle">{alertCount} open alert{alertCount !== 1 ? "s" : ""} with material action or risk changes.</p>
-      {dismissError && (
-        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          Failed to dismiss alert: {dismissError}
-        </div>
-      )}
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {alerts.map(alert => (
-          <div key={alert.id} className="rounded-lg border border-app px-3 py-2 text-sm">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  {alert.ticker ? (
-                    <Link to={`/dossier/${encodeURIComponent(alert.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
-                      {alert.ticker}
-                    </Link>
-                  ) : (
-                    <span className="font-semibold text-app">PORTFOLIO</span>
-                  )}
-                  <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", alertSeverityClass(alert.severity))}>
-                    {alert.severity}
-                  </span>
-                  <span className="text-xs text-subtle">{alert.alert_type.replace(/_/g, " ")}</span>
-                </div>
-                <p className="mt-1 text-xs text-muted line-clamp-2">{alert.change_summary}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onDismiss(alert)}
-                disabled={processingIds.has(`optimizer-alert-${alert.id}`)}
-                className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 function ThesisClaimsPanel({ claims, claimCount }: { claims: ThesisClaim[]; claimCount: number }) {
   if (claimCount <= 0) return null
   return (
@@ -451,104 +378,9 @@ function ThesisClaimsPanel({ claims, claimCount }: { claims: ThesisClaim[]; clai
   )
 }
 
-function RecentActivityPanel({
-  workflowRuns,
-  reportRuns,
-  onViewWorkflowTrace,
-}: {
-  workflowRuns: WorkflowRun[]
-  reportRuns: ReportRun[]
-  onViewWorkflowTrace?: (run: WorkflowRun) => void
-}) {
-  if (workflowRuns.length === 0 && reportRuns.length === 0) return null
-  return (
-    <section className="theme-surface rounded-xl p-4 lg:col-span-2">
-      <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-        <Clock size={14} className="text-gray-500" />
-        Recent Activity
-      </h2>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {workflowRuns.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Workflow Runs</h3>
-            <div className="space-y-2">
-              {workflowRuns.map((run, index) => {
-                const ticker = workflowRunTicker(run)
-                const runId = String(run.run_id ?? "").trim()
-                return (
-                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
-                    <div className="flex items-center gap-3">
-                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
-                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
-                      {ticker && (
-                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
-                          {ticker}
-                        </Link>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
-                      {runId && onViewWorkflowTrace && (
-                        <TraceTriggerButton
-                          compact
-                          label={`View workflow ${runId} trace`}
-                          onClick={() => onViewWorkflowTrace(run)}
-                        />
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-        {reportRuns.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Report Runs</h3>
-            <div className="space-y-2">
-              {reportRuns.map((run, index) => (
-                <div key={reportRunKey(run, index)} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <FileText size={14} className="shrink-0 text-blue-500" />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-app">{reportRunLabel(run)}</span>
-                        <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
-                        <span className="text-xs text-subtle">{run.status ?? "unknown"}</span>
-                      </div>
-                      {run.error && <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{run.error}</p>}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-xs text-subtle">{reportRunTime(run)}</span>
-                    {run.issue_url && (
-                      <a href={run.issue_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
-                        Issue
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </section>
-  )
-}
-
 function sourceHealthLabel(value: string | null | undefined): string {
   const normalized = String(value || "missing").replace(/_/g, " ")
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
-}
-
-function sourceHealthBadgeClass(source: Pick<SourceHealthSource, "status" | "required">): string {
-  const status = String(source.status || "missing")
-  if (source.required && ["stale", "failed", "missing"].includes(status)) return "theme-badge-error"
-  if (status === "ok") return "theme-badge-success"
-  if (status === "failed") return "theme-badge-error"
-  if (status === "stale" || status === "degraded") return "theme-badge-warning"
-  return "theme-badge-neutral"
 }
 
 function sourceHealthOverallClass(quality: string | null | undefined): string {
@@ -557,10 +389,6 @@ function sourceHealthOverallClass(quality: string | null | undefined): string {
   if (value === "failed" || value === "missing") return "theme-badge-error"
   if (value === "stale" || value === "degraded") return "theme-badge-warning"
   return "theme-badge-neutral"
-}
-
-function sourceHealthTimestamp(source: SourceHealthSource): string {
-  return formatTime(source.freshness_timestamp ?? source.as_of ?? source.fetched_at)
 }
 
 function reliabilityTierLabel(tier: string | null | undefined): string {
@@ -574,84 +402,6 @@ function reliabilityTierBadgeClass(tier: string | null | undefined): string {
   if (value === "standard") return "theme-badge-warning"
   if (value === "supplemental") return "theme-badge-neutral"
   return "theme-badge-neutral"
-}
-
-function SourceHealthPanel({ sourceHealth }: { sourceHealth: SourceHealth }) {
-  const counts = sourceHealth.counts ?? {}
-  const tierCounts = sourceHealth.tier_counts ?? {}
-  const domains = sourceHealth.domains ?? []
-  return (
-    <section className="theme-surface mt-6 rounded-xl p-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-app">
-          <Database size={14} className="text-blue-500" />
-          Source Health
-        </h2>
-        <span className={cn("theme-badge ml-auto", sourceHealthOverallClass(sourceHealth.overall_quality))}>
-          {sourceHealthLabel(sourceHealth.overall_quality)}
-        </span>
-        <span className="text-xs text-subtle">Updated {formatTime(sourceHealth.generated_at)}</span>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted">
-        <span>{counts.total ?? 0} sources</span>
-        <span>{counts.ok ?? 0} ok</span>
-        <span>{counts.critical_stale ?? 0} critical stale</span>
-        <span>{counts.critical_failed ?? 0} critical failed</span>
-        <span>{counts.sla_breach ?? 0} SLA breach</span>
-        <span>{counts.optional_degraded ?? 0} optional degraded</span>
-        {(tierCounts.critical ?? 0) > 0 && <span>{tierCounts.critical} critical tier</span>}
-      </div>
-      {domains.length === 0 ? (
-        <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
-          No source freshness records are available yet.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {domains.map(domain => (
-            <div key={domain.domain} className="rounded-lg border border-app px-3 py-3">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="text-sm font-semibold text-app">{domain.label}</span>
-                <span className={cn("theme-badge ml-auto", sourceHealthOverallClass(domain.overall_quality))}>
-                  {sourceHealthLabel(domain.overall_quality)}
-                </span>
-              </div>
-              <div className="space-y-2">
-                {domain.sources.map(source => (
-                  <div
-                    key={source.id}
-                    className={cn(
-                      "grid gap-2 rounded-md px-2 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
-                      source.required && ["stale", "failed", "missing"].includes(source.status)
-                        ? "border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
-                        : "bg-[hsl(var(--muted-2))]",
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-app">{source.source_name.replace(/_/g, " ")}</span>
-                        <span className={cn("theme-badge", reliabilityTierBadgeClass(source.reliability_tier))}>
-                          {reliabilityTierLabel(source.reliability_tier)}
-                        </span>
-                        <span className="text-subtle">{source.required ? "required" : "optional"}</span>
-                        {source.sla_breach && <span className="text-red-600 dark:text-red-400">SLA breach</span>}
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-subtle">
-                        <span>{sourceHealthTimestamp(source)}</span>
-                        {source.detail && <span className="max-w-full truncate">{source.detail}</span>}
-                      </div>
-                    </div>
-                    <span className={cn("theme-badge w-fit", sourceHealthBadgeClass(source))}>
-                      {sourceHealthLabel(source.status)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  )
 }
 
 type ApprovalSourceHealthReview = NonNullable<ApprovalRecord["source_health_review"]>
@@ -908,6 +658,658 @@ function RiskBindingLine({ record }: { record: RecommendationRecord | Record<str
       {riskSnapshot && <span>Risk {riskSnapshot}</span>}
       {portfolioSnapshot && <span>Portfolio {portfolioSnapshot}</span>}
     </div>
+  )
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Workspace redesign — calm "Daily Briefing" information architecture.
+   What to do first (summary + action queue), status second (risk,
+   triggers, timeline, source health). Plain-language over raw diffs.
+   ──────────────────────────────────────────────────────────────── */
+
+function greeting(date = new Date()): string {
+  const h = date.getHours()
+  if (h < 12) return "Good morning"
+  if (h < 18) return "Good afternoon"
+  return "Good evening"
+}
+
+function todayLabel(date = new Date()): string {
+  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+}
+
+const NUM_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+function numWord(n: number): string {
+  return n >= 0 && n <= 10 ? NUM_WORDS[n] : String(n)
+}
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+interface BriefingFacts {
+  regime: string | null
+  regimeTone: "success" | "warning" | "error" | null
+  regimeScore: number | null
+  positions: number | null
+  avgRisk: number | null
+  riskBand: string | null
+  riskQuality: string | null
+  pendingApprovals: number
+  optimizerAlerts: number
+  degradedSources: number
+  failedReports: string[]
+}
+
+function buildBriefingFacts(
+  data: WorkspaceData,
+  approvalCount: number,
+  optimizerAlertCount: number,
+): BriefingFacts {
+  const regime = data.regime
+  const regimeInfo = regime?.signal ? REGIME_SIGNAL_MAP[regime.signal.toLowerCase()] : null
+  const risk = data.portfolio?.risk
+  const counts = data.source_health?.counts ?? {}
+  const degraded = (counts.optional_degraded ?? 0) + (counts.sla_breach ?? 0)
+  const failedReports = data.recommendations.blocked_warnings.map(w => String(w.report_type || "").toLowerCase()).filter(Boolean)
+  const band = risk?.risk_level ? String(risk.risk_level).toLowerCase() : null
+  return {
+    regime: regimeInfo?.label ?? (regime?.regime ?? null),
+    regimeTone: regimeInfo?.signal ?? null,
+    regimeScore: regime?.composite_score ?? null,
+    positions: data.portfolio?.position_count ?? null,
+    avgRisk: typeof risk?.average_risk_score === "number" ? risk.average_risk_score : null,
+    riskBand: band,
+    riskQuality: risk?.quality ?? null,
+    pendingApprovals: approvalCount,
+    optimizerAlerts: optimizerAlertCount,
+    degradedSources: degraded,
+    failedReports,
+  }
+}
+
+function templateBriefingSummary(f: BriefingFacts): string {
+  const parts: string[] = []
+  if (f.regime && f.positions != null) {
+    const bandClause = f.riskBand ? ` carrying ${f.riskBand} average risk` : ""
+    parts.push(`The market is in a ${f.regime} regime and your ${numWord(f.positions)} position${f.positions === 1 ? "" : "s"} are${bandClause || " in line with target"}.`)
+  } else if (f.regime) {
+    parts.push(`The market is in a ${f.regime} regime.`)
+  } else if (f.positions != null) {
+    parts.push(`You are holding ${numWord(f.positions)} position${f.positions === 1 ? "" : "s"}.`)
+  }
+
+  const approvals = f.pendingApprovals === 0
+    ? "Nothing is waiting on your approval"
+    : `${f.pendingApprovals === 1 ? "One approval is" : `${capitalize(numWord(f.pendingApprovals))} approvals are`} waiting on you`
+  const alerts = f.optimizerAlerts > 0
+    ? `, and the optimizer flagged ${numWord(f.optimizerAlerts)} change${f.optimizerAlerts === 1 ? "" : "s"} worth a look`
+    : ""
+  parts.push(`${approvals}${alerts}.`)
+
+  if (f.degradedSources > 0) {
+    const failed = f.failedReports.length > 0
+      ? ` ${capitalize(f.failedReports.join(" & "))} recommendation run${f.failedReports.length === 1 ? "" : "s"} did not complete as a result.`
+      : " Nothing critical has failed."
+    parts.push(`${capitalize(numWord(f.degradedSources))} data source${f.degradedSources === 1 ? " is" : "s are"} running degraded.${failed}`)
+  }
+
+  return parts.join(" ")
+}
+
+function StatInline({ tone, value, label }: { tone: "success" | "warning" | "error" | "neutral"; value: string; label: string }) {
+  const dot = tone === "neutral" ? "bg-[hsl(var(--foreground-quaternary))]"
+    : tone === "success" ? "bg-[hsl(var(--success))]"
+    : tone === "warning" ? "bg-[hsl(var(--warning))]"
+    : "bg-[hsl(var(--destructive))]"
+  return (
+    <span className="inline-flex items-baseline gap-2">
+      <span className={cn("h-2 w-2 self-center rounded-full", dot)} />
+      <strong className="font-semibold text-app">{value}</strong>
+      <span className="text-sm text-subtle">{label}</span>
+    </span>
+  )
+}
+
+function BriefingSummaryCard({ facts }: { facts: BriefingFacts }) {
+  const [generatedAt, setGeneratedAt] = useState(() => new Date())
+  const summary = templateBriefingSummary(facts)
+  const regimeStat = facts.regime
+    ? <StatInline tone={facts.regimeTone ?? "neutral"} value={facts.regime} label={facts.regimeScore != null ? `regime · score ${facts.regimeScore}` : "regime"} />
+    : null
+  const riskStat = facts.avgRisk != null
+    ? <StatInline tone={facts.riskQuality && facts.riskQuality !== "ok" ? "warning" : "success"} value={formatRiskScore(facts.avgRisk)} label={`avg risk${facts.positions != null ? ` · ${facts.positions} position${facts.positions === 1 ? "" : "s"}` : ""}`} />
+    : null
+  const approvalStat = <StatInline tone={facts.pendingApprovals > 0 ? "warning" : "success"} value={String(facts.pendingApprovals)} label={`approval${facts.pendingApprovals === 1 ? "" : "s"} pending`} />
+  const sourceStat = facts.degradedSources > 0
+    ? <StatInline tone="warning" value="Degraded" label={`${facts.degradedSources} source${facts.degradedSources === 1 ? "" : "s"}`} />
+    : <StatInline tone="success" value="Healthy" label="sources" />
+
+  return (
+    <section className="theme-surface mb-6 rounded-xl p-5 sm:p-6">
+      <div className="mb-4 flex items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-[0.13em] text-subtle">Today's read</span>
+        <span className="ml-auto inline-flex items-center gap-1.5 theme-badge theme-badge-neutral">
+          <FileText size={12} aria-hidden="true" /> Template
+        </span>
+        <button
+          type="button"
+          onClick={() => setGeneratedAt(new Date())}
+          title="Regenerate summary"
+          className="theme-icon-button h-8 w-8"
+        >
+          <RefreshCw size={15} />
+        </button>
+      </div>
+      <p className="m-0 text-lg leading-relaxed text-muted sm:text-xl">{summary}</p>
+      <div className="mt-5 flex flex-wrap gap-x-7 gap-y-3 border-t border-app pt-4 text-sm">
+        {regimeStat}
+        {riskStat}
+        {approvalStat}
+        {sourceStat}
+      </div>
+      <p className="mt-3 text-[11px] text-subtle">
+        Computed from your live data · as of {generatedAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+      </p>
+    </section>
+  )
+}
+
+type PortfolioRisk = NonNullable<NonNullable<WorkspaceData["portfolio"]>["risk"]>
+
+function WorkspaceRiskCard({ risk }: { risk: PortfolioRisk }) {
+  const contributors = Array.isArray(risk.top_contributors) ? risk.top_contributors : []
+  const degraded = Boolean(risk.quality && risk.quality !== "ok")
+  return (
+    <section className="theme-surface flex flex-col rounded-xl p-4">
+      <div className="mb-4 flex items-center gap-2">
+        <Shield size={15} className={degraded ? "text-amber-500" : "text-blue-500"} />
+        <h2 className="text-sm font-semibold text-app">Portfolio risk</h2>
+        <span className="ml-auto"><QualityStateBadge state={risk.quality || "missing"} /></span>
+      </div>
+      <div className="mb-4 flex items-end gap-6">
+        <div>
+          <p className="text-2xl font-bold tracking-tight text-app">{formatRiskScore(risk.average_risk_score)}</p>
+          <p className="mt-1 text-xs text-subtle">Avg risk</p>
+        </div>
+        <div>
+          <p className="text-2xl font-bold tracking-tight text-app">{formatRiskScore(risk.max_risk_score)}</p>
+          <p className="mt-1 text-xs text-subtle">Max risk</p>
+        </div>
+        <div className="ml-auto text-right">
+          <p className="text-sm font-semibold text-app">
+            H {risk.risk_buckets?.high ?? 0} · M {risk.risk_buckets?.medium ?? 0} · L {risk.risk_buckets?.low ?? 0}
+          </p>
+          <p className="mt-1 text-xs text-subtle">Buckets · {risk.as_of || risk.computed_at || "—"}</p>
+        </div>
+      </div>
+      {contributors.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {contributors.slice(0, 5).map((row, idx) => {
+            const score = typeof row.risk_score === "number" ? row.risk_score : null
+            return (
+              <span key={`${String(row.ticker || "risk")}-${idx}`} className="inline-flex items-center gap-1.5 rounded-full border border-app bg-card-muted px-2.5 py-1 text-xs">
+                <span className="font-bold tabular-nums text-app">{String(row.ticker || "Portfolio")}</span>
+                <span className={cn("tabular-nums font-semibold", score != null && score >= 0.36 ? "text-amber-600 dark:text-amber-400" : "text-subtle")}>{formatRiskScore(score)}</span>
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function WorkspaceTriggersCard({
+  triggers,
+  count,
+  processingIds,
+  onEdit,
+  onCancel,
+}: {
+  triggers: Trigger[]
+  count: number
+  processingIds: Set<number | string>
+  onEdit: (t: Trigger) => void
+  onCancel: (id: number | string) => void
+}) {
+  return (
+    <section className="theme-surface flex min-h-0 flex-col rounded-xl p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Flag size={15} className="text-cyan-500" />
+        <h2 className="text-sm font-semibold text-app">Active triggers</h2>
+        <span className="ml-auto text-xs text-subtle">{count} active</span>
+      </div>
+      {triggers.length === 0 ? (
+        <p className="text-xs text-subtle">No active triggers.</p>
+      ) : (
+        <div className="-mx-1 max-h-[22rem] space-y-1 overflow-y-auto px-1">
+          {triggers.slice(0, 6).map(t => (
+            <div key={t.id} className="rounded-lg px-2 py-2 text-sm transition-colors hover:bg-[hsl(var(--background-card-muted))]">
+              <div className="flex items-center gap-2">
+                {t.ticker && (
+                  <Link to={`/dossier/${encodeURIComponent(t.ticker)}`} state={{ from: "workspace" }} className="shrink-0 font-bold text-app hover:underline">
+                    {t.ticker}
+                  </Link>
+                )}
+                <span className="min-w-0 flex-1 truncate text-muted">{t.condition}</span>
+                <button
+                  type="button"
+                  onClick={() => onEdit(t)}
+                  disabled={processingIds.has(t.id)}
+                  className="shrink-0 text-xs font-semibold text-link hover:underline disabled:opacity-50"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCancel(t.id)}
+                  disabled={processingIds.has(t.id)}
+                  aria-label={`Cancel trigger ${t.id}`}
+                  className="theme-icon-button h-7 w-7 shrink-0 disabled:opacity-50"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[11px] text-subtle">
+                <span>{t.trigger_type.replace(/_/g, " ")}</span>
+                {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+type QueueTab = "all" | "approvals" | "alerts"
+
+function ActionQueueCard({
+  approvalItems,
+  approvalCount,
+  approvalLoading,
+  approvalError,
+  optimizerAlerts,
+  optimizerCount,
+  optimizerDismissError,
+  pressures,
+  pressureDismissError,
+  processingIds,
+  bulkDismissSubmitting,
+  onReviewApproval,
+  onBulkDismiss,
+  onDismissOptimizer,
+  onDismissPressure,
+  onOpenApprovalTrace,
+}: {
+  approvalItems: ApprovalRecord[]
+  approvalCount: number
+  approvalLoading: boolean
+  approvalError: unknown
+  optimizerAlerts: OptimizationAlert[]
+  optimizerCount: number
+  optimizerDismissError: string | null
+  pressures: WorkspaceData["thesis_pressure"]
+  pressureDismissError: string | null
+  processingIds: Set<number | string>
+  bulkDismissSubmitting: boolean
+  onReviewApproval: (a: ApprovalRecord) => void
+  onBulkDismiss: () => void
+  onDismissOptimizer: (a: OptimizationAlert) => void
+  onDismissPressure: (tp: WorkspaceData["thesis_pressure"][number]) => void
+  onOpenApprovalTrace: (a: ApprovalRecord) => void
+}) {
+  const [tab, setTab] = useState<QueueTab>("all")
+  const alertCount = optimizerCount + pressures.length
+  const counts: Record<QueueTab, number> = { all: approvalCount + alertCount, approvals: approvalCount, alerts: alertCount }
+  const showApprovals = tab === "all" || tab === "approvals"
+  const showAlerts = tab === "all" || tab === "alerts"
+  const canBulkDismiss = approvalCount > 0 && !approvalLoading && !approvalError && showApprovals
+  const isEmpty =
+    (!showApprovals || (approvalCount === 0 && !approvalLoading && !approvalError)) &&
+    (!showAlerts || alertCount === 0)
+
+  const tabs: [QueueTab, string][] = [["all", "All"], ["approvals", "Approvals"], ["alerts", "Alerts"]]
+
+  return (
+    <section className="theme-surface flex min-h-0 flex-col overflow-hidden rounded-xl">
+      <div className="border-b border-app p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Bell size={16} className="text-blue-500" />
+          <h2 className="text-sm font-semibold text-app">Action queue</h2>
+          {canBulkDismiss ? (
+            <button
+              type="button"
+              onClick={onBulkDismiss}
+              disabled={bulkDismissSubmitting}
+              className="ml-auto rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-300 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
+            >
+              Dismiss all
+            </button>
+          ) : (
+            <span className="ml-auto text-xs text-subtle">What needs you, in order</span>
+          )}
+        </div>
+        <div className="inline-flex gap-1 rounded-full border border-app bg-card-muted p-1">
+          {tabs.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors",
+                tab === id ? "bg-elevated text-app shadow-sm" : "text-subtle hover:text-app",
+              )}
+            >
+              {label}
+              <span className={cn(
+                "inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[11px] font-bold tabular-nums",
+                tab === id ? "bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]" : "bg-card-muted text-subtle",
+              )}>
+                {counts[id]}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3.5">
+        {(optimizerDismissError || pressureDismissError) && showAlerts && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {optimizerDismissError || pressureDismissError}
+          </div>
+        )}
+
+        {showApprovals && approvalLoading && (
+          <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">Loading approvals…</div>
+        )}
+        {showApprovals && !!approvalError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            Failed to load approvals: {String(approvalError)}
+          </div>
+        )}
+        {showApprovals && !approvalLoading && !approvalError && approvalItems.map(a => {
+          const gate = policyGateFromApproval(a)
+          const displayTicker = approvalTickerLabel(a)
+          const displayReason = approvalReasonLabel(a)
+          return (
+            <div key={a.id} className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30">
+              <div className="flex items-center gap-2 border-b border-amber-200/70 px-3.5 py-2 dark:border-amber-900/50">
+                <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-amber-700 dark:text-amber-300">Pending approval</span>
+                {displayTicker && <span className="font-bold tabular-nums text-app">{displayTicker}</span>}
+                <span className="text-xs text-subtle">{approvalSubjectLabel(a)}</span>
+              </div>
+              <div className="bg-card px-3.5 py-3">
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  <BaseStateBadge state={a.base_state_status} message={a.base_state_message} />
+                  <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
+                  <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
+                  <QualityStateBadge state={a.quality_state ?? "missing"} />
+                  <ApprovalSourceHealthBadge review={a.source_health_review} />
+                </div>
+                {displayReason && <p className="mb-2 line-clamp-2 text-sm text-muted">{displayReason}</p>}
+                {approvalNeedsPolicyGate(a, gate) && <PolicyGatePanel gate={gate} />}
+                <ApprovalProgressSummary approval={a} compact />
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onReviewApproval(a)}
+                    disabled={processingIds.has(a.id)}
+                    className="theme-button-base theme-button-primary min-h-9 flex-1 px-4 text-xs"
+                  >
+                    Review
+                  </button>
+                  <TraceTriggerButton compact label={`View approval ${a.id} trace`} onClick={() => onOpenApprovalTrace(a)} />
+                </div>
+              </div>
+            </div>
+          )
+        })}
+
+        {showAlerts && optimizerAlerts.map(alert => (
+          <div key={`opt-${alert.id}`} className="flex gap-3 rounded-xl border border-app bg-card px-3.5 py-3 transition-colors hover:bg-[hsl(var(--background-card-muted))]">
+            <span className="w-[3px] shrink-0 self-stretch rounded-full bg-amber-400" />
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                {alert.ticker ? (
+                  <Link to={`/dossier/${encodeURIComponent(alert.ticker)}`} state={{ from: "workspace" }} className="font-bold tabular-nums text-app hover:underline">{alert.ticker}</Link>
+                ) : (
+                  <span className="font-bold tabular-nums text-app">PORTFOLIO</span>
+                )}
+                <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-semibold", alertSeverityClass(alert.severity))}>{alert.severity}</span>
+                <span className="text-[11px] text-subtle">{alert.alert_type.replace(/_/g, " ")}</span>
+              </div>
+              <p className="line-clamp-2 text-sm leading-snug text-muted">{alert.change_summary}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onDismissOptimizer(alert)}
+              disabled={processingIds.has(`optimizer-alert-${alert.id}`)}
+              aria-label="Dismiss alert"
+              className="theme-icon-button h-7 w-7 shrink-0 disabled:opacity-50"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+
+        {showAlerts && pressures.map(tp => (
+          <div key={`pressure-${tp.pressure_key}`} className="flex gap-3 rounded-xl border border-app bg-card px-3.5 py-3 transition-colors hover:bg-[hsl(var(--background-card-muted))]">
+            <span className={cn("w-[3px] shrink-0 self-stretch rounded-full", tp.action === "exit" || tp.action === "reduce" ? "bg-red-400" : "bg-amber-400")} />
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <Link to={`/dossier/${encodeURIComponent(tp.ticker)}`} state={{ from: "workspace" }} className="font-bold tabular-nums text-app hover:underline">{tp.ticker}</Link>
+                <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-semibold", tp.action === "exit" || tp.action === "reduce" ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950" : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950")}>Evaluation: {tp.action}</span>
+                <span className="text-[11px] text-subtle">{tp.confidence}</span>
+              </div>
+              <p className="text-sm leading-snug text-muted">
+                Thesis pressure flagged a possible {tp.action}{tp.risk_flag ? ` — ${tp.risk_flag}` : ""}.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onDismissPressure(tp)}
+              disabled={processingIds.has(`pressure-${tp.pressure_key}`)}
+              aria-label={`Clear ${tp.ticker} pressure row`}
+              className="theme-icon-button h-7 w-7 shrink-0 disabled:opacity-50"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+
+        {isEmpty && (
+          <div className="py-12 text-center">
+            <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
+              <CheckCircle size={24} />
+            </span>
+            <p className="text-sm font-semibold text-app">You're all caught up</p>
+            <p className="mt-1 text-xs text-subtle">Nothing in this lane needs action right now.</p>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+interface TimelineEntry {
+  id: string
+  kind: "workflow" | "report"
+  title: string
+  detail: string | null
+  ticker: string | null
+  status: string | null
+  time: string
+  sortKey: number
+  trace?: () => void
+  traceLabel?: string
+}
+
+function WorkspaceTimeline({
+  workflowRuns,
+  reportRuns,
+  onViewWorkflowTrace,
+}: {
+  workflowRuns: WorkflowRun[]
+  reportRuns: ReportRun[]
+  onViewWorkflowTrace?: (run: WorkflowRun) => void
+}) {
+  const [filter, setFilter] = useState<"all" | "workflow" | "report">("all")
+  const sortKey = (iso: string | null | undefined) => {
+    const t = new Date(String(iso ?? "")).getTime()
+    return Number.isNaN(t) ? 0 : t
+  }
+  const entries: TimelineEntry[] = [
+    ...workflowRuns.map((run, i): TimelineEntry => {
+      const ticker = workflowRunTicker(run)
+      const runId = String(run.run_id ?? "").trim()
+      return {
+        id: runId || `workflow-${i}`,
+        kind: "workflow",
+        title: `${capitalize(workflowRunLabel(run))} ${ticker ? "review" : "run"}`,
+        detail: run.synthesis ? String(run.synthesis).slice(0, 140) : `Workflow run ${run.status ?? ""}`.trim(),
+        ticker,
+        status: run.status ?? null,
+        time: workflowRunTime(run),
+        sortKey: sortKey(run.started_at ?? run.completed_at),
+        trace: runId && onViewWorkflowTrace ? () => onViewWorkflowTrace(run) : undefined,
+        traceLabel: runId ? `View workflow ${runId} trace` : undefined,
+      }
+    }),
+    ...reportRuns.map((run, i): TimelineEntry => ({
+      id: reportRunKey(run, i),
+      kind: "report",
+      title: `${reportRunLabel(run)} report ${String(run.status ?? "").toLowerCase() === "failed" ? "did not complete" : "generated"}`,
+      detail: run.error ? String(run.error) : (run.status ? capitalize(String(run.status)) : null),
+      ticker: null,
+      status: run.status ?? null,
+      time: reportRunTime(run),
+      sortKey: sortKey(run.as_of ?? run.synced_at ?? run.created_at),
+    })),
+  ].sort((a, b) => b.sortKey - a.sortKey)
+
+  const counts = {
+    all: entries.length,
+    workflow: entries.filter(e => e.kind === "workflow").length,
+    report: entries.filter(e => e.kind === "report").length,
+  }
+  const shown = entries.filter(e => filter === "all" || e.kind === filter)
+  const filters: ["all" | "workflow" | "report", string][] = [["all", "All"], ["workflow", "Workflows"], ["report", "Reports"]]
+
+  if (entries.length === 0) return null
+
+  return (
+    <section className="theme-surface mb-6 rounded-xl p-5">
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <Clock size={16} className="text-gray-500" />
+        <h2 className="text-sm font-semibold text-app">Timeline</h2>
+        <span className="text-xs text-subtle">everything that moved, newest first</span>
+        <div className="ml-auto inline-flex gap-1.5">
+          {filters.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setFilter(id)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors",
+                filter === id ? "border-transparent bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]" : "border-app text-subtle hover:text-app",
+              )}
+            >
+              {label} <span className="tabular-nums opacity-75">{counts[id]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {shown.length === 0 ? (
+        <p className="py-8 text-center text-sm text-subtle">Nothing in this filter.</p>
+      ) : (
+        <div className="pl-1">
+          {shown.map((e, i) => {
+            const last = i === shown.length - 1
+            return (
+              <div key={e.id} className="flex gap-4">
+                <div className="w-16 shrink-0 pt-0.5 text-right">
+                  <div className="text-xs font-semibold text-muted">{e.time.split(",")[0]}</div>
+                  <div className="text-[11px] tabular-nums text-subtle">{e.time.split(",").slice(1).join(",").trim()}</div>
+                </div>
+                <div className="flex w-[18px] shrink-0 flex-col items-center">
+                  <span className={cn("mt-1.5 h-3 w-3 shrink-0 rounded-full ring-[1.5px] ring-[hsl(var(--separator))]", workflowStatusClass(e.status), "border-2 border-[hsl(var(--background-card))]")} />
+                  {!last && <span className="mt-1 w-0.5 flex-1 bg-[hsl(var(--separator))]" />}
+                </div>
+                <div className={cn("flex min-w-0 flex-1 gap-3", last ? "pb-0" : "pb-5")}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-app">{e.title}</span>
+                      {e.ticker && (
+                        <Link to={`/dossier/${encodeURIComponent(e.ticker)}`} state={{ from: "workspace" }} className="text-xs font-bold text-link hover:underline">{e.ticker}</Link>
+                      )}
+                    </div>
+                    {e.detail && <p className="mt-0.5 line-clamp-1 text-xs leading-snug text-subtle">{e.detail}</p>}
+                  </div>
+                  {e.trace && <TraceTriggerButton compact label={e.traceLabel ?? `Trace ${e.title}`} onClick={e.trace} />}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CollapsibleSourceHealth({ sourceHealth }: { sourceHealth: SourceHealth }) {
+  const [open, setOpen] = useState(false)
+  const counts = sourceHealth.counts ?? {}
+  const domains = sourceHealth.domains ?? []
+  return (
+    <section className="theme-surface overflow-hidden rounded-xl">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full flex-wrap items-center gap-4 px-5 py-3.5 text-left"
+      >
+        <Database size={16} className="text-subtle" />
+        <span className="text-sm font-semibold text-app">Source health</span>
+        <div className="flex flex-wrap gap-1.5">
+          <span className="theme-badge theme-badge-success">{counts.ok ?? 0} ok</span>
+          {(counts.sla_breach ?? 0) > 0 && <span className="theme-badge theme-badge-warning">{counts.sla_breach} SLA breach</span>}
+          {(counts.optional_degraded ?? 0) > 0 && <span className="theme-badge theme-badge-neutral">{counts.optional_degraded} degraded</span>}
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-xs text-subtle">Updated {formatTime(sourceHealth.generated_at)}</span>
+          <span className={cn("theme-badge", sourceHealthOverallClass(sourceHealth.overall_quality))}>{sourceHealthLabel(sourceHealth.overall_quality)}</span>
+          <ChevronDown size={18} className={cn("text-subtle transition-transform", open && "rotate-180")} />
+        </div>
+      </button>
+      {open && (
+        <div className="grid grid-cols-1 gap-6 border-t border-app px-5 py-5 xl:grid-cols-2">
+          {domains.length === 0 ? (
+            <p className="text-sm text-muted">No source freshness records are available yet.</p>
+          ) : domains.map(domain => (
+            <div key={domain.domain}>
+              <div className="mb-2.5 flex items-center justify-between">
+                <span className="text-sm font-semibold text-app">{domain.label}</span>
+                <span className={cn("theme-badge", sourceHealthOverallClass(domain.overall_quality))}>{sourceHealthLabel(domain.overall_quality)}</span>
+              </div>
+              <div>
+                {domain.sources.map((source, i) => (
+                  <div key={source.id} className={cn("flex items-center gap-2.5 py-2", i > 0 && "border-t border-app")}>
+                    <span className="text-sm text-muted">{source.source_name.replace(/_/g, " ")}</span>
+                    <span className="text-[11px] font-semibold text-subtle">
+                      {reliabilityTierLabel(source.reliability_tier)} · {source.required ? "required" : "optional"}
+                    </span>
+                    <span className={cn("ml-auto text-xs font-semibold", source.status === "ok" ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400")}>
+                      {sourceHealthLabel(source.status)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1206,15 +1608,7 @@ export function Workspace() {
   const approvalSummaryData = approvalSummary.data
   const approvalCount = approvalSummaryData?.count ?? data.pending_approvals.count
   const approvalItems = approvalSummaryData?.items ?? data.pending_approvals.items
-  const approvalHasMore = approvalSummaryData?.has_more ?? approvalItems.length < approvalCount
   const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
-  const approvalCountLabel = approvalSummaryInitialLoading
-    ? "loading"
-    : approvalHasMore
-      ? `showing ${approvalItems.length} of ${approvalCount} total`
-      : `${approvalCount} total`
-  const approvalRecommendationCount =
-    approvalSummaryData?.recommendation_approval_count ?? data.recommendations.pending_approval_count
   const courseOfActions = data.course_of_actions ?? {
     pending: { count: 0, items: [] },
     recent: { count: 0, items: [] },
@@ -1222,17 +1616,10 @@ export function Workspace() {
     pending_approval_count: 0,
   }
   const approvalSummaryError = approvalSummary.error
-  const regime = data.regime
   const portfolioRisk = data.portfolio?.risk
-  const regimeInfo = regime?.signal ? REGIME_SIGNAL_MAP[regime.signal.toLowerCase()] : null
-  const regimeSubtitle = [
-    regime?.composite_score != null ? `Score: ${regime.composite_score}` : null,
-    regime?.snapshot?.as_of ? `As of ${regime.snapshot.as_of}` : null,
-    regime?.snapshot?.refresh_status && regime.snapshot.refresh_status !== "ok" ? `Refresh ${regime.snapshot.refresh_status}` : null,
-    regime?.snapshot?.stale ? "Stale" : null,
-  ].filter(Boolean).join(" · ")
   const optimizerAlerts = data.continuous_optimization?.open_alerts ?? []
   const optimizerAlertCount = data.continuous_optimization?.open_alert_count ?? optimizerAlerts.length
+  const briefingFacts = buildBriefingFacts(data, approvalCount, optimizerAlertCount)
   const builderMonitors = data.monitor_builder?.active_monitors ?? []
   const builderMissions = data.monitor_builder?.active_missions ?? []
   const builderDefinitionCount =
@@ -1244,10 +1631,11 @@ export function Workspace() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-app">Portfolio Commander</h1>
-          <p className="mt-1 text-sm text-subtle">What changed, what matters, and what needs review.</p>
+          <p className="text-xs font-bold uppercase tracking-[0.13em] text-subtle">{todayLabel()}</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-app">{greeting()}.</h1>
+          <p className="mt-1.5 text-sm text-subtle">Here's where your book stands and the few things worth your attention.</p>
         </div>
         <RefreshButton
           queryKeys={[["workspace"]]}
@@ -1262,49 +1650,10 @@ export function Workspace() {
         </div>
       )}
 
-      {/* Top metrics row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <MetricCard
-          title="Market Regime"
-          value={regime?.regime ?? "--"}
-          subtitle={regimeSubtitle || undefined}
-          signal={regimeInfo?.signal ?? null}
-          signalLabel={regimeInfo?.label}
-        />
-        <MetricCard
-          title="Positions"
-          value={data.portfolio?.position_count ?? "--"}
-          subtitle={[
-            data.portfolio?.total_pnl_pct != null ? `P&L: ${formatPnl(data.portfolio.total_pnl_pct)}` : null,
-            portfolioRisk?.average_risk_score != null ? `Avg risk ${formatRiskScore(portfolioRisk.average_risk_score)}` : null,
-          ].filter(Boolean).join(" · ") || undefined}
-          signal={portfolioRisk?.quality && portfolioRisk.quality !== "ok" ? "warning" : null}
-          signalLabel={portfolioRisk?.risk_level ? String(portfolioRisk.risk_level) : undefined}
-        />
-        <MetricCard
-          title="Pending Approvals"
-          value={approvalSummaryInitialLoading ? "--" : approvalCount}
-          signal={approvalCount > 0 ? "warning" : null}
-          signalLabel={approvalCount > 0 ? "Needs Review" : undefined}
-        />
-        <MetricCard
-          title="Courses Of Action"
-          value={courseOfActions.pending.count}
-          subtitle={[
-            `${courseOfActions.pending_approval_count || approvalRecommendationCount} approval${(courseOfActions.pending_approval_count || approvalRecommendationCount) !== 1 ? "s" : ""}`,
-            optimizerAlertCount > 0 ? `${optimizerAlertCount} optimizer alert${optimizerAlertCount !== 1 ? "s" : ""}` : null,
-          ].filter(Boolean).join(" · ") || undefined}
-          signal={data.recommendations.blocked_warnings.length > 0 || optimizerAlertCount > 0 ? "warning" : null}
-          signalLabel={
-            data.recommendations.blocked_warnings.length > 0
-              ? "Blocked"
-              : optimizerAlertCount > 0
-                ? "Monitor Hits"
-                : undefined
-          }
-        />
-      </div>
+      {/* Calm summary — plain-language read of the book */}
+      <BriefingSummaryCard facts={briefingFacts} />
 
+      {/* What changed — elevated, concise */}
       <WhatChangedPanel summary={data.what_changed} className="mb-6" from="workspace" />
 
       {(data.opportunity_candidates?.count ?? 0) > 0 && (
@@ -1320,47 +1669,59 @@ export function Workspace() {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {portfolioRisk && (
-          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
-            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <GitBranch size={14} className={portfolioRisk.quality === "ok" ? "text-blue-500" : "text-amber-500"} />
-              Portfolio Risk
-              <span className="ml-auto text-xs text-subtle">{portfolioRisk.as_of || portfolioRisk.computed_at}</span>
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-              <div className="rounded-lg border border-app px-3 py-2">
-                <p className="text-xs text-subtle">Average Risk</p>
-                <p className="mt-1 text-lg font-semibold text-app">{formatRiskScore(portfolioRisk.average_risk_score)}</p>
-              </div>
-              <div className="rounded-lg border border-app px-3 py-2">
-                <p className="text-xs text-subtle">Max Risk</p>
-                <p className="mt-1 text-lg font-semibold text-app">{formatRiskScore(portfolioRisk.max_risk_score)}</p>
-              </div>
-              <div className="rounded-lg border border-app px-3 py-2">
-                <p className="text-xs text-subtle">Quality</p>
-                <div className="mt-1"><QualityStateBadge state={portfolioRisk.quality || "missing"} /></div>
-              </div>
-              <div className="rounded-lg border border-app px-3 py-2">
-                <p className="text-xs text-subtle">Buckets</p>
-                <p className="mt-1 text-sm font-medium text-app">
-                  H {portfolioRisk.risk_buckets?.high ?? 0} · M {portfolioRisk.risk_buckets?.medium ?? 0} · L {portfolioRisk.risk_buckets?.low ?? 0}
-                </p>
-              </div>
-            </div>
-            {Array.isArray(portfolioRisk.top_contributors) && portfolioRisk.top_contributors.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                {portfolioRisk.top_contributors.slice(0, 5).map((row, idx) => (
-                  <span key={`${String(row.ticker || "risk")}-${idx}`} className="rounded border border-app px-2 py-1 text-muted">
-                    <span className="font-semibold text-app">{String(row.ticker || "Portfolio")}</span>
-                    {" "}risk {formatRiskScore(typeof row.risk_score === "number" ? row.risk_score : null)}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
+      {/* What to do first — action queue beside key status */}
+      <div className="mb-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <ActionQueueCard
+          approvalItems={approvalItems}
+          approvalCount={approvalCount}
+          approvalLoading={approvalSummaryInitialLoading}
+          approvalError={approvalSummaryError}
+          optimizerAlerts={optimizerAlerts}
+          optimizerCount={optimizerAlertCount}
+          optimizerDismissError={optimizerDismissError}
+          pressures={data.thesis_pressure}
+          pressureDismissError={pressureDismissError}
+          processingIds={processingIds}
+          bulkDismissSubmitting={bulkDismissSubmitting}
+          onReviewApproval={openApprovalReview}
+          onBulkDismiss={() => {
+            setBulkDismissOpen(true)
+            setBulkDismissError(null)
+          }}
+          onDismissOptimizer={handleDismissOptimizerAlert}
+          onDismissPressure={handleDismissPressure}
+          onOpenApprovalTrace={a =>
+            openDecisionTrace({ kind: "approval", record: a as unknown as Record<string, unknown> })
+          }
+        />
+        <div className="flex flex-col gap-6">
+          {portfolioRisk && <WorkspaceRiskCard risk={portfolioRisk} />}
+          {data.active_triggers.count > 0 && (
+            <WorkspaceTriggersCard
+              triggers={data.active_triggers.items}
+              count={data.active_triggers.count}
+              processingIds={processingIds}
+              onEdit={t => {
+                setTriggerEdit({ kind: "active", trigger: t })
+                setTriggerEditError(null)
+              }}
+              onCancel={handleCancelTrigger}
+            />
+          )}
+        </div>
+      </div>
 
+      {/* Timeline — everything that moved, pulled into its own band */}
+      <WorkspaceTimeline
+        workflowRuns={data.recent_workflow_runs}
+        reportRuns={recentReportRuns}
+        onViewWorkflowTrace={run =>
+          openDecisionTrace({ kind: "workflow_run", record: run as unknown as Record<string, unknown> })
+        }
+      />
+
+      {/* Needs review & secondary status */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Course of Action Review */}
         {(courseOfActions.pending.count > 0 || courseOfActions.recent.count > 0 || courseOfActions.comparisons.count > 0) && (
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
@@ -1412,14 +1773,6 @@ export function Workspace() {
             </div>
           </section>
         )}
-
-        <OptimizationAlertsPanel
-          alerts={optimizerAlerts}
-          alertCount={optimizerAlertCount}
-          processingIds={processingIds}
-          onDismiss={handleDismissOptimizerAlert}
-          dismissError={optimizerDismissError}
-        />
 
         <ThesisClaimsPanel claims={thesisClaimItems} claimCount={thesisClaimCount} />
 
@@ -1592,171 +1945,6 @@ export function Workspace() {
           </section>
         ) : null}
 
-        {/* Thesis Pressure */}
-        {data.thesis_pressure.length > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
-            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <AlertTriangle size={14} className="text-amber-500" />
-              Positions Under Pressure
-            </h2>
-            {pressureDismissError && (
-              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                Failed to clear pressure row: {pressureDismissError}
-              </div>
-            )}
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {data.thesis_pressure.map(tp => (
-                <div
-                  key={tp.pressure_key}
-                  className="grid grid-cols-1 gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[hsl(var(--muted-2))] sm:grid-cols-[3rem_7.25rem_minmax(0,1fr)_4.5rem_2rem] sm:items-center"
-                >
-                  <Link
-                    to={`/dossier/${encodeURIComponent(tp.ticker)}`}
-                    state={{ from: "workspace" }}
-                    className="font-semibold text-app hover:underline"
-                  >
-                    {tp.ticker}
-                  </Link>
-                  <span className={cn(
-                    "w-fit rounded px-1.5 py-0.5 text-xs font-medium leading-4",
-                    tp.action === "exit" || tp.action === "reduce"
-                      ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950"
-                      : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
-                  )}>
-                    Evaluation: {tp.action}
-                  </span>
-                  {tp.risk_flag ? (
-                    <span className="text-xs leading-5 text-red-500">{tp.risk_flag}</span>
-                  ) : (
-                    <span className="hidden sm:block" />
-                  )}
-                  <span className="text-xs text-subtle sm:text-right">{tp.confidence}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleDismissPressure(tp)}
-                    disabled={processingIds.has(`pressure-${tp.pressure_key}`)}
-                    className="theme-icon-button h-8 w-8 justify-self-start disabled:cursor-not-allowed disabled:opacity-50 sm:justify-self-end"
-                    aria-label={`Clear ${tp.ticker} pressure row`}
-                    title="Clear pressure row"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Pending Approvals */}
-        {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
-            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <CheckCircle size={14} className="text-blue-500" />
-              Pending Approvals
-              <span className="ml-auto text-xs text-subtle">{approvalCountLabel}</span>
-              {approvalCount > 0 && !approvalSummaryInitialLoading && !approvalSummaryError && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBulkDismissOpen(true)
-                    setBulkDismissError(null)
-                  }}
-                  disabled={bulkDismissSubmitting}
-                  className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-300 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
-                >
-                  Dismiss all
-                </button>
-              )}
-            </h2>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-              {approvalSummaryInitialLoading && (
-                <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
-                  Loading approvals...
-                </div>
-              )}
-              {approvalSummaryError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  Failed to load approvals: {String(approvalSummaryError)}
-                </div>
-              )}
-              {!approvalSummaryInitialLoading && !approvalSummaryError && approvalItems.map(a => {
-                const key = `approval-${a.id}`
-                const expanded = expandedIds.has(key)
-                const gate = policyGateFromApproval(a)
-                const displayTicker = approvalTickerLabel(a)
-                const displayReason = approvalReasonLabel(a)
-                return (
-                  <div
-                    key={a.id}
-                    className="overflow-hidden rounded-lg border border-app px-3 py-3 text-sm"
-                  >
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <DecisionStateBadge state={approvalDecisionState(a)} />
-                          {displayTicker && (
-                            <Link to={`/dossier/${encodeURIComponent(displayTicker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
-                              {displayTicker}
-                            </Link>
-                          )}
-                          <span className="min-w-0 break-words text-xs text-subtle">{approvalSubjectLabel(a)}</span>
-                          {a.application_status && (
-                            <span className="max-w-full truncate rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
-                              {applicationLabel(a)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          <BaseStateBadge state={a.base_state_status} message={a.base_state_message} />
-                          <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
-                          <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
-                          <QualityStateBadge state={a.quality_state ?? "missing"} />
-                          <ApprovalSourceHealthBadge review={a.source_health_review} />
-                        </div>
-                        {displayReason && (
-                          <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
-                            {displayReason}
-                          </p>
-                        )}
-                        {a.application_error && (
-                          <p className="mt-1 break-words text-[11px] text-red-600 dark:text-red-400">
-                            Application failed: {a.application_error}
-                          </p>
-                        )}
-                        {approvalNeedsPolicyGate(a, gate) && (
-                          <PolicyGatePanel gate={gate} />
-                        )}
-                        <ApprovalProgressSummary approval={a} compact />
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                        <TraceTriggerButton
-                          compact
-                          label={`View approval ${a.id} trace`}
-                          onClick={() =>
-                            openDecisionTrace({
-                              kind: "approval",
-                              record: a as unknown as Record<string, unknown>,
-                            })
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() => openApprovalReview(a)}
-                          disabled={processingIds.has(a.id)}
-                          className="inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded px-3 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 dark:hover:bg-blue-900 disabled:opacity-50 sm:px-2.5 sm:min-h-8"
-                          title="Review approval"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        )}
-
         {/* Open Action Items */}
         {data.open_actions.count > 0 && (
           <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
@@ -1838,62 +2026,6 @@ export function Workspace() {
           </section>
         )}
 
-        {/* Active Watch Triggers */}
-        {data.active_triggers.count > 0 && (
-          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
-            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
-              <Eye size={14} className="text-cyan-500" />
-              Active Triggers
-              <span className="ml-auto text-xs text-subtle">{data.active_triggers.count} total</span>
-            </h2>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {data.active_triggers.items.map(t => (
-                <div key={t.id} className="rounded-lg px-3 py-2 text-sm">
-                  <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-3">
-                        {t.ticker && (
-                          <Link to={`/dossier/${encodeURIComponent(t.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
-                            {t.ticker}
-                          </Link>
-                        )}
-                        <span className="text-muted truncate">{t.condition}</span>
-                        <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
-                        <span>{t.status}</span>
-                        {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
-                        {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTriggerEdit({ kind: "active", trigger: t })
-                          setTriggerEditError(null)
-                        }}
-                        disabled={processingIds.has(t.id)}
-                        className="rounded px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950 disabled:opacity-50"
-                      >
-                        Propose Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCancelTrigger(t.id)}
-                        disabled={processingIds.has(t.id)}
-                        className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
-                      >
-                        Propose Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* Thesis surveillance / monitor hits */}
         {data.monitor_hits.count > 0 && (
           <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4 max-md:max-h-[min(40rem,calc(100dvh-12rem))]">
@@ -1938,16 +2070,6 @@ export function Workspace() {
           </section>
         )}
 
-        <RecentActivityPanel
-          workflowRuns={data.recent_workflow_runs}
-          reportRuns={recentReportRuns}
-          onViewWorkflowTrace={run =>
-            openDecisionTrace({
-              kind: "workflow_run",
-              record: run as unknown as Record<string, unknown>,
-            })
-          }
-        />
       </div>
 
       {/* Empty state */}
@@ -1975,7 +2097,11 @@ export function Workspace() {
         </div>
       )}
 
-      {data.source_health && <SourceHealthPanel sourceHealth={data.source_health} />}
+      {data.source_health && (
+        <div className="mt-6">
+          <CollapsibleSourceHealth sourceHealth={data.source_health} />
+        </div>
+      )}
       <Dialog
         open={bulkDismissOpen}
         onOpenChange={open => {

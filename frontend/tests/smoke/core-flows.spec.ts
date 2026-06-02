@@ -31,25 +31,20 @@ test("renders workspace common operating picture and enforces approval note gati
   await authenticate(page)
   await page.goto("/workspace")
 
-  await expect(page.getByRole("heading", { name: "Portfolio Commander" })).toBeVisible()
-  await expect(page.getByText("What changed, what matters, and what needs review.")).toBeVisible()
-  await expect(page.getByText("Market Regime", { exact: true })).toBeVisible()
-  await expect(page.getByText("Risk-on")).toBeVisible()
-  await expect(page.getByText("Portfolio Risk")).toBeVisible()
-  await expect(page.getByRole("heading", { name: /Optimizer Alerts/ })).toBeVisible()
+  await expect(page.getByText("Here's where your book stands and the few things worth your attention.")).toBeVisible()
+  await expect(page.getByText("Today's read")).toBeVisible()
+  await expect(page.getByText(/Bullish regime/)).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
   await expect(page.getByText("Recommended action shifted from hold to trim after risk review.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Portfolio risk" })).toBeVisible()
   await expect(page.getByRole("heading", { name: /Thesis Claim Issues/ })).toBeVisible()
   await expect(page.getByText("AI infrastructure demand remains durable through 2026.")).toBeVisible()
-  await expect(page.getByRole("heading", { name: /Recent Activity/ })).toBeVisible()
-  await expect(page.getByText("Report Runs")).toBeVisible()
-  await expect(page.getByRole("heading", { name: /Pending Approvals/ })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible()
   await expect(page.getByText("1/2 approvals recorded")).toBeVisible()
   await expect(page.getByText("Portfolio manager (portfolio:default)")).toBeVisible()
 
-  await expect(page.getByRole("heading", { name: "Source Health" })).toBeVisible()
-  await expect(page.getByText("1 critical stale")).toBeVisible()
-  await expect(page.getByText("SLA breach").first()).toBeVisible()
-  await expect(page.getByText("Critical").first()).toBeVisible()
+  await expect(page.getByText("Source health", { exact: true })).toBeVisible()
+  await expect(page.getByText(/SLA breach/).first()).toBeVisible()
 
   await page.getByRole("button", { name: "Review", exact: true }).click()
 
@@ -80,7 +75,7 @@ test("clears workspace pressure rows and bulk dismisses approvals", async ({ pag
   await authenticate(page)
   await page.goto("/workspace")
 
-  await expect(page.getByRole("heading", { name: "Positions Under Pressure" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
   await expect(page.getByText("AI capex concentration")).toBeVisible()
 
   await page.getByRole("button", { name: "Clear MSFT pressure row" }).click()
@@ -264,11 +259,11 @@ test("opens dossier pressure test workflow and records prior run trace", async (
   await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
 })
 
-test("opens workflow trace from workspace recent activity", async ({ page }) => {
+test("opens workflow trace from workspace timeline", async ({ page }) => {
   await authenticate(page)
   await page.goto("/workspace")
 
-  await expect(page.getByRole("heading", { name: /Recent Activity/ })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible()
   await page.getByRole("button", { name: "View workflow workflow-smoke trace" }).click()
   await expectDecisionTraceDrawer(page.getByRole("dialog", { name: "Decision Trace" }))
 })
