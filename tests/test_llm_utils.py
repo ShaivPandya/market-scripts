@@ -123,6 +123,113 @@ def test_anthropic_text_request_shape_and_citations(monkeypatch):
     assert "thinking" not in fake_messages.kwargs
 
 
+def test_anthropic_text_request_can_stream(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    class FakeStream:
+        def __init__(self, response):
+            self.response = response
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_final_message(self):
+            return self.response
+
+    class FakeMessages:
+        def __init__(self):
+            self.kwargs = None
+            self.create_called = False
+
+        def create(self, **kwargs):
+            self.create_called = True
+            raise AssertionError("streaming calls should not use messages.create")
+
+        def stream(self, **kwargs):
+            self.kwargs = kwargs
+            return FakeStream(
+                SimpleNamespace(
+                    content=[SimpleNamespace(type="text", text="streamed answer")],
+                    stop_reason="end_turn",
+                )
+            )
+
+    fake_messages = FakeMessages()
+
+    class FakeAnthropic:
+        def __init__(self, *args, **kwargs):
+            self.messages = fake_messages
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    text, citations, _response = llm_utils.call_llm_text(
+        prompt="hello",
+        model=llm_utils.MODEL_LOW,
+        api_key=None,
+        max_tokens=24576,
+        stream=True,
+    )
+
+    assert text == "streamed answer"
+    assert citations == []
+    assert fake_messages.create_called is False
+    assert fake_messages.kwargs["max_tokens"] == 24576
+
+
+def test_anthropic_long_text_request_streams_automatically(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_final_message(self):
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="auto streamed")], stop_reason="end_turn")
+
+    class FakeMessages:
+        def __init__(self):
+            self.kwargs = None
+            self.create_called = False
+
+        def create(self, **kwargs):
+            self.create_called = True
+            raise AssertionError("long Anthropic requests must not use messages.create")
+
+        def stream(self, **kwargs):
+            self.kwargs = kwargs
+            return FakeStream()
+
+    fake_messages = FakeMessages()
+
+    class FakeAnthropic:
+        def __init__(self, *args, **kwargs):
+            self.messages = fake_messages
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="hello",
+        model=llm_utils.MODEL_HIGH,
+        api_key=None,
+        max_tokens=24576,
+        reasoning_effort=llm_utils.REASONING_HIGH,
+    )
+
+    assert text == "auto streamed"
+    assert fake_messages.create_called is False
+    assert fake_messages.kwargs["model"] == "claude-opus-4-8"
+    assert fake_messages.kwargs["max_tokens"] == 24576
+    assert fake_messages.kwargs["thinking"] == {"type": "adaptive", "display": "omitted"}
+
+
 def test_call_llm_json_injects_schema_for_anthropic(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")

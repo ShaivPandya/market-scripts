@@ -408,7 +408,7 @@ const baseWorkspaceResponse = {
       approval_status: "none",
       decision_state: "recommendation",
       effect_scope: "read_only",
-      policy_state: "pass",
+      policy_state: "missing",
       quality_state: "ok",
     },
     latest_weekly: null,

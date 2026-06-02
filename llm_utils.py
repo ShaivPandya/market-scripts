@@ -135,6 +135,12 @@ _API_KEY_ENV_BY_PROVIDER = {
 _CLIENT_CACHE: dict[tuple[str, str | None], Any] = {}
 _CLIENT_FACTORY_CACHE: dict[str, Any] = {}
 _CLIENT_LOCK = threading.Lock()
+_ANTHROPIC_MAX_NONSTREAMING_SECONDS = 10 * 60
+_ANTHROPIC_MAX_REQUEST_SECONDS = 60 * 60
+_ANTHROPIC_ESTIMATED_OUTPUT_TOKENS_PER_HOUR = 128_000
+_ANTHROPIC_GENERIC_NONSTREAMING_TOKEN_LIMIT = (
+    _ANTHROPIC_ESTIMATED_OUTPUT_TOKENS_PER_HOUR * _ANTHROPIC_MAX_NONSTREAMING_SECONDS // _ANTHROPIC_MAX_REQUEST_SECONDS
+)
 
 
 def _obj_get(value: Any, key: str, default: Any = None) -> Any:
@@ -519,6 +525,7 @@ def call_llm_text(
     reasoning_effort: str | None = None,
     json_schema: dict[str, Any] | None = None,
     json_schema_name: str | None = None,
+    stream: bool = False,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     resolved_provider = _provider_for_model_argument(model, provider)
     resolved_model = resolve_model(model, resolved_provider)
@@ -544,6 +551,7 @@ def call_llm_text(
             enable_web_search=web_search_enabled,
             max_web_search_uses=max_web_search_uses,
             reasoning_effort=reasoning_effort,
+            stream=stream,
         )
     elif resolved_provider == PROVIDER_OPENAI:
         response = _call_openai_response(
@@ -970,6 +978,7 @@ def _call_anthropic_messages(
     enable_web_search: bool = False,
     max_web_search_uses: int = 5,
     reasoning_effort: str | None = None,
+    stream: bool = False,
 ) -> Any:
     client = get_llm_client(PROVIDER_ANTHROPIC, api_key=api_key)
     resolved_model = resolve_model(model, PROVIDER_ANTHROPIC)
@@ -996,13 +1005,40 @@ def _call_anthropic_messages(
             }
         ]
 
-    response = client.messages.create(**kwargs)
+    def _send_message() -> Any:
+        use_stream = stream or _anthropic_requires_streaming(
+            model=resolved_model,
+            max_tokens=max_tokens,
+        )
+        if not use_stream:
+            return client.messages.create(**kwargs)
+        with client.messages.stream(**kwargs) as response_stream:
+            return response_stream.get_final_message()
+
+    response = _send_message()
     while _obj_get(response, "stop_reason") == "pause_turn":
         messages.append({"role": "assistant", "content": _obj_get(response, "content", [])})
         messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
         kwargs["messages"] = messages
-        response = client.messages.create(**kwargs)
+        response = _send_message()
     return response
+
+
+def _anthropic_requires_streaming(*, model: str, max_tokens: int) -> bool:
+    if max_tokens > _ANTHROPIC_GENERIC_NONSTREAMING_TOKEN_LIMIT:
+        return True
+    model_limit = _anthropic_model_nonstreaming_token_limit(model)
+    return model_limit is not None and max_tokens > model_limit
+
+
+def _anthropic_model_nonstreaming_token_limit(model: str) -> int | None:
+    try:
+        from anthropic._constants import MODEL_NONSTREAMING_TOKENS
+    except Exception:
+        return None
+
+    limit = MODEL_NONSTREAMING_TOKENS.get(model)
+    return limit if isinstance(limit, int) else None
 
 
 def _call_openai_response(

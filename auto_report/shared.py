@@ -158,6 +158,7 @@ def call_report_llm(
     model: str = MODEL_HIGH,
     max_tokens: int = 16384,
     reasoning_effort: str | None = None,
+    stream: bool = False,
 ) -> tuple[str, list[tuple[str, str]]]:
     """Call the configured report LLM provider, optionally with unrestricted web search.
 
@@ -178,6 +179,7 @@ def call_report_llm(
                     system=system_msg,
                     enable_web_search=web_search_enabled,
                     reasoning_effort=reasoning_effort or _top_reasoning_effort_for_tier(MODEL_HIGH),
+                    stream=stream,
                 )
             except Exception as exc:
                 status_code = getattr(exc, "status_code", None)

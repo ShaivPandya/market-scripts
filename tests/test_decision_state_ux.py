@@ -266,6 +266,29 @@ def test_normalize_recommendation_keeps_execution_capability_none():
     assert rec["quality_state"] == "degraded"
 
 
+def test_normalize_recommendation_uses_payload_quality_fallback():
+    rec = normalize_recommendation(
+        {
+            "id": 2,
+            "action": "do_nothing",
+            "status": "error",
+            "payload": {
+                "recommendation_status": "error",
+                "critical_data_quality": "ok",
+                "blocked_reasons": ["Recommendation generation failed."],
+            },
+        }
+    )
+
+    assert rec is not None
+    assert rec["decision_state"] == "failed"
+    assert rec["effect_scope"] == "read_only"
+    assert rec["recommendation_status"] == "error"
+    assert rec["critical_data_quality"] == "ok"
+    assert rec["quality_state"] == "ok"
+    assert rec["blocked_reasons_json"] == ["Recommendation generation failed."]
+
+
 def _previous_policy_reason() -> dict:
     return {
         "code": "tax_flag",

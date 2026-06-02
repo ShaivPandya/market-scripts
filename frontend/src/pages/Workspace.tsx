@@ -487,7 +487,13 @@ function policyGateFromRecommendation(rec: RecommendationRecord): PolicyGateResu
 }
 
 function recommendationNeedsPolicyGate(rec: RecommendationRecord): boolean {
-  return Boolean(rec.policy_gate_decision) || ACTIONABLE_RECOMMENDATION_ACTIONS.has(rec.action)
+  const action = String(rec.action || "").trim().toLowerCase()
+  const effectScope = String(rec.effect_scope || "read_only").trim().toLowerCase()
+  if (ACTIONABLE_RECOMMENDATION_ACTIONS.has(action)) return true
+  if (effectScope !== "read_only") return true
+  if (policyGateFromRecommendation(rec)) return true
+  const policyState = String(rec.policy_state || "").trim().toLowerCase()
+  return Boolean(policyState && policyState !== "missing")
 }
 
 function policyGateFromApproval(approval: ApprovalRecord): PolicyGateResult | null {
@@ -1797,7 +1803,9 @@ export function Workspace() {
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.stance}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.action.replace(/_/g, " ")}</span>
                     <QualityStateBadge state={rec!.quality_state ?? rec!.critical_data_quality} />
-                    <PolicyStateBadge state={rec!.policy_state ?? rec!.policy_gate_decision ?? "missing"} />
+                    {recommendationNeedsPolicyGate(rec!) && (
+                      <PolicyStateBadge state={rec!.policy_state ?? rec!.policy_gate_decision ?? "missing"} />
+                    )}
                   </div>
                   <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
                   <RiskBindingLine record={rec!} />
@@ -1844,7 +1852,9 @@ export function Workspace() {
                     <div className="mt-1 flex flex-wrap gap-2">
                       <EffectScopeBadge scope={rec.effect_scope ?? "internal_state"} />
                       <QualityStateBadge state={rec.quality_state ?? rec.critical_data_quality} />
-                      <PolicyStateBadge state={rec.policy_state ?? rec.policy_gate_decision ?? "missing"} />
+                      {recommendationNeedsPolicyGate(rec) && (
+                        <PolicyStateBadge state={rec.policy_state ?? rec.policy_gate_decision ?? "missing"} />
+                      )}
                     </div>
                     <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
                     <RiskBindingLine record={rec} />

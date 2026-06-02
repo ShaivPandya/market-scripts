@@ -1577,6 +1577,9 @@ class Recommendation(OntologySchemaBase):
     source_kind: NonBlankStr = "report"
     report_type: str | None = None
     as_of: str | None = None
+    recommendation_status: str | None = None
+    critical_data_quality: str | None = None
+    blocked_reasons_json: list[str] = Field(default_factory=list)
     action: NonBlankStr
     ticker: str | None = None
     instrument: str | None = None
@@ -1618,6 +1621,8 @@ class Recommendation(OntologySchemaBase):
         "idempotency_key",
         "report_type",
         "as_of",
+        "recommendation_status",
+        "critical_data_quality",
         "instrument",
         "status",
         "approval_id",
@@ -1638,6 +1643,14 @@ class Recommendation(OntologySchemaBase):
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+    @field_validator("blocked_reasons_json", mode="before")
+    @classmethod
+    def _string_list(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        rows = value if isinstance(value, list) else [value]
+        return [text for item in rows if (text := str(item or "").strip())]
 
 
 class CourseOfAction(OntologySchemaBase):

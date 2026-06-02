@@ -41,6 +41,11 @@ test("renders workspace common operating picture and enforces approval note gati
   await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
   await expect(page.getByText("Recommended action shifted from hold to trim after risk review.")).toBeVisible()
   await expect(page.getByRole("heading", { name: "Portfolio risk" })).toBeVisible()
+  const recommendationReview = page.locator("section").filter({
+    has: page.getByRole("heading", { name: /Recommendation Review/ }),
+  })
+  await expect(recommendationReview).toBeVisible()
+  await expect(recommendationReview.getByText("Policy Missing")).toHaveCount(0)
   await expect(page.getByRole("heading", { name: /Thesis Claim Issues/ })).toBeVisible()
   await expect(page.getByText("AI infrastructure demand remains durable through 2026.")).toBeVisible()
   await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible()

@@ -741,7 +741,9 @@ files; use web search to verify and cite claims rather than citing the uploaded 
         search_instruction = """Web search is disabled for this pass. Do not say you will search or browse.
 Use the supplied market bundle, performance tables, and news_digests as the available
 market context. Cite news only when source URLs are already present in the supplied data."""
-        citation_constraint = "- Cite specific metrics from the data; cite news only when URLs are present in the supplied data."
+        citation_constraint = (
+            "- Cite specific metrics from the data; cite news only when URLs are present in the supplied data."
+        )
 
     return f"""Here is today's market data bundle:
 
@@ -1576,6 +1578,7 @@ def main():
             web_search=pass1_web_search,
             max_tokens=24576,
             reasoning_effort="high",
+            stream=True,
         )
         market_analysis_md, stance_dict = _parse_pass1_response_or_raise(pass1_text)
         market_analysis_md = strip_llm_meta(market_analysis_md)
@@ -1599,6 +1602,7 @@ def main():
                     web_search=False,
                     max_tokens=24576,
                     reasoning_effort="high",
+                    stream=True,
                 )
                 pass1_citations.extend(retry_citations)
                 market_analysis_md, stance_dict = _parse_pass1_response_or_raise(retry_text)

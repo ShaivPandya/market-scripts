@@ -274,6 +274,9 @@ def test_decision_writeback_records_report_recommendation_lineage(monkeypatch):
                     "action": "buy",
                     "ticker": "MU",
                     "instrument": "MU",
+                    "recommendation_status": "clear",
+                    "critical_data_quality": "degraded",
+                    "blocked_reasons": ["liquidity degraded"],
                     "account_id": "acct-1",
                     "portfolio_id": "portfolio-1",
                     "risk_metric_ids": ["mu_var"],
@@ -351,6 +354,11 @@ def test_decision_writeback_records_report_recommendation_lineage(monkeypatch):
         "trade_proposal_requires_approval",
         "approval_targets_trade_proposal",
     } <= relation_types
+    recommendation_write = next(write for write in repo.object_writes if write.object_type == "Recommendation")
+    assert recommendation_write.properties["recommendation_status"] == "clear"
+    assert recommendation_write.properties["critical_data_quality"] == "degraded"
+    assert recommendation_write.properties["blocked_reasons_json"] == ["liquidity degraded"]
+    assert recommendation_write.properties["payload"]["critical_data_quality"] == "degraded"
 
 
 def test_decision_writeback_records_workflow_artifact_and_executed_action(monkeypatch):

@@ -454,6 +454,16 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
         return None
     out = deepcopy(record)
     _filter_top_level_policy_fields(out)
+    raw_payload = out.get("payload")
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    if not str(out.get("recommendation_status") or "").strip() and payload.get("recommendation_status") is not None:
+        out["recommendation_status"] = payload.get("recommendation_status")
+    if not str(out.get("critical_data_quality") or "").strip() and payload.get("critical_data_quality") is not None:
+        out["critical_data_quality"] = payload.get("critical_data_quality")
+    if not out.get("blocked_reasons_json"):
+        payload_reasons = payload.get("blocked_reasons") or payload.get("blocked_reasons_json")
+        if payload_reasons:
+            out["blocked_reasons_json"] = payload_reasons if isinstance(payload_reasons, list) else [payload_reasons]
     gate = _filter_policy_gate(_nested_policy_gate(out), policy_context=out)
     action = str(out.get("action") or "").strip().lower()
     approval_required = bool(out.get("approval_required")) or action in ACTIONABLE_RECOMMENDATION_ACTIONS
@@ -467,8 +477,6 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
     out["policy_state"] = _policy_state_from_fields(out, gate)
     out["quality_state"] = _quality_state(out.get("critical_data_quality"))
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
-    raw_payload = out.get("payload")
-    payload = raw_payload if isinstance(raw_payload, dict) else {}
     raw_outcome = payload.get("outcome")
     outcome = raw_outcome if isinstance(raw_outcome, dict) else {}
     if outcome:

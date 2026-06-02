@@ -109,11 +109,7 @@ def test_auth_user_active_read_filters_use_boolean_parameters(monkeypatch):
     auth_store.get_user_by_email("admin@example.com")
     lookup_session("session-token")
 
-    active_reads = [
-        params
-        for sql, params in conn.calls
-        if "active = ?" in sql or "u.active = ?" in sql
-    ]
+    active_reads = [params for sql, params in conn.calls if "active = ?" in sql or "u.active = ?" in sql]
     assert len(active_reads) == 3
     assert all(any(param is True for param in params) for params in active_reads)
     assert all("active = 1" not in sql for sql, _params in conn.calls)
