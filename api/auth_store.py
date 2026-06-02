@@ -191,17 +191,17 @@ def _upsert_user(
     if existing:
         user_id = str(_row_dict(existing)["id"])
         conn.execute(
-            "UPDATE auth_users SET password_hash = ?, email = ?, active = 1, updated_at = ? WHERE id = ?",
-            (password_hash, email, now, user_id),
+            "UPDATE auth_users SET password_hash = ?, email = ?, active = ?, updated_at = ? WHERE id = ?",
+            (password_hash, email, True, now, user_id),
         )
     else:
         user_id = str(uuid.uuid4())
         conn.execute(
             """
             INSERT INTO auth_users (id, username, password_hash, email, active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, username, password_hash, email, now, now),
+            (user_id, username, password_hash, email, True, now, now),
         )
     conn.execute("DELETE FROM auth_user_roles WHERE user_id = ?", (user_id,))
     for role in roles:
@@ -248,8 +248,8 @@ def get_user_by_username(username: str) -> AuthUser | None:
     ensure_auth_users_seeded()
     conn = _get_conn()
     row = conn.execute(
-        "SELECT * FROM auth_users WHERE username = ? AND active = 1",
-        (username.strip(),),
+        "SELECT * FROM auth_users WHERE username = ? AND active = ?",
+        (username.strip(), True),
     ).fetchone()
     return _user_from_row(conn, row)
 
@@ -259,8 +259,8 @@ def get_user_by_email(email: str) -> AuthUser | None:
     conn = _get_conn()
     normalized = email.strip().lower()
     row = conn.execute(
-        "SELECT * FROM auth_users WHERE lower(email) = ? AND active = 1",
-        (normalized,),
+        "SELECT * FROM auth_users WHERE lower(email) = ? AND active = ?",
+        (normalized, True),
     ).fetchone()
     return _user_from_row(conn, row)
 
@@ -354,9 +354,9 @@ def lookup_session(session_token: str) -> AuthSession | None:
                u.username, u.email
         FROM auth_sessions s
         JOIN auth_users u ON u.id = s.user_id
-        WHERE s.token_hash = ? AND u.active = 1
+        WHERE s.token_hash = ? AND u.active = ?
         """,
-        (_hash_secret(session_token),),
+        (_hash_secret(session_token), True),
     ).fetchone()
     if not row:
         return None
