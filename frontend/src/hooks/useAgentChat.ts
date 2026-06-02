@@ -1126,7 +1126,7 @@ export function useAgentChat() {
     try {
       if (options?.durable) {
         const started = await startAgentJob(body, controller.signal)
-        await beginDurableResponse(assistantId, clientTurnId, started)
+        await beginDurableResponse(assistantId, clientTurnId, started, controller)
         return
       }
 
@@ -1144,7 +1144,7 @@ export function useAgentChat() {
       }, controller.signal)
 
       if (live.handoff) {
-        await beginDurableResponse(assistantId, clientTurnId, live.handoff)
+        await beginDurableResponse(assistantId, clientTurnId, live.handoff, controller)
         return
       }
 
@@ -1173,7 +1173,7 @@ export function useAgentChat() {
       if (!options?.durable && !sawAssistantDelta) {
         try {
           const started = await startAgentJob(body, controller.signal)
-          await beginDurableResponse(assistantId, clientTurnId, started)
+          await beginDurableResponse(assistantId, clientTurnId, started, controller)
           return
         } catch (fallbackErr) {
           if ((fallbackErr as Error).name === "AbortError") {
