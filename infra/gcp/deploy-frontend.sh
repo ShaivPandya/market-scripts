@@ -42,6 +42,7 @@ if [[ ! -d "${frontend_dir}/node_modules" ]]; then
   (cd "${frontend_dir}" && npm ci)
 elif [[ "${frontend_dir}/package-lock.json" -nt "${frontend_dir}/node_modules/.package-lock.json" ]]; then
   echo "frontend/package-lock.json is newer than node_modules; refreshing dependencies with npm ci."
+  rm -rf "${frontend_dir}/node_modules"
   (cd "${frontend_dir}" && npm ci)
 fi
 
