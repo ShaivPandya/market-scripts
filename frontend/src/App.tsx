@@ -36,6 +36,9 @@ function lazyPage<T extends ComponentType>(
 ) {
   return lazy(async () => {
     const mod = await loadPageModule(loader)
+    if (!mod || typeof mod !== "object") {
+      throw new TypeError("Failed to fetch dynamically imported module")
+    }
     const page = mod[exportName]
     if (!page) throw new Error(`Lazy page export "${exportName}" was not found.`)
     return { default: page }

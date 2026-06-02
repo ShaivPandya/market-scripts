@@ -791,14 +791,27 @@ export type IdeaComparisonJobResponse =
   | { job_id: string; status: "done"; timeout_s?: number; result?: IdeaComparisonJobResult; progress?: Record<string, unknown> }
   | { job_id: string; status: "error" | "cancelled"; timeout_s?: number; error?: string; progress?: Record<string, unknown> }
 
+function shouldRedirectUnauthorizedToLogin(err: unknown): boolean {
+  if (getAuthMode() === "cloudflare") return false
+  if (!axios.isAxiosError(err) || err.response?.status !== 401) return false
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/login")) return false
+
+  const rawUrl = (err.config?.url ?? "").split("?")[0]
+  const path = rawUrl.startsWith("http")
+    ? new URL(rawUrl).pathname
+    : rawUrl.startsWith("/")
+      ? rawUrl
+      : `/api/${rawUrl.replace(/^\/+/, "")}`
+  // Session bootstrap endpoints are expected to 401 when logged out.
+  if (path.endsWith("/auth/me") || path.endsWith("/auth/login")) return false
+
+  return true
+}
+
 client.interceptors.response.use(
   res => res,
   err => {
-    if (
-      getAuthMode() !== "cloudflare" &&
-      err.response?.status === 401 &&
-      !window.location.pathname.startsWith("/login")
-    ) {
+    if (shouldRedirectUnauthorizedToLogin(err)) {
       window.location.href = "/login"
     }
     const msg = formatApiError(err)
