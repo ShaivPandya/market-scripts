@@ -1381,6 +1381,7 @@ function PublicShowcase() {
 function LoginCard() {
   const { login, mode } = useAuth()
   const navigate = useNavigate()
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1390,7 +1391,7 @@ function LoginCard() {
     setError(null)
     setLoading(true)
     try {
-      await login(password)
+      await login(password, username.trim() || undefined)
       navigate("/", { replace: true })
     } catch {
       setError("Incorrect password. Please try again.")
@@ -1421,8 +1422,22 @@ function LoginCard() {
         </>
       ) : (
         <>
-          <p className="mb-6 body-copy mt-1">Enter your password to continue.</p>
+          <p className="mb-6 body-copy mt-1">Sign in with your username and password.</p>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="username" className="theme-field-label">
+                Username
+              </label>
+              <input
+                id="username"
+                type="text"
+                autoComplete="username"
+                placeholder="admin"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                className="theme-input"
+              />
+            </div>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="password" className="theme-field-label">
                 Password
@@ -1450,13 +1465,6 @@ function LoginCard() {
           </form>
         </>
       )}
-      <p
-        className="mt-4"
-        style={{ color: "hsl(var(--foreground-tertiary))", fontSize: "0.78rem" }}
-      >
-        Scroll down to see how Talisman works — the product, the architecture, and Stan, the AI
-        agent.
-      </p>
     </div>
   )
 }

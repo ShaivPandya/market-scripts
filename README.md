@@ -55,7 +55,7 @@ cp .env.example .env
 Common local settings:
 
 - `FRED_API_KEY` for FRED-backed macro and rates modules.
-- `AUTH_PASSWORD_HASH` and `JWT_SECRET` for password-mode UI login.
+- `AUTH_PASSWORD_HASH` and `AUTH_DEFAULT_USERNAME` for password-mode UI login (opaque server sessions).
 - `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and/or `GEMINI_API_KEY` for agent, thesis, overview, and report workflows.
 - `ESTAT_APP_ID`, `SODA_APP_TOKEN`, and `EIA_API_KEY` for modules that use those data sources.
 
@@ -184,8 +184,8 @@ Local password mode is the default:
 
 - Backend `AUTH_MODE=password`
 - Frontend `VITE_AUTH_MODE=password` or unset
-- Login sets an HTTP-only JWT cookie.
-- Frontend requests use `withCredentials: true`.
+- Login sets an HTTP-only opaque session cookie (`__session`) and returns a CSRF token for mutating requests.
+- Frontend requests use `withCredentials: true` and send `X-CSRF-Token` on POST/PUT/PATCH/DELETE.
 - Login is protected by `AUTH_LOGIN_RATE_LIMIT` plus failed-attempt lockout:
   `AUTH_LOGIN_FAILURE_LIMIT` failures within `AUTH_LOGIN_FAILURE_WINDOW_SECONDS`
   blocks that client for `AUTH_LOGIN_LOCKOUT_SECONDS`.
@@ -202,6 +202,24 @@ State backends:
 - Normal development, CI, and production runtime paths use `STATE_DB_BACKEND=postgres` and `DATABASE_URL`; a few isolated tests still exercise explicit SQLite compatibility paths.
 - Production additionally uses `STATE_STORAGE_BACKEND=gcs` and `GCS_STATE_BUCKET`.
 - Async work runs locally unless `ASYNC_JOB_BACKEND=cloud_run_jobs` or `CLOUD_RUN_JOBS_ENABLED=true` opts into dispatching the generic Cloud Run Job configured by `ASYNC_CLOUD_RUN_JOB=talisman-async-job`.
+
+## Observability (optional Sentry)
+
+Sentry is optional on both backend and frontend. When `SENTRY_DSN` / `VITE_SENTRY_DSN` are unset, the app starts normally and no events are sent.
+
+Backend (`api/observability.py`):
+
+- Set `SENTRY_DSN` to enable FastAPI, async job, worker, and workflow error capture.
+- Release/environment tags reuse `TALISMAN_RELEASE_*` when present.
+- Events are scrubbed before send: auth/session headers, CSRF tokens, request bodies, portfolio holdings, prompts, and model payloads are redacted.
+
+Frontend (`frontend/src/lib/observability.ts`):
+
+- Set `VITE_SENTRY_DSN` at build time for production browser error capture.
+- Route render errors are reported from `RouteErrorBoundary`; chunk-load reload paths are excluded.
+- Browser breadcrumbs and request metadata are scrubbed; session replay is not enabled.
+
+Intentionally **not** sent to Sentry: passwords, cookies, authorization headers, CSRF/session tokens, portfolio positions/holdings, thesis text, agent prompts, model request/response bodies, and async job payloads/results.
 
 ## Development Commands
 
@@ -284,7 +302,8 @@ FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
 
 ## Troubleshooting
 
-- `401 Not authenticated`: verify `AUTH_PASSWORD_HASH` and `JWT_SECRET`, then log in at `/login`.
+- `401 Not authenticated`: verify `AUTH_PASSWORD_HASH` and `AUTH_DEFAULT_USERNAME`, then log in at `/login`.
+- `403 CSRF validation failed`: ensure the UI obtained `csrfToken` from login or `/api/auth/me` before mutating.
 - API starts but a page returns a dependency/degraded error: check `/api/admin/health` and the optional router import logs.
 - FRED-backed pages fail: verify `FRED_API_KEY` is present in `.env`.
 - Direct script imports fail: run from the repository root so top-level package imports resolve.

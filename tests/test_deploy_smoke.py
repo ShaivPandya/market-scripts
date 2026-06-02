@@ -74,18 +74,24 @@ def test_check_health_bad_status():
 
 def test_check_login_ok():
     client = MagicMock()
-    client.post.return_value = FakeResponse(200, {"detail": "ok"}, cookies={"__session": "tok"})
-    result, cookies = check_login(client, "smoke-pw")
+    client.post.return_value = FakeResponse(
+        200,
+        {"detail": "ok", "csrfToken": "csrf-tok"},
+        cookies={"__session": "tok"},
+    )
+    result, cookies, headers = check_login(client, "smoke-pw")
     assert result.passed
     assert cookies.get("__session") == "tok"
+    assert headers.get("X-CSRF-Token") == "csrf-tok"
 
 
 def test_check_login_401():
     client = MagicMock()
     client.post.return_value = FakeResponse(401, {"detail": "Incorrect password"}, cookies={})
-    result, cookies = check_login(client, "bad-pw")
+    result, cookies, headers = check_login(client, "bad-pw")
     assert not result.passed
     assert not cookies
+    assert not headers
 
 
 # ---------------------------------------------------------------------------

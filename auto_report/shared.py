@@ -157,6 +157,7 @@ def call_report_llm(
     web_search: bool | None = None,
     model: str = MODEL_HIGH,
     max_tokens: int = 16384,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]]]:
     """Call the configured report LLM provider, optionally with unrestricted web search.
 
@@ -176,7 +177,7 @@ def call_report_llm(
                     max_tokens=max_tokens,
                     system=system_msg,
                     enable_web_search=web_search_enabled,
-                    reasoning_effort=_top_reasoning_effort_for_tier(MODEL_HIGH),
+                    reasoning_effort=reasoning_effort or _top_reasoning_effort_for_tier(MODEL_HIGH),
                 )
             except Exception as exc:
                 status_code = getattr(exc, "status_code", None)
@@ -206,13 +207,15 @@ def call_report_llm(
     usage = getattr(response, "usage", None)
     if usage is not None and hasattr(usage, "server_tool_use") and usage.server_tool_use:
         search_count = getattr(usage.server_tool_use, "web_search_requests", 0)
+    stop_reason = getattr(response, "stop_reason", None)
 
     log.info(
-        "LLM call completed in %.2fs (%d input tokens, %d output tokens, %d web searches)",
+        "LLM call completed in %.2fs (%d input tokens, %d output tokens, %d web searches, stop_reason=%s)",
         time.perf_counter() - t0,
         getattr(usage, "input_tokens", 0) if usage is not None else 0,
         getattr(usage, "output_tokens", 0) if usage is not None else 0,
         search_count,
+        stop_reason or "unknown",
     )
     return text or extract_text(response), citations or extract_citations(response)
 

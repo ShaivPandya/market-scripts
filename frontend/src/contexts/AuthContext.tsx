@@ -9,12 +9,14 @@ import {
 } from "react"
 import { authApi } from "@/lib/api"
 import { setAuthMode, type AuthMode } from "@/lib/authMode"
+import { setCsrfToken } from "@/lib/csrfToken"
 
 interface AuthState {
   mode: AuthMode
   isAuthenticated: boolean
   isLoading: boolean
-  login: (password: string) => Promise<void>
+  username: string | null
+  login: (password: string, username?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -45,23 +47,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<AuthMode>(REQUESTED_AUTH_MODE)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [username, setUsername] = useState<string | null>(null)
 
-  // On mount: silently check if a valid cookie already exists
   useEffect(() => {
     let cancelled = false
 
     async function checkPasswordSession() {
-      if (!sessionStorage.getItem('auth_session')) {
-        // No tab-scoped flag — force logout to clear any stale cookie, then require login
-        try { await authApi.logout() } catch { /* ignore */ }
-        if (!cancelled) { setIsAuthenticated(false); setIsLoading(false) }
-        return
-      }
       try {
-        await authApi.me()
-        if (!cancelled) setIsAuthenticated(true)
+        const me = await authApi.me()
+        if (!cancelled) {
+          setUsername(me.username)
+          setIsAuthenticated(true)
+        }
       } catch {
-        if (!cancelled) { sessionStorage.removeItem('auth_session'); setIsAuthenticated(false) }
+        if (!cancelled) {
+          setCsrfToken(null)
+          setUsername(null)
+          setIsAuthenticated(false)
+        }
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -79,7 +82,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (cancelled) return
 
       if (!probe.available) {
-        // Cloudflare Access isn't configured for this hostname — fall back to password mode.
         setAuthMode("password")
         setMode("password")
         await checkPasswordSession()
@@ -88,14 +90,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setAuthMode("cloudflare")
       setMode("cloudflare")
-      setIsAuthenticated(probe.authenticated)
-      setIsLoading(false)
+      if (probe.authenticated) {
+        try {
+          const me = await authApi.me()
+          if (!cancelled) {
+            setUsername(me.username)
+            setIsAuthenticated(true)
+          }
+        } catch {
+          if (!cancelled) setIsAuthenticated(probe.authenticated)
+        }
+      } else {
+        setIsAuthenticated(false)
+      }
+      if (!cancelled) setIsLoading(false)
     }
 
     init().catch(() => {
       if (!cancelled) {
         setAuthMode("password")
         setMode("password")
+        setCsrfToken(null)
+        setUsername(null)
         setIsAuthenticated(false)
         setIsLoading(false)
       }
@@ -106,30 +122,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const login = useCallback(async (password: string) => {
-    if (mode === "cloudflare") {
-      // Cloudflare Access handles auth via the edge. Reload a protected route to trigger login.
-      window.location.href = "/"
-      return
-    }
-    await authApi.login(password)
-    sessionStorage.setItem('auth_session', '1')
-    setIsAuthenticated(true)
-  }, [mode])
+  const login = useCallback(
+    async (password: string, loginUsername?: string) => {
+      if (mode === "cloudflare") {
+        window.location.href = "/"
+        return
+      }
+      const result = await authApi.login(password, loginUsername)
+      setUsername(result.username)
+      setIsAuthenticated(true)
+    },
+    [mode],
+  )
 
   const logout = useCallback(async () => {
     if (mode === "cloudflare") {
-      // Cloudflare Access logout endpoint for the current application.
       window.location.href = "/cdn-cgi/access/logout"
       return
     }
     await authApi.logout()
-    sessionStorage.removeItem('auth_session')
+    setCsrfToken(null)
+    setUsername(null)
     setIsAuthenticated(false)
   }, [mode])
 
   return (
-    <AuthContext.Provider value={{ mode, isAuthenticated, isLoading, login, logout }}>
+    <AuthContext.Provider
+      value={{ mode, isAuthenticated, isLoading, username, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   )

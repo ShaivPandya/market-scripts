@@ -51,16 +51,16 @@ The frontend supports two auth strategies:
 
 - Set `VITE_AUTH_MODE=password` (or omit it; password is the default)
 - The UI shows a login form that calls:
-  - `POST /api/auth/login` (sets an HTTP-only `access_token` cookie)
-  - `GET /api/auth/me` (session validation)
-  - `POST /api/auth/logout` (clears cookie)
-- The Axios client is created with `withCredentials: true` so cookies are sent on API calls.
+  - `POST /api/auth/login` (sets HTTP-only `__session` cookie; returns `csrfToken`)
+  - `GET /api/auth/me` (session validation; refreshes `csrfToken`)
+  - `POST /api/auth/logout` (revokes session and clears cookie)
+- The Axios client uses `withCredentials: true` and sends `X-CSRF-Token` on mutating requests.
 
 Implementation:
 - `frontend/src/contexts/AuthContext.tsx`
 - `frontend/src/components/auth/ProtectedRoute.tsx`
 
-Note: password sessions are intentionally “tab-scoped” — the UI uses `sessionStorage` as a simple “this tab is logged in” flag.
+Note: password sessions are server-side and shared across tabs; the UI calls `/api/auth/me` on load to confirm the cookie is still valid.
 
 ### 2) Cloudflare Access mode
 
@@ -71,6 +71,21 @@ Note: password sessions are intentionally “tab-scoped” — the UI uses `sess
 - Login/logout actions redirect to Cloudflare endpoints instead of calling `/api/auth/*`.
 
 This mode is meant for deployments where Cloudflare Access gates the app at the edge and a trusted API proxy can inject `X-Api-Proxy-Secret`. The checked-in Firebase Hosting rewrite cannot inject that header, so do not combine `AUTH_MODE=cloudflare` with plain Firebase rewrites unless another proxy layer adds the secret.
+
+## Observability (optional Sentry)
+
+Frontend Sentry is opt-in via build-time env vars. When `VITE_SENTRY_DSN` is unset, `npm run dev` and `npm run build` behave as before.
+
+Suggested production build vars:
+
+```bash
+VITE_SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+VITE_SENTRY_ENVIRONMENT=production
+VITE_SENTRY_RELEASE=<git-sha>
+VITE_SENTRY_TRACES_SAMPLE_RATE=0.05
+```
+
+Route render errors are captured from `RouteErrorBoundary`. Chunk-load recovery reloads are excluded. Auth headers, CSRF tokens, API bodies, portfolio data, and agent prompts are scrubbed before events leave the browser.
 
 ## Production hosting
 

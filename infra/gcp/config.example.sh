@@ -60,6 +60,7 @@ export API_SECRETS=(
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
   "EIA_API_KEY=EIA_API_KEY:latest"
+  "SENTRY_DSN=SENTRY_DSN:latest"
 )
 
 export WORKER_SECRETS=(
@@ -70,6 +71,7 @@ export WORKER_SECRETS=(
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
   "EIA_API_KEY=EIA_API_KEY:latest"
+  "SENTRY_DSN=SENTRY_DSN:latest"
 )
 
 # Migration job runs with the migrator user only — no LLM/data-vendor secrets.

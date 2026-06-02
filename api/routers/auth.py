@@ -1,39 +1,51 @@
 """
-Authentication router — single master account, no registration.
+Authentication router — first-party users and opaque server-side sessions.
 
 Endpoints (all under /api prefix set in main.py):
-    POST /api/auth/login   — verify password, set HTTP-only JWT cookie
-    POST /api/auth/logout  — clear the cookie
-    GET  /api/auth/me      — return {"username": "admin"} if cookie valid, else 401
+    POST /api/auth/login   — verify credentials, set HTTP-only session cookie + CSRF token
+    POST /api/auth/logout  — revoke session and clear cookie
+    GET  /api/auth/me      — return user + roles + CSRF token when session valid
 
-Dependency:
-    require_auth — inject into include_router() calls to protect all routes in a router
+Dependencies:
+    require_auth / require_actor — protect routes; role-aware Actor for policy checks
 """
 
 import os
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from api.audit import emit_audit_event
-from ontology.policy import Actor, admin_actor
+from api.auth_store import (
+    AuthUser,
+    create_session,
+    default_admin_username,
+    ensure_auth_users_seeded,
+    get_csrf_token_for_session,
+    get_or_create_cloudflare_user,
+    get_user_by_username,
+    lookup_session,
+    revoke_session,
+    verify_password,
+)
+from ontology.policy import Actor, user_actor
 
 _limiter = Limiter(key_func=get_remote_address)
 
-# ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
 _LOGIN_RATE_LIMIT = (os.environ.get("AUTH_LOGIN_RATE_LIMIT") or "").strip() or "5/minute"
 _DEFAULT_LOGIN_FAILURE_LIMIT = 5
 _DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _DEFAULT_LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+SESSION_COOKIE = "__session"
+CSRF_HEADER = "x-csrf-token"
 
 
 @dataclass
@@ -73,7 +85,6 @@ def _auth_mode() -> str:
 
 
 def _is_cloudflare_mode() -> bool:
-    # Cloudflare Access gates the app; the API still remains protected by the proxy-secret middleware.
     return _auth_mode() == "cloudflare"
 
 
@@ -81,51 +92,44 @@ def _cloudflare_proxy_secret_configured() -> bool:
     return bool((os.environ.get("API_PROXY_SECRET") or "").strip())
 
 
-def _get_password_hash() -> bytes:
-    value = os.environ.get("AUTH_PASSWORD_HASH")
-    if not value:
-        raise RuntimeError("AUTH_PASSWORD_HASH is not set")
-    return value.encode()
+def _is_production() -> bool:
+    return os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
 
 
-def _get_smoke_password_hash() -> bytes | None:
-    """Return the optional smoke password bcrypt hash, or None if not configured."""
-    value = (os.environ.get("AUTH_SMOKE_PASSWORD_HASH") or "").strip()
-    return value.encode() if value else None
+def _session_max_age_seconds() -> int:
+    from api.auth_store import _session_ttl_hours
+
+    return _session_ttl_hours() * 3600
 
 
-def _get_jwt_secret() -> str:
-    value = os.environ.get("JWT_SECRET")
-    if not value:
-        raise RuntimeError("JWT_SECRET is not set")
-    return value
+def _set_session_cookie(response: Response, session_token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_token,
+        httponly=True,
+        samesite="strict",
+        secure=_is_production(),
+        path="/",
+        max_age=_session_max_age_seconds(),
+    )
 
 
-def _get_jwt_algorithm() -> str:
-    return os.environ.get("JWT_ALGORITHM", "HS256")
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(key=SESSION_COOKIE, path="/", samesite="strict")
 
 
-def _get_jwt_ttl_hours() -> int:
-    return int(os.environ.get("JWT_TTL_HOURS", "12"))
+def _cloudflare_identity_email(request: Request) -> str | None:
+    for header in (
+        "cf-access-authenticated-user-email",
+        "Cf-Access-Authenticated-User-Email",
+    ):
+        value = (request.headers.get(header) or "").strip()
+        if value:
+            return value
+    return None
 
 
 router = APIRouter(tags=["auth"])
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _create_token(subject: str = "admin") -> str:
-    ttl_hours = _get_jwt_ttl_hours()
-    expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
-    return cast(
-        str,
-        jwt.encode(
-            {"sub": subject, "exp": expire},
-            _get_jwt_secret(),
-            algorithm=_get_jwt_algorithm(),
-        ),
-    )
 
 
 def _login_attempt_key(request: Request) -> str:
@@ -137,7 +141,6 @@ def _retry_after_seconds(until: float, now: float) -> int:
 
 
 def _reset_login_attempt_state() -> None:
-    """Clear in-memory login attempt state. Used by tests and local reloads."""
     with _login_failure_lock:
         _login_failures.clear()
 
@@ -146,7 +149,6 @@ def _current_lockout_retry_after(request: Request) -> int | None:
     limit = _login_failure_limit()
     if limit <= 0:
         return None
-
     key = _login_attempt_key(request)
     now = time.time()
     window_start = now - _login_failure_window_seconds()
@@ -166,7 +168,6 @@ def _record_failed_login(request: Request) -> int | None:
     limit = _login_failure_limit()
     if limit <= 0:
         return None
-
     key = _login_attempt_key(request)
     now = time.time()
     window_start = now - _login_failure_window_seconds()
@@ -186,72 +187,95 @@ def _clear_failed_logins(request: Request) -> None:
         _login_failures.pop(key, None)
 
 
-# ── Dependency — inject via dependencies=[Depends(require_auth)] ──────────────
-
-
-def require_auth(access_token: str | None = Cookie(default=None, alias="__session")) -> str:
-    """
-    Returns the token subject ("admin") or raises HTTP 401.
-
-    Usage in main.py:
-        app.include_router(some_router, prefix="/api", dependencies=[Depends(require_auth)])
-    """
+def _resolve_session_user(
+    request: Request,
+    access_token: str | None,
+) -> AuthUser:
     if _is_cloudflare_mode():
         if not _cloudflare_proxy_secret_configured():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="API proxy secret is required in Cloudflare auth mode.",
             )
-        return "admin"
-    if access_token is None:
+        email = _cloudflare_identity_email(request)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Cloudflare Access identity is required.",
+            )
+        return get_or_create_cloudflare_user(email)
+
+    if not access_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    try:
-        payload = cast(
-            dict[str, Any],
-            jwt.decode(
-                access_token,
-                _get_jwt_secret(),
-                algorithms=[_get_jwt_algorithm()],
-            ),
-        )
-        sub = payload.get("sub")
-        if isinstance(sub, str):
-            return sub
+    session = lookup_session(access_token)
+    if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
+            detail="Invalid or expired session",
         )
-    except JWTError:
-        raise HTTPException(  # noqa: B904
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
+    return session.user
 
 
-def require_actor(sub: str = Depends(require_auth)) -> Actor:
-    """Return the typed actor context for the authenticated v1 user."""
-    return admin_actor(sub, source="api")
+def require_auth(
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> str:
+    """Returns the authenticated username or raises HTTP 401/403."""
+    return _resolve_session_user(request, access_token).username
+
+
+def require_actor(
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> Actor:
+    user = _resolve_session_user(request, access_token)
+    return user_actor(user.username, user.roles, source="api")
+
+
+def require_admin(
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> Actor:
+    roles = {role.lower() for role in actor.roles}
+    if actor.actor_type != "system" and "admin" not in roles and "owner" not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access is required.",
+        )
+    return actor
 
 
 ActorDep = Annotated[Actor, Depends(require_actor)]
-
-
-# ── Schemas ───────────────────────────────────────────────────────────────────
+AdminActorDep = Annotated[Actor, Depends(require_admin)]
 
 
 class LoginRequest(BaseModel):
+    username: str | None = Field(default=None, max_length=128)
     password: str = Field(..., min_length=1, max_length=512)
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+def _legacy_password_login(password: str) -> AuthUser | None:
+    """Fallback when auth tables are empty: verify env bcrypt hashes directly."""
+    admin_hash = (os.environ.get("AUTH_PASSWORD_HASH") or "").strip()
+    smoke_hash = (os.environ.get("AUTH_SMOKE_PASSWORD_HASH") or "").strip()
+    if smoke_hash and bcrypt.checkpw(password.encode(), smoke_hash.encode()):
+        return AuthUser(id="legacy-smoke", username="smoke", roles=("smoke", "viewer"))
+    if admin_hash and bcrypt.checkpw(password.encode(), admin_hash.encode()):
+        return AuthUser(id="legacy-admin", username=default_admin_username(), roles=("owner", "admin"))
+    return None
 
 
 @router.post("/auth/login")
 @_limiter.limit(_LOGIN_RATE_LIMIT)
 def login(request: Request, body: LoginRequest, response: Response):
+    if _is_cloudflare_mode():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password login is disabled in Cloudflare auth mode.",
+        )
+
     retry_after = _current_lockout_retry_after(request)
     if retry_after is not None:
         emit_audit_event(
@@ -268,12 +292,17 @@ def login(request: Request, body: LoginRequest, response: Response):
             headers={"Retry-After": str(retry_after)},
         )
 
-    # Check smoke password first (if configured), then admin password
-    smoke_hash = _get_smoke_password_hash()
-    is_smoke = False
-    if smoke_hash and bcrypt.checkpw(body.password.encode(), smoke_hash):
-        is_smoke = True
-    elif not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
+    username = (body.username or default_admin_username()).strip() or default_admin_username()
+    ensure_auth_users_seeded()
+    user = get_user_by_username(username)
+    authenticated = user is not None and verify_password(user, body.password)
+    if not authenticated:
+        legacy = _legacy_password_login(body.password)
+        if legacy is not None and (body.username is None or legacy.username == username):
+            user = legacy
+            authenticated = True
+
+    if not authenticated:
         retry_after = _record_failed_login(request)
         emit_audit_event(
             "auth.login",
@@ -285,6 +314,7 @@ def login(request: Request, body: LoginRequest, response: Response):
             },
             metadata={
                 "path": str(request.url.path),
+                "username": username,
                 **({"retry_after_seconds": retry_after} if retry_after is not None else {}),
             },
             error="Too many failed login attempts" if retry_after is not None else "Incorrect password",
@@ -299,31 +329,44 @@ def login(request: Request, body: LoginRequest, response: Response):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password",
         )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+
     _clear_failed_logins(request)
-    subject = "smoke" if is_smoke else "admin"
-    token = _create_token(subject)
-    response.set_cookie(
-        key="__session",
-        value=token,
-        httponly=True,
-        samesite="strict",
-        secure=os.environ.get("ENVIRONMENT", "development").strip().lower() == "production",
-        path="/",
+    session = create_session(
+        user,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=get_remote_address(request),
     )
+    _set_session_cookie(response, session.session_token)
     emit_audit_event(
         "auth.login",
         "permission",
         "succeeded",
-        actor=admin_actor(subject, source="api"),
-        after_summary={"auth_mode": _auth_mode(), "subject": subject},
+        actor=user_actor(user.username, user.roles, source="api"),
+        after_summary={"auth_mode": _auth_mode(), "subject": user.username},
         metadata={"path": str(request.url.path)},
     )
-    return {"detail": "ok"}
+    return {
+        "detail": "ok",
+        "username": user.username,
+        "roles": list(user.roles),
+        "csrfToken": session.csrf_token,
+    }
 
 
 @router.post("/auth/logout")
-def logout(response: Response):
-    response.delete_cookie(key="__session", path="/", samesite="strict")
+def logout(
+    response: Response,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+):
+    if access_token:
+        revoke_session(access_token)
+    _clear_session_cookie(response)
     emit_audit_event(
         "auth.logout",
         "permission",
@@ -334,5 +377,48 @@ def logout(response: Response):
 
 
 @router.get("/auth/me")
-def me(actor: ActorDep):
-    return {"username": actor.actor_id}
+def me(
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+):
+    user = _resolve_session_user(request, access_token)
+    csrf_token: str | None = None
+    if not _is_cloudflare_mode() and access_token:
+        csrf_token = get_csrf_token_for_session(access_token)
+    return {
+        "username": user.username,
+        "roles": list(user.roles),
+        "csrfToken": csrf_token,
+    }
+
+
+def verify_request_csrf(request: Request) -> bool:
+    """Validate CSRF for browser session cookies. Returns True if check passes or is skipped."""
+    if _is_cloudflare_mode():
+        return True
+    session_token = request.cookies.get(SESSION_COOKIE)
+    if not session_token:
+        return True
+    if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return True
+    csrf = (request.headers.get(CSRF_HEADER) or request.headers.get("X-CSRF-Token") or "").strip()
+    from api.auth_store import verify_csrf
+
+    return verify_csrf(session_token, csrf or None)
+
+
+def is_machine_authenticated_request(request: Request) -> bool:
+    """True when scheduler or report-sync shared secrets authenticate the request."""
+    import hmac
+
+    scheduler_expected = (os.getenv("SCHEDULER_SECRET") or "").strip()
+    if scheduler_expected:
+        provided = request.headers.get("x-scheduler-secret")
+        if provided and hmac.compare_digest(provided, scheduler_expected):
+            return True
+    report_expected = (os.getenv("REPORT_SYNC_SECRET") or "").strip()
+    if report_expected:
+        provided = request.headers.get("x-report-sync-secret")
+        if provided and hmac.compare_digest(provided, report_expected):
+            return True
+    return False

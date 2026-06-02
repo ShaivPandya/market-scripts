@@ -557,6 +557,14 @@ def admin_actor(subject: str = "admin", *, source: str = "api") -> Actor:
     return Actor(actor_id=actor_id, actor_type="user", roles=("owner", "admin"), source=source)
 
 
+def user_actor(subject: str, roles: tuple[str, ...] | list[str], *, source: str = "api") -> Actor:
+    actor_id = str(subject or "admin").strip() or "admin"
+    normalized_roles = tuple(str(role).strip() for role in roles if str(role).strip())
+    if not normalized_roles:
+        normalized_roles = ("viewer",)
+    return Actor(actor_id=actor_id, actor_type="user", roles=normalized_roles, source=source)
+
+
 def system_actor(source: str) -> Actor:
     actor_id = f"system:{str(source or 'internal').strip() or 'internal'}"
     return Actor(actor_id=actor_id, actor_type="system", roles=("system",), source=source)

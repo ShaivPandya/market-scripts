@@ -120,18 +120,26 @@ def check_health(
 def check_login(
     client: httpx.Client,
     smoke_password: str,
-) -> tuple[CheckResult, dict[str, str]]:
-    """Returns (result, cookies_dict)."""
+) -> tuple[CheckResult, dict[str, str], dict[str, str]]:
+    """Returns (result, cookies_dict, extra_headers)."""
     try:
-        resp = client.post("/api/auth/login", json={"password": smoke_password})
+        username = (os.getenv("AUTH_DEFAULT_USERNAME") or "admin").strip() or "admin"
+        resp = client.post(
+            "/api/auth/login",
+            json={"password": smoke_password, "username": username},
+        )
         if resp.status_code != 200:
-            return CheckResult("login", False, f"status={resp.status_code}"), {}
+            return CheckResult("login", False, f"status={resp.status_code}"), {}, {}
         cookies = dict(resp.cookies)
         if "__session" not in cookies:
-            return CheckResult("login", False, "no session cookie"), {}
-        return CheckResult("login", True, "ok"), cookies
+            return CheckResult("login", False, "no session cookie"), {}, {}
+        body = resp.json()
+        headers: dict[str, str] = {}
+        if isinstance(body, dict) and body.get("csrfToken"):
+            headers["X-CSRF-Token"] = str(body["csrfToken"])
+        return CheckResult("login", True, "ok"), cookies, headers
     except Exception as exc:
-        return CheckResult("login", False, f"error: {exc}"), {}
+        return CheckResult("login", False, f"error: {exc}"), {}, {}
 
 
 def check_me(client: httpx.Client, cookies: dict[str, str]) -> CheckResult:
@@ -225,7 +233,7 @@ def run_smoke(
     results.append(check_health(client, expected_image_tag))
 
     # 2. Login
-    login_result, cookies = check_login(client, smoke_password)
+    login_result, cookies, _csrf_headers = check_login(client, smoke_password)
     results.append(login_result)
 
     if not login_result.passed:

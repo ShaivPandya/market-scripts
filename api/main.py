@@ -46,6 +46,10 @@ IS_PRODUCTION = ENVIRONMENT == "production"
 configure_logging(json_format=IS_PRODUCTION)
 logger = logging.getLogger("api")
 
+from api.observability import capture_exception, init_sentry, set_request_context
+
+init_sentry(component="api")
+
 # ---------------------------------------------------------------------------
 # Release identity (set by deploy-api.sh via TALISMAN_RELEASE_* env vars)
 # ---------------------------------------------------------------------------
@@ -80,7 +84,7 @@ from api.routers import (
     thesis,
 )
 from api.routers import auth as auth_router
-from api.routers.auth import require_actor
+from api.routers.auth import is_machine_authenticated_request, require_actor, verify_request_csrf
 from ontology.policy import PolicyDenied
 
 # Optional routers — gracefully degrade if dependencies fail
@@ -180,6 +184,17 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 @app.exception_handler(AppError)
 async def _app_error_handler(request: Request, exc: AppError):
     logger.error("AppError [%s]: %s", exc.__class__.__name__, exc.message, exc_info=True)
+    if exc.status_code >= 500:
+        capture_exception(
+            exc,
+            tags={"error_type": exc.__class__.__name__},
+            context={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": exc.status_code,
+                "request_id": request_id_var.get(""),
+            },
+        )
     content = {"error": exc.message, "type": exc.__class__.__name__}
 
     if isinstance(exc, DataFetchError):
@@ -199,6 +214,15 @@ async def _app_error_handler(request: Request, exc: AppError):
 @app.exception_handler(Exception)
 async def _unhandled_error_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    capture_exception(
+        exc,
+        tags={"error_type": "InternalError"},
+        context={
+            "method": request.method,
+            "path": request.url.path,
+            "request_id": request_id_var.get(""),
+        },
+    )
     return JSONResponse(
         status_code=500,
         content={"error": "Internal server error", "type": "InternalError"},
@@ -222,6 +246,7 @@ async def _policy_denied_handler(request: Request, exc: PolicyDenied):
 # Middleware
 # ---------------------------------------------------------------------------
 _DOCS_PATHS = {"/api/docs", "/api/redoc", "/api/openapi.json"}
+_CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/health"}
 
 
 def _is_production_runtime() -> bool:
@@ -233,7 +258,9 @@ async def _request_id_middleware(request: Request, call_next):
     """Assign a correlation ID to every request."""
     rid = request.headers.get("x-request-id") or generate_request_id()
     request_id_var.set(rid)
+    set_request_context(request_id=rid, method=request.method, path=request.url.path)
     response = await call_next(request)
+    set_request_context(status_code=response.status_code)
     response.headers["X-Request-Id"] = rid
     return response
 
@@ -305,6 +332,28 @@ def _proxy_secret_required() -> bool:
 
 
 _WRITE_FREEZE = (os.environ.get("WRITE_FREEZE") or "").strip().lower() in ("1", "true", "yes")
+
+
+@app.middleware("http")
+async def _csrf_middleware(request: Request, call_next):
+    """Require CSRF token for mutating browser session requests."""
+    path = request.url.path
+    if (
+        path.startswith("/api/")
+        and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        and path not in _CSRF_EXEMPT_PATHS
+        and not is_machine_authenticated_request(request)
+        and not verify_request_csrf(request)
+    ):
+        emit_audit_event(
+            "permission.csrf_denied",
+            "permission",
+            "denied",
+            metadata={"method": request.method, "path": path},
+            error="CSRF validation failed",
+        )
+        return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")

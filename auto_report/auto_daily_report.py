@@ -689,7 +689,7 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _fallback_pass1_result() -> dict:
+def _fallback_pass1_result(reason: str = "analysis failure") -> dict:
     return {
         "stance": DEFAULT_STANCE,
         "target_leverage": DEFAULT_LEVERAGE,
@@ -699,6 +699,7 @@ def _fallback_pass1_result() -> dict:
         "drivers": [],
         "watchlist_triggers": [],
         "parse_error": True,
+        "parse_error_reason": reason,
     }
 
 
@@ -715,7 +716,7 @@ def _build_pass1_system_message(last_daily_json: str | None) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def _build_pass1_user_message(market_bundle: dict, perf_md: str) -> str:
+def _build_pass1_user_message(market_bundle: dict, perf_md: str, web_search: bool = True) -> str:
     """Build user message for Pass 1: market analysis and stance determination."""
     prompt_bundle = _prepare_prompt_bundle(market_bundle)
     bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
@@ -728,6 +729,20 @@ def _build_pass1_user_message(market_bundle: dict, perf_md: str) -> str:
         )
     leverage_table = "\n".join(leverage_table_lines)
 
+    if web_search:
+        search_instruction = """Before writing the analysis, use the web search tool to find the key market-moving
+news from the past 24 hours (Fed speakers, economic releases, geopolitical events,
+major premarket moves, overnight developments) that are relevant to today's session.
+Weave this context into your analysis and cite sources for news-driven claims.
+Treat the news_digests block as user-curated high-signal leads from uploaded digest
+files; use web search to verify and cite claims rather than citing the uploaded digest itself."""
+        citation_constraint = "- Cite specific metrics from the data and news search."
+    else:
+        search_instruction = """Web search is disabled for this pass. Do not say you will search or browse.
+Use the supplied market bundle, performance tables, and news_digests as the available
+market context. Cite news only when source URLs are already present in the supplied data."""
+        citation_constraint = "- Cite specific metrics from the data; cite news only when URLs are present in the supplied data."
+
     return f"""Here is today's market data bundle:
 
 ```json
@@ -738,12 +753,7 @@ def _build_pass1_user_message(market_bundle: dict, perf_md: str) -> str:
 
 {RULES_TEXT}
 
-Before writing the analysis, use the web search tool to find the key market-moving
-news from the past 24 hours (Fed speakers, economic releases, geopolitical events,
-major premarket moves, overnight developments) that are relevant to today's session.
-Weave this context into your analysis and cite sources for news-driven claims.
-Treat the news_digests block as user-curated high-signal leads from uploaded digest
-files; use web search to verify and cite claims rather than citing the uploaded digest itself.
+{search_instruction}
 
 Analyze the market environment through the lens of the investment philosophy.
 
@@ -780,7 +790,7 @@ level within the stance — e.g., a borderline Offensive environment might warra
 (low end of Offensive) rather than 2.25 (high end).
 
 Constraints:
-- Cite specific metrics from the data and news search.
+{citation_constraint}
 - Use news_digests explicitly when it changes the assessment of market character, macro risk, or portfolio risk.
 - Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and country_dashboard explicitly when they inform Macro Momentum, Liquidity/Rates, Risk Sentiment, or Cycle Position.
 - Assess the context for a long/short equity portfolio — not generic market commentary.
@@ -973,13 +983,13 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
         json_part = json_part.strip()
         try:
             stance_dict = json.loads(json_part)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             log.warning("Failed to parse Pass 1 stance JSON — using fallback")
-            stance_dict = _fallback_pass1_result()
+            stance_dict = _fallback_pass1_result(f"invalid stance JSON: {exc}")
     else:
         log.warning("No Pass 1 separator found — using fallback")
         analysis_md = text.strip()
-        stance_dict = _fallback_pass1_result()
+        stance_dict = _fallback_pass1_result(f"missing separator {PASS1_SUMMARY_SEPARATOR}")
 
     # Validate and clamp leverage
     raw_leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
@@ -1005,6 +1015,15 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
     stance_dict["target_leverage"] = validate_and_clamp_leverage(raw_leverage, stance)
     _normalize_pass1_structured_fields(stance_dict)
 
+    return analysis_md, stance_dict
+
+
+def _parse_pass1_response_or_raise(text: str) -> tuple[str, dict]:
+    """Parse Pass 1 and raise when the response fell back to default stance."""
+    analysis_md, stance_dict = parse_pass1_response(text)
+    if stance_dict.get("parse_error"):
+        reason = stance_dict.get("parse_error_reason") or "Pass 1 response did not satisfy the contract"
+        raise ValueError(str(reason))
     return analysis_md, stance_dict
 
 
@@ -1539,9 +1558,9 @@ def main():
     # ---------------------------------------------------------------
     log.info("=== Pass 1: Market Analysis + Stance ===")
     pass1_system = _build_pass1_system_message(last_daily_json)
-    pass1_user = _build_pass1_user_message(market_bundle, perf_md)
 
     pass1_web_search = not args.no_search
+    pass1_user = _build_pass1_user_message(market_bundle, perf_md, web_search=pass1_web_search)
     if pass1_web_search:
         log.info("Pass 1 web search enabled with unrestricted domains")
     else:
@@ -1555,8 +1574,10 @@ def main():
             system_msg=pass1_system,
             user_msg=pass1_user,
             web_search=pass1_web_search,
+            max_tokens=24576,
+            reasoning_effort="high",
         )
-        market_analysis_md, stance_dict = parse_pass1_response(pass1_text)
+        market_analysis_md, stance_dict = _parse_pass1_response_or_raise(pass1_text)
         market_analysis_md = strip_llm_meta(market_analysis_md)
         log.info(
             "Pass 1 complete — stance: %s, leverage: %.2f",
@@ -1564,10 +1585,42 @@ def main():
             stance_dict["target_leverage"],
         )
     except Exception as e:
-        log.error("Pass 1 (market analysis) failed: %s", e, exc_info=True)
-        stance_dict = _fallback_pass1_result()
-        stance_dict["error"] = str(e)
-        market_analysis_md = f"**Pass 1 Error**: Market analysis failed.\n\n```\n{e}\n```"
+        if pass1_web_search:
+            log.warning(
+                "Pass 1 web-search attempt failed contract (%s); retrying without web search",
+                e,
+                exc_info=True,
+            )
+            try:
+                retry_user = _build_pass1_user_message(market_bundle, perf_md, web_search=False)
+                retry_text, retry_citations = call_report_llm(
+                    system_msg=pass1_system,
+                    user_msg=retry_user,
+                    web_search=False,
+                    max_tokens=24576,
+                    reasoning_effort="high",
+                )
+                pass1_citations.extend(retry_citations)
+                market_analysis_md, stance_dict = _parse_pass1_response_or_raise(retry_text)
+                market_analysis_md = strip_llm_meta(market_analysis_md)
+                log.info(
+                    "Pass 1 no-search retry complete — stance: %s, leverage: %.2f",
+                    stance_dict["stance"],
+                    stance_dict["target_leverage"],
+                )
+            except Exception as retry_exc:
+                log.error("Pass 1 (market analysis) failed after no-search retry: %s", retry_exc, exc_info=True)
+                stance_dict = _fallback_pass1_result(f"web-search attempt: {e}; no-search retry: {retry_exc}")
+                stance_dict["error"] = str(retry_exc)
+                market_analysis_md = (
+                    "**Pass 1 Error**: Market analysis failed after web-search and no-search attempts.\n\n"
+                    f"Initial failure: `{e}`\n\nRetry failure: `{retry_exc}`"
+                )
+        else:
+            log.error("Pass 1 (market analysis) failed: %s", e, exc_info=True)
+            stance_dict = _fallback_pass1_result(str(e))
+            stance_dict["error"] = str(e)
+            market_analysis_md = f"**Pass 1 Error**: Market analysis failed.\n\n```\n{e}\n```"
 
     target_leverage = stance_dict["target_leverage"]
     log.info("Using target_leverage=%.2f for sizer", target_leverage)

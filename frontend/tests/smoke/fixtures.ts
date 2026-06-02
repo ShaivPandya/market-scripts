@@ -14,6 +14,7 @@ interface ApiMockState {
   approvalsDismissed: boolean
   dismissedPressureKeys: Set<string>
   ontologyQueryRequest: Record<string, JsonValue> | null
+  isAuthenticated: boolean
 }
 
 const smokeApproval = {
@@ -921,10 +922,19 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
   const path = url.pathname
   const method = request.method()
 
-  if (method === "POST" && path === "/api/auth/logout") return json(route, { status: "ok" })
-  if (method === "POST" && path === "/api/auth/login") return json(route, { status: "ok" })
+  if (method === "POST" && path === "/api/auth/logout") {
+    state.isAuthenticated = false
+    return json(route, { status: "ok" })
+  }
+  if (method === "POST" && path === "/api/auth/login") {
+    state.isAuthenticated = true
+    return json(route, { detail: "ok", username: "admin", roles: ["admin"], csrfToken: "smoke-csrf" })
+  }
   if (method === "GET" && path === "/api/auth/me") {
-    return json(route, { email: "smoke@example.com", authenticated: true })
+    if (!state.isAuthenticated) {
+      return json(route, { detail: "Not authenticated" }, 401)
+    }
+    return json(route, { username: "admin", roles: ["admin"], csrfToken: "smoke-csrf" })
   }
 
   if (method === "GET" && path === "/api/portfolio") {
@@ -1187,20 +1197,21 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
 }
 
 export async function authenticate(page: Page) {
-  await page.addInitScript(() => {
-    window.sessionStorage.setItem("auth_session", "1")
-  })
+  void page
+  // Session auth is mocked via /api/auth/me in installApiMocks.
 }
 
-export const test = base.extend<{ apiMocks: ApiMockState }>({
+export const test = base.extend<{ apiMocks: ApiMockState; authenticated: boolean }>({
+  authenticated: [true, { option: true }],
   apiMocks: [
-    async ({ page }, use) => {
+    async ({ page, authenticated }, use) => {
       const state: ApiMockState = {
         unknownRequests: [],
         agentHistoryTitle: "NVDA Earnings Prep",
         approvalsDismissed: false,
         dismissedPressureKeys: new Set(),
         ontologyQueryRequest: null,
+        isAuthenticated: authenticated,
       }
       await page.route("**/api/**", route => handleApiRoute(route, state))
       await use(state)

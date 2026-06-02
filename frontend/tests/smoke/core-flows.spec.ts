@@ -1,18 +1,22 @@
 import { authenticate, expect, test } from "./fixtures"
 import { expectDecisionTraceDrawer, expectPrimaryControlsSeparated } from "./operatingWorkflow"
 
-test("redirects protected routes to login and signs in with password auth", async ({ page }) => {
-  await page.goto("/workspace")
+test.describe("password auth entry", () => {
+  test.use({ authenticated: false })
 
-  await expect(page).toHaveURL(/\/login$/)
-  await expect(page.getByRole("heading", { name: "Talisman" })).toBeVisible()
-  await expect(page.getByText("Enter your password to continue.")).toBeVisible()
+  test("redirects protected routes to login and signs in with password auth", async ({ page }) => {
+    await page.goto("/workspace")
 
-  await page.getByLabel("Password").fill("smoke-password")
-  await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page).toHaveURL(/\/login$/)
+    await expect(page.getByRole("heading", { name: "Talisman" })).toBeVisible()
+    await expect(page.getByText("Sign in with your username and password.")).toBeVisible()
 
-  await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole("heading", { name: "Portfolio Dashboard" })).toBeVisible()
+    await page.getByLabel("Password").fill("smoke-password")
+    await page.getByRole("button", { name: "Sign in" }).click()
+
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole("heading", { name: "Portfolio Dashboard" })).toBeVisible()
+  })
 })
 
 test("renders the portfolio dashboard happy path with deterministic holdings", async ({ page }) => {

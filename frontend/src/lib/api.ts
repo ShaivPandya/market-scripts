@@ -1,6 +1,7 @@
 import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
+import { csrfHeaders, setCsrfToken } from "@/lib/csrfToken"
 import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
 import type { ManagementQualityAssessment, ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
@@ -25,8 +26,15 @@ function schemaHeaders(method: string, url: string): Record<string, string> {
 
 client.interceptors.request.use(config => {
   const method = (config.method ?? "get").toLowerCase()
-  if (!["post", "put", "patch", "delete"].includes(method) || config.data == null || !config.url) return config
-  config.headers.set(schemaHeaders(method, config.url))
+  if (!["post", "put", "patch", "delete"].includes(method) || !config.url) return config
+  for (const [key, value] of Object.entries(csrfHeaders())) {
+    config.headers.set(key, value)
+  }
+  if (config.data != null) {
+    for (const [key, value] of Object.entries(schemaHeaders(method, config.url))) {
+      config.headers.set(key, value)
+    }
+  }
   return config
 })
 
@@ -783,14 +791,27 @@ export type IdeaComparisonJobResponse =
   | { job_id: string; status: "done"; timeout_s?: number; result?: IdeaComparisonJobResult; progress?: Record<string, unknown> }
   | { job_id: string; status: "error" | "cancelled"; timeout_s?: number; error?: string; progress?: Record<string, unknown> }
 
+function shouldRedirectUnauthorizedToLogin(err: unknown): boolean {
+  if (getAuthMode() === "cloudflare") return false
+  if (!axios.isAxiosError(err) || err.response?.status !== 401) return false
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/login")) return false
+
+  const rawUrl = (err.config?.url ?? "").split("?")[0]
+  const path = rawUrl.startsWith("http")
+    ? new URL(rawUrl).pathname
+    : rawUrl.startsWith("/")
+      ? rawUrl
+      : `/api/${rawUrl.replace(/^\/+/, "")}`
+  // Session bootstrap endpoints are expected to 401 when logged out.
+  if (path.endsWith("/auth/me") || path.endsWith("/auth/login")) return false
+
+  return true
+}
+
 client.interceptors.response.use(
   res => res,
   err => {
-    if (
-      getAuthMode() !== "cloudflare" &&
-      err.response?.status === 401 &&
-      !window.location.pathname.startsWith("/login")
-    ) {
+    if (shouldRedirectUnauthorizedToLogin(err)) {
       window.location.href = "/login"
     }
     const msg = formatApiError(err)
@@ -799,10 +820,30 @@ client.interceptors.response.use(
   },
 )
 
+export type AuthMeResponse = {
+  username: string
+  roles: string[]
+  csrfToken?: string | null
+}
+
 export const authApi = {
-  login: (password: string) => client.post("/auth/login", { password }).then(r => r.data),
-  logout: () => client.post("/auth/logout").then(r => r.data),
-  me: () => client.get("/auth/me").then(r => r.data),
+  login: (password: string, username?: string) =>
+    client.post("/auth/login", { password, username }).then(r => {
+      const data = r.data as AuthMeResponse & { detail?: string; csrfToken?: string }
+      if (data.csrfToken) setCsrfToken(data.csrfToken)
+      return data
+    }),
+  logout: () =>
+    client.post("/auth/logout").then(r => {
+      setCsrfToken(null)
+      return r.data
+    }),
+  me: () =>
+    client.get("/auth/me").then(r => {
+      const data = r.data as AuthMeResponse
+      if (data.csrfToken) setCsrfToken(data.csrfToken)
+      return data
+    }),
 }
 
 export type LLMProvider = "anthropic" | "openai" | "gemini"

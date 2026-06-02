@@ -210,6 +210,18 @@ else
   echo "  EIA_API_KEY: exists, leaving alone"
 fi
 
+if ! secret_exists SENTRY_DSN; then
+  v="$(prompt_optional 'SENTRY_DSN (optional observability DSN)')"
+  if [[ -n "${v}" ]]; then
+    printf '%s' "${v}" | create_if_missing SENTRY_DSN
+  else
+    echo "  SENTRY_DSN: skipped (remove from API_SECRETS/WORKER_SECRETS in config.sh until added)"
+  fi
+  unset v
+else
+  echo "  SENTRY_DSN: exists, leaving alone"
+fi
+
 ###############################################################################
 # 5. AUTH_SMOKE_PASSWORD + AUTH_SMOKE_PASSWORD_HASH (SHA-34)
 ###############################################################################
@@ -238,11 +250,11 @@ fi
 API_ALLOWED=(
   DATABASE_URL_API AUTH_PASSWORD_HASH AUTH_SMOKE_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
   SCHEDULER_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
-  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
+  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY SENTRY_DSN
 )
 WORKER_ALLOWED=(
   DATABASE_URL_WORKER ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
-  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
+  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY SENTRY_DSN
 )
 MIGRATOR_ALLOWED=( DATABASE_URL_MIGRATION )
 
