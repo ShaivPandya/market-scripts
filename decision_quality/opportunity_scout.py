@@ -340,5 +340,8 @@ def maybe_create_candidate_from_monitor_hit(
     idempotency_key = _text(record.get("idempotency_key"))
     if existing_idempotency_keys is not None and idempotency_key in existing_idempotency_keys:
         return None
-    persist_proactive_opportunity_candidate(record, source_id=source_id)
+    try:
+        persist_proactive_opportunity_candidate(record, source_id=source_id)
+    except Exception:
+        return None
     return record

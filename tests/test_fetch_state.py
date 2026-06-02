@@ -14,8 +14,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeResponse:
-    def __init__(self, payload=None):
+    def __init__(self, payload=None, headers=None):
         self._payload = payload
+        self.headers = headers or {"content-type": "application/json"}
 
     def raise_for_status(self) -> None:
         return None
@@ -67,7 +68,7 @@ def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch, tmp
         ("GET", "https://example.test/api/portfolio-positions"),
         ("GET", "https://example.test/api/portfolio-settings"),
     ]
-    assert session.calls[0][2]["json"] == {"password": "report-password"}
+    assert session.calls[0][2]["json"] == {"password": "report-password", "username": "admin"}
     assert session.calls[0][2]["headers"] == {
         "X-Api-Proxy-Secret": "proxy-secret",
         "X-Request-Schema-Name": "post:/api/auth/login",

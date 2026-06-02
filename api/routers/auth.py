@@ -330,6 +330,12 @@ def login(request: Request, body: LoginRequest, response: Response):
             detail="Incorrect password",
         )
 
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+
     _clear_failed_logins(request)
     session = create_session(
         user,

@@ -51,6 +51,9 @@ def _reset_auth_state():
     reset_auth_store_for_tests()
     auth_router._reset_login_attempt_state()
     yield
+    os.environ["TALISMAN_ALLOW_SQLITE_STATE"] = "true"
+    os.environ["STATE_DB_BACKEND"] = "sqlite"
+    os.environ["DATABASE_URL"] = ""
     reset_auth_store_for_tests()
     auth_router._reset_login_attempt_state()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
@@ -218,7 +218,7 @@ def init_sentry(*, component: str = "api") -> bool:
             traces_sample_rate=_env_float("SENTRY_TRACES_SAMPLE_RATE", 0.05),
             profiles_sample_rate=_env_float("SENTRY_PROFILES_SAMPLE_RATE", 0.0),
             send_default_pii=False,
-            before_send=_before_send,
+            before_send=cast(Any, _before_send),
             integrations=integrations,
         )
         sentry_sdk.set_tag("component", component)
@@ -257,7 +257,7 @@ def set_request_context(
 def capture_message(
     message: str,
     *,
-    level: str = "error",
+    level: Literal["fatal", "critical", "error", "warning", "info", "debug"] = "error",
     context: dict[str, Any] | None = None,
     tags: dict[str, Any] | None = None,
 ) -> str | None:
