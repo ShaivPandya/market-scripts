@@ -51,6 +51,18 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   export VITE_SENTRY_ENVIRONMENT="${VITE_SENTRY_ENVIRONMENT:-production}"
   export VITE_SENTRY_RELEASE="${VITE_SENTRY_RELEASE:-${_full_sha}}"
   export VITE_TALISMAN_RELEASE_GIT_SHA_SHORT="${VITE_TALISMAN_RELEASE_GIT_SHA_SHORT:-${_short_sha}}"
+  if [[ -z "${VITE_SENTRY_DSN:-}" ]] && command -v gcloud >/dev/null 2>&1; then
+    if gcloud secrets describe SENTRY_DSN --project="${PROJECT_ID}" >/dev/null 2>&1; then
+      export VITE_SENTRY_DSN="$(
+        gcloud secrets versions access latest --secret=SENTRY_DSN --project="${PROJECT_ID}" 2>/dev/null | tr -d '\n'
+      )"
+    fi
+  fi
+  if [[ -n "${VITE_SENTRY_DSN:-}" ]]; then
+    echo "Frontend Sentry enabled for build (environment=${VITE_SENTRY_ENVIRONMENT})."
+  else
+    echo "VITE_SENTRY_DSN unset; frontend Sentry will remain disabled in this build."
+  fi
   (cd "${frontend_dir}" && npm run build)
 else
   echo "SKIP_BUILD=1; deploying existing frontend/dist."
