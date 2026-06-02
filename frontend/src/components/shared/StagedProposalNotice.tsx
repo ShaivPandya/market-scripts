@@ -5,10 +5,12 @@ import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/Decisi
 import type { StagedMutationResponse } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-type StagedProposal = Pick<
-  StagedMutationResponse,
-  "approval_id" | "decision_state" | "effect_scope" | "review_route"
->
+export type StagedProposal = {
+  approval_id?: string | number | null
+  decision_state?: StagedMutationResponse["decision_state"]
+  effect_scope?: StagedMutationResponse["effect_scope"]
+  review_route?: string | null
+}
 
 interface StagedProposalNoticeProps {
   proposal: StagedProposal | null | undefined

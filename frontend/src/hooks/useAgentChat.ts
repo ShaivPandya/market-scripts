@@ -101,6 +101,7 @@ interface AgentStreamEvent {
 
 const STORAGE_KEY = "agent-chat-current"
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, "")
+const EMPTY_AGENT_RESPONSE_TEXT = "I couldn't generate a response for that request. Please try again."
 
 function schemaHeaders(method: string, url: string): Record<string, string> {
   const parsed = new URL(url, window.location.origin)
@@ -1094,14 +1095,21 @@ export function useAgentChat() {
       if (targetSessionId) delete inFlightBySessionRef.current[targetSessionId]
     }
 
-    const handleError = (message: string) => {
+    const handleError = (message: string, assistantFallbackContent?: string) => {
       setState(prev => ({
         ...prev,
         error: message,
         isStreaming: false,
         activeJob: null,
         messages: prev.messages.map(m =>
-          m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+          m.id === assistantId
+            ? {
+                ...m,
+                content: m.content.trim() ? m.content : assistantFallbackContent ?? m.content,
+                isStreaming: false,
+                statusText: undefined,
+              }
+            : m,
         ),
       }))
       activeJobRef.current = null
@@ -1111,7 +1119,7 @@ export function useAgentChat() {
     try {
       if (options?.durable) {
         const started = await startAgentJob(body, controller.signal)
-        await beginDurableResponse(assistantId, clientTurnId, started, controller)
+        await beginDurableResponse(assistantId, clientTurnId, started)
         return
       }
 
@@ -1129,7 +1137,13 @@ export function useAgentChat() {
       }, controller.signal)
 
       if (live.handoff) {
-        await beginDurableResponse(assistantId, clientTurnId, live.handoff, controller)
+        await beginDurableResponse(assistantId, clientTurnId, live.handoff)
+        return
+      }
+
+      const assistant = stateRef.current.messages.find(m => m.id === assistantId)
+      if (!sawAssistantDelta && !assistant?.content.trim()) {
+        handleError("Agent returned an empty response.", EMPTY_AGENT_RESPONSE_TEXT)
         return
       }
 
@@ -1152,7 +1166,7 @@ export function useAgentChat() {
       if (!options?.durable && !sawAssistantDelta) {
         try {
           const started = await startAgentJob(body, controller.signal)
-          await beginDurableResponse(assistantId, clientTurnId, started, controller)
+          await beginDurableResponse(assistantId, clientTurnId, started)
           return
         } catch (fallbackErr) {
           if ((fallbackErr as Error).name === "AbortError") {

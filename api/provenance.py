@@ -19,6 +19,7 @@ from typing import Any
 
 from api.audit import summarize_for_audit
 from api.logging_config import request_id_var
+from api.optional_ontology_writes import should_attempt_optional_ontology_write
 from ontology.object_service import OntologyObjectService, source_record_object_uid_for
 from ontology.schemas.identity import (
     action_item_id,
@@ -486,6 +487,9 @@ def start_event(
     producer_name: str | None = None,
     producer_version: str | None = None,
 ) -> dict | None:
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
+
     try:
         actor_type, actor_id, parent_actor_id = _actor_fields(actor)
         started = started_at or _now()
@@ -548,6 +552,8 @@ def finish_event(
     error: str | None = None,
     fail_closed: bool = False,
 ) -> dict | None:
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
     if not event_id:
         raise ProvenanceWriteError("Provenance link requires event_id")
     try:
@@ -629,6 +635,8 @@ def link_refs(
     lineage_root_id: str | None = None,
     fail_closed: bool = False,
 ) -> dict | None:
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
     if not event_id:
         raise ProvenanceWriteError("Provenance relation requires event_id")
     try:
@@ -706,6 +714,8 @@ def record_source_ref(
     retention_class: str = SOURCE_REF_RETENTION_CLASS,
     fail_closed: bool = False,
 ) -> dict | None:
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
     if not adapter_run_event_id:
         raise ProvenanceWriteError("Source record provenance requires adapter_run_event_id")
     record_key_hash = stable_hash(record_key)
@@ -758,6 +768,8 @@ def record_workflow_artifact(
     retention_class: str = WORKFLOW_ARTIFACT_RETENTION_CLASS,
     fail_closed: bool = False,
 ) -> dict | None:
+    if not should_attempt_optional_ontology_write(fail_closed=fail_closed):
+        return None
     if not provenance_event_id:
         raise ProvenanceWriteError("Workflow artifact provenance requires provenance_event_id")
     artifact_hash = stable_hash(artifact_value)
