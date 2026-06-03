@@ -41,7 +41,10 @@ def _cache_key(
 def _pick_price(row: Any) -> float | None:
     for field in ("lastPrice", "regularMarketPrice", "bid", "ask"):
         try:
-            value = float(getattr(row, field, None) if hasattr(row, field) else row.get(field))
+            raw = getattr(row, field, None) if hasattr(row, field) else row.get(field)
+            if raw is None:
+                continue
+            value = float(raw)
         except (TypeError, ValueError):
             continue
         if value > 0:

@@ -26,14 +26,16 @@ def get_dossier(ticker: str, since: str | None = None):
     reads = OntologyRuntimeReadService()
     ontology_bundle = reads.dossier_bundle(ticker)
     position = ontology_bundle.get("position")
-    related_portfolio_legs = [
-        row
-        for row in reads.positions(include_hedges=False)
-        if str(row.get("ticker") or "").strip().upper() == ticker
-        or str(row.get("underlying_ticker") or "").strip().upper() == ticker
-    ]
-    if position is None and related_portfolio_legs:
-        position = related_portfolio_legs[0]
+    related_portfolio_legs: list[dict[str, Any]] = []
+    if position is None:
+        related_portfolio_legs = [
+            row
+            for row in reads.positions(include_hedges=False)
+            if str(row.get("ticker") or "").strip().upper() == ticker
+            or str(row.get("underlying_ticker") or "").strip().upper() == ticker
+        ]
+        if related_portfolio_legs:
+            position = related_portfolio_legs[0]
     thesis_meta = ontology_bundle.get("thesis_meta")
     thesis_content = None
 

@@ -543,7 +543,7 @@ def test_hedge_update_apply_accepts_enriched_payload_fields():
 
     assert approval["entity_type"] == "hedge_positions"
     assert applied["application_status"] == "applied"
-    assert "hedge_position:SPY" in repo.objects
+    assert "position:SPY" in repo.objects
 
 
 def test_hedge_update_apply_preserves_negative_quantity():
@@ -568,7 +568,7 @@ def test_hedge_update_apply_preserves_negative_quantity():
     )
 
     applied = service.resolve_approval(approval["id"], "approved", "apply", context)
-    hedge = repo.objects["hedge_position:SPY"]["properties_json"]
+    hedge = repo.objects["position:SPY"]["properties_json"]
 
     assert applied["application_status"] == "applied"
     assert approval["proposed_change"]["positions"][0]["shares"] == -12

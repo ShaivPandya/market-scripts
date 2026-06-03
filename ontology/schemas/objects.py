@@ -267,7 +267,11 @@ class Instrument(OntologySchemaBase):
     def _optional_strike(cls, value: object) -> float | None:
         if value in (None, ""):
             return None
-        return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            return float(value)
+        raise TypeError("option_strike must be numeric")
 
 
 class Issuer(OntologySchemaBase):

@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 AssetClass = Literal["equity", "commodity", "fx", "bond"]
 InstrumentType = Literal["security", "future", "spot_fx", "option"]
@@ -239,16 +239,20 @@ def normalize_option_position_fields(row: Mapping[str, Any]) -> dict[str, Any]:
         normalized_type = normalize_option_type(out.get("option_type"))
         if normalized_type is None:
             raise ValueError("Option positions require option_type call or put.")
+        strike_raw = out.get("option_strike")
+        if strike_raw is None:
+            raise ValueError("Option positions require option_strike.")
+        option_strike = float(strike_raw)
         parsed = ParsedOptionContract(
             underlying_ticker=str(out.get("underlying_ticker")).strip().upper(),
             option_expiration=str(out.get("option_expiration")).strip(),
             option_type=normalized_type,
-            option_strike=float(out.get("option_strike")),
+            option_strike=option_strike,
             option_contract_symbol=build_option_contract_symbol(
                 str(out.get("underlying_ticker")),
                 str(out.get("option_expiration")),
                 normalized_type,
-                float(out.get("option_strike")),
+                option_strike,
             ),
         )
     if parsed is None:
@@ -291,7 +295,7 @@ def normalize_asset(value: Any, *, instrument_type: InstrumentType, symbol: str)
     if instrument_type == "spot_fx":
         return "fx"
     if instrument_type == "option":
-        return raw or "equity"
+        return cast(AssetClass, raw or "equity")
     spec = futures_spec(symbol) if instrument_type == "future" else None
     asset = raw or (spec.asset if spec else "equity")
     if asset not in ASSET_CLASSES:
