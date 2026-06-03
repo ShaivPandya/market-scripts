@@ -417,6 +417,61 @@ def test_position_update_apply_accepts_reviewed_valuation_fields():
     assert "position:APO" in repo.objects
 
 
+def test_meta_shares_and_multiple_option_contracts_coexist():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 10,
+                    "instrument_type": "security",
+                },
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 2,
+                    "instrument_type": "option",
+                    "underlying_ticker": "META",
+                    "option_expiration": "2026-01-16",
+                    "option_strike": 500,
+                    "option_type": "call",
+                },
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 1,
+                    "instrument_type": "option",
+                    "underlying_ticker": "META",
+                    "option_expiration": "2026-01-16",
+                    "option_strike": 450,
+                    "option_type": "put",
+                },
+            ]
+        },
+        context,
+        reason="meta book with options",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+    active_positions = {row["object_uid"] for row in service.objects.query_objects("Position")}
+
+    assert applied["application_status"] == "applied"
+    assert "position:META" in active_positions
+    assert "position:META260116C00500000" in active_positions
+    assert "position:META260116P00450000" in active_positions
+    assert repo.objects["position:META"]["properties_json"]["ticker"] == "META"
+    assert repo.objects["position:META260116C00500000"]["properties_json"]["underlying_ticker"] == "META"
+
+
 def test_position_replacement_apply_expires_removed_positions():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
@@ -489,6 +544,37 @@ def test_hedge_update_apply_accepts_enriched_payload_fields():
     assert approval["entity_type"] == "hedge_positions"
     assert applied["application_status"] == "applied"
     assert "hedge_position:SPY" in repo.objects
+
+
+def test_hedge_update_apply_uses_distinct_uid_from_same_ticker_position():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    position_approval = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "SPY", "asset": "equity", "direction": "long", "shares": 10}]},
+        context,
+        reason="live position",
+    )
+    service.resolve_approval(position_approval["id"], "approved", "apply", context)
+
+    hedge_approval = service.propose_action(
+        "update_hedge_positions",
+        {"positions": [{"ticker": "SPY", "direction": "short", "shares": -3, "quantity": -3}]},
+        context,
+        reason="overlay hedge",
+    )
+    applied = service.resolve_approval(hedge_approval["id"], "approved", "apply", context)
+
+    active_positions = service.objects.query_objects("Position")
+    active_hedges = service.objects.query_objects("HedgePosition")
+
+    assert applied["application_status"] == "applied"
+    assert [row["object_uid"] for row in active_positions] == ["position:SPY"]
+    assert [row["object_uid"] for row in active_hedges] == ["hedge_position:SPY"]
+    assert repo.objects["position:SPY"]["tx_to"] is None
+    assert repo.objects["hedge_position:SPY"]["tx_to"] is None
 
 
 def test_hedge_update_apply_preserves_negative_quantity():

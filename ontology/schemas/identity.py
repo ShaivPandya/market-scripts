@@ -37,6 +37,35 @@ def position_id(ticker: object) -> str:
     return f"position:{canonical_ticker(ticker)}"
 
 
+def portfolio_position_uid(row: object) -> str:
+    from portfolio.instruments import position_row_id
+
+    if isinstance(row, dict):
+        key = position_row_id(row)
+    else:
+        key = str(row or "").strip().upper()
+    if not key:
+        raise ValueError("position uid requires a non-empty position key.")
+    if key.startswith("position:"):
+        return key
+    return position_id(key)
+
+
+def hedge_position_uid(row: object) -> str:
+    from portfolio.instruments import position_row_id
+
+    if isinstance(row, dict):
+        key = position_row_id(row)
+    else:
+        key = str(row or "").strip().upper()
+    if not key:
+        raise ValueError("hedge position uid requires a non-empty position key.")
+    prefix, sep, suffix = key.partition(":")
+    if sep and prefix.lower() in {"hedge_position", "position"}:
+        key = suffix
+    return hedge_position_id(key)
+
+
 def asset_id(ticker: object) -> str:
     return f"asset:{canonical_ticker(ticker)}"
 

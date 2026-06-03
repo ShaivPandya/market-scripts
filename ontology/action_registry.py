@@ -37,14 +37,8 @@ from pydantic import (
 
 from api.audit import emit_audit_event, summarize_for_audit
 from portfolio.instruments import (
-    default_contract_multiplier,
-    is_continuous_future_symbol,
-    normalize_asset,
-    normalize_instrument_type,
-    normalize_quantity,
-    normalize_spot_fx_symbol,
-    normalize_symbol,
-    spot_fx_currencies,
+    normalize_portfolio_instrument_row,
+    position_row_id,
 )
 from portfolio.position_groups import (
     canonicalize_position_group_rows,
@@ -230,9 +224,15 @@ class PortfolioPositionInputBase(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -247,31 +247,10 @@ class PortfolioPositionInputBase(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPositionInputBase:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         return self
 
 
@@ -292,10 +271,10 @@ class UpdatePortfolioPositionsInput(BaseModel):
     def _validate_positions(self) -> UpdatePortfolioPositionsInput:
         if not self.positions:
             raise ValueError("At least one position is required.")
-        tickers = [position.ticker for position in self.positions]
-        if len(set(tickers)) != len(tickers):
-            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
-            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        position_ids = [position_row_id(position.model_dump()) for position in self.positions]
+        if len(set(position_ids)) != len(position_ids):
+            duplicate = next(pid for pid in position_ids if position_ids.count(pid) > 1)
+            raise ValueError(f"Duplicate position_id: '{duplicate}'.")
         rows = canonicalize_position_group_rows([position.model_dump() for position in self.positions])
         validate_position_groups(rows)
         for position, row in zip(self.positions, rows, strict=False):
@@ -311,9 +290,15 @@ class HedgePositionInput(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -328,31 +313,10 @@ class HedgePositionInput(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePositionInput:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         return self
 
 
@@ -361,10 +325,10 @@ class UpdateHedgePositionsInput(BaseModel):
 
     @model_validator(mode="after")
     def _validate_positions(self) -> UpdateHedgePositionsInput:
-        tickers = [position.ticker for position in self.positions]
-        if len(set(tickers)) != len(tickers):
-            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
-            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        position_ids = [position_row_id(position.model_dump()) for position in self.positions]
+        if len(set(position_ids)) != len(position_ids):
+            duplicate = next(pid for pid in position_ids if position_ids.count(pid) > 1)
+            raise ValueError(f"Duplicate position_id: '{duplicate}'.")
         return self
 
 
@@ -1816,6 +1780,12 @@ def _position_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "position_id": pos.position_id,
+            "underlying_ticker": pos.underlying_ticker,
+            "option_contract_symbol": pos.option_contract_symbol,
+            "option_expiration": pos.option_expiration,
+            "option_strike": pos.option_strike,
+            "option_type": pos.option_type,
             "fx_base_currency": pos.fx_base_currency,
             "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,
@@ -1855,6 +1825,12 @@ def _hedge_rows(
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "position_id": pos.position_id,
+            "underlying_ticker": pos.underlying_ticker,
+            "option_contract_symbol": pos.option_contract_symbol,
+            "option_expiration": pos.option_expiration,
+            "option_strike": pos.option_strike,
+            "option_type": pos.option_type,
             "fx_base_currency": pos.fx_base_currency,
             "fx_quote_currency": pos.fx_quote_currency,
             "currency": pos.currency,

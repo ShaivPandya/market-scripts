@@ -13,6 +13,7 @@ from api.exceptions import DataFetchError
 from api.portfolio_settings import get_portfolio_book_size
 from api.serializers import serialize_dataframe, serialize_value
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.instruments import display_ticker, infer_underlying_direction
 from portfolio.position_groups import (
     canonicalize_position_group_rows,
     group_key,
@@ -228,6 +229,17 @@ def get_portfolio_sizer_job(job_id: str):
         raise HTTPException(status_code=404, detail="Unknown job_id")  # noqa: B904
 
 
+def _leg_conviction(leg: dict[str, Any]) -> int:
+    value = pd.to_numeric(leg.get("conviction"), errors="coerce")
+    return int(value) if pd.notna(value) else 3
+
+
+def _representative_leg(legs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Highest-conviction leg, preferring one that carries a position group."""
+    grouped = [leg for leg in legs if normalize_group_name(leg.get("group_name"))]
+    return max(grouped or legs, key=_leg_conviction)
+
+
 @router.get("/portfolio-sizer/prefill")
 def get_sizer_prefill():
     try:
@@ -235,62 +247,53 @@ def get_sizer_prefill():
         if "ticker" not in df.columns:
             raise ValueError("Ontology positions are missing required 'ticker' column.")
 
-        tickers = df["ticker"].astype(str).str.strip().str.upper()
-        directions = (
-            df["direction"].astype(str).str.strip().str.lower()
-            if "direction" in df.columns
-            else pd.Series([""] * len(df))
-        )
-        convictions = (
-            pd.to_numeric(df["conviction"], errors="coerce").fillna(3).astype(int).clip(1, 5)
-            if "conviction" in df.columns
-            else pd.Series([3] * len(df))
-        )
-        instrument_types = (
-            df["instrument_type"].astype(str).str.strip().str.lower()
-            if "instrument_type" in df.columns
-            else pd.Series(["security"] * len(df))
-        )
-        assets = (
-            df["asset"].astype(str).str.strip().str.lower()
-            if "asset" in df.columns
-            else pd.Series(["equity"] * len(df))
-        )
-        group_names = (
-            df["group_name"].apply(normalize_group_name) if "group_name" in df.columns else pd.Series([None] * len(df))
-        )
-        group_convictions = (
-            pd.to_numeric(df["group_conviction"], errors="coerce").astype("Int64")
-            if "group_conviction" in df.columns
-            else pd.Series([pd.NA] * len(df), dtype="Int64")
-        )
-
-        deduped_rows: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for ticker, direction, conviction, instrument_type, asset, group_name, group_conviction in zip(  # noqa: B905
-            tickers.tolist(),
-            directions.tolist(),
-            convictions.tolist(),
-            instrument_types.tolist(),
-            assets.tolist(),
-            group_names.tolist(),
-            group_convictions.tolist(),
-        ):
+        # Group equity-underlying legs (options net by underlying ticker) so each
+        # underlying produces a single prefill row with an inferred net direction.
+        groups: dict[str, list[dict[str, Any]]] = {}
+        order: list[str] = []
+        for record in df.to_dict("records"):
+            asset = str(record.get("asset") or "equity").strip().lower()
             if asset != "equity":
                 continue
-            if ticker and ticker not in seen:
-                seen.add(ticker)
-                group_conviction_out = None if pd.isna(group_conviction) else int(group_conviction)
-                deduped_rows.append(
-                    {
-                        "ticker": ticker,
-                        "conviction": conviction,
-                        "direction": direction,
-                        "instrument_type": instrument_type,
-                        "group_name": group_name,
-                        "group_conviction": group_conviction_out if group_name else None,
-                    }
-                )
+            key = str(display_ticker(record) or "").strip().upper()
+            if not key:
+                continue
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(record)
+
+        deduped_rows: list[dict[str, Any]] = []
+        for key in order:
+            legs = groups[key]
+            direction, _near_zero = infer_underlying_direction(legs)
+            if direction is None:
+                continue
+
+            conviction = min(5, max(1, max(_leg_conviction(leg) for leg in legs)))
+            non_option = next(
+                (leg for leg in legs if str(leg.get("instrument_type") or "security").strip().lower() != "option"),
+                None,
+            )
+            instrument_type = (
+                str(non_option.get("instrument_type") or "security").strip().lower() if non_option else "option"
+            )
+
+            representative = _representative_leg(legs)
+            group_name = normalize_group_name(representative.get("group_name"))
+            group_conviction_raw = pd.to_numeric(representative.get("group_conviction"), errors="coerce")
+            group_conviction = int(group_conviction_raw) if group_name and pd.notna(group_conviction_raw) else None
+
+            deduped_rows.append(
+                {
+                    "ticker": key,
+                    "conviction": conviction,
+                    "direction": direction,
+                    "instrument_type": instrument_type,
+                    "group_name": group_name,
+                    "group_conviction": group_conviction,
+                }
+            )
 
         return {
             "positions": deduped_rows,

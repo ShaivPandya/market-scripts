@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from portfolio.instruments import infer_underlying_direction
 from portfolio.portfolio_optimizer import portfolio_analyzer, portfolio_sizer
 
 
@@ -292,3 +293,148 @@ def test_grouped_convictions_reject_mixed_direction():
 
     with pytest.raises(ValueError, match="cannot mix long and short"):
         portfolio_sizer._build_conviction_weights(meta, positions)
+
+
+def _opt_leg(option_type, direction, *, qty, cost):
+    return {
+        "instrument_type": "option",
+        "option_type": option_type,
+        "direction": direction,
+        "quantity": qty,
+        "cost_basis": cost,
+        "contract_multiplier": 100,
+    }
+
+
+def test_infer_direction_short_put_is_long():
+    assert infer_underlying_direction([_opt_leg("put", "short", qty=2, cost=6.0)]) == ("long", False)
+
+
+def test_infer_direction_long_put_is_short():
+    assert infer_underlying_direction([_opt_leg("put", "long", qty=2, cost=6.0)]) == ("short", False)
+
+
+def test_infer_direction_call_spread_is_long():
+    legs = [_opt_leg("call", "long", qty=1, cost=12.0), _opt_leg("call", "short", qty=1, cost=5.0)]
+    assert infer_underlying_direction(legs) == ("long", False)
+
+
+def test_infer_direction_balanced_straddle_is_neutral():
+    legs = [_opt_leg("call", "long", qty=1, cost=10.0), _opt_leg("put", "long", qty=1, cost=10.0)]
+    assert infer_underlying_direction(legs) == ("neutral", True)
+
+
+def test_infer_direction_share_leg_wins():
+    legs = [{"instrument_type": "security", "direction": "long"}, _opt_leg("put", "long", qty=1, cost=10.0)]
+    assert infer_underlying_direction(legs) == ("long", False)
+
+
+def test_collapse_options_only_synthesizes_equity_row():
+    df = pd.DataFrame(
+        [
+            {
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "short",
+                "instrument_type": "option",
+                "option_type": "put",
+                "underlying_ticker": "NVDA",
+                "price_symbol": "NVDA260116P00100000",
+                "quantity": 2,
+                "shares": 2,
+                "cost_basis": 6.0,
+                "contract_multiplier": 100,
+            }
+        ]
+    )
+
+    collapsed, skipped = portfolio_sizer._collapse_positions_to_underlyings(df)
+
+    assert skipped == []
+    assert list(collapsed["ticker"]) == ["NVDA"]
+    row = collapsed.iloc[0]
+    assert row["instrument_type"] == "security"
+    assert row["asset"] == "equity"
+    assert row["price_symbol"] == "NVDA"
+    assert float(row["contract_multiplier"]) == 1.0
+    assert row["direction"] == "long"  # short put -> long equity exposure
+
+
+def test_collapse_equity_plus_option_dedupes_to_equity_row():
+    df = pd.DataFrame(
+        [
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "security",
+                "price_symbol": "AAPL",
+                "quantity": 10,
+                "shares": 10,
+                "cost_basis": 100.0,
+                "contract_multiplier": 1,
+                "underlying_ticker": None,
+                "option_type": None,
+            },
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "put",
+                "underlying_ticker": "AAPL",
+                "price_symbol": "AAPL260116P00150000",
+                "quantity": 1,
+                "shares": 1,
+                "cost_basis": 5.0,
+                "contract_multiplier": 100,
+            },
+        ]
+    )
+
+    collapsed, skipped = portfolio_sizer._collapse_positions_to_underlyings(df)
+
+    assert skipped == []
+    assert list(collapsed["ticker"]) == ["AAPL"]
+    row = collapsed.iloc[0]
+    assert row["instrument_type"] == "security"
+    assert row["price_symbol"] == "AAPL"
+    assert row["direction"] == "long"
+
+
+def test_collapse_skips_offsetting_option_underlying():
+    df = pd.DataFrame(
+        [
+            {
+                "ticker": "TSLA",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "call",
+                "underlying_ticker": "TSLA",
+                "price_symbol": "c",
+                "quantity": 1,
+                "shares": 1,
+                "cost_basis": 10.0,
+                "contract_multiplier": 100,
+            },
+            {
+                "ticker": "TSLA",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "put",
+                "underlying_ticker": "TSLA",
+                "price_symbol": "p",
+                "quantity": 1,
+                "shares": 1,
+                "cost_basis": 10.0,
+                "contract_multiplier": 100,
+            },
+        ]
+    )
+
+    collapsed, skipped = portfolio_sizer._collapse_positions_to_underlyings(df)
+
+    assert skipped == ["TSLA"]
+    assert collapsed.empty

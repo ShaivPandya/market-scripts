@@ -41,6 +41,7 @@ from ontology.schemas.identity import (
     factor_score_id,
     forward_outlook_id,
     hedge_position_id,
+    hedge_position_uid,
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
@@ -74,6 +75,7 @@ from ontology.schemas.identity import (
     pattern_detection_id,
     policy_gate_result_id,
     portfolio_id,
+    portfolio_position_uid,
     portfolio_risk_snapshot_id,
     position_id,
     position_risk_snapshot_id,
@@ -632,9 +634,9 @@ def normalize_graph(
 
 def expected_node_id(node_type: str, model: OntologyObject) -> str:
     if isinstance(model, Position):
-        return position_id(model.ticker)
+        return portfolio_position_uid(model.model_dump())
     if isinstance(model, HedgePosition):
-        return hedge_position_id(model.ticker)
+        return hedge_position_uid(model.model_dump())
     if isinstance(model, Asset):
         return asset_id(model.ticker)
     if isinstance(model, Instrument):

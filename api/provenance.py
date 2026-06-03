@@ -31,7 +31,6 @@ from ontology.schemas.identity import (
     computed_snapshot_ref_id,
     document_artifact_id,
     evaluation_id,
-    hedge_position_id,
     kill_condition_id,
     model_call_ref_id,
     object_version_ref_id,
@@ -232,7 +231,7 @@ def ref_object_uid_for(ref_type: str, ref_id: Any) -> str:
     if ref_type == "hedge_positions":
         return portfolio_id(text)
     if ref_type == "hedge_position":
-        return hedge_position_id(text)
+        return position_id(text)
     if ref_type == "thesis":
         return thesis_id(text)
     if ref_type == "thesis_evaluation":

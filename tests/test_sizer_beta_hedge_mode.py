@@ -203,3 +203,49 @@ def test_sizer_prefill_only_returns_equity_positions(monkeypatch):
 
     assert [row["ticker"] for row in result["positions"]] == ["NVDA"]
     assert result["count"] == 1
+
+
+def test_sizer_prefill_nets_option_legs_into_one_directional_row(monkeypatch):
+    class FakeRuntimeReadService:
+        def positions_df(self):
+            return pd.DataFrame(
+                [
+                    {
+                        "ticker": "NVDA",
+                        "direction": "short",
+                        "conviction": 4,
+                        "asset": "equity",
+                        "instrument_type": "option",
+                        "option_type": "put",
+                        "underlying_ticker": "NVDA",
+                        "quantity": 2,
+                        "cost_basis": 6.0,
+                        "contract_multiplier": 100,
+                    },
+                    {
+                        "ticker": "NVDA",
+                        "direction": "long",
+                        "conviction": 5,
+                        "asset": "equity",
+                        "instrument_type": "option",
+                        "option_type": "put",
+                        "underlying_ticker": "NVDA",
+                        "quantity": 1,
+                        "cost_basis": 3.0,
+                        "contract_multiplier": 100,
+                    },
+                ]
+            )
+
+    monkeypatch.setattr(sizer, "OntologyRuntimeReadService", lambda: FakeRuntimeReadService())
+    monkeypatch.setattr(sizer, "get_portfolio_book_size", lambda: 100000.0)
+
+    result = sizer.get_sizer_prefill()
+
+    assert result["count"] == 1
+    row = result["positions"][0]
+    assert row["ticker"] == "NVDA"
+    # Short put (+1200) dominates the smaller long put (-300) -> net long exposure.
+    assert row["direction"] == "long"
+    assert row["conviction"] == 5
+    assert row["instrument_type"] == "option"

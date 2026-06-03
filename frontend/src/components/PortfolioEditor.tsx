@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2 } from "lucide-react"
 import { Dialog } from "@/components/shared/Dialog"
@@ -8,6 +8,7 @@ import {
   fetchHedgePositions,
   fetchPortfolioSettings,
   fetchPortfolioPositions,
+  importIbkrFlexPortfolioPositions,
   saveHedgePositions,
   savePortfolioPositions,
   updatePortfolioSettings,
@@ -19,13 +20,17 @@ import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 import {
   ASSET_OPTIONS,
   INSTRUMENT_TYPE_OPTIONS,
+  OPTION_TYPE_OPTIONS,
+  applyOptionPaste,
+  buildOptionContractSymbol,
   canonicalSpotFxSymbol,
+  displayTicker,
   effectivePriceSymbol,
   inferInstrumentType,
   nextContractMultiplier,
   normalizedSymbol,
+  positionRowId,
   spotFxCurrencies,
-  submissionSymbol,
 } from "@/lib/instruments"
 import { groupKey, normalizeGroupConviction, normalizeGroupName } from "@/lib/positionGroups"
 
@@ -90,9 +95,116 @@ function parseBookSizeInput(value: string) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null
 }
 
+function rowInstrumentType(row: { ticker: string; instrument_type?: InstrumentType | null }) {
+  return inferInstrumentType(row.ticker, row.instrument_type)
+}
+
+function optionContractSymbolForRow(row: {
+  ticker: string
+  underlying_ticker?: string | null
+  option_contract_symbol?: string | null
+  option_expiration?: string | null
+  option_strike?: number | null
+  option_type?: PortfolioPosition["option_type"] | null
+}) {
+  const underlying = normalizedSymbol(row.underlying_ticker || row.ticker)
+  if (row.option_contract_symbol?.trim()) return normalizedSymbol(row.option_contract_symbol)
+  if (!underlying || row.option_expiration == null || row.option_strike == null || !row.option_type) return null
+  return buildOptionContractSymbol(underlying, row.option_expiration, row.option_type, row.option_strike)
+}
+
+function serializeInstrumentRow<T extends PortfolioPosition | HedgePosition>(
+  row: EditorRow | HedgeEditorRow,
+  extras?: Partial<PortfolioPosition>,
+): T {
+  const instrumentType = rowInstrumentType(row)
+  const quantity = rowQuantity(row)
+
+  if (instrumentType === "option") {
+    const underlying = normalizedSymbol(row.underlying_ticker || row.ticker)
+    const contractSymbol = optionContractSymbolForRow(row)
+    if (!underlying || !contractSymbol) {
+      throw new Error("Option rows require underlying, expiration, strike, type, or a valid OCC contract symbol.")
+    }
+    const positionId = positionRowId({
+      ticker: underlying,
+      position_id: row.position_id,
+      option_contract_symbol: contractSymbol,
+      price_symbol: contractSymbol,
+      instrument_type: "option",
+    })
+    return {
+      ticker: underlying,
+      asset: row.asset ?? "equity",
+      direction: row.direction,
+      cost_basis: row.cost_basis,
+      shares: quantity,
+      quantity,
+      instrument_type: "option",
+      price_symbol: contractSymbol,
+      contract_multiplier: row.contract_multiplier ?? 100,
+      position_id: positionId,
+      underlying_ticker: underlying,
+      option_contract_symbol: contractSymbol,
+      option_expiration: row.option_expiration ?? null,
+      option_strike: row.option_strike ?? null,
+      option_type: row.option_type ?? null,
+      currency: row.currency ?? null,
+      country: row.country ?? null,
+      exchange: row.exchange ?? null,
+      base_currency: row.base_currency ?? null,
+      fx_rate_to_base: row.fx_rate_to_base ?? null,
+      fx_rate_as_of: row.fx_rate_as_of ?? null,
+      cost_basis_base: row.cost_basis_base ?? null,
+      notional_base: row.notional_base ?? null,
+      valuation_status: row.valuation_status ?? null,
+      ...extras,
+    } as T
+  }
+
+  const ticker = instrumentType === "spot_fx"
+    ? canonicalSpotFxSymbol(row.price_symbol || row.ticker) ?? row.ticker.trim().toUpperCase()
+    : row.ticker.trim().toUpperCase()
+  const priceSymbol = instrumentType === "spot_fx" ? ticker : (row.price_symbol?.trim() || row.ticker).toUpperCase()
+  const fxCurrencies = instrumentType === "spot_fx"
+    ? spotFxCurrencies(priceSymbol)
+    : { fx_base_currency: row.fx_base_currency ?? null, fx_quote_currency: row.fx_quote_currency ?? null }
+
+  return {
+    ticker,
+    asset: instrumentType === "spot_fx" ? "fx" : row.asset ?? "equity",
+    direction: row.direction,
+    cost_basis: row.cost_basis,
+    shares: quantity,
+    quantity,
+    instrument_type: instrumentType,
+    price_symbol: priceSymbol,
+    contract_multiplier: instrumentType === "future" ? row.contract_multiplier ?? null : 1,
+    position_id: positionRowId({ ticker, instrument_type: instrumentType }),
+    fx_base_currency: fxCurrencies.fx_base_currency,
+    fx_quote_currency: fxCurrencies.fx_quote_currency,
+    currency: instrumentType === "spot_fx" ? fxCurrencies.fx_quote_currency : row.currency ?? null,
+    country: row.country ?? null,
+    exchange: instrumentType === "spot_fx" ? row.exchange ?? "FX" : row.exchange ?? null,
+    base_currency: row.base_currency ?? null,
+    fx_rate_to_base: row.fx_rate_to_base ?? null,
+    fx_rate_as_of: row.fx_rate_as_of ?? null,
+    cost_basis_base: row.cost_basis_base ?? null,
+    notional_base: row.notional_base ?? null,
+    valuation_status: row.valuation_status ?? null,
+    ...extras,
+  } as T
+}
+
 function valuationSummary(row: PortfolioPosition | HedgePosition) {
   const parts: string[] = []
   const market = [row.country, row.exchange].filter(Boolean).join(" / ")
+  if (row.instrument_type === "option" && row.option_contract_symbol) {
+    parts.push(row.option_contract_symbol)
+    if (row.option_type && row.option_strike != null && row.option_expiration) {
+      parts.push(`${String(row.option_type).toUpperCase()} ${row.option_strike} exp ${row.option_expiration}`)
+    }
+  }
   if (row.instrument_type === "spot_fx" && row.fx_base_currency && row.fx_quote_currency) {
     parts.push(`${row.fx_base_currency}/${row.fx_quote_currency} spot`)
   }
@@ -134,12 +246,12 @@ function positionGroupState(rows: EditorRow[]) {
         conviction,
         direction: row.direction,
         ids: [row._id],
-        tickers: [row.ticker || "New position"],
+        tickers: [displayTicker(row) || row.ticker || "New position"],
       })
       continue
     }
     existing.ids.push(row._id)
-    existing.tickers.push(row.ticker || "New position")
+    existing.tickers.push(displayTicker(row) || row.ticker || "New position")
     if (existing.conviction !== conviction) {
       errors.push(`Group ${existing.name} has inconsistent convictions.`)
     }
@@ -153,6 +265,7 @@ function positionGroupState(rows: EditorRow[]) {
 function positionToRow(p: PortfolioPosition): EditorRow {
   const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
   const quantity = rowQuantity(p)
+  const defaultMultiplier = instrumentType === "future" ? null : instrumentType === "option" ? 100 : 1
   return {
     ...p,
     _id: makeId(),
@@ -161,8 +274,10 @@ function positionToRow(p: PortfolioPosition): EditorRow {
     quantity,
     shares: quantity,
     instrument_type: instrumentType,
-    price_symbol: p.price_symbol ?? p.ticker,
-    contract_multiplier: p.contract_multiplier ?? (instrumentType === "future" ? null : 1),
+    price_symbol: p.price_symbol ?? p.option_contract_symbol ?? p.ticker,
+    underlying_ticker: p.underlying_ticker ?? (instrumentType === "option" ? p.ticker : null),
+    contract_multiplier: p.contract_multiplier ?? defaultMultiplier,
+    position_id: p.position_id ?? null,
   }
 }
 
@@ -190,6 +305,7 @@ function newRow(): EditorRow {
 function hedgeToRow(p: HedgePosition): HedgeEditorRow {
   const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
   const quantity = rowQuantity(p)
+  const defaultMultiplier = instrumentType === "future" ? null : instrumentType === "option" ? 100 : 1
   return {
     ...p,
     _id: makeId(),
@@ -201,8 +317,10 @@ function hedgeToRow(p: HedgePosition): HedgeEditorRow {
     shares: quantity,
     quantity,
     instrument_type: instrumentType,
-    price_symbol: p.price_symbol ?? p.ticker,
-    contract_multiplier: p.contract_multiplier ?? (instrumentType === "future" ? null : 1),
+    price_symbol: p.price_symbol ?? p.option_contract_symbol ?? p.ticker,
+    underlying_ticker: p.underlying_ticker ?? (instrumentType === "option" ? p.ticker : null),
+    contract_multiplier: p.contract_multiplier ?? defaultMultiplier,
+    position_id: p.position_id ?? null,
   }
 }
 
@@ -240,6 +358,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [lastProposal, setLastProposal] = useState<StagedMutationResponse | null>(null)
+  const [ibkrImportError, setIbkrImportError] = useState<string | null>(null)
+  const ibkrImportInputRef = useRef<HTMLInputElement | null>(null)
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -250,6 +370,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setSettingsSavedMessage(null)
     setPositionValidationError(null)
     setHedgeValidationError(null)
+    setIbkrImportError(null)
     setLastProposal(null)
     setIsLoading(true)
     Promise.all([
@@ -283,6 +404,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const hedgeMutation = useMutation({
     mutationFn: (positions: HedgePosition[]) => saveHedgePositions(positions),
     onSuccess: handleSaved,
+  })
+
+  const ibkrImportMutation = useMutation({
+    mutationFn: (file: File) => importIbkrFlexPortfolioPositions(file),
+    onSuccess: result => {
+      setIbkrImportError(null)
+      handleSaved(result)
+    },
+    onError: err => setIbkrImportError(String(err)),
   })
 
   const settingsMutation = useMutation({
@@ -342,6 +472,14 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setHedgeRows(prev => [...prev, newHedgeRow()])
   }
 
+  function handleIbkrFlexImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    setIbkrImportError(null)
+    ibkrImportMutation.mutate(file)
+  }
+
   function handleSaveBookSize() {
     setSettingsValidationError(null)
     setSettingsSavedMessage(null)
@@ -360,21 +498,35 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   function handleSavePositions() {
     setPositionValidationError(null)
 
-    const tickers = positionRows.map(submissionSymbol).filter(Boolean)
-    const unique = new Set(tickers)
-    if (unique.size !== tickers.length) {
-      setPositionValidationError("Duplicate tickers detected. Each ticker must be unique.")
+    const positionIds = positionRows.map(row => positionRowId({
+      ticker: row.ticker,
+      position_id: row.position_id,
+      option_contract_symbol: optionContractSymbolForRow(row) ?? undefined,
+      price_symbol: row.price_symbol,
+      instrument_type: rowInstrumentType(row),
+    })).filter(Boolean)
+    const unique = new Set(positionIds)
+    if (unique.size !== positionIds.length) {
+      setPositionValidationError("Duplicate position IDs detected. Each leg must be unique.")
       return
     }
-    if (positionRows.some(r => !r.ticker.trim())) {
+    if (positionRows.some(r => rowInstrumentType(r) !== "option" && !r.ticker.trim())) {
       setPositionValidationError("All rows must have a ticker.")
+      return
+    }
+    if (positionRows.some(r => rowInstrumentType(r) === "option" && !(r.underlying_ticker || r.ticker).trim())) {
+      setPositionValidationError("Option rows must have an underlying ticker.")
+      return
+    }
+    if (positionRows.some(r => rowInstrumentType(r) === "option" && !optionContractSymbolForRow(r))) {
+      setPositionValidationError("Option rows require expiration, strike, type, or a valid OCC contract symbol.")
       return
     }
     if (positionRows.length === 0) {
       setPositionValidationError("At least one position is required.")
       return
     }
-    if (positionRows.some(r => inferInstrumentType(r.ticker, r.instrument_type) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
+    if (positionRows.some(r => rowInstrumentType(r) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
       setPositionValidationError("Spot FX rows must use a pair like EURUSD=X, EURUSD, EUR/USD, or EUR-USD.")
       return
     }
@@ -384,92 +536,61 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       return
     }
 
-    const positions: PortfolioPosition[] = positionRows.map(r => {
-      const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
-      const ticker = instrumentType === "spot_fx" ? canonicalSpotFxSymbol(r.price_symbol || r.ticker) ?? r.ticker.trim().toUpperCase() : r.ticker.trim().toUpperCase()
-      const priceSymbol = instrumentType === "spot_fx" ? ticker : (r.price_symbol?.trim() || r.ticker).toUpperCase()
-      const fxCurrencies = instrumentType === "spot_fx" ? spotFxCurrencies(priceSymbol) : { fx_base_currency: r.fx_base_currency ?? null, fx_quote_currency: r.fx_quote_currency ?? null }
-      const rowGroupName = normalizeGroupName(r.group_name)
-      const rowGroup = rowGroupName ? groupState.groups.get(groupKey(rowGroupName) ?? "") : null
-      return {
-        ticker,
-        asset: instrumentType === "spot_fx" ? "fx" : r.asset,
-        direction: r.direction,
-        contrarian: r.contrarian,
-        conviction: r.conviction,
-        cost_basis: r.cost_basis,
-        shares: rowQuantity(r),
-        quantity: rowQuantity(r),
-        instrument_type: instrumentType,
-        price_symbol: priceSymbol,
-        contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
-        fx_base_currency: fxCurrencies.fx_base_currency,
-        fx_quote_currency: fxCurrencies.fx_quote_currency,
-        currency: instrumentType === "spot_fx" ? fxCurrencies.fx_quote_currency : r.currency ?? null,
-        country: r.country ?? null,
-        exchange: instrumentType === "spot_fx" ? r.exchange ?? "FX" : r.exchange ?? null,
-        base_currency: r.base_currency ?? null,
-        fx_rate_to_base: r.fx_rate_to_base ?? null,
-        fx_rate_as_of: r.fx_rate_as_of ?? null,
-        cost_basis_base: r.cost_basis_base ?? null,
-        notional_base: r.notional_base ?? null,
-        valuation_status: r.valuation_status ?? null,
-        group_name: rowGroup?.name ?? rowGroupName,
-        group_conviction: rowGroupName ? rowGroup?.conviction ?? normalizeGroupConviction(r.group_conviction) : null,
-      }
-    })
-
-    positionMutation.mutate(positions)
+    try {
+      const positions: PortfolioPosition[] = positionRows.map(r => {
+        const rowGroupName = normalizeGroupName(r.group_name)
+        const rowGroup = rowGroupName ? groupState.groups.get(groupKey(rowGroupName) ?? "") : null
+        return serializeInstrumentRow<PortfolioPosition>(r, {
+          contrarian: r.contrarian,
+          conviction: r.conviction,
+          group_name: rowGroup?.name ?? rowGroupName,
+          group_conviction: rowGroupName ? rowGroup?.conviction ?? normalizeGroupConviction(r.group_conviction) : null,
+        })
+      })
+      positionMutation.mutate(positions)
+    } catch (err) {
+      setPositionValidationError(String(err))
+    }
   }
 
   function handleSaveHedges() {
     setHedgeValidationError(null)
 
-    const tickers = hedgeRows.map(submissionSymbol).filter(Boolean)
-    const unique = new Set(tickers)
-    if (unique.size !== tickers.length) {
-      setHedgeValidationError("Duplicate tickers detected. Each ticker must be unique.")
+    const positionIds = hedgeRows.map(row => positionRowId({
+      ticker: row.ticker,
+      position_id: row.position_id,
+      option_contract_symbol: optionContractSymbolForRow(row) ?? undefined,
+      price_symbol: row.price_symbol,
+      instrument_type: rowInstrumentType(row),
+    })).filter(Boolean)
+    const unique = new Set(positionIds)
+    if (unique.size !== positionIds.length) {
+      setHedgeValidationError("Duplicate position IDs detected. Each leg must be unique.")
       return
     }
-    if (hedgeRows.some(r => !r.ticker.trim())) {
+    if (hedgeRows.some(r => rowInstrumentType(r) !== "option" && !r.ticker.trim())) {
       setHedgeValidationError("All hedge rows must have a ticker.")
       return
     }
-    if (hedgeRows.some(r => inferInstrumentType(r.ticker, r.instrument_type) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
+    if (hedgeRows.some(r => rowInstrumentType(r) === "option" && !(r.underlying_ticker || r.ticker).trim())) {
+      setHedgeValidationError("Option hedge rows must have an underlying ticker.")
+      return
+    }
+    if (hedgeRows.some(r => rowInstrumentType(r) === "option" && !optionContractSymbolForRow(r))) {
+      setHedgeValidationError("Option hedge rows require expiration, strike, type, or a valid OCC contract symbol.")
+      return
+    }
+    if (hedgeRows.some(r => rowInstrumentType(r) === "spot_fx" && !canonicalSpotFxSymbol(r.price_symbol || r.ticker))) {
       setHedgeValidationError("Spot FX rows must use a pair like EURUSD=X, EURUSD, EUR/USD, or EUR-USD.")
       return
     }
 
-    const positions: HedgePosition[] = hedgeRows.map(r => {
-      const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
-      const ticker = instrumentType === "spot_fx" ? canonicalSpotFxSymbol(r.price_symbol || r.ticker) ?? r.ticker.trim().toUpperCase() : r.ticker.trim().toUpperCase()
-      const priceSymbol = instrumentType === "spot_fx" ? ticker : (r.price_symbol?.trim() || r.ticker).toUpperCase()
-      const fxCurrencies = instrumentType === "spot_fx" ? spotFxCurrencies(priceSymbol) : { fx_base_currency: r.fx_base_currency ?? null, fx_quote_currency: r.fx_quote_currency ?? null }
-      return {
-        ticker,
-        asset: instrumentType === "spot_fx" ? "fx" : r.asset ?? "equity",
-        direction: r.direction,
-        cost_basis: r.cost_basis,
-        shares: rowQuantity(r),
-        quantity: rowQuantity(r),
-        instrument_type: instrumentType,
-        price_symbol: priceSymbol,
-        contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
-        fx_base_currency: fxCurrencies.fx_base_currency,
-        fx_quote_currency: fxCurrencies.fx_quote_currency,
-        currency: instrumentType === "spot_fx" ? fxCurrencies.fx_quote_currency : r.currency ?? null,
-        country: r.country ?? null,
-        exchange: instrumentType === "spot_fx" ? r.exchange ?? "FX" : r.exchange ?? null,
-        base_currency: r.base_currency ?? null,
-        fx_rate_to_base: r.fx_rate_to_base ?? null,
-        fx_rate_as_of: r.fx_rate_as_of ?? null,
-        cost_basis_base: r.cost_basis_base ?? null,
-        notional_base: r.notional_base ?? null,
-        valuation_status: r.valuation_status ?? null,
-      }
-    })
-
-    hedgeMutation.mutate(positions)
+    try {
+      const positions: HedgePosition[] = hedgeRows.map(r => serializeInstrumentRow<HedgePosition>(r))
+      hedgeMutation.mutate(positions)
+    } catch (err) {
+      setHedgeValidationError(String(err))
+    }
   }
 
   const currentValidationError = tab === "Positions" ? positionValidationError : hedgeValidationError
@@ -568,6 +689,37 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
           {tab === "Positions" ? (
             <>
+              <div className="mb-4 rounded-lg border border-app bg-card-muted px-3 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-app">Import IBKR Flex</p>
+                    <p className="text-xs text-muted">
+                      Imports IBKR Flex Open Positions and stages a replacement proposal.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={ibkrImportInputRef}
+                      type="file"
+                      accept=".xml,application/xml,text/xml"
+                      className="hidden"
+                      onChange={handleIbkrFlexImport}
+                    />
+                    <ActionButton
+                      onClick={() => ibkrImportInputRef.current?.click()}
+                      loading={ibkrImportMutation.isPending}
+                      loadingText="Importing..."
+                      className="w-auto px-4"
+                    >
+                      Upload Flex XML
+                    </ActionButton>
+                  </div>
+                </div>
+                {ibkrImportError && (
+                  <p className="mt-2 text-xs text-red-700">{ibkrImportError}</p>
+                )}
+              </div>
+
               <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
@@ -589,6 +741,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                   const previousKey = idx > 0 ? groupKey(positionRows[idx - 1]?.group_name) : null
                   const group = key ? currentGroupState.groups.get(key) : null
                   const showGroupHeader = Boolean(group && key !== previousKey)
+                  const currentType = rowInstrumentType(row)
+                  const isOption = currentType === "option"
                   return (
                   <div key={row._id} className="space-y-1">
                     {showGroupHeader && group && (
@@ -632,9 +786,17 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <input
                         type="text"
-                        value={row.ticker}
+                        value={isOption ? (row.underlying_ticker ?? row.ticker) : row.ticker}
                         onChange={e => {
                           const nextTicker = e.target.value.toUpperCase()
+                          if (isOption) {
+                            updatePositionRow(row._id, applyOptionPaste({
+                              ...row,
+                              underlying_ticker: nextTicker,
+                              ticker: nextTicker,
+                            }))
+                            return
+                          }
                           const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
                           const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
                             ? nextTicker
@@ -651,30 +813,33 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "EURUSD=X" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "AAPL"}
+                        placeholder={isOption ? "META" : currentType === "spot_fx" ? "EURUSD=X" : currentType === "future" ? "ES=F" : "AAPL"}
                         className="theme-input w-full font-mono text-sm"
                       />
                     </div>
 
                     <div className="col-span-2">
                       <SelectInput
-                        value={inferInstrumentType(row.ticker, row.instrument_type)}
+                        value={currentType}
                         onChange={v => {
                           const nextInstrumentType = v as InstrumentType
                           const nextPriceSymbol = nextInstrumentType === "spot_fx"
                             ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
                             : row.price_symbol
                           const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
+                          const nextUnderlying = normalizedSymbol(row.underlying_ticker || row.ticker)
                           updatePositionRow(row._id, {
                             instrument_type: nextInstrumentType,
                             price_symbol: nextPriceSymbol,
                             asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
                             fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
                             fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
-                            _contractMultiplierTouched: nextInstrumentType !== "future"
-                              ? false
-                              : row._contractMultiplierTouched,
+                            underlying_ticker: nextInstrumentType === "option" ? nextUnderlying : row.underlying_ticker,
+                            ticker: nextInstrumentType === "option" ? nextUnderlying : row.ticker,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol ?? "")),
+                            _contractMultiplierTouched: nextInstrumentType === "future" || nextInstrumentType === "option"
+                              ? row._contractMultiplierTouched
+                              : false,
                           })
                         }}
                         options={INSTRUMENT_TYPE_OPTIONS}
@@ -686,7 +851,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={row.asset}
                         onChange={v => updatePositionRow(row._id, { asset: v as PortfolioPosition["asset"] })}
                         options={ASSET_OPTIONS}
-                        disabled={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx"}
+                        disabled={currentType === "spot_fx"}
                       />
                     </div>
 
@@ -782,7 +947,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const v = e.target.value
                           updatePositionRow(row._id, { cost_basis: v === "" ? null : Number(v) })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Entry rate" : "Optional"}
+                        placeholder={currentType === "spot_fx" ? "Entry rate" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="0.01"
                         min="0"
@@ -798,7 +963,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const quantity = v === "" ? null : Number(v)
                           updatePositionRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Base units" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
+                        placeholder={currentType === "spot_fx" ? "Base units" : currentType === "future" || isOption ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                         min="0"
@@ -808,7 +973,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <input
                         type="number"
-                        value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
+                        value={currentType === "future" || isOption ? row.contract_multiplier ?? "" : 1}
                         onChange={e => {
                           const v = e.target.value
                           updatePositionRow(row._id, {
@@ -816,11 +981,11 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             _contractMultiplierTouched: true,
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
+                        placeholder={currentType === "future" ? "Auto" : isOption ? "100" : "1"}
                         className="theme-input w-full text-sm"
                         step="any"
                         min="0"
-                        disabled={inferInstrumentType(row.ticker, row.instrument_type) !== "future"}
+                        disabled={currentType !== "future" && !isOption}
                       />
                     </div>
 
@@ -856,6 +1021,63 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         {valuationSummary(row)}
                       </div>
                     )}
+                    {isOption && (
+                      <div
+                        className="grid gap-2 items-center rounded-lg border border-app bg-card-muted px-2 py-2"
+                        style={{ gridColumn: "1 / -1", gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}
+                      >
+                        <div className="col-span-6">
+                          <label className="mb-1 block text-[11px] font-medium text-gray-500">OCC / Contract</label>
+                          <input
+                            type="text"
+                            value={row.option_contract_symbol ?? ""}
+                            onChange={e => updatePositionRow(row._id, applyOptionPaste({
+                              ...row,
+                              option_contract_symbol: e.target.value.toUpperCase(),
+                            }))}
+                            placeholder="META260116C00500000"
+                            className="theme-input w-full font-mono text-sm"
+                          />
+                        </div>
+                        <div className="col-span-4">
+                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Expiration</label>
+                          <input
+                            type="date"
+                            value={row.option_expiration ?? ""}
+                            onChange={e => updatePositionRow(row._id, { option_expiration: e.target.value || null })}
+                            className="theme-input w-full text-sm"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Type</label>
+                          <SelectInput
+                            value={row.option_type ?? "call"}
+                            onChange={v => updatePositionRow(row._id, { option_type: v as PortfolioPosition["option_type"] })}
+                            options={[...OPTION_TYPE_OPTIONS]}
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Strike</label>
+                          <input
+                            type="number"
+                            value={row.option_strike ?? ""}
+                            onChange={e => {
+                              const v = e.target.value
+                              updatePositionRow(row._id, { option_strike: v === "" ? null : Number(v) })
+                            }}
+                            placeholder="500"
+                            className="theme-input w-full text-sm"
+                            step="0.01"
+                            min="0"
+                          />
+                        </div>
+                        <div className="col-span-6 flex items-end">
+                          <p className="pb-2 text-[11px] text-muted truncate">
+                            {optionContractSymbolForRow(row) ?? "Enter fields or paste OCC symbol"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   </div>
                   )
@@ -885,14 +1107,26 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
               </div>
 
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {hedgeRows.map(row => (
-                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
+                {hedgeRows.map(row => {
+                  const hedgeType = rowInstrumentType(row)
+                  const hedgeIsOption = hedgeType === "option"
+                  return (
+                  <div key={row._id} className="space-y-1">
+                  <div className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
                     <div className="col-span-2">
                       <input
                         type="text"
-                        value={row.ticker}
+                        value={hedgeIsOption ? (row.underlying_ticker ?? row.ticker) : row.ticker}
                         onChange={e => {
                           const nextTicker = e.target.value.toUpperCase()
+                          if (hedgeIsOption) {
+                            updateHedgeRow(row._id, applyOptionPaste({
+                              ...row,
+                              underlying_ticker: nextTicker,
+                              ticker: nextTicker,
+                            }))
+                            return
+                          }
                           const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
                           const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
                             ? nextTicker
@@ -909,30 +1143,33 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "EURUSD=X" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "SPY"}
+                        placeholder={hedgeIsOption ? "META" : hedgeType === "spot_fx" ? "EURUSD=X" : hedgeType === "future" ? "ES=F" : "SPY"}
                         className="theme-input w-full font-mono text-sm"
                       />
                     </div>
 
                     <div className="col-span-2">
                       <SelectInput
-                        value={inferInstrumentType(row.ticker, row.instrument_type)}
+                        value={hedgeType}
                         onChange={v => {
                           const nextInstrumentType = v as InstrumentType
                           const nextPriceSymbol = nextInstrumentType === "spot_fx"
                             ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
                             : row.price_symbol
                           const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
+                          const nextUnderlying = normalizedSymbol(row.underlying_ticker || row.ticker)
                           updateHedgeRow(row._id, {
                             instrument_type: nextInstrumentType,
                             price_symbol: nextPriceSymbol,
                             asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
                             fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
                             fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
-                            _contractMultiplierTouched: nextInstrumentType !== "future"
-                              ? false
-                              : row._contractMultiplierTouched,
+                            underlying_ticker: nextInstrumentType === "option" ? nextUnderlying : row.underlying_ticker,
+                            ticker: nextInstrumentType === "option" ? nextUnderlying : row.ticker,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol ?? "")),
+                            _contractMultiplierTouched: nextInstrumentType === "future" || nextInstrumentType === "option"
+                              ? row._contractMultiplierTouched
+                              : false,
                           })
                         }}
                         options={INSTRUMENT_TYPE_OPTIONS}
@@ -944,7 +1181,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={row.asset ?? "equity"}
                         onChange={v => updateHedgeRow(row._id, { asset: v as HedgePosition["asset"] })}
                         options={ASSET_OPTIONS}
-                        disabled={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx"}
+                        disabled={hedgeType === "spot_fx"}
                       />
                     </div>
 
@@ -964,7 +1201,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const v = e.target.value
                           updateHedgeRow(row._id, { cost_basis: v === "" ? null : Number(v) })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Entry rate" : "Optional"}
+                        placeholder={hedgeType === "spot_fx" ? "Entry rate" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="0.01"
                         min="0"
@@ -980,7 +1217,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           const quantity = v === "" ? null : Number(v)
                           updateHedgeRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "spot_fx" ? "Base units" : inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
+                        placeholder={hedgeType === "spot_fx" ? "Base units" : hedgeType === "future" || hedgeIsOption ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                       />
@@ -989,7 +1226,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <input
                         type="number"
-                        value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
+                        value={hedgeType === "future" || hedgeIsOption ? row.contract_multiplier ?? "" : 1}
                         onChange={e => {
                           const v = e.target.value
                           updateHedgeRow(row._id, {
@@ -997,11 +1234,11 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                             _contractMultiplierTouched: true,
                           })
                         }}
-                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
+                        placeholder={hedgeType === "future" ? "Auto" : hedgeIsOption ? "100" : "1"}
                         className="theme-input w-full text-sm"
                         step="any"
                         min="0"
-                        disabled={inferInstrumentType(row.ticker, row.instrument_type) !== "future"}
+                        disabled={hedgeType !== "future" && !hedgeIsOption}
                       />
                     </div>
 
@@ -1022,7 +1259,65 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                       </div>
                     )}
                   </div>
-                ))}
+                  {hedgeIsOption && (
+                    <div
+                      className="grid gap-2 items-center rounded-lg border border-app bg-card-muted px-2 py-2"
+                      style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}
+                    >
+                      <div className="col-span-5">
+                        <label className="mb-1 block text-[11px] font-medium text-gray-500">OCC / Contract</label>
+                        <input
+                          type="text"
+                          value={row.option_contract_symbol ?? ""}
+                          onChange={e => updateHedgeRow(row._id, applyOptionPaste({
+                            ...row,
+                            option_contract_symbol: e.target.value.toUpperCase(),
+                          }))}
+                          placeholder="META260116C00500000"
+                          className="theme-input w-full font-mono text-sm"
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Expiration</label>
+                        <input
+                          type="date"
+                          value={row.option_expiration ?? ""}
+                          onChange={e => updateHedgeRow(row._id, { option_expiration: e.target.value || null })}
+                          className="theme-input w-full text-sm"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Type</label>
+                        <SelectInput
+                          value={row.option_type ?? "call"}
+                          onChange={v => updateHedgeRow(row._id, { option_type: v as HedgePosition["option_type"] })}
+                          options={[...OPTION_TYPE_OPTIONS]}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Strike</label>
+                        <input
+                          type="number"
+                          value={row.option_strike ?? ""}
+                          onChange={e => {
+                            const v = e.target.value
+                            updateHedgeRow(row._id, { option_strike: v === "" ? null : Number(v) })
+                          }}
+                          placeholder="500"
+                          className="theme-input w-full text-sm"
+                          step="0.01"
+                          min="0"
+                        />
+                      </div>
+                      <div className="col-span-4 flex items-end">
+                        <p className="pb-2 text-[11px] text-muted truncate">
+                          {optionContractSymbolForRow(row) ?? "Enter fields or paste OCC symbol"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  </div>
+                )})}
               </div>
 
               <button

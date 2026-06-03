@@ -124,6 +124,12 @@ class Position(OntologySchemaBase):
     group_name: str | None = None
     group_conviction: int | None = Field(default=None, ge=1, le=5)
     role: str = "position"
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: str | None = None
 
     @field_validator("ticker", mode="before")
     @classmethod
@@ -155,6 +161,11 @@ class Position(OntologySchemaBase):
         "fx_rate_as_of",
         "valuation_status",
         "group_name",
+        "position_id",
+        "underlying_ticker",
+        "option_contract_symbol",
+        "option_expiration",
+        "option_type",
         mode="before",
     )
     @classmethod
@@ -207,6 +218,11 @@ class Instrument(OntologySchemaBase):
     sector: str | None = None
     industry: str | None = None
     price_symbol: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: str | None = None
     status: NonBlankStr = "active"
     ontology_run_id: NonBlankStr = "operational"
 
@@ -236,11 +252,26 @@ class Instrument(OntologySchemaBase):
         "sector",
         "industry",
         "price_symbol",
+        "underlying_ticker",
+        "option_contract_symbol",
+        "option_expiration",
+        "option_type",
         mode="before",
     )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+    @field_validator("option_strike", mode="before")
+    @classmethod
+    def _optional_strike(cls, value: object) -> float | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            return float(value)
+        raise TypeError("option_strike must be numeric")
 
 
 class Issuer(OntologySchemaBase):
@@ -955,6 +986,12 @@ class HedgePosition(OntologySchemaBase):
     notional_base: float | None = None
     valuation_status: str | None = None
     ontology_run_id: NonBlankStr = "operational"
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: str | None = None
 
     @field_validator("ticker", mode="before")
     @classmethod
@@ -981,6 +1018,11 @@ class HedgePosition(OntologySchemaBase):
         "base_currency",
         "fx_rate_as_of",
         "valuation_status",
+        "position_id",
+        "underlying_ticker",
+        "option_contract_symbol",
+        "option_expiration",
+        "option_type",
         mode="before",
     )
     @classmethod

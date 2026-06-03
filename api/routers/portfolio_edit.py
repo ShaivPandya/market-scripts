@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from api.action_execution import stage_api_action
@@ -18,18 +18,14 @@ from api.portfolio_settings import (
     normalize_portfolio_book_size,
     set_portfolio_book_size,
 )
+from api.request_limits import read_upload_file_bytes
 from api.routers.auth import require_actor
 from ontology.policy import Actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.ibkr_flex_import import merge_preserved_portfolio_metadata, parse_ibkr_flex_open_positions_xml
 from portfolio.instruments import (
-    default_contract_multiplier,
-    is_continuous_future_symbol,
-    normalize_asset,
-    normalize_instrument_type,
-    normalize_quantity,
-    normalize_spot_fx_symbol,
-    normalize_symbol,
-    spot_fx_currencies,
+    normalize_portfolio_instrument_row,
+    position_row_id,
 )
 from portfolio.position_groups import (
     canonicalize_position_group_rows,
@@ -39,6 +35,8 @@ from portfolio.position_groups import (
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
+
+MAX_IBKR_FLEX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=-]{0,31}$")
 
@@ -103,9 +101,15 @@ class PortfolioPosition(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -122,31 +126,10 @@ class PortfolioPosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPosition:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         self.group_name, self.group_conviction = normalize_position_group_fields(self.model_dump())
         return self
 
@@ -196,6 +179,65 @@ def update_portfolio_positions(req: PortfolioUpdateRequest, actor: ActorDep):
     return result
 
 
+def _is_ibkr_flex_xml_upload(file: UploadFile) -> bool:
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    filename = (file.filename or "").lower()
+    return filename.endswith(".xml") or content_type in {"application/xml", "text/xml"}
+
+
+@router.post("/portfolio-positions/import/ibkr-flex")
+async def import_ibkr_flex_portfolio_positions(
+    actor: ActorDep,
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+    reason: str | None = Form(default=None),
+):
+    """Parse IBKR Flex Open Positions XML and stage a replacement portfolio proposal."""
+    if not _is_ibkr_flex_xml_upload(file):
+        raise HTTPException(status_code=400, detail="File must be an XML (.xml) Flex export.")
+
+    payload = await read_upload_file_bytes(file, limit_bytes=MAX_IBKR_FLEX_UPLOAD_BYTES, limit_label="10 MiB")
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        imported_rows = parse_ibkr_flex_open_positions_xml(payload)
+        existing_rows = OntologyRuntimeReadService().positions(include_hedges=False)
+        merged_rows = merge_preserved_portfolio_metadata(imported_rows, existing_rows)
+        positions = [PortfolioPosition(**row) for row in merged_rows]
+        result = stage_api_action(
+            "update_portfolio_positions",
+            {"positions": [position.model_dump() for position in positions]},
+            source_id="portfolio_edit.import_ibkr_flex_portfolio_positions",
+            actor=actor,
+            reason=reason or f"Import IBKR Flex open positions from {file.filename or 'upload.xml'}",
+            apply=False,
+            validation_status_code=400,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (HTTPException, AppError):
+        raise
+    except Exception as e:
+        raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
+
+    return {
+        **result,
+        "import_summary": {
+            "source": "ibkr_flex",
+            "filename": file.filename,
+            "imported_count": len(imported_rows),
+            "preserved_metadata_count": sum(
+                1
+                for imported, merged in zip(imported_rows, merged_rows, strict=False)
+                if any(
+                    merged.get(field) != imported.get(field)
+                    for field in ("conviction", "contrarian", "group_name", "group_conviction")
+                )
+            ),
+        },
+    }
+
+
 def _flatten_object(row: dict) -> dict:
     props = dict(row.get("properties") or row.get("properties_json") or {})
     props["id"] = str(row.get("object_uid") or props.get("id") or "")
@@ -215,9 +257,15 @@ class HedgePosition(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -232,31 +280,10 @@ class HedgePosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePosition:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         return self
 
 

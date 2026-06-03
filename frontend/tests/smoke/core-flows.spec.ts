@@ -198,6 +198,23 @@ test("renders liquidity data-quality warning and formatted screen context", asyn
   await expect(page.getByText("us: +0.05, europe: -0.37, japan: +0.47")).toBeVisible()
 })
 
+test("renders first-turn live agent chat response without switching sessions", async ({ page }) => {
+  await authenticate(page)
+  await page.goto("/workspace")
+
+  await expect(page.getByText("Here's where your book stands and the few things worth your attention.")).toBeVisible()
+
+  await page.getByRole("button", { name: "Open Stan" }).click()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await expect(page.getByText("Stan is ready")).toBeVisible()
+
+  await page.getByRole("textbox", { name: "Message Stan" }).fill("Summarize my portfolio's performance")
+  await page.getByRole("button", { name: "Send message" }).click()
+
+  await expect(page.getByText("Portfolio summary smoke response.")).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText("Stan is ready")).toBeHidden()
+})
+
 test("opens the agent chat shell with workflow and preference fixtures", async ({ page }) => {
   await authenticate(page)
   await page.goto("/")
