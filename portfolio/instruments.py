@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal, cast
@@ -16,6 +16,11 @@ OptionType = Literal["call", "put"]
 ASSET_CLASSES: set[str] = {"equity", "commodity", "fx", "bond"}
 INSTRUMENT_TYPES: set[str] = {"security", "future", "spot_fx", "option"}
 DEFAULT_OPTION_MULTIPLIER = 100.0
+
+# When |net option exposure| is within this fraction of gross premium, the legs
+# are treated as nearly fully offsetting (e.g. a balanced straddle) and reported
+# as a near-zero net so they are not sized as a tiny ghost position.
+NEAR_ZERO_NET_RATIO = 0.02
 
 _OCC_SYMBOL_RE = re.compile(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$")
 
@@ -412,3 +417,88 @@ def notional_value(quantity: Any, price: Any, contract_multiplier: Any = 1.0) ->
     if qty <= 0 or px <= 0 or multiplier <= 0:
         return None
     return abs(qty * px * multiplier)
+
+
+def direction_sign(row: Mapping[str, Any]) -> int:
+    """Return +1 for long exposure and -1 for short, defaulting to long."""
+    return -1 if str(row.get("direction") or "long").strip().lower() == "short" else 1
+
+
+def option_exposure_sign(row: Mapping[str, Any]) -> int | None:
+    """Signed directional polarity for an option leg.
+
+    Combines option polarity (call +1, put -1) with leg direction (long +1,
+    short -1) so that a long call and a short put both return +1 (bullish/long
+    exposure) while a long put and a short call return -1 (bearish/short
+    exposure). The sign comes solely from ``option_type`` and ``direction``;
+    the quantity sign is intentionally ignored to avoid double-counting shorts.
+
+    Returns ``None`` when the row is not a recognizable option.
+    """
+    option_type = normalize_option_type(row.get("option_type"))
+    if option_type is None:
+        return None
+    polarity = 1 if option_type == "call" else -1
+    return polarity * direction_sign(row)
+
+
+def signed_notional(base_notional: float | None, row: Mapping[str, Any]) -> float | None:
+    """Apply the directional sign to a non-negative base notional.
+
+    Options use :func:`option_exposure_sign`; all other instruments use plain
+    long/short direction. Returns ``None`` when ``base_notional`` is ``None``.
+    """
+    if base_notional is None:
+        return None
+    sign = option_exposure_sign(row)
+    if sign is None:
+        sign = direction_sign(row)
+    return base_notional * sign
+
+
+def infer_underlying_direction(legs: Iterable[Mapping[str, Any]]) -> tuple[str | None, bool]:
+    """Infer one ``(direction, near_zero)`` for an underlying from its legs.
+
+    A real non-option (share/equity) leg dictates direction. Otherwise the sign
+    of net option exposure is used, with ``|quantity| * cost_basis *
+    contract_multiplier`` as the per-leg magnitude and option polarity x leg
+    direction as the sign. Near-perfect offsets (e.g. a balanced straddle) are
+    reported as ``("neutral", True)``. Returns ``(None, False)`` when there are
+    no legs with a determinable exposure.
+    """
+    option_legs: list[Mapping[str, Any]] = []
+    share_direction: str | None = None
+    for row in legs:
+        if str(row.get("instrument_type") or "security").strip().lower() == "option":
+            option_legs.append(row)
+        elif share_direction is None:
+            share_direction = "short" if str(row.get("direction") or "long").strip().lower() == "short" else "long"
+    if share_direction is not None:
+        return share_direction, False
+    if not option_legs:
+        return None, False
+
+    gross = 0.0
+    net = 0.0
+    for row in option_legs:
+        sign = option_exposure_sign(row)
+        if sign is None:
+            continue
+        quantity = row.get("quantity")
+        if quantity is None:
+            quantity = row.get("shares")
+        try:
+            qty = abs(float(quantity))
+        except (TypeError, ValueError):
+            qty = None
+        magnitude = notional_value(qty, row.get("cost_basis"), row.get("contract_multiplier") or 1.0)
+        if magnitude is None:
+            magnitude = 1.0
+        gross += magnitude
+        net += magnitude * sign
+
+    if gross <= 0:
+        return None, False
+    if abs(net) <= NEAR_ZERO_NET_RATIO * gross:
+        return "neutral", True
+    return ("long" if net > 0 else "short"), False

@@ -23,6 +23,7 @@ import pandas as pd
 
 from ontology.runtime_read_service import get_hedge_positions as _get_hedge_positions
 from ontology.runtime_read_service import get_positions_df as _get_positions_df
+from portfolio.instruments import display_ticker, infer_underlying_direction
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BASE_CCY,
     BETA_EWMA_HALFLIFE_DAYS,
@@ -302,6 +303,68 @@ def _parse_positions(
     return result
 
 
+def _collapse_positions_to_underlyings(meta: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Collapse position legs to one synthetic row per underlying for equity sizing.
+
+    - Underlyings with a real share/equity (non-option) leg keep that leg, and
+      its direction wins. This also de-duplicates the ticker index when equity
+      and options are held on the same name.
+    - Options-only underlyings become a synthetic equity row priced on the
+      underlying symbol with a net inferred direction (so a short put sizes as
+      long exposure), since the sizer optimizes equity underlyings.
+    - Underlyings whose option legs nearly fully offset (net ~ 0) are dropped
+      and returned as skipped tickers so they are not sized as a ghost position.
+    """
+    if meta.empty or "ticker" not in meta.columns:
+        return meta, []
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for record in meta.to_dict("records"):
+        key = str(display_ticker(record) or record.get("ticker") or "").strip().upper()
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(record)
+
+    collapsed: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for key in order:
+        legs = groups[key]
+        non_option = [r for r in legs if str(r.get("instrument_type") or "security").strip().lower() != "option"]
+        options = [r for r in legs if str(r.get("instrument_type") or "security").strip().lower() == "option"]
+        if non_option:
+            base = dict(non_option[0])
+            base["ticker"] = key
+            collapsed.append(base)
+            continue
+        direction, near_zero = infer_underlying_direction(options)
+        if direction is None or direction == "neutral" or near_zero:
+            skipped.append(key)
+            continue
+        base = dict(options[0])
+        base.update(
+            {
+                "ticker": key,
+                "instrument_type": "security",
+                "asset": "equity",
+                "price_symbol": key,
+                "contract_multiplier": 1.0,
+                "direction": direction,
+                "option_type": None,
+                "underlying_ticker": None,
+                "quantity": None,
+                "shares": None,
+            }
+        )
+        collapsed.append(base)
+
+    collapsed_df = pd.DataFrame(collapsed, columns=list(meta.columns))
+    return collapsed_df, skipped
+
+
 def _build_conviction_weights(
     meta: pd.DataFrame,
     positions: dict[str, dict[str, Any]],
@@ -481,11 +544,18 @@ def size_portfolio(
         # Load portfolio metadata
         meta = _get_positions_df(fallback_to_csv=True)
         meta["direction"] = meta["direction"].fillna("")
+        # Collapse legs to one synthetic equity row per underlying so option
+        # underlyings are sized as equity with a net inferred direction, and
+        # nearly fully offsetting option structures are skipped.
+        meta, skipped_offsetting_tickers = _collapse_positions_to_underlyings(meta)
         meta = meta.set_index("ticker")
         meta = prepare_instrument_metadata(meta)
 
         # Filter to user-requested tickers that exist in CSV
         requested = list(positions_by_ticker.keys())
+        skipped_set = set(skipped_offsetting_tickers)
+        skipped_requested = [t for t in requested if t in skipped_set]
+        requested = [t for t in requested if t not in skipped_set]
         missing_from_csv = [t for t in requested if t not in meta.index]
         if missing_from_csv:
             raise ValueError(
@@ -895,6 +965,7 @@ def size_portfolio(
             "sizing_scope": "equity_only",
             "sizing_asset_classes": ["equity"],
             "excluded_sizing_tickers": excluded_non_equity_tickers,
+            "skipped_offsetting_tickers": skipped_requested,
             # Solution metrics
             "vol_daily": vol_final,
             "gross_leverage": exp["total_gross"],

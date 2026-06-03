@@ -130,6 +130,106 @@ def test_futures_price_symbol_maps_back_to_portfolio_label(monkeypatch):
     assert "roll P&L is not modeled" in data["warning"]
 
 
+def test_underlying_exposures_nets_and_directs_option_legs(monkeypatch):
+    dashboard, _ = _import_dashboard(monkeypatch)
+
+    leg_metadata = {
+        "META260116C00500000": {
+            "display_ticker": "META",
+            "ticker": "META",
+            "instrument_type": "option",
+            "option_type": "call",
+            "direction": "long",
+            "current_notional": 1200.0,
+            "cost_notional": 1000.0,
+        },
+        "META260116C00520000": {
+            "display_ticker": "META",
+            "ticker": "META",
+            "instrument_type": "option",
+            "option_type": "call",
+            "direction": "short",
+            "current_notional": 500.0,
+            "cost_notional": 400.0,
+        },
+    }
+
+    row = dashboard._underlying_exposures(leg_metadata)[0]
+
+    assert row["underlying_ticker"] == "META"
+    assert row["current_notional"] == 1700.0  # gross preserved for diagnostics
+    assert row["option_gross_current_notional"] == 1700.0
+    assert row["option_net_current_notional"] == 700.0
+    assert row["option_net_size_current_notional"] == 700.0
+    assert row["net_direction"] == "long"
+    assert row["near_zero_net"] is False
+
+
+def test_underlying_exposures_mixed_equity_option_kept_separate(monkeypatch):
+    dashboard, _ = _import_dashboard(monkeypatch)
+
+    leg_metadata = {
+        "AAPL": {
+            "display_ticker": "AAPL",
+            "ticker": "AAPL",
+            "instrument_type": "security",
+            "direction": "long",
+            "current_notional": 1600.0,
+            "cost_notional": 1000.0,
+        },
+        "AAPL260116P00150000": {
+            "display_ticker": "AAPL",
+            "ticker": "AAPL",
+            "instrument_type": "option",
+            "option_type": "put",
+            "direction": "long",
+            "current_notional": 300.0,
+            "cost_notional": 250.0,
+        },
+    }
+
+    row = dashboard._underlying_exposures(leg_metadata)[0]
+
+    # Equity market value and option premium are reported separately, not merged.
+    assert row["equity_current_notional"] == 1600.0
+    assert row["option_gross_current_notional"] == 300.0
+    assert row["option_net_current_notional"] == -300.0  # long put = short exposure
+    # A real share leg dictates direction.
+    assert row["net_direction"] == "long"
+    assert row["near_zero_net"] is False
+
+
+def test_underlying_exposures_flags_offsetting_straddle(monkeypatch):
+    dashboard, _ = _import_dashboard(monkeypatch)
+
+    leg_metadata = {
+        "TSLA260116C00250000": {
+            "display_ticker": "TSLA",
+            "ticker": "TSLA",
+            "instrument_type": "option",
+            "option_type": "call",
+            "direction": "long",
+            "current_notional": 1000.0,
+            "cost_notional": 1000.0,
+        },
+        "TSLA260116P00250000": {
+            "display_ticker": "TSLA",
+            "ticker": "TSLA",
+            "instrument_type": "option",
+            "option_type": "put",
+            "direction": "long",
+            "current_notional": 1000.0,
+            "cost_notional": 1000.0,
+        },
+    }
+
+    row = dashboard._underlying_exposures(leg_metadata)[0]
+
+    assert row["option_net_current_notional"] == 0.0
+    assert row["near_zero_net"] is True
+    assert row["net_direction"] == "neutral"
+
+
 def test_option_legs_group_under_underlying_chart_tile(monkeypatch):
     dashboard, _runtime_read_service = _import_dashboard(monkeypatch)
 

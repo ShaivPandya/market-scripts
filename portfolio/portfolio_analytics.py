@@ -16,7 +16,13 @@ import math
 
 import pandas as pd
 
-from portfolio.instruments import display_ticker, notional_value, position_row_id
+from portfolio.instruments import (
+    NEAR_ZERO_NET_RATIO,
+    display_ticker,
+    notional_value,
+    position_row_id,
+    signed_notional,
+)
 
 
 def _position_pnl(
@@ -157,6 +163,55 @@ def _option_current_price(pos: dict) -> float | None:
         return None
 
 
+def _sum_present(values: dict[str, float | None], leg_ids: list[str]) -> float:
+    """Sum the non-None values for the given leg ids."""
+    total = 0.0
+    for leg_id in leg_ids:
+        value = values.get(leg_id)
+        if value is not None:
+            total += value
+    return total
+
+
+def _is_near_zero_net(gross_current: float, net_current: float, gross_cost: float, net_cost: float) -> bool:
+    """True when option legs nearly fully offset (real gross, ~zero net)."""
+    if gross_current > 0:
+        gross, net = gross_current, net_current
+    elif gross_cost > 0:
+        gross, net = gross_cost, net_cost
+    else:
+        return False
+    return abs(net) <= NEAR_ZERO_NET_RATIO * gross
+
+
+def _net_exposure_direction(
+    pos_lookup: dict[str, dict],
+    other_leg_ids: list[str],
+    net_current: float,
+    net_cost: float,
+    gross_current: float,
+    gross_cost: float,
+) -> str | None:
+    """Direction for an underlying's net exposure.
+
+    A real share/equity (non-option) leg dictates direction; otherwise the sign
+    of net option exposure is used, with near-perfect offsets reported as
+    ``"neutral"``.
+    """
+    for leg_id in other_leg_ids:
+        direction = str(pos_lookup[leg_id].get("direction") or "long").strip().lower()
+        return "short" if direction == "short" else "long"
+    if gross_current > 0:
+        gross, net = gross_current, net_current
+    elif gross_cost > 0:
+        gross, net = gross_cost, net_cost
+    else:
+        return None
+    if abs(net) <= NEAR_ZERO_NET_RATIO * gross:
+        return "neutral"
+    return "long" if net > 0 else "short"
+
+
 def compute_analytics(
     prices: dict[str, pd.Series],
     positions: list[dict],
@@ -172,8 +227,12 @@ def compute_analytics(
 
     pos_lookup = {position_row_id(p): p for p in positions}
 
-    notionals: dict[str, float] = {}
+    # Pass 1: per-leg current price plus gross (base-adjusted) and signed notionals.
     current_prices: dict[str, float | None] = {}
+    leg_current_notional: dict[str, float | None] = {}
+    leg_cost_notional: dict[str, float | None] = {}
+    leg_signed_current: dict[str, float | None] = {}
+    leg_signed_cost: dict[str, float | None] = {}
     for leg_id, pos in pos_lookup.items():
         instrument_type = str(pos.get("instrument_type") or "security").strip().lower()
         display = display_ticker(pos)
@@ -185,18 +244,91 @@ def compute_analytics(
         current_prices[leg_id] = cp
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
+        notional_base = _float_or_none(pos.get("notional_base"))
         current_notional = _position_base_notional_value(pos, quantity, cp, contract_multiplier)
-        if current_notional is not None:
-            notionals[leg_id] = current_notional
+        cost_notional = (
+            notional_base
+            if notional_base is not None
+            else _position_base_notional_value(pos, quantity, pos.get("cost_basis"), contract_multiplier)
+        )
+        leg_current_notional[leg_id] = current_notional
+        leg_cost_notional[leg_id] = cost_notional
+        if instrument_type == "option":
+            leg_signed_current[leg_id] = signed_notional(current_notional, pos)
+            leg_signed_cost[leg_id] = signed_notional(cost_notional, pos)
+        else:
+            leg_signed_current[leg_id] = None
+            leg_signed_cost[leg_id] = None
+
+    # Group legs by underlying exposure key (display ticker) and aggregate option
+    # legs into a single net directional exposure per underlying.
+    exposure_groups: dict[str, dict[str, list[str]]] = {}
+    for leg_id, pos in pos_lookup.items():
+        key = display_ticker(pos)
+        is_option = str(pos.get("instrument_type") or "security").strip().lower() == "option"
+        group = exposure_groups.setdefault(key, {"option_legs": [], "other_legs": []})
+        (group["option_legs"] if is_option else group["other_legs"]).append(leg_id)
+
+    underlying_exposure: dict[str, dict] = {}
+    for key, group in exposure_groups.items():
+        option_legs = group["option_legs"]
+        other_legs = group["other_legs"]
+        has_options = bool(option_legs)
+        gross_current = _sum_present(leg_current_notional, option_legs)
+        net_current = _sum_present(leg_signed_current, option_legs)
+        gross_cost = _sum_present(leg_cost_notional, option_legs)
+        net_cost = _sum_present(leg_signed_cost, option_legs)
+        # Size used for weighting is the absolute net option exposure (net debit).
+        option_size_current = abs(net_current) if has_options else 0.0
+        net_direction = _net_exposure_direction(
+            pos_lookup, other_legs, net_current, net_cost, gross_current, gross_cost
+        )
+        near_zero = (
+            _is_near_zero_net(gross_current, net_current, gross_cost, net_cost)
+            if has_options and not other_legs
+            else False
+        )
+        underlying_exposure[key] = {
+            "has_options": has_options,
+            "option_gross_current": gross_current,
+            "option_net_current": net_current,
+            "option_gross_cost": gross_cost,
+            "option_net_cost": net_cost,
+            "option_size_current": option_size_current,
+            "net_direction": net_direction,
+            "near_zero_net": near_zero,
+        }
+
+    # Weights: non-option legs are weighted on their own gross notional; option
+    # legs of an underlying share that underlying's absolute net size, split
+    # pro-rata by each leg's gross premium so summed leg weights equal the net.
+    total_notional = 0.0
+    for leg_id, pos in pos_lookup.items():
+        if str(pos.get("instrument_type") or "security").strip().lower() == "option":
+            continue
+        value = leg_current_notional.get(leg_id)
+        if value is not None:
+            total_notional += value
+    for agg in underlying_exposure.values():
+        total_notional += agg["option_size_current"]
 
     weights: dict[str, float] = {}
-    if notionals:
-        total_notional = sum(notionals.values())
-        for leg_id in pos_lookup:
-            if leg_id in notionals and total_notional > 0:
-                weights[leg_id] = notionals[leg_id] / total_notional
+    if total_notional > 0:
+        for leg_id, pos in pos_lookup.items():
+            key = display_ticker(pos)
+            is_option = str(pos.get("instrument_type") or "security").strip().lower() == "option"
+            if is_option:
+                agg = underlying_exposure.get(key, {})
+                gross = agg.get("option_gross_current") or 0.0
+                size = agg.get("option_size_current") or 0.0
+                leg_cur = leg_current_notional.get(leg_id)
+                if gross > 0 and leg_cur is not None:
+                    weights[leg_id] = (size / total_notional) * (leg_cur / gross)
+                else:
+                    weights[leg_id] = 0.0
             else:
-                weights[leg_id] = 0.0
+                leg_cur = leg_current_notional.get(leg_id)
+                weights[leg_id] = (leg_cur / total_notional) if leg_cur is not None else 0.0
     else:
         eq = 1.0 / n_positions
         weights = {leg_id: eq for leg_id in pos_lookup}
@@ -220,12 +352,12 @@ def compute_analytics(
         )
         notional_base = _float_or_none(pos.get("notional_base"))
         cost_basis_base = _float_or_none(pos.get("cost_basis_base"))
-        current_notional = _position_base_notional_value(pos, quantity, cp, contract_multiplier)
-        cost_notional = (
-            notional_base
-            if notional_base is not None
-            else _position_base_notional_value(pos, quantity, cost_basis, contract_multiplier)
-        )
+        current_notional = leg_current_notional[leg_id]
+        cost_notional = leg_cost_notional[leg_id]
+        signed_current = leg_signed_current[leg_id]
+        signed_cost = leg_signed_cost[leg_id]
+        agg = underlying_exposure.get(display, {})
+        underlying_has_options = bool(agg.get("has_options"))
         high_52w, dd_pct = (
             (None, None)
             if instrument_type == "option"
@@ -263,6 +395,12 @@ def compute_analytics(
             "option_type": pos.get("option_type"),
             "current_notional": round(current_notional, 2) if current_notional is not None else None,
             "cost_notional": round(cost_notional, 2) if cost_notional is not None else None,
+            "signed_current_notional": round(signed_current, 2) if signed_current is not None else None,
+            "signed_cost_notional": round(signed_cost, 2) if signed_cost is not None else None,
+            "net_current_notional": (round(agg["option_net_current"], 2) if underlying_has_options else None),
+            "net_cost_notional": round(agg["option_net_cost"], 2) if underlying_has_options else None,
+            "net_direction": agg.get("net_direction") if underlying_has_options else None,
+            "near_zero_net": bool(agg.get("near_zero_net")) if underlying_has_options else None,
             "notional_base": round(notional_base, 2) if notional_base is not None else None,
             "cost_basis_base": round(cost_basis_base, 4) if cost_basis_base is not None else None,
             "currency": pos.get("currency"),

@@ -19,8 +19,8 @@ from typing import Any
 import pandas as pd
 
 from ontology.runtime_read_service import get_positions, get_positions_df
-from portfolio.instruments import chart_price_symbol, display_ticker, position_row_id
-from portfolio.portfolio_analytics import compute_analytics
+from portfolio.instruments import chart_price_symbol, display_ticker, position_row_id, signed_notional
+from portfolio.portfolio_analytics import NEAR_ZERO_NET_RATIO, compute_analytics
 from portfolio.position_groups import group_key, normalize_position_group_fields
 from utils.retry import yf_download
 
@@ -179,6 +179,15 @@ def _group_exposures(metadata: dict[str, dict]) -> list[dict]:
 
 
 def _underlying_exposures(leg_metadata: dict[str, dict]) -> list[dict]:
+    """Aggregate leg exposures per underlying.
+
+    Gross ``current_notional``/``cost_notional`` are preserved (sum of all legs)
+    for backward compatibility. Option legs are additionally netted by polarity
+    and direction into ``option_net_*`` and an absolute ``option_net_size_*``
+    used for sizing, while equity and option exposure are kept as separate
+    sub-totals (their notional units are not directly comparable). ``net_direction``
+    follows any real share leg, otherwise the sign of net option exposure.
+    """
     groups: dict[str, dict] = {}
     for leg_id, meta in leg_metadata.items():
         display = str(meta.get("display_ticker") or meta.get("ticker") or "").upper()
@@ -192,15 +201,82 @@ def _underlying_exposures(leg_metadata: dict[str, dict]) -> list[dict]:
                 "legs": [],
                 "current_notional": 0.0,
                 "cost_notional": 0.0,
+                "equity_current_notional": 0.0,
+                "equity_cost_notional": 0.0,
+                "option_gross_current_notional": 0.0,
+                "option_gross_cost_notional": 0.0,
+                "option_net_current_notional": 0.0,
+                "option_net_cost_notional": 0.0,
+                "_has_options": False,
+                "_other_direction": None,
             },
         )
         group["tickers"].append(display)
         group["legs"].append(leg_id)
-        for field in ("current_notional", "cost_notional"):
-            value = meta.get(field)
-            if isinstance(value, (int, float)):
-                group[field] += float(value)
-    return sorted(groups.values(), key=lambda row: str(row["underlying_ticker"]).casefold())
+
+        is_option = str(meta.get("instrument_type") or "security").strip().lower() == "option"
+        current = meta.get("current_notional")
+        cost = meta.get("cost_notional")
+        current = float(current) if isinstance(current, (int, float)) else None
+        cost = float(cost) if isinstance(cost, (int, float)) else None
+        if current is not None:
+            group["current_notional"] += current
+        if cost is not None:
+            group["cost_notional"] += cost
+
+        if is_option:
+            group["_has_options"] = True
+            if current is not None:
+                group["option_gross_current_notional"] += current
+                signed = signed_notional(current, meta)
+                if signed is not None:
+                    group["option_net_current_notional"] += signed
+            if cost is not None:
+                group["option_gross_cost_notional"] += cost
+                signed_c = signed_notional(cost, meta)
+                if signed_c is not None:
+                    group["option_net_cost_notional"] += signed_c
+        else:
+            if group["_other_direction"] is None:
+                group["_other_direction"] = str(meta.get("direction") or "long").strip().lower() or "long"
+            if current is not None:
+                group["equity_current_notional"] += signed_notional(current, meta) or 0.0
+            if cost is not None:
+                group["equity_cost_notional"] += signed_notional(cost, meta) or 0.0
+
+    result: list[dict] = []
+    for group in groups.values():
+        has_options = group.pop("_has_options")
+        other_direction = group.pop("_other_direction")
+        gross = group["option_gross_current_notional"]
+        net = group["option_net_current_notional"]
+        gross_cost = group["option_gross_cost_notional"]
+        net_cost = group["option_net_cost_notional"]
+
+        near_zero = False
+        if other_direction:
+            net_direction: str | None = "short" if other_direction == "short" else "long"
+        elif has_options:
+            ref_gross = gross if gross > 0 else gross_cost
+            ref_net = net if gross > 0 else net_cost
+            if ref_gross <= 0:
+                net_direction = None
+            elif abs(ref_net) <= NEAR_ZERO_NET_RATIO * ref_gross:
+                net_direction = "neutral"
+                near_zero = True
+            else:
+                net_direction = "long" if ref_net > 0 else "short"
+        else:
+            net_direction = None
+
+        group["has_options"] = has_options
+        group["net_direction"] = net_direction
+        group["near_zero_net"] = near_zero
+        group["option_net_size_current_notional"] = abs(net) if has_options else 0.0
+        group["option_net_size_cost_notional"] = abs(net_cost) if has_options else 0.0
+        result.append(group)
+
+    return sorted(result, key=lambda row: str(row["underlying_ticker"]).casefold())
 
 
 def fetch_portfolio_data(timeframe: str = "Daily") -> dict:

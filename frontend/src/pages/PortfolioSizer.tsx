@@ -926,6 +926,7 @@ export function PortfolioSizer() {
                 <div className="col-span-2">
                   {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Direction</p>}
                   <span
+                    title="Net directional exposure for this underlying. Options are netted by underlying, so a short put shows as long and a long put as short."
                     className="inline-flex w-full items-center justify-center rounded-lg border px-2 py-1.5 text-center text-xs font-medium"
                     style={
                       row.direction === "long"
