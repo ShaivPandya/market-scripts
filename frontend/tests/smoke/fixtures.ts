@@ -916,6 +916,29 @@ function json(route: Route, body: JsonValue, status = 200) {
   })
 }
 
+function sse(route: Route, body: string, status = 200) {
+  return route.fulfill({
+    status,
+    contentType: "text/event-stream",
+    headers: {
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+    body,
+  })
+}
+
+function liveAgentChatSseBody(): string {
+  const frames = [
+    ["ping", { ts: 1 }],
+    ["delta", { text: "Portfolio summary smoke response." }],
+    ["done", { session_id: "smoke-first-turn-session", usage: {} }],
+  ]
+  return frames
+    .map(([event, payload]) => `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
+    .join("")
+}
+
 async function handleApiRoute(route: Route, state: ApiMockState) {
   const request = route.request()
   const url = new URL(request.url())
@@ -1092,6 +1115,10 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
       job_id: "monitor-builder-smoke-job",
       status: "queued",
     }, 202)
+  }
+
+  if (method === "POST" && path === "/api/agent/chat") {
+    return sse(route, liveAgentChatSseBody())
   }
 
   if (method === "POST" && path === "/api/agent/chat/async") {

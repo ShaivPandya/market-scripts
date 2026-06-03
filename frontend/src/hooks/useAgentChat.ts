@@ -682,13 +682,22 @@ export function useAgentChat() {
   const drainQueueRef = useRef<((sessionId: string) => Promise<void>) | null>(null)
 
   const applyJobEvents = useCallback((assistantId: string, events: AgentJobEvent[], fallbackSessionId?: string | null) => {
-    if (!events.length && !fallbackSessionId) return
+    const assistantOnActiveView = stateRef.current.messages.some(message => message.id === assistantId)
     const targetSessionId = fallbackSessionId ?? stateRef.current.sessionId
-    if (!targetSessionId) return
+
+    if (!events.length && !fallbackSessionId) return
+    if (!events.length && !targetSessionId && !assistantOnActiveView) return
+
+    const applyToLiveView =
+      assistantOnActiveView
+      && (
+        stateRef.current.sessionId === targetSessionId
+        || (stateRef.current.sessionId == null && (targetSessionId == null || fallbackSessionId != null))
+      )
 
     const mutate = (prev: AgentChatState): AgentChatState => {
       let next = prev
-      let sessionId = targetSessionId
+      let sessionId = targetSessionId ?? prev.sessionId
 
       for (const event of events) {
         const data = event.payload ?? {}
@@ -847,17 +856,24 @@ export function useAgentChat() {
     }
 
     let shouldDrain = false
+    let doneSessionId: string | null = null
     for (const event of events) {
-      if (event.event_type === "done") shouldDrain = true
+      if (event.event_type === "done") {
+        shouldDrain = true
+        const payloadSessionId = event.payload?.session_id
+        if (typeof payloadSessionId === "string" && payloadSessionId) {
+          doneSessionId = payloadSessionId
+        }
+      }
     }
 
-    if (stateRef.current.sessionId === targetSessionId) {
+    if (applyToLiveView) {
       setState(prev => {
         const next = mutate(prev)
-        persistActiveSessionSnapshot(next)
+        if (next.sessionId) persistActiveSessionSnapshot(next)
         return next
       })
-    } else {
+    } else if (targetSessionId) {
       const snap = sessionSnapshotsRef.current[targetSessionId] ?? {
         messages: [],
         isStreaming: false,
@@ -874,7 +890,8 @@ export function useAgentChat() {
     }
 
     if (shouldDrain) {
-      void drainQueueRef.current?.(targetSessionId)
+      const drainSessionId = doneSessionId ?? targetSessionId ?? stateRef.current.sessionId
+      if (drainSessionId) void drainQueueRef.current?.(drainSessionId)
     }
   }, [persistActiveSessionSnapshot])
 
