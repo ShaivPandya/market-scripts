@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2 } from "lucide-react"
 import { Dialog } from "@/components/shared/Dialog"
@@ -8,6 +8,7 @@ import {
   fetchHedgePositions,
   fetchPortfolioSettings,
   fetchPortfolioPositions,
+  importIbkrFlexPortfolioPositions,
   saveHedgePositions,
   savePortfolioPositions,
   updatePortfolioSettings,
@@ -357,6 +358,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [lastProposal, setLastProposal] = useState<StagedMutationResponse | null>(null)
+  const [ibkrImportError, setIbkrImportError] = useState<string | null>(null)
+  const ibkrImportInputRef = useRef<HTMLInputElement | null>(null)
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -367,6 +370,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setSettingsSavedMessage(null)
     setPositionValidationError(null)
     setHedgeValidationError(null)
+    setIbkrImportError(null)
     setLastProposal(null)
     setIsLoading(true)
     Promise.all([
@@ -400,6 +404,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const hedgeMutation = useMutation({
     mutationFn: (positions: HedgePosition[]) => saveHedgePositions(positions),
     onSuccess: handleSaved,
+  })
+
+  const ibkrImportMutation = useMutation({
+    mutationFn: (file: File) => importIbkrFlexPortfolioPositions(file),
+    onSuccess: result => {
+      setIbkrImportError(null)
+      handleSaved(result)
+    },
+    onError: err => setIbkrImportError(String(err)),
   })
 
   const settingsMutation = useMutation({
@@ -457,6 +470,14 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
   function addHedgeRow() {
     setHedgeRows(prev => [...prev, newHedgeRow()])
+  }
+
+  function handleIbkrFlexImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    setIbkrImportError(null)
+    ibkrImportMutation.mutate(file)
   }
 
   function handleSaveBookSize() {
@@ -668,6 +689,37 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
           {tab === "Positions" ? (
             <>
+              <div className="mb-4 rounded-lg border border-app bg-card-muted px-3 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-app">Import IBKR Flex</p>
+                    <p className="text-xs text-muted">
+                      Imports IBKR Flex Open Positions and stages a replacement proposal.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={ibkrImportInputRef}
+                      type="file"
+                      accept=".xml,application/xml,text/xml"
+                      className="hidden"
+                      onChange={handleIbkrFlexImport}
+                    />
+                    <ActionButton
+                      onClick={() => ibkrImportInputRef.current?.click()}
+                      loading={ibkrImportMutation.isPending}
+                      loadingText="Importing..."
+                      className="w-auto px-4"
+                    >
+                      Upload Flex XML
+                    </ActionButton>
+                  </div>
+                </div>
+                {ibkrImportError && (
+                  <p className="mt-2 text-xs text-red-700">{ibkrImportError}</p>
+                )}
+              </div>
+
               <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>

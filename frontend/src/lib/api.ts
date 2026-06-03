@@ -1098,6 +1098,24 @@ export const fetchPortfolioPositions = (includeHedges = false) =>
 export const savePortfolioPositions = (positions: PortfolioPosition[], options?: StagedMutationOptions) =>
   client.put("/portfolio-positions", { positions, ...options }).then(r => r.data as StagedMutationResponse)
 
+export interface IbkrFlexImportResponse extends StagedMutationResponse {
+  import_summary?: {
+    source: string
+    filename?: string | null
+    imported_count: number
+    preserved_metadata_count: number
+  }
+}
+
+export const importIbkrFlexPortfolioPositions = (file: File, reason?: string) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  if (reason?.trim()) formData.append("reason", reason.trim())
+  return client
+    .post("/portfolio-positions/import/ibkr-flex", formData)
+    .then(r => r.data as IbkrFlexImportResponse)
+}
+
 export interface PortfolioSettings {
   book_size: number
   default_book_size: number

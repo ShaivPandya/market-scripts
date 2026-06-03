@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from api.action_execution import stage_api_action
@@ -18,9 +18,11 @@ from api.portfolio_settings import (
     normalize_portfolio_book_size,
     set_portfolio_book_size,
 )
+from api.request_limits import read_upload_file_bytes
 from api.routers.auth import require_actor
 from ontology.policy import Actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from portfolio.ibkr_flex_import import merge_preserved_portfolio_metadata, parse_ibkr_flex_open_positions_xml
 from portfolio.instruments import (
     normalize_portfolio_instrument_row,
     position_row_id,
@@ -33,6 +35,8 @@ from portfolio.position_groups import (
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
+
+MAX_IBKR_FLEX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=-]{0,31}$")
 
@@ -173,6 +177,65 @@ def update_portfolio_positions(req: PortfolioUpdateRequest, actor: ActorDep):
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
     return result
+
+
+def _is_ibkr_flex_xml_upload(file: UploadFile) -> bool:
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    filename = (file.filename or "").lower()
+    return filename.endswith(".xml") or content_type in {"application/xml", "text/xml"}
+
+
+@router.post("/portfolio-positions/import/ibkr-flex")
+async def import_ibkr_flex_portfolio_positions(
+    actor: ActorDep,
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+    reason: str | None = Form(default=None),
+):
+    """Parse IBKR Flex Open Positions XML and stage a replacement portfolio proposal."""
+    if not _is_ibkr_flex_xml_upload(file):
+        raise HTTPException(status_code=400, detail="File must be an XML (.xml) Flex export.")
+
+    payload = await read_upload_file_bytes(file, limit_bytes=MAX_IBKR_FLEX_UPLOAD_BYTES, limit_label="10 MiB")
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        imported_rows = parse_ibkr_flex_open_positions_xml(payload)
+        existing_rows = OntologyRuntimeReadService().positions(include_hedges=False)
+        merged_rows = merge_preserved_portfolio_metadata(imported_rows, existing_rows)
+        positions = [PortfolioPosition(**row) for row in merged_rows]
+        result = stage_api_action(
+            "update_portfolio_positions",
+            {"positions": [position.model_dump() for position in positions]},
+            source_id="portfolio_edit.import_ibkr_flex_portfolio_positions",
+            actor=actor,
+            reason=reason or f"Import IBKR Flex open positions from {file.filename or 'upload.xml'}",
+            apply=False,
+            validation_status_code=400,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (HTTPException, AppError):
+        raise
+    except Exception as e:
+        raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
+
+    return {
+        **result,
+        "import_summary": {
+            "source": "ibkr_flex",
+            "filename": file.filename,
+            "imported_count": len(imported_rows),
+            "preserved_metadata_count": sum(
+                1
+                for imported, merged in zip(imported_rows, merged_rows, strict=False)
+                if any(
+                    merged.get(field) != imported.get(field)
+                    for field in ("conviction", "contrarian", "group_name", "group_conviction")
+                )
+            ),
+        },
+    }
 
 
 def _flatten_object(row: dict) -> dict:
