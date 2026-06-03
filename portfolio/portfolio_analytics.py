@@ -16,7 +16,7 @@ import math
 
 import pandas as pd
 
-from portfolio.instruments import notional_value
+from portfolio.instruments import display_ticker, notional_value, position_row_id
 
 
 def _position_pnl(
@@ -140,6 +140,23 @@ def _portfolio_summary(per_position: dict) -> dict:
     }
 
 
+def _option_current_price(pos: dict) -> float | None:
+    from portfolio.options_market_data import fetch_option_quote
+
+    quote = fetch_option_quote(
+        underlying_ticker=str(pos.get("underlying_ticker") or pos.get("ticker") or ""),
+        option_expiration=str(pos.get("option_expiration") or ""),
+        option_strike=float(pos.get("option_strike") or 0),
+        option_type=str(pos.get("option_type") or ""),
+        option_contract_symbol=pos.get("option_contract_symbol"),
+    )
+    price = quote.get("price")
+    try:
+        return float(price) if price is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_analytics(
     prices: dict[str, pd.Series],
     positions: list[dict],
@@ -153,44 +170,47 @@ def compute_analytics(
     if n_positions == 0:
         return {"per_position": {}, "portfolio": {}}
 
-    pos_lookup = {p["ticker"]: p for p in positions}
+    pos_lookup = {position_row_id(p): p for p in positions}
 
-    # First pass: compute current prices and notional values for weighting
     notionals: dict[str, float] = {}
     current_prices: dict[str, float | None] = {}
-    for ticker, pos in pos_lookup.items():
-        series = prices.get(ticker)
-        cp = float(series.iloc[-1]) if series is not None and not series.empty else None
-        current_prices[ticker] = cp
+    for leg_id, pos in pos_lookup.items():
+        instrument_type = str(pos.get("instrument_type") or "security").strip().lower()
+        display = display_ticker(pos)
+        series = prices.get(display)
+        if instrument_type == "option":
+            cp = _option_current_price(pos)
+        else:
+            cp = float(series.iloc[-1]) if series is not None and not series.empty else None
+        current_prices[leg_id] = cp
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
         current_notional = _position_base_notional_value(pos, quantity, cp, contract_multiplier)
         if current_notional is not None:
-            notionals[ticker] = current_notional
+            notionals[leg_id] = current_notional
 
-    # Build weights: notional-weighted if any quantity exists, else equal-weight
     weights: dict[str, float] = {}
     if notionals:
         total_notional = sum(notionals.values())
-        for ticker in pos_lookup:
-            if ticker in notionals and total_notional > 0:
-                weights[ticker] = notionals[ticker] / total_notional
+        for leg_id in pos_lookup:
+            if leg_id in notionals and total_notional > 0:
+                weights[leg_id] = notionals[leg_id] / total_notional
             else:
-                weights[ticker] = 0.0
+                weights[leg_id] = 0.0
     else:
         eq = 1.0 / n_positions
-        weights = {t: eq for t in pos_lookup}
+        weights = {leg_id: eq for leg_id in pos_lookup}
 
-    # Second pass: compute per-position metrics
     per_position: dict[str, dict] = {}
-    for ticker, pos in pos_lookup.items():
-        series = prices.get(ticker)
+    for leg_id, pos in pos_lookup.items():
+        instrument_type = str(pos.get("instrument_type") or "security").strip().lower()
+        display = display_ticker(pos)
+        series = prices.get(display)
         direction = pos.get("direction", "long")
         cost_basis = pos.get("cost_basis")
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
-        instrument_type = pos.get("instrument_type", "security")
-        cp = current_prices[ticker]
+        cp = current_prices[leg_id]
         pnl_quote_to_base = _spot_fx_quote_to_base_rate(pos, cp) if instrument_type == "spot_fx" else 1.0
 
         pnl_pct, pnl_dollar, pnl_per_unit = (
@@ -206,21 +226,41 @@ def compute_analytics(
             if notional_base is not None
             else _position_base_notional_value(pos, quantity, cost_basis, contract_multiplier)
         )
-        high_52w, dd_pct = _drawdown_52w(series, direction) if series is not None else (None, None)
-        weekly_ret = _period_return(series, 7, direction) if series is not None else None
-        monthly_ret = _period_return(series, 30, direction) if series is not None else None
+        high_52w, dd_pct = (
+            (None, None)
+            if instrument_type == "option"
+            else (_drawdown_52w(series, direction) if series is not None else (None, None))
+        )
+        weekly_ret = (
+            None
+            if instrument_type == "option"
+            else (_period_return(series, 7, direction) if series is not None else None)
+        )
+        monthly_ret = (
+            None
+            if instrument_type == "option"
+            else (_period_return(series, 30, direction) if series is not None else None)
+        )
 
-        w = weights.get(ticker, 0.0)
+        w = weights.get(leg_id, 0.0)
         weekly_contrib = round(weekly_ret * w, 4) if weekly_ret is not None else None
         monthly_contrib = round(monthly_ret * w, 4) if monthly_ret is not None else None
 
-        per_position[ticker] = {
+        per_position[leg_id] = {
+            "ticker": pos.get("ticker"),
+            "display_ticker": display,
+            "position_id": leg_id,
             "cost_basis": cost_basis,
             "current_price": cp,
             "shares": quantity,
             "quantity": quantity,
             "instrument_type": instrument_type,
             "contract_multiplier": contract_multiplier,
+            "underlying_ticker": pos.get("underlying_ticker"),
+            "option_contract_symbol": pos.get("option_contract_symbol"),
+            "option_expiration": pos.get("option_expiration"),
+            "option_strike": pos.get("option_strike"),
+            "option_type": pos.get("option_type"),
             "current_notional": round(current_notional, 2) if current_notional is not None else None,
             "cost_notional": round(cost_notional, 2) if cost_notional is not None else None,
             "notional_base": round(notional_base, 2) if notional_base is not None else None,

@@ -9,7 +9,7 @@ from typing import Any
 
 import yfinance as yf
 
-from portfolio.instruments import normalize_spot_fx_symbol, spot_fx_currencies
+from portfolio.instruments import display_ticker, normalize_spot_fx_symbol, spot_fx_currencies
 from utils.fx import fx_rate_to_base as _shared_fx_rate_to_base
 from utils.retry import yf_ticker_info
 
@@ -95,6 +95,8 @@ def enrich_position_valuation(
     instrument_type = str(out.get("instrument_type") or "").strip().lower()
     if instrument_type == "spot_fx":
         return _enrich_spot_fx_valuation(out, base_currency=base, preserve_existing=preserve_existing)
+    if instrument_type == "option":
+        return _enrich_option_valuation(out, base_currency=base, preserve_existing=preserve_existing)
 
     metadata = detect_market_metadata(price_symbol or ticker, overrides=out)
 
@@ -182,6 +184,43 @@ def _enrich_spot_fx_valuation(
     if rate is None or rate <= 0 or not math.isfinite(rate):
         return _set_valuation_missing(row, "missing_fx_rate")
     return _set_base_valuation(row, cost_basis, quantity, 1.0, rate, as_of)
+
+
+def _enrich_option_valuation(
+    row: dict[str, Any],
+    *,
+    base_currency: str,
+    preserve_existing: bool,
+) -> dict[str, Any]:
+    underlying = _clean_symbol(row.get("underlying_ticker") or row.get("ticker"))
+    row["underlying_ticker"] = underlying
+    row["ticker"] = display_ticker(row)
+    metadata = detect_market_metadata(underlying, overrides=row)
+    base = _clean_currency(base_currency) or DEFAULT_BASE_CURRENCY
+    currency = _clean_currency(row.get("currency")) or metadata.get("currency") or "USD"
+    row["base_currency"] = base
+    row["currency"] = currency
+    row["country"] = _clean_text(row.get("country")) or metadata.get("country")
+    row["exchange"] = _clean_text(row.get("exchange")) or metadata.get("exchange")
+
+    cost_basis = _to_float(row.get("cost_basis"))
+    quantity = _to_float(row.get("quantity") if row.get("quantity") is not None else row.get("shares"))
+    multiplier = _to_float(row.get("contract_multiplier")) or 100.0
+    if cost_basis is None or quantity is None or multiplier <= 0:
+        return _set_valuation_missing(row, "missing_position_inputs")
+
+    if preserve_existing:
+        existing_rate = _to_float(row.get("fx_rate_to_base"))
+        if existing_rate is not None and existing_rate > 0:
+            return _set_base_valuation(row, cost_basis, quantity, multiplier, existing_rate, row.get("fx_rate_as_of"))
+
+    fx = fx_rate_to_base(currency, base)
+    if fx is None:
+        return _set_valuation_missing(row, "missing_fx_rate")
+    rate = fx["rate"]
+    if rate is None or rate <= 0 or not math.isfinite(rate):
+        return _set_valuation_missing(row, "missing_fx_rate")
+    return _set_base_valuation(row, cost_basis, quantity, multiplier, rate, fx.get("as_of"))
 
 
 def detect_market_metadata(symbol: str, *, overrides: Mapping[str, Any] | None = None) -> dict[str, str | None]:

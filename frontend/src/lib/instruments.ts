@@ -11,7 +11,23 @@ export const INSTRUMENT_TYPE_OPTIONS: { value: InstrumentType; label: string }[]
   { value: "security", label: "Security" },
   { value: "future", label: "Future" },
   { value: "spot_fx", label: "Spot FX" },
+  { value: "option", label: "Option" },
 ]
+
+export const OPTION_TYPE_OPTIONS = [
+  { value: "call", label: "Call" },
+  { value: "put", label: "Put" },
+] as const
+
+const OCC_SYMBOL_RE = /^([A-Z]{1,6})(\d{6})([CP])(\d{8})$/
+
+export interface ParsedOptionContract {
+  underlying_ticker: string
+  option_expiration: string
+  option_type: "call" | "put"
+  option_strike: number
+  option_contract_symbol: string
+}
 
 export function canonicalSpotFxSymbol(value?: string | null) {
   let symbol = (value ?? "").trim().toUpperCase()
@@ -32,10 +48,58 @@ export function spotFxCurrencies(value?: string | null) {
   }
 }
 
+function occExpirationToIso(raw: string) {
+  if (/^\d{6}$/.test(raw)) {
+    const year = 2000 + Number(raw.slice(0, 2))
+    const month = raw.slice(2, 4)
+    const day = raw.slice(4, 6)
+    return `${year}-${month}-${day}`
+  }
+  return raw
+}
+
+export function parseOccSymbol(value?: string | null): ParsedOptionContract | null {
+  const symbol = (value ?? "").trim().toUpperCase().replace(/\s/g, "")
+  if (!symbol) return null
+  const match = OCC_SYMBOL_RE.exec(symbol)
+  if (!match) return null
+  const [, underlying, expRaw, cpFlag, strikeRaw] = match
+  return {
+    underlying_ticker: underlying,
+    option_expiration: occExpirationToIso(expRaw),
+    option_type: cpFlag === "C" ? "call" : "put",
+    option_strike: Number(strikeRaw) / 1000,
+    option_contract_symbol: symbol,
+  }
+}
+
+export function buildOptionContractSymbol(
+  underlyingTicker: string,
+  optionExpiration: string,
+  optionType: string,
+  optionStrike: number,
+) {
+  const underlying = underlyingTicker.trim().toUpperCase()
+  const normalizedType = optionType.trim().toLowerCase()
+  if (!underlying || (normalizedType !== "call" && normalizedType !== "put")) {
+    return null
+  }
+  let expRaw = optionExpiration.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(expRaw)) {
+    const [year, month, day] = expRaw.split("-")
+    expRaw = `${Number(year) % 100}${month}${day}`
+  }
+  if (!/^\d{6}$/.test(expRaw)) return null
+  const strikeRaw = String(Math.round(optionStrike * 1000)).padStart(8, "0")
+  return `${underlying}${expRaw}${normalizedType === "call" ? "C" : "P"}${strikeRaw}`
+}
+
 export function inferInstrumentType(ticker: string, instrumentType?: InstrumentType | string | null): InstrumentType {
   if (instrumentType === "spot_fx") return "spot_fx"
+  if (instrumentType === "option") return "option"
   if (ticker.trim().toUpperCase().endsWith("=X")) return "spot_fx"
   if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
+  if (parseOccSymbol(ticker)) return "option"
   return (instrumentType as InstrumentType) ?? "security"
 }
 
@@ -43,39 +107,78 @@ export function normalizedSymbol(value?: string | null) {
   return (value ?? "").trim().toUpperCase()
 }
 
-export function effectivePriceSymbol(row: { ticker: string; price_symbol?: string | null }) {
+export function displayTicker(row: {
+  ticker?: string | null
+  underlying_ticker?: string | null
+  instrument_type?: InstrumentType | string | null
+}) {
+  if (inferInstrumentType(row.ticker ?? "", row.instrument_type) === "option") {
+    return normalizedSymbol(row.underlying_ticker) || normalizedSymbol(row.ticker)
+  }
+  return normalizedSymbol(row.ticker)
+}
+
+export function positionRowId(row: {
+  ticker: string
+  position_id?: string | null
+  option_contract_symbol?: string | null
+  price_symbol?: string | null
+  instrument_type?: InstrumentType | string | null
+}) {
+  if (row.position_id?.trim()) return row.position_id.trim().toUpperCase()
+  if (inferInstrumentType(row.ticker, row.instrument_type) === "option") {
+    return normalizedSymbol(row.option_contract_symbol) || normalizedSymbol(row.price_symbol)
+  }
+  return normalizedSymbol(row.ticker)
+}
+
+export function effectivePriceSymbol(row: {
+  ticker: string
+  price_symbol?: string | null
+  option_contract_symbol?: string | null
+  instrument_type?: InstrumentType | string | null
+}) {
+  if (inferInstrumentType(row.ticker, row.instrument_type) === "option") {
+    return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.option_contract_symbol)
+  }
   return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
 }
 
 export function hasSeparatePriceSymbol(instrumentType?: InstrumentType | string | null) {
-  return instrumentType === "future" || instrumentType === "spot_fx"
+  return instrumentType === "future" || instrumentType === "spot_fx" || instrumentType === "option"
 }
 
 export function visiblePriceSymbol(row: {
   ticker?: string | null
   price_symbol?: string | null
+  option_contract_symbol?: string | null
   instrument_type?: InstrumentType | string | null
 }) {
   if (!hasSeparatePriceSymbol(row.instrument_type)) return ""
+  if (row.instrument_type === "option") return normalizedSymbol(row.option_contract_symbol) || normalizedSymbol(row.price_symbol)
   return normalizedSymbol(row.price_symbol)
 }
 
 export function pricingSymbolLabel(instrumentType?: InstrumentType | string | null) {
-  return instrumentType === "spot_fx" ? "FX Pair" : "Price Symbol"
+  if (instrumentType === "spot_fx") return "FX Pair"
+  if (instrumentType === "option") return "Contract"
+  return "Price Symbol"
 }
 
-export function submissionSymbol(row: { ticker: string; price_symbol?: string | null; instrument_type?: InstrumentType | string | null }) {
-  const instrumentType = inferInstrumentType(row.ticker, row.instrument_type)
-  if (instrumentType === "spot_fx") {
-    return canonicalSpotFxSymbol(row.price_symbol || row.ticker) || normalizedSymbol(row.price_symbol || row.ticker)
-  }
-  return normalizedSymbol(row.ticker)
+export function submissionSymbol(row: {
+  ticker: string
+  price_symbol?: string | null
+  option_contract_symbol?: string | null
+  instrument_type?: InstrumentType | string | null
+}) {
+  return positionRowId(row)
 }
 
 export function nextContractMultiplier(
   row: {
     ticker: string
     price_symbol?: string | null
+    option_contract_symbol?: string | null
     instrument_type?: InstrumentType | string | null
     contract_multiplier?: number | null
     _contractMultiplierTouched: boolean
@@ -84,6 +187,7 @@ export function nextContractMultiplier(
   nextPriceSymbol = effectivePriceSymbol(row),
 ) {
   if (nextInstrumentType === "security" || nextInstrumentType === "spot_fx") return 1
+  if (nextInstrumentType === "option") return row._contractMultiplierTouched ? row.contract_multiplier ?? 100 : 100
   if (row._contractMultiplierTouched) return row.contract_multiplier ?? null
 
   const currentInstrumentType = inferInstrumentType(row.ticker, row.instrument_type)
@@ -93,6 +197,32 @@ export function nextContractMultiplier(
     return null
   }
   return row.contract_multiplier ?? null
+}
+
+export function applyOptionPaste(row: {
+  ticker: string
+  underlying_ticker?: string | null
+  option_contract_symbol?: string | null
+  option_expiration?: string | null
+  option_strike?: number | null
+  option_type?: "call" | "put" | null
+  price_symbol?: string | null
+  instrument_type?: InstrumentType | null
+}) {
+  const parsed = parseOccSymbol(row.option_contract_symbol || row.ticker || row.price_symbol)
+  if (!parsed) return row
+  return {
+    ...row,
+    instrument_type: "option" as InstrumentType,
+    ticker: parsed.underlying_ticker,
+    underlying_ticker: parsed.underlying_ticker,
+    option_contract_symbol: parsed.option_contract_symbol,
+    option_expiration: parsed.option_expiration,
+    option_strike: parsed.option_strike,
+    option_type: parsed.option_type,
+    price_symbol: parsed.option_contract_symbol,
+    position_id: parsed.option_contract_symbol,
+  }
 }
 
 export function assetLabel(value?: string | null) {

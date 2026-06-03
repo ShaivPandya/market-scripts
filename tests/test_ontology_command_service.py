@@ -417,6 +417,61 @@ def test_position_update_apply_accepts_reviewed_valuation_fields():
     assert "position:APO" in repo.objects
 
 
+def test_meta_shares_and_multiple_option_contracts_coexist():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 10,
+                    "instrument_type": "security",
+                },
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 2,
+                    "instrument_type": "option",
+                    "underlying_ticker": "META",
+                    "option_expiration": "2026-01-16",
+                    "option_strike": 500,
+                    "option_type": "call",
+                },
+                {
+                    "ticker": "META",
+                    "asset": "equity",
+                    "direction": "long",
+                    "shares": 1,
+                    "instrument_type": "option",
+                    "underlying_ticker": "META",
+                    "option_expiration": "2026-01-16",
+                    "option_strike": 450,
+                    "option_type": "put",
+                },
+            ]
+        },
+        context,
+        reason="meta book with options",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+    active_positions = {row["object_uid"] for row in service.objects.query_objects("Position")}
+
+    assert applied["application_status"] == "applied"
+    assert "position:META" in active_positions
+    assert "position:META260116C00500000" in active_positions
+    assert "position:META260116P00450000" in active_positions
+    assert repo.objects["position:META"]["properties_json"]["ticker"] == "META"
+    assert repo.objects["position:META260116C00500000"]["properties_json"]["underlying_ticker"] == "META"
+
+
 def test_position_replacement_apply_expires_removed_positions():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]

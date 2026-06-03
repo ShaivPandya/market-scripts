@@ -22,14 +22,8 @@ from api.routers.auth import require_actor
 from ontology.policy import Actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio.instruments import (
-    default_contract_multiplier,
-    is_continuous_future_symbol,
-    normalize_asset,
-    normalize_instrument_type,
-    normalize_quantity,
-    normalize_spot_fx_symbol,
-    normalize_symbol,
-    spot_fx_currencies,
+    normalize_portfolio_instrument_row,
+    position_row_id,
 )
 from portfolio.position_groups import (
     canonicalize_position_group_rows,
@@ -103,9 +97,15 @@ class PortfolioPosition(BaseModel):
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -122,31 +122,10 @@ class PortfolioPosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPosition:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         self.group_name, self.group_conviction = normalize_position_group_fields(self.model_dump())
         return self
 
@@ -215,9 +194,15 @@ class HedgePosition(BaseModel):
     shares: float | None = None
     quantity: float | None = None
     asset: Literal["equity", "commodity", "fx", "bond"] | None = None
-    instrument_type: Literal["security", "future", "spot_fx"] | None = None
+    instrument_type: Literal["security", "future", "spot_fx", "option"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    position_id: str | None = None
+    underlying_ticker: str | None = None
+    option_contract_symbol: str | None = None
+    option_expiration: str | None = None
+    option_strike: float | None = None
+    option_type: Literal["call", "put"] | None = None
     fx_base_currency: str | None = None
     fx_quote_currency: str | None = None
     currency: str | None = None
@@ -232,31 +217,10 @@ class HedgePosition(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePosition:
-        self.instrument_type = normalize_instrument_type(
-            self.instrument_type,
-            ticker=str(self.ticker),
-            price_symbol=str(self.price_symbol or self.ticker),
-        )
-        if self.instrument_type == "spot_fx":
-            self.price_symbol = normalize_spot_fx_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-            self.ticker = self.price_symbol
-            self.fx_base_currency, self.fx_quote_currency = spot_fx_currencies(self.price_symbol)
-            self.asset = "fx"
-            self.currency = self.fx_quote_currency
-            self.exchange = self.exchange or "FX"
-        else:
-            self.ticker = normalize_symbol(self.ticker)
-            self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
-        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
-            raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
-        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
-        self.contract_multiplier = default_contract_multiplier(
-            instrument_type=self.instrument_type,
-            symbol=self.price_symbol,
-            override=self.contract_multiplier,
-        )
-        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares, allow_negative=True)
-        self.shares = self.quantity
+        normalized = normalize_portfolio_instrument_row(self.model_dump())
+        for key, value in normalized.items():
+            if key in self.model_fields:
+                object.__setattr__(self, key, value)
         return self
 
 

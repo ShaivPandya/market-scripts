@@ -1010,6 +1010,8 @@ def _build_agent_portfolio_payload(
     include_hedges: bool,
     book_size: float | None = None,
 ) -> dict[str, Any]:
+    from portfolio.instruments import display_ticker, position_row_id
+
     analytics_raw = raw.get("analytics")
     analytics: dict[str, Any] = analytics_raw if isinstance(analytics_raw, dict) else {}
     per_position_raw = analytics.get("per_position")
@@ -1018,6 +1020,7 @@ def _build_agent_portfolio_payload(
     portfolio_summary: dict[str, Any] = portfolio_summary_raw if isinstance(portfolio_summary_raw, dict) else {}
     raw_positions_raw = raw.get("positions")
     raw_positions: dict[str, Any] = raw_positions_raw if isinstance(raw_positions_raw, dict) else {}
+    underlying_exposures = raw.get("underlying_exposures")
     if book_size is None:
         book_size = _agent_portfolio_book_size()
 
@@ -1026,9 +1029,11 @@ def _build_agent_portfolio_payload(
         ticker = str(holding.get("ticker") or "").strip().upper()
         if not ticker:
             continue
-        perf = per_position.get(ticker)
+        leg_id = position_row_id(holding)
+        display = display_ticker(holding)
+        perf = per_position.get(leg_id)
         perf = perf if isinstance(perf, dict) else {}
-        last = _series_edge_point(raw_positions.get(ticker), first=False)
+        last = _series_edge_point(raw_positions.get(display), first=False)
         current_price = _to_float(perf.get("current_price"))
         last_price = (
             current_price
@@ -1054,10 +1059,17 @@ def _build_agent_portfolio_payload(
         )
         row = {
             "ticker": ticker,
+            "display_ticker": display,
+            "position_id": leg_id,
             "asset": holding.get("asset"),
             "direction": holding.get("direction"),
             "instrument_type": instrument_type,
             "price_symbol": holding.get("price_symbol") or ticker,
+            "underlying_ticker": holding.get("underlying_ticker"),
+            "option_contract_symbol": holding.get("option_contract_symbol"),
+            "option_expiration": holding.get("option_expiration"),
+            "option_strike": holding.get("option_strike"),
+            "option_type": holding.get("option_type"),
             "cost_basis": holding.get("cost_basis"),
             "shares": quantity,
             "quantity": quantity,
@@ -1107,6 +1119,9 @@ def _build_agent_portfolio_payload(
                 "futures_quantity": "contracts",
                 "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
                 "spot_fx_quantity": "base-currency units; cost_basis is quote currency per base currency",
+                "options_quantity": "contracts",
+                "options_notional_pnl": "quantity * premium * contract_multiplier; delayed yfinance option quotes",
+                "display_ticker": "underlying ticker used for dossier routing and dashboard charts",
             },
             "summary": {
                 "position_count": len(rows),
@@ -1116,6 +1131,7 @@ def _build_agent_portfolio_payload(
                 **portfolio_summary,
             },
             "positions": rows,
+            "underlying_exposures": underlying_exposures if isinstance(underlying_exposures, list) else [],
         }
     )
     return payload

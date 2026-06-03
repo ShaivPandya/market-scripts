@@ -21,6 +21,7 @@ from ontology.schemas.identity import (
     management_quality_assessment_id,
     object_version_ref_id,
     policy_gate_result_id,
+    portfolio_position_uid,
     thesis_id,
 )
 
@@ -361,20 +362,25 @@ def action_mutations(
     now = now or _now()
     if action_id == "update_portfolio_positions":
         return [
-            OntologyMutation("Position", str(row.get("ticker") or ""), _position_properties(row, role="position"), now)
+            OntologyMutation(
+                "Position",
+                portfolio_position_uid(row),
+                _position_properties(row, role="position"),
+                now,
+            )
             for row in _dicts(input_payload.get("positions"))
-            if row.get("ticker")
+            if row.get("ticker") or row.get("position_id")
         ]
     if action_id == "update_hedge_positions":
         return [
             OntologyMutation(
                 "HedgePosition",
-                str(row.get("ticker") or ""),
+                portfolio_position_uid(row),
                 _hedge_properties(row),
                 now,
             )
             for row in _dicts(input_payload.get("positions"))
-            if row.get("ticker")
+            if row.get("ticker") or row.get("position_id")
         ]
     if action_id == "change_thesis_status":
         if output.get("changed") is False:
@@ -608,6 +614,7 @@ def action_mutations(
 
 
 def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]:
+    from portfolio.instruments import position_row_id
     from portfolio.position_groups import normalize_position_group_fields
 
     ticker = str(row.get("ticker") or "").upper()
@@ -624,6 +631,12 @@ def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]
         "instrument_type": str(row.get("instrument_type") or "security").lower(),
         "price_symbol": str(row.get("price_symbol") or ticker).upper(),
         "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
+        "position_id": position_row_id(row),
+        "underlying_ticker": _optional_text(row.get("underlying_ticker")),
+        "option_contract_symbol": _optional_text(row.get("option_contract_symbol")),
+        "option_expiration": _optional_text(row.get("option_expiration")),
+        "option_strike": _optional_float(row.get("option_strike")),
+        "option_type": _optional_text(row.get("option_type")),
         "fx_base_currency": _optional_text(row.get("fx_base_currency")),
         "fx_quote_currency": _optional_text(row.get("fx_quote_currency")),
         "group_name": group_name,
@@ -633,6 +646,8 @@ def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]
 
 
 def _hedge_properties(row: Mapping[str, Any]) -> dict[str, Any]:
+    from portfolio.instruments import position_row_id
+
     ticker = str(row.get("ticker") or "").upper()
     return {
         "ticker": ticker,
@@ -644,6 +659,12 @@ def _hedge_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "instrument_type": str(row.get("instrument_type") or "security").lower(),
         "price_symbol": str(row.get("price_symbol") or ticker).upper(),
         "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
+        "position_id": position_row_id(row),
+        "underlying_ticker": _optional_text(row.get("underlying_ticker")),
+        "option_contract_symbol": _optional_text(row.get("option_contract_symbol")),
+        "option_expiration": _optional_text(row.get("option_expiration")),
+        "option_strike": _optional_float(row.get("option_strike")),
+        "option_type": _optional_text(row.get("option_type")),
         "fx_base_currency": _optional_text(row.get("fx_base_currency")),
         "fx_quote_currency": _optional_text(row.get("fx_quote_currency")),
     }

@@ -14,10 +14,12 @@ Terminal:
 import logging
 import warnings
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
 from ontology.runtime_read_service import get_positions, get_positions_df
+from portfolio.instruments import chart_price_symbol, display_ticker, position_row_id
 from portfolio.portfolio_analytics import compute_analytics
 from portfolio.position_groups import group_key, normalize_position_group_fields
 from utils.retry import yf_download
@@ -32,47 +34,89 @@ def _load_portfolio() -> pd.DataFrame:
     return get_positions_df()
 
 
-def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
-    positions = {row.ticker: getattr(row, "price_symbol", None) or row.ticker for row in df.itertuples()}
-    order = list(df.ticker)
-    meta = {
-        row.ticker: {
-            "asset": row.asset,
-            "direction": row.direction,
-            "instrument_type": getattr(row, "instrument_type", "security"),
-            "price_symbol": getattr(row, "price_symbol", row.ticker),
-            "quantity": getattr(row, "quantity", getattr(row, "shares", None)),
-            "shares": getattr(row, "quantity", getattr(row, "shares", None)),
-            "contract_multiplier": getattr(row, "contract_multiplier", 1.0),
-            "fx_base_currency": getattr(row, "fx_base_currency", None),
-            "fx_quote_currency": getattr(row, "fx_quote_currency", None),
-            "currency": getattr(row, "currency", None),
-            "country": getattr(row, "country", None),
-            "exchange": getattr(row, "exchange", None),
-            "base_currency": getattr(row, "base_currency", "USD"),
-            "fx_rate_to_base": getattr(row, "fx_rate_to_base", None),
-            "fx_rate_as_of": getattr(row, "fx_rate_as_of", None),
-            "cost_basis_base": getattr(row, "cost_basis_base", None),
-            "notional_base": getattr(row, "notional_base", None),
-            "valuation_status": getattr(row, "valuation_status", None),
-            "group_name": getattr(row, "group_name", None),
-            "group_conviction": getattr(row, "group_conviction", None),
-            "role": getattr(row, "role", "position"),
-        }
-        for row in df.itertuples()
+def _leg_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    leg_id = position_row_id(row)
+    display = display_ticker(row)
+    return {
+        "ticker": row.get("ticker"),
+        "display_ticker": display,
+        "position_id": leg_id,
+        "asset": row.get("asset"),
+        "direction": row.get("direction"),
+        "instrument_type": row.get("instrument_type", "security"),
+        "price_symbol": row.get("price_symbol", row.get("ticker")),
+        "underlying_ticker": row.get("underlying_ticker"),
+        "option_contract_symbol": row.get("option_contract_symbol"),
+        "option_expiration": row.get("option_expiration"),
+        "option_strike": row.get("option_strike"),
+        "option_type": row.get("option_type"),
+        "quantity": row.get("quantity", row.get("shares")),
+        "shares": row.get("quantity", row.get("shares")),
+        "contract_multiplier": row.get("contract_multiplier", 1.0),
+        "fx_base_currency": row.get("fx_base_currency"),
+        "fx_quote_currency": row.get("fx_quote_currency"),
+        "currency": row.get("currency"),
+        "country": row.get("country"),
+        "exchange": row.get("exchange"),
+        "base_currency": row.get("base_currency", "USD"),
+        "fx_rate_to_base": row.get("fx_rate_to_base"),
+        "fx_rate_as_of": row.get("fx_rate_as_of"),
+        "cost_basis_base": row.get("cost_basis_base"),
+        "notional_base": row.get("notional_base"),
+        "valuation_status": row.get("valuation_status"),
+        "group_name": row.get("group_name"),
+        "group_conviction": row.get("group_conviction"),
+        "role": row.get("role", "position"),
+        "cost_basis": row.get("cost_basis"),
     }
-    return positions, order, meta
+
+
+def _build_globals(df: pd.DataFrame) -> tuple[dict[str, str], list[str], dict[str, dict], dict[str, dict]]:
+    holdings = [dict(row) for row in df.to_dict(orient="records")] if not df.empty else get_positions()
+    return _build_dashboard_state(holdings)
+
+
+def _build_dashboard_state(
+    holdings: list[dict[str, Any]],
+) -> tuple[dict[str, str], list[str], dict[str, dict], dict[str, dict]]:
+    chart_symbols: dict[str, str] = {}
+    chart_order: list[str] = []
+    leg_meta: dict[str, dict] = {}
+    display_meta: dict[str, dict] = {}
+
+    for row in holdings:
+        if str(row.get("role") or "position").lower() == "hedge":
+            continue
+        meta = _leg_metadata(row)
+        leg_id = meta["position_id"]
+        display = str(meta["display_ticker"] or meta["ticker"] or "").upper()
+        if not display:
+            continue
+        leg_meta[leg_id] = meta
+        if display not in chart_order:
+            chart_order.append(display)
+        chart_symbols[display] = chart_price_symbol(row)
+        display_meta.setdefault(
+            display,
+            {
+                **meta,
+                "legs": [],
+            },
+        )
+        display_meta[display]["legs"].append(leg_id)
+
+    return chart_symbols, chart_order, leg_meta, display_meta
 
 
 _portfolio_df = _load_portfolio()
-POSITIONS, POSITION_ORDER, POSITION_META = _build_globals(_portfolio_df)
+POSITIONS, POSITION_ORDER, POSITION_META, DISPLAY_META = _build_globals(_portfolio_df)
 
 
 def reload_portfolio() -> None:
     """Re-read positions from the database and update module-level globals."""
-    global _portfolio_df, POSITIONS, POSITION_ORDER, POSITION_META
+    global _portfolio_df, POSITIONS, POSITION_ORDER, POSITION_META, DISPLAY_META
     _portfolio_df = _load_portfolio()
-    POSITIONS, POSITION_ORDER, POSITION_META = _build_globals(_portfolio_df)
+    POSITIONS, POSITION_ORDER, POSITION_META, DISPLAY_META = _build_globals(_portfolio_df)
 
 
 # -- Timeframe configs: name -> yfinance (period, interval) ──────────────────
@@ -92,12 +136,13 @@ def _empty_payload(timeframe: str, warning: str | None = None) -> dict:
     positions: dict[str, pd.Series] = {}
     payload = {
         "positions": positions,
-        "metadata": POSITION_META,
+        "metadata": DISPLAY_META,
         "timeframe": timeframe,
         "timestamp": datetime.now(),
         "position_order": POSITION_ORDER,
         "analytics": compute_analytics(positions, get_positions()),
-        "group_exposures": _group_exposures(POSITION_META),
+        "group_exposures": _group_exposures(DISPLAY_META),
+        "underlying_exposures": _underlying_exposures(POSITION_META),
     }
     if warning:
         payload["warning"] = warning
@@ -133,13 +178,38 @@ def _group_exposures(metadata: dict[str, dict]) -> list[dict]:
     return sorted(groups.values(), key=lambda row: str(row["group_name"]).casefold())
 
 
+def _underlying_exposures(leg_metadata: dict[str, dict]) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for leg_id, meta in leg_metadata.items():
+        display = str(meta.get("display_ticker") or meta.get("ticker") or "").upper()
+        if not display:
+            continue
+        group = groups.setdefault(
+            display,
+            {
+                "underlying_ticker": display,
+                "tickers": [],
+                "legs": [],
+                "current_notional": 0.0,
+                "cost_notional": 0.0,
+            },
+        )
+        group["tickers"].append(display)
+        group["legs"].append(leg_id)
+        for field in ("current_notional", "cost_notional"):
+            value = meta.get(field)
+            if isinstance(value, (int, float)):
+                group[field] += float(value)
+    return sorted(groups.values(), key=lambda row: str(row["underlying_ticker"]).casefold())
+
+
 def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     """
     Fetch closing-price time series for all portfolio positions.
 
     Returns dict with:
-        positions – dict[ticker] -> pd.Series (Close prices)
-        metadata  – dict[ticker] -> {asset, direction}
+        positions – dict[display_ticker] -> pd.Series (Close prices)
+        metadata  – dict[display_ticker] -> summary metadata
         timeframe – str
         timestamp – datetime
         error     – str (only on failure)
@@ -173,8 +243,8 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     is_multi = isinstance(raw.columns, pd.MultiIndex)
     positions = {}
 
-    for ticker in POSITION_ORDER:
-        price_symbol = POSITIONS.get(ticker, ticker)
+    for chart_ticker in POSITION_ORDER:
+        price_symbol = POSITIONS.get(chart_ticker, chart_ticker)
         try:
             if is_multi:
                 if price_symbol not in raw.columns.get_level_values(0):
@@ -189,24 +259,34 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
             if hasattr(series.index, "tz") and series.index.tz is not None:
                 series.index = series.index.tz_localize(None)
 
-            positions[ticker] = series
+            positions[chart_ticker] = series
         except Exception:
             continue
 
     holdings = get_positions()
     analytics = compute_analytics(positions, holdings)
-    metadata = {ticker: dict(meta) for ticker, meta in POSITION_META.items()}
+    metadata = {ticker: dict(meta) for ticker, meta in DISPLAY_META.items()}
     per_position = analytics.get("per_position", {}) if isinstance(analytics, dict) else {}
-    for ticker, metrics in per_position.items():
-        if ticker in metadata and isinstance(metrics, dict):
-            metadata[ticker]["current_notional"] = metrics.get("current_notional")
-            metadata[ticker]["cost_notional"] = metrics.get("cost_notional")
+    for leg_id, metrics in per_position.items():
+        leg_meta = POSITION_META.get(leg_id)
+        if not leg_meta or not isinstance(metrics, dict):
+            continue
+        display = str(leg_meta.get("display_ticker") or leg_meta.get("ticker") or "").upper()
+        leg_meta["current_notional"] = metrics.get("current_notional")
+        leg_meta["cost_notional"] = metrics.get("cost_notional")
+        if display in metadata:
+            for field in ("current_notional", "cost_notional"):
+                value = metrics.get(field)
+                if isinstance(value, (int, float)):
+                    metadata[display][field] = metadata[display].get(field, 0.0) + float(value)
 
     warnings_out: list[str] = []
     if any(str(row.get("instrument_type") or "").lower() == "future" for row in holdings):
         warnings_out.append("Continuous futures use front/active contract pricing; roll P&L is not modeled.")
     if any(str(row.get("instrument_type") or "").lower() == "spot_fx" for row in holdings):
         warnings_out.append("Spot FX positions use base-currency units and yfinance spot pair pricing.")
+    if any(str(row.get("instrument_type") or "").lower() == "option" for row in holdings):
+        warnings_out.append("Option positions use delayed yfinance option quotes; charts show the underlying stock.")
 
     payload = {
         "positions": positions,
@@ -216,6 +296,7 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
         "position_order": POSITION_ORDER,
         "analytics": analytics,
         "group_exposures": _group_exposures(metadata),
+        "underlying_exposures": _underlying_exposures(POSITION_META),
     }
     if warnings_out:
         payload["warning"] = "; ".join(warnings_out)
@@ -234,7 +315,6 @@ def fetch_all_timeframes_data() -> dict:
         results[tf_name] = data
         if data.get("warning"):
             warnings_by_timeframe[tf_name] = data["warning"]
-        # Use Weekly (2y) analytics for top-level — good 52-week coverage
         if tf_name == "Weekly":
             analytics = data.get("analytics")
     payload = {
@@ -318,7 +398,7 @@ def print_terminal():
 
         for ticker in POSITION_ORDER:
             series = positions.get(ticker)
-            meta = POSITION_META.get(ticker, {})
+            meta = DISPLAY_META.get(ticker, {})
             direction = meta.get("direction", "").upper()
             asset = meta.get("asset", "")
             a = per_pos.get(ticker, {})
@@ -353,7 +433,6 @@ def print_terminal():
                 attr_str,
             )
 
-        # Summary row
         port = analytics.get("portfolio", {})
         total_pnl = port.get("total_unrealized_pnl_pct")
         wk_port = port.get("weekly_portfolio_return_pct")

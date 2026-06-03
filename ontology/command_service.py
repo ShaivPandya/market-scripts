@@ -55,6 +55,7 @@ from ontology.schemas.identity import (
     opportunity_candidate_id,
     policy_gate_result_id,
     portfolio_id,
+    portfolio_position_uid,
     portfolio_risk_snapshot_id,
     position_id,
     position_risk_snapshot_id,
@@ -1034,19 +1035,25 @@ class OntologyCommandService:
     def _expire_absent_replacement_objects(
         self,
         object_type: str,
-        submitted_tickers: set[str],
+        submitted_keys: set[str],
         now: str,
     ) -> list[str]:
-        expired_tickers: list[str] = []
+        from portfolio.instruments import position_row_id
+
+        expired_keys: list[str] = []
         for existing in self.objects.query_objects(object_type, limit=1000):
             flat = _flatten_object(existing)
-            ticker = str(flat.get("ticker") or "").strip().upper()
             object_uid = str(flat.get("id") or existing.get("object_uid") or "").strip()
-            if not ticker or not object_uid or ticker in submitted_tickers:
+            key = str(flat.get("position_id") or position_row_id(flat) or flat.get("ticker") or "").strip().upper()
+            if not key or not object_uid:
+                continue
+            submitted = {str(item or "").strip().upper() for item in submitted_keys}
+            submitted_uids = {portfolio_position_uid({"position_id": item}) for item in submitted}
+            if key in submitted or object_uid in submitted_uids:
                 continue
             self._expire_current_object_and_relations(object_uid, now)
-            expired_tickers.append(ticker)
-        return sorted(set(expired_tickers))
+            expired_keys.append(key)
+        return sorted(set(expired_keys))
 
     def _expire_current_object_and_relations(self, object_uid: str, now: str) -> None:
         self.objects.expire_object(object_uid, tx_to=now)
@@ -1227,13 +1234,19 @@ class OntologyCommandService:
         refs: list[dict[str, Any]] = []
         if action_id == "update_portfolio_positions":
             positions = _list(payload.get("positions"))
-            submitted_tickers = {_non_blank(_dict(position).get("ticker"), "ticker").upper() for position in positions}
-            removed_tickers = self._expire_absent_replacement_objects("Position", submitted_tickers, now)
+            submitted_keys = {
+                str(_dict(position).get("position_id") or _dict(position).get("ticker") or "").strip().upper()
+                for position in positions
+            }
+            removed_tickers = self._expire_absent_replacement_objects("Position", submitted_keys, now)
             self._ensure_default_account_portfolio(context, provenance_id=provenance_id, input_hash=input_hash)
             for position in positions:
                 row = dict(position)
                 ticker = _non_blank(row.get("ticker"), "ticker").upper()
-                instr_key = str(row.get("instrument_id") or ticker)
+                pos_uid_key = portfolio_position_uid(row)
+                instr_key = str(
+                    row.get("instrument_id") or row.get("option_contract_symbol") or row.get("price_symbol") or ticker
+                )
                 instr_uid = instrument_id(instr_key)
                 self.objects.write_object(
                     "Instrument",
@@ -1244,6 +1257,11 @@ class OntologyCommandService:
                         "asset_class": row.get("asset") or "security",
                         "instrument_type": row.get("instrument_type") or "security",
                         "price_symbol": row.get("price_symbol") or ticker,
+                        "underlying_ticker": row.get("underlying_ticker"),
+                        "option_contract_symbol": row.get("option_contract_symbol"),
+                        "option_expiration": row.get("option_expiration"),
+                        "option_strike": row.get("option_strike"),
+                        "option_type": row.get("option_type"),
                         "fx_base_currency": row.get("fx_base_currency"),
                         "fx_quote_currency": row.get("fx_quote_currency"),
                         "status": "active",
@@ -1262,7 +1280,7 @@ class OntologyCommandService:
                 row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
                 pos = self.objects.write_object(
                     "Position",
-                    ticker,
+                    pos_uid_key,
                     row,
                     now,
                     actor=actor,
@@ -1303,8 +1321,11 @@ class OntologyCommandService:
             return refs
         if action_id == "update_hedge_positions":
             positions = _list(payload.get("positions"))
-            submitted_tickers = {_non_blank(_dict(position).get("ticker"), "ticker").upper() for position in positions}
-            self._expire_absent_replacement_objects("HedgePosition", submitted_tickers, now)
+            submitted_keys = {
+                str(_dict(position).get("position_id") or _dict(position).get("ticker") or "").strip().upper()
+                for position in positions
+            }
+            self._expire_absent_replacement_objects("HedgePosition", submitted_keys, now)
             for position in positions:
                 row = dict(position)
                 ticker = _non_blank(row.get("ticker"), "ticker").upper()
@@ -1313,7 +1334,7 @@ class OntologyCommandService:
                 row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
                 hedge = self.objects.write_object(
                     "HedgePosition",
-                    ticker,
+                    portfolio_position_uid(row),
                     row,
                     now,
                     actor=actor,

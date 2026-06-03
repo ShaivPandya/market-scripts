@@ -88,6 +88,7 @@ import { openStanWithCommand } from "@/lib/stanLauncher"
 interface DossierData {
   ticker: string
   position: Record<string, unknown> | null
+  related_portfolio_legs?: Array<Record<string, unknown>>
   overview_content: string | null
   overview_parsed: ParsedOverview | null
   management_quality: {
@@ -514,11 +515,13 @@ export function PositionDossier() {
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
   const decisionOutcomes = Array.isArray(data.decision_outcomes) ? data.decision_outcomes : []
   const positionQuantity = pos?.quantity ?? pos?.shares
-  const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
+  const positionQuantityLabel = pos?.instrument_type === "future" || pos?.instrument_type === "option" ? "Contracts" : "Quantity"
+  const relatedLegs = Array.isArray(data.related_portfolio_legs) ? data.related_portfolio_legs : []
   const hasPositionSummary = Boolean(
     pos && (
       positionQuantity != null ||
       (pos.instrument_type === "future" && pos.contract_multiplier != null) ||
+      (pos.instrument_type === "option" && (pos.option_contract_symbol != null || pos.contract_multiplier != null)) ||
       pos.group_name != null ||
       pos.avg_cost != null ||
       pos.market_value != null ||
@@ -571,6 +574,13 @@ export function PositionDossier() {
         <div className="theme-surface rounded-xl p-3 mb-4 flex flex-wrap gap-6 text-sm">
           {positionQuantity != null && <div><span className="text-subtle">{positionQuantityLabel}</span> <span className="font-medium text-app ml-1">{String(positionQuantity)}</span></div>}
           {pos.instrument_type === "future" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
+          {pos.instrument_type === "option" && pos.option_contract_symbol != null && (
+            <div><span className="text-subtle">Contract</span> <span className="font-medium text-app ml-1 font-mono text-xs">{String(pos.option_contract_symbol)}</span></div>
+          )}
+          {pos.instrument_type === "option" && pos.option_type != null && pos.option_strike != null && (
+            <div><span className="text-subtle">Option</span> <span className="font-medium text-app ml-1">{String(pos.option_type).toUpperCase()} {String(pos.option_strike)}{pos.option_expiration ? ` exp ${String(pos.option_expiration)}` : ""}</span></div>
+          )}
+          {pos.instrument_type === "option" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
           {pos.group_name != null && <div><span className="text-subtle">Group</span> <span className="font-medium text-app ml-1">{String(pos.group_name)}{pos.group_conviction != null ? ` (${String(pos.group_conviction)})` : ""}</span></div>}
           {pos.avg_cost != null && <div><span className="text-subtle">Avg Cost</span> <span className="font-medium text-app ml-1">${Number(pos.avg_cost).toFixed(2)}</span></div>}
           {pos.market_value != null && <div><span className="text-subtle">Mkt Value</span> <span className="font-medium text-app ml-1">${Number(pos.market_value).toLocaleString()}</span></div>}
@@ -583,6 +593,30 @@ export function PositionDossier() {
             </div>
           )}
           {pos.weight != null && <div><span className="text-subtle">Weight</span> <span className="font-medium text-app ml-1">{Number(pos.weight).toFixed(1)}%</span></div>}
+        </div>
+      )}
+
+      {relatedLegs.length > 0 && (
+        <div className="theme-surface rounded-xl p-3 mb-4">
+          <p className="mb-2 text-sm font-semibold text-app">Related Portfolio Legs</p>
+          <div className="space-y-2">
+            {relatedLegs.map((leg, index) => {
+              const legType = String(leg.instrument_type ?? "security")
+              const legLabel = legType === "option"
+                ? `${String(leg.option_type ?? "option").toUpperCase()} ${String(leg.option_strike ?? "-")} ${String(leg.option_contract_symbol ?? leg.position_id ?? "")}`.trim()
+                : String(leg.ticker ?? "Leg")
+              const legQty = leg.quantity ?? leg.shares
+              return (
+                <div key={String(leg.position_id ?? leg.option_contract_symbol ?? leg.ticker ?? index)} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                  <span className="font-medium text-app">{legLabel}</span>
+                  {leg.direction != null && <span className="text-muted">{String(leg.direction)}</span>}
+                  {legQty != null && <span className="text-muted">{legType === "option" || legType === "future" ? "Contracts" : "Qty"} {String(legQty)}</span>}
+                  {leg.contract_multiplier != null && legType === "option" && <span className="text-muted">x{String(leg.contract_multiplier)}</span>}
+                  {leg.cost_basis != null && <span className="text-muted">Entry {String(leg.cost_basis)}</span>}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 

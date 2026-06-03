@@ -1052,8 +1052,9 @@ export const fetchPortfolio = (timeframe: string) =>
 export const fetchPortfolioAllTimeframes = () =>
   client.get("/portfolio?all_timeframes=true").then(r => r.data)
 
-export type InstrumentType = "security" | "future" | "spot_fx"
+export type InstrumentType = "security" | "future" | "spot_fx" | "option"
 export type PortfolioAsset = "equity" | "commodity" | "fx" | "bond"
+export type OptionType = "call" | "put"
 
 export interface PortfolioPosition {
   ticker: string
@@ -1067,6 +1068,12 @@ export interface PortfolioPosition {
   instrument_type?: InstrumentType | null
   price_symbol?: string | null
   contract_multiplier?: number | null
+  position_id?: string | null
+  underlying_ticker?: string | null
+  option_contract_symbol?: string | null
+  option_expiration?: string | null
+  option_strike?: number | null
+  option_type?: OptionType | null
   fx_base_currency?: string | null
   fx_quote_currency?: string | null
   currency?: string | null
@@ -1115,6 +1122,12 @@ export interface HedgePosition {
   instrument_type?: InstrumentType | null
   price_symbol?: string | null
   contract_multiplier?: number | null
+  position_id?: string | null
+  underlying_ticker?: string | null
+  option_contract_symbol?: string | null
+  option_expiration?: string | null
+  option_strike?: number | null
+  option_type?: OptionType | null
   fx_base_currency?: string | null
   fx_quote_currency?: string | null
   currency?: string | null
