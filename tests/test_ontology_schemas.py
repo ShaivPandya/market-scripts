@@ -14,7 +14,7 @@ from ontology.schemas.identity import (
     catalyst_id,
     course_of_action_id,
     evaluation_id,
-    position_id,
+    hedge_position_id,
     scenario_assumption_id,
     signal_id,
     simulated_outcome_id,
@@ -99,7 +99,7 @@ def test_position_schema_normalizes_and_checks_risk_level():
 def test_operational_object_schemas_have_stable_identities():
     hedge = normalize_node(
         OntologyNode(
-            id=position_id("MU"),
+            id=hedge_position_id("MU"),
             type="HedgePosition",
             label="MU hedge",
             properties=HedgePosition(ticker="mu", direction="short").model_dump(mode="json"),
@@ -120,7 +120,7 @@ def test_operational_object_schemas_have_stable_identities():
         allow_current=False,
     )
 
-    assert hedge.id == "position:MU"
+    assert hedge.id == "hedge_position:MU"
     assert hedge.properties["ticker"] == "MU"
     assert action_item.id == "action_item:review_mu"
     assert action_item.properties["status"] == "open"

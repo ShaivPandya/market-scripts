@@ -17,6 +17,7 @@ from ontology.read_model import TemporalReadModelRepository
 from ontology.schemas.identity import (
     action_run_id,
     document_artifact_id,
+    hedge_position_uid,
     issuer_id,
     management_quality_assessment_id,
     object_version_ref_id,
@@ -375,7 +376,7 @@ def action_mutations(
         return [
             OntologyMutation(
                 "HedgePosition",
-                portfolio_position_uid(row),
+                hedge_position_uid(row),
                 _hedge_properties(row),
                 now,
             )

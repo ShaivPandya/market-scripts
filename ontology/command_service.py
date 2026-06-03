@@ -42,6 +42,7 @@ from ontology.schemas.identity import (
     evidence_id,
     executed_decision_record_id,
     extrinsic_sensitivity_id,
+    hedge_position_uid,
     industry_force_assessment_id,
     instrument_id,
     issuer_id,
@@ -1334,7 +1335,7 @@ class OntologyCommandService:
                 row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
                 hedge = self.objects.write_object(
                     "HedgePosition",
-                    portfolio_position_uid(row),
+                    hedge_position_uid(row),
                     row,
                     now,
                     actor=actor,

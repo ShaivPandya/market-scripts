@@ -42,6 +42,7 @@ from ontology.schemas.identity import (
     extrinsic_sensitivity_id,
     factor_score_id,
     forward_outlook_id,
+    hedge_position_uid,
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
@@ -549,14 +550,12 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
             return key
         return position_id(canonical_ticker(props.get("ticker") or key))
     if object_type == "HedgePosition":
-        if key.startswith("hedge_position:"):
-            key = key.split(":", 1)[1]
-        if key.startswith("position:"):
-            return key
+        if key.lower().startswith(("hedge_position:", "position:")):
+            return hedge_position_uid(key)
         row = dict(props)
         if not row.get("ticker") and not row.get("position_id"):
             row["ticker"] = canonical_ticker(key)
-        return portfolio_position_uid(row)
+        return hedge_position_uid(row)
     if object_type == "Asset":
         if key.startswith("asset:"):
             return key
