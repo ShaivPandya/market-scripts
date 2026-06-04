@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Info, Plus, X } from "lucide-react"
+import { Info, Layers, Plus, X } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/components/shared/FormControls"
@@ -204,8 +204,17 @@ function makeRow(ticker = "", direction = "", conviction = 3, groupName?: string
   }
 }
 
+interface SizerGroup {
+  key: string
+  name: string
+  conviction: number
+  direction: string
+  ids: string[]
+  tickers: string[]
+}
+
 function sizerGroupState(rows: SizerRow[]) {
-  const groups = new Map<string, { key: string; name: string; conviction: number; direction: string; ids: string[]; tickers: string[] }>()
+  const groups = new Map<string, SizerGroup>()
   const errors: string[] = []
   for (const row of rows) {
     const name = normalizeGroupName(row.groupName)
@@ -409,6 +418,228 @@ const CONVICTION_LABELS: Record<number, string> = {
   5: "Very High",
 }
 
+const CONV_HSL: Record<number, string> = {
+  1: "215 16% 52%",
+  2: "212 48% 52%",
+  3: "211 78% 52%",
+  4: "224 74% 57%",
+  5: "250 72% 61%",
+}
+const convColor = (c: number) => `hsl(${CONV_HSL[c] ?? CONV_HSL[3]})`
+
+const GROUP_HUES = [248, 30, 168, 211, 330, 96, 280, 12]
+function groupHue(key: string) {
+  let hash = 0
+  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  return GROUP_HUES[hash % GROUP_HUES.length]
+}
+const groupColor = (key: string) => `hsl(${groupHue(key)} 64% 55%)`
+const groupTint = (key: string, a = 0.12) => `hsl(${groupHue(key)} 64% 55% / ${a})`
+
+function ConvictionChips({ value, onChange }: { value: number; onChange: (c: number) => void }) {
+  return (
+    <div className="inline-flex items-center" style={{ gap: 3 }} title={`Conviction: ${CONVICTION_LABELS[value] ?? value}`}>
+      {[1, 2, 3, 4, 5].map(c => {
+        const active = c <= value
+        return (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            aria-label={`Conviction ${c} — ${CONVICTION_LABELS[c]}`}
+            style={{
+              width: 27,
+              height: 27,
+              borderRadius: 7,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12,
+              fontWeight: 700,
+              border: active ? "none" : "1px solid hsl(var(--border))",
+              background: active ? convColor(value) : "hsl(var(--background-card-muted))",
+              color: active ? "#fff" : "hsl(var(--foreground-quaternary))",
+              boxShadow: active ? "0 1px 2px hsl(var(--shadow-color) / 0.14)" : "none",
+              transition: "background 120ms ease, border-color 120ms ease",
+            }}
+          >
+            {c}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function DirectionTag({ direction }: { direction: string }) {
+  const isLong = direction === "long"
+  return (
+    <span
+      className="theme-badge"
+      title="Net directional exposure for this underlying. Options are netted by underlying, so a short put shows as long and a long put as short."
+      style={{
+        backgroundColor: isLong ? "hsl(var(--success-muted))" : direction === "short" ? "hsl(var(--destructive-muted))" : "hsl(var(--background-card-muted))",
+        color: isLong ? "hsl(var(--success))" : direction === "short" ? "hsl(var(--destructive))" : "hsl(var(--foreground-secondary))",
+        borderColor: isLong ? "hsl(var(--success) / 0.18)" : direction === "short" ? "hsl(var(--destructive) / 0.18)" : "hsl(var(--border))",
+      }}
+    >
+      {direction || "—"}
+    </span>
+  )
+}
+
+const GRID_SIZER_ROW = "14px minmax(120px,1fr) 88px minmax(180px,1fr) minmax(140px,1fr) 140px"
+
+interface SizerRowCallbacks {
+  onConviction: (id: string, conviction: number) => void
+  onAssignGroup: (id: string, name: string | null) => void
+}
+
+interface SizerRowViewProps extends SizerRowCallbacks {
+  row: SizerRow
+  spine?: string | null
+  groups: SizerGroup[]
+}
+
+function SizerRowView({ row, spine, groups, onConviction, onAssignGroup }: SizerRowViewProps) {
+  return (
+    <div style={{ borderTop: "1px solid hsl(var(--separator))", background: "transparent" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: GRID_SIZER_ROW,
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 12px",
+          minHeight: 48,
+        }}
+      >
+        <div style={{ alignSelf: "stretch", borderRadius: 999, background: spine || "transparent", width: 4 }} />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          <span className="mono-text" style={{ fontWeight: 700, fontSize: "0.92rem" }}>{row.ticker}</span>
+        </div>
+
+        <div><DirectionTag direction={row.direction} /></div>
+
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <ConvictionChips value={row.conviction} onChange={c => onConviction(row.id, c)} />
+        </div>
+
+        <label style={{ display: "block", minWidth: 0 }}>
+          <span className="sr-only">Group</span>
+          <select
+            className="theme-input w-full text-sm"
+            value={row.groupName ?? ""}
+            onChange={e => onAssignGroup(row.id, e.target.value || null)}
+          >
+            <option value="">— Ungrouped —</option>
+            {groups.map(g => (
+              <option key={g.key} value={g.name}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <div className="text-xs text-muted truncate" title={CONVICTION_LABELS[row.conviction]}>
+          {row.conviction} — {CONVICTION_LABELS[row.conviction] ?? ""}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface SizerGroupBandProps extends SizerRowCallbacks {
+  group: SizerGroup
+  members: SizerRow[]
+  groups: SizerGroup[]
+  onRename: (key: string, name: string) => void
+  onConvictionAll: (name: string, conviction: number) => void
+  onDisband: (key: string) => void
+}
+
+function SizerGroupBand({ group, members, groups, onRename, onConvictionAll, onDisband, onConviction, onAssignGroup }: SizerGroupBandProps) {
+  if (members.length === 0) return null
+  const col = groupColor(group.key)
+  const directions = new Set(members.map(m => m.direction).filter(Boolean))
+  const mixed = directions.size > 1
+  const wConv = members.reduce((s, m) => s + m.conviction, 0) / members.length
+
+  return (
+    <div style={{ marginTop: 14, borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid hsl(var(--border))", boxShadow: "var(--shadow-soft)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", background: groupTint(group.key, 0.1), borderLeft: `4px solid ${col}`, flexWrap: "wrap" }}>
+        <span style={{ color: col, display: "inline-flex" }}><Layers size={15} /></span>
+        <input
+          value={group.name}
+          onChange={e => onRename(group.key, e.target.value)}
+          style={{
+            border: "1px solid transparent",
+            borderRadius: 8,
+            background: "transparent",
+            padding: "0.25rem 0.4rem",
+            fontSize: "0.98rem",
+            fontWeight: 650,
+            color: "hsl(var(--foreground))",
+            outline: "none",
+            minWidth: 120,
+            width: `${Math.max(8, group.name.length + 1)}ch`,
+          }}
+          onFocus={e => { e.target.style.background = "hsl(var(--background-input))" }}
+          onBlur={e => { e.target.style.background = "transparent" }}
+          aria-label={`Group name for ${group.name}`}
+        />
+        <span className="theme-badge theme-badge-neutral">{members.length} {members.length === 1 ? "position" : "positions"}</span>
+        {mixed ? <span className="theme-badge theme-badge-warning" title="Group positions should share one direction">Mixed direction</span> : null}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span className="label-text" style={{ whiteSpace: "nowrap" }}>Group Conviction</span>
+          <ConvictionChips value={group.conviction} onChange={c => onConvictionAll(group.name, c)} />
+        </div>
+        <button
+          type="button"
+          className="theme-button-base theme-button-ghost"
+          style={{ minHeight: 30, fontSize: "0.76rem", paddingInline: 12 }}
+          onClick={() => onDisband(group.key)}
+        >
+          Disband
+        </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", background: "hsl(var(--background-card-muted) / 0.5)" }}>
+        <span className="text-subtle" style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>Avg conviction</span>
+        <div style={{ flex: 1, height: 5, borderRadius: 999, background: "hsl(var(--separator))", maxWidth: 220 }}>
+          <div style={{ height: "100%", borderRadius: 999, width: `${(wConv / 5) * 100}%`, background: convColor(Math.round(wConv)) }} />
+        </div>
+        <span className="mono-text" style={{ fontSize: "0.74rem", fontWeight: 700 }}>{wConv.toFixed(2)} / 5</span>
+      </div>
+
+      <div style={{ background: "hsl(var(--background-card) / 0.6)" }}>
+        {members.map(member => (
+          <SizerRowView
+            key={member.id}
+            row={member}
+            spine={col}
+            groups={groups}
+            onConviction={onConviction}
+            onAssignGroup={onAssignGroup}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SizerSectionCard({ title, icon, count, children }: { title: string; icon: ReactNode; count: number; children: ReactNode }) {
+  return (
+    <div className="theme-surface" style={{ marginTop: 14, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px" }}>
+        <span style={{ color: "hsl(var(--foreground-tertiary))", display: "inline-flex" }}>{icon}</span>
+        <span style={{ fontWeight: 650, fontSize: "0.95rem", whiteSpace: "nowrap" }}>{title}</span>
+        <span className="theme-badge theme-badge-neutral">{count}</span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function PortfolioSizer() {
   const queryClient = useQueryClient()
   const cachedState = queryClient.getQueryData<{
@@ -563,25 +794,63 @@ export function PortfolioSizer() {
     setRows(prev => prev.map(row => (row.id === id ? { ...row, conviction } : row)))
   }
 
-  function updateGroupName(id: string, value: string) {
+  function assignGroup(id: string, name: string | null) {
     setRows(prev => {
-      const target = prev.find(row => row.id === id)
-      const name = normalizeGroupName(value)
-      if (!target || !name) {
+      const normalized = normalizeGroupName(name)
+      if (!normalized) {
         return prev.map(row => (row.id === id ? { ...row, groupName: null, groupConviction: null } : row))
       }
-      const key = groupKey(name)
+      const key = groupKey(normalized)
       const existing = prev.find(row => row.id !== id && groupKey(row.groupName) === key)
-      const groupName = normalizeGroupName(existing?.groupName) ?? name
-      const groupConviction = normalizeGroupConviction(existing?.groupConviction) ?? normalizeGroupConviction(target.groupConviction) ?? target.conviction
+      const target = prev.find(row => row.id === id)
+      const groupName = normalizeGroupName(existing?.groupName) ?? normalized
+      const groupConviction = normalizeGroupConviction(existing?.groupConviction)
+        ?? normalizeGroupConviction(target?.groupConviction)
+        ?? target?.conviction
+        ?? 3
       return prev.map(row => (row.id === id ? { ...row, groupName, groupConviction } : row))
     })
+  }
+
+  function renameGroup(key: string, value: string) {
+    const nextName = normalizeGroupName(value)
+    setRows(prev => prev.map(item => (
+      groupKey(item.groupName) === key
+        ? { ...item, groupName: nextName, groupConviction: nextName ? item.groupConviction : null }
+        : item
+    )))
   }
 
   function updateGroupConviction(group: string | null | undefined, conviction: number) {
     const key = groupKey(group)
     if (!key) return
     setRows(prev => prev.map(row => (groupKey(row.groupName) === key ? { ...row, groupConviction: conviction } : row)))
+  }
+
+  function disbandGroup(key: string) {
+    setRows(prev => prev.map(row => (groupKey(row.groupName) === key ? { ...row, groupName: null, groupConviction: null } : row)))
+  }
+
+  function addGroup() {
+    setRows(prev => {
+      const ungrouped = prev.filter(row => !groupKey(row.groupName))
+      if (ungrouped.length === 0) return prev
+
+      const existing = new Set(prev.map(r => groupKey(r.groupName)).filter(Boolean) as string[])
+      const base = "New Group"
+      let name = base
+      let n = 2
+      while (existing.has(groupKey(name) as string)) {
+        name = `${base} ${n}`
+        n += 1
+      }
+      const targetId = ungrouped[0].id
+      return prev.map(row => (
+        row.id === targetId
+          ? { ...row, groupName: name, groupConviction: normalizeGroupConviction(row.groupConviction) ?? row.conviction }
+          : row
+      ))
+    })
   }
 
   function toggleHedgeTicker(ticker: string) {
@@ -715,6 +984,9 @@ export function PortfolioSizer() {
     equityNet,
   ].some(v => v != null) || betaMetricCards.length > 0
   const groupState = sizerGroupState(rows)
+  const orderedGroups = Array.from(groupState.groups.values())
+  const ungroupedRows = rows.filter(row => !groupKey(row.groupName))
+  const rowCallbacks: SizerRowCallbacks = { onConviction: updateConviction, onAssignGroup: assignGroup }
 
   const sizingDeltas = useMemo(() => {
     if (!data) return []
@@ -923,102 +1195,61 @@ export function PortfolioSizer() {
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium text-gray-700">Conviction Levels</p>
+            {rows.length > 0 && ungroupedRows.length > 0 ? (
+              <button
+                type="button"
+                className="theme-button-base theme-button-secondary"
+                style={{ minHeight: 34, fontSize: "0.82rem", paddingInline: 12 }}
+                onClick={addGroup}
+              >
+                <Layers size={14} /> New group
+              </button>
+            ) : null}
           </div>
           <p className="text-xs text-gray-400 mb-3">
-            Set conviction (1–5) for each position. Higher conviction = larger allocation toward the position cap.
+            Set conviction (1–5) for each position. Group related positions to share a group conviction.
           </p>
 
-          <div className="space-y-2">
-            {rows.length === 0 && (
-              <p className="text-sm text-gray-400">Loading portfolio tickers...</p>
-            )}
-            {rows.map((row, idx) => (
-              <div key={row.id} className="grid gap-3 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
-                <div className="col-span-2">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Ticker</p>}
-                  <span className="inline-flex w-full items-center justify-center rounded-lg border border-app bg-[hsl(var(--muted-2))] px-2 py-1.5 text-center text-sm font-mono text-app">
-                    {row.ticker}
-                  </span>
-                </div>
-                <div className="col-span-2">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Direction</p>}
-                  <span
-                    title="Net directional exposure for this underlying. Options are netted by underlying, so a short put shows as long and a long put as short."
-                    className="inline-flex w-full items-center justify-center rounded-lg border px-2 py-1.5 text-center text-xs font-medium"
-                    style={
-                      row.direction === "long"
-                        ? {
-                          backgroundColor: "hsl(var(--success-muted))",
-                          color: "hsl(var(--success))",
-                          borderColor: "hsl(var(--success) / 0.25)",
-                        }
-                        : row.direction === "short"
-                          ? {
-                            backgroundColor: "hsl(var(--destructive-muted))",
-                            color: "hsl(var(--destructive))",
-                            borderColor: "hsl(var(--destructive) / 0.25)",
-                          }
-                          : {
-                            backgroundColor: "hsl(var(--background-card-muted))",
-                            color: "hsl(var(--foreground-secondary))",
-                            borderColor: "hsl(var(--border))",
-                          }
-                    }
-                  >
-                    {row.direction || "—"}
-                  </span>
-                </div>
-                <div className="col-span-3">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Group</p>}
-                  <input
-                    type="text"
-                    value={row.groupName ?? ""}
-                    onChange={e => updateGroupName(row.id, e.target.value)}
-                    placeholder="Optional"
-                    className="theme-input w-full text-sm"
-                  />
-                </div>
-                <div className="col-span-3">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Group Conv.</p>}
-                  <input
-                    type="range"
-                    min={1}
-                    max={5}
-                    step={1}
-                    value={normalizeGroupConviction(row.groupConviction) ?? row.conviction}
-                    onChange={e => updateGroupConviction(row.groupName, Number(e.target.value))}
-                    className="hig-slider w-full cursor-pointer"
-                    style={{ accentColor: "hsl(var(--accent))" }}
-                    disabled={!normalizeGroupName(row.groupName)}
-                  />
-                  <span className="text-xs text-muted">
-                    {normalizeGroupName(row.groupName)
-                      ? `${normalizeGroupConviction(row.groupConviction) ?? row.conviction} — ${CONVICTION_LABELS[normalizeGroupConviction(row.groupConviction) ?? row.conviction] ?? ""}`
-                      : "Ungrouped"}
-                  </span>
-                </div>
-                <div className="col-span-4">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Conviction</p>}
-                  <input
-                    type="range"
-                    min={1}
-                    max={5}
-                    step={1}
-                    value={row.conviction}
-                    onChange={e => updateConviction(row.id, Number(e.target.value))}
-                    className="hig-slider w-full cursor-pointer"
-                    style={{ accentColor: "hsl(var(--accent))" }}
-                  />
-                </div>
-                <div className="col-span-2">
-                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Level</p>}
-                  <span className="text-sm font-medium text-app">
-                    {row.conviction} — {CONVICTION_LABELS[row.conviction] ?? ""}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+          {rows.length === 0 ? (
+            <p className="text-sm text-gray-400">Loading portfolio tickers...</p>
+          ) : (
+            <>
+              {orderedGroups.map(group => (
+                <SizerGroupBand
+                  key={group.key}
+                  group={group}
+                  members={rows.filter(row => groupKey(row.groupName) === group.key)}
+                  groups={orderedGroups}
+                  onRename={renameGroup}
+                  onConvictionAll={updateGroupConviction}
+                  onDisband={disbandGroup}
+                  onConviction={rowCallbacks.onConviction}
+                  onAssignGroup={rowCallbacks.onAssignGroup}
+                />
+              ))}
+
+              <SizerSectionCard
+                title="Ungrouped positions"
+                icon={<span>◇</span>}
+                count={ungroupedRows.length}
+              >
+                {ungroupedRows.length === 0 ? (
+                  <p className="text-subtle px-3 py-4 text-sm">All positions are grouped.</p>
+                ) : (
+                  ungroupedRows.map(row => (
+                    <SizerRowView
+                      key={row.id}
+                      row={row}
+                      spine={null}
+                      groups={orderedGroups}
+                      onConviction={rowCallbacks.onConviction}
+                      onAssignGroup={rowCallbacks.onAssignGroup}
+                    />
+                  ))
+                )}
+              </SizerSectionCard>
+            </>
+          )}
         </div>
 
         {groupState.errors.length > 0 && (
