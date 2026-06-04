@@ -8,7 +8,6 @@ import { TimeSeriesChart, calcReturn, type DataPoint, type SeriesDef } from "@/c
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
-import { PortfolioEditor } from "@/components/PortfolioEditor"
 import { Notice } from "@/components/shared/Notice"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { ChartTile } from "@/components/shared/ChartTile"
@@ -152,8 +151,6 @@ export function PortfolioDashboard() {
   const queryClient = useQueryClient()
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
   const [viewMode, setViewMode] = useState<ViewMode>("Grid")
-  const [editOpen, setEditOpen] = useState(false)
-
   const {
     data: timeframeData,
     isLoading,
@@ -293,13 +290,12 @@ export function PortfolioDashboard() {
         subtitle="Portfolio positions organized as an adaptive chart grid and comparable performance view."
         actions={(
           <>
-            <button
-              type="button"
-              onClick={() => setEditOpen(true)}
+            <Link
+              to="/portfolio/edit"
               className="theme-button-base theme-button-secondary px-4"
             >
               Edit Portfolio
-            </button>
+            </Link>
             <RefreshButton
               queryKeys={refreshQueryKeys}
               beforeRefetch={invalidatePortfolioQueries}
@@ -433,7 +429,6 @@ export function PortfolioDashboard() {
         </div>
       )}
 
-      <PortfolioEditor open={editOpen} onOpenChange={setEditOpen} />
     </div>
   )
 }

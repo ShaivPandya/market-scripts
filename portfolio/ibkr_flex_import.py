@@ -17,6 +17,7 @@ from portfolio.instruments import (
 SUPPORTED_ASSET_CATEGORIES = {"STK", "OPT"}
 PRESERVED_METADATA_FIELDS = ("conviction", "contrarian", "group_name", "group_conviction")
 DEFAULT_CONVICTION = 3
+IBKR_FLEX_INDEX_HEDGE_TICKERS = frozenset({"SPY", "IWM", "QQQ"})
 
 
 def _attr(row: ET.Element, name: str) -> str:
@@ -221,4 +222,58 @@ def merge_preserved_portfolio_metadata(
             out.setdefault("group_name", None)
             out.setdefault("group_conviction", None)
         merged.append(out)
+    return merged
+
+
+def is_ibkr_flex_index_hedge_row(row: dict[str, Any]) -> bool:
+    """True when a Flex row should be staged as a hedge (short index ETF security)."""
+    ticker = str(row.get("ticker") or "").strip().upper()
+    direction = str(row.get("direction") or "").strip().lower()
+    instrument_type = str(row.get("instrument_type") or "security").strip().lower()
+    return instrument_type == "security" and direction == "short" and ticker in IBKR_FLEX_INDEX_HEDGE_TICKERS
+
+
+def split_ibkr_flex_import_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split parsed Flex rows into portfolio positions and hedge positions."""
+    portfolio_rows: list[dict[str, Any]] = []
+    hedge_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if is_ibkr_flex_index_hedge_row(row):
+            hedge_rows.append(row)
+        else:
+            portfolio_rows.append(row)
+    return portfolio_rows, hedge_rows
+
+
+def merge_ibkr_flex_hedge_replacement(
+    imported_hedge_rows: list[dict[str, Any]],
+    existing_hedge_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build full hedge replacement payload: imported rows replace matches; others preserved."""
+    imported_by_id: dict[str, dict[str, Any]] = {}
+    for row in imported_hedge_rows:
+        key = position_row_id(row)
+        if key:
+            imported_by_id[key] = row
+
+    merged: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for existing in existing_hedge_rows:
+        key = position_row_id(existing)
+        if not key or key in seen_ids:
+            continue
+        if key in imported_by_id:
+            merged.append(dict(imported_by_id[key]))
+            seen_ids.add(key)
+        else:
+            merged.append(dict(existing))
+            seen_ids.add(key)
+
+    for key, row in imported_by_id.items():
+        if key not in seen_ids:
+            merged.append(dict(row))
+            seen_ids.add(key)
+
     return merged

@@ -35,6 +35,10 @@ interface RouteEntry {
 const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   // Command Portfolio
   "/": { pageName: "Portfolio Dashboard", tools: ["get_portfolio"] },
+  "/portfolio/edit": {
+    pageName: "Edit Portfolio",
+    tools: ["get_portfolio_positions", "get_hedge_positions", "propose_portfolio_positions_update"],
+  },
   "/workspace": { pageName: "Portfolio Commander", tools: ["get_workspace"] },
   "/theses": { pageName: "Investment Theses", tools: ["get_thesis"] },
   "/dossier": { pageName: "Position Dossier", tools: ["get_dossier", "get_position_valuation"] },

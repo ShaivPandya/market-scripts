@@ -14,6 +14,7 @@ import {
   updatePortfolioSettings,
   type HedgePosition,
   type PortfolioPosition,
+  type IbkrFlexImportResponse,
   type StagedMutationResponse,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
@@ -340,12 +341,11 @@ function newHedgeRow(): HedgeEditorRow {
   }
 }
 
-interface PortfolioEditorProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+export interface PortfolioEditorPanelProps {
+  onCancel?: () => void
 }
 
-export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
+export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {} as PortfolioEditorPanelProps) {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<EditorTab>("Positions")
   const [positionRows, setPositionRows] = useState<EditorRow[]>([])
@@ -357,13 +357,13 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [positionValidationError, setPositionValidationError] = useState<string | null>(null)
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [lastProposal, setLastProposal] = useState<StagedMutationResponse | null>(null)
+  const [lastProposals, setLastProposals] = useState<StagedMutationResponse[]>([])
+  const [ibkrImportSummary, setIbkrImportSummary] = useState<string | null>(null)
   const [ibkrImportError, setIbkrImportError] = useState<string | null>(null)
   const ibkrImportInputRef = useRef<HTMLInputElement | null>(null)
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (!open) return
     setTab("Positions")
     setLoadError(null)
     setSettingsValidationError(null)
@@ -371,7 +371,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setPositionValidationError(null)
     setHedgeValidationError(null)
     setIbkrImportError(null)
-    setLastProposal(null)
+    setIbkrImportSummary(null)
+    setLastProposals([])
     setIsLoading(true)
     Promise.all([
       fetchPortfolioPositions(),
@@ -388,12 +389,38 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       })
       .catch(err => setLoadError(String(err)))
       .finally(() => setIsLoading(false))
-  }, [open])
+  }, [])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  function handleSaved(result: StagedMutationResponse) {
-    setLastProposal(result)
+  function handleSaved(result: StagedMutationResponse | StagedMutationResponse[]) {
+    const proposals = Array.isArray(result) ? result : [result]
+    setLastProposals(proposals)
     void invalidateApprovalSummaries(queryClient)
+  }
+
+  function handleIbkrImportSuccess(result: IbkrFlexImportResponse) {
+    setIbkrImportError(null)
+    const proposals = result.staged_proposals?.length
+      ? result.staged_proposals
+      : [result]
+    handleSaved(proposals)
+    const summary = result.import_summary
+    if (summary) {
+      const hedgeCount = summary.hedge_imported_count ?? 0
+      const hedgeTickers = summary.hedge_tickers?.length
+        ? summary.hedge_tickers.join(", ")
+        : null
+      const parts = [
+        `${summary.imported_count} row(s) parsed`,
+        `${summary.portfolio_imported_count ?? summary.imported_count - hedgeCount} portfolio`,
+      ]
+      if (hedgeCount > 0) {
+        parts.push(`${hedgeCount} hedge${hedgeTickers ? ` (${hedgeTickers})` : ""}`)
+      }
+      setIbkrImportSummary(parts.join(" · "))
+    } else {
+      setIbkrImportSummary(null)
+    }
   }
 
   const positionMutation = useMutation({
@@ -408,10 +435,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
   const ibkrImportMutation = useMutation({
     mutationFn: (file: File) => importIbkrFlexPortfolioPositions(file),
-    onSuccess: result => {
-      setIbkrImportError(null)
-      handleSaved(result)
-    },
+    onSuccess: handleIbkrImportSuccess,
     onError: err => setIbkrImportError(String(err)),
   })
 
@@ -603,14 +627,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const currentGroupState = positionGroupState(positionRows)
   const saveDisabled = tab === "Positions" && currentGroupState.errors.length > 0
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Edit Portfolio"
-      description="Stage internal portfolio or hedge changes for approval. Nothing is applied until an approval is reviewed and applied."
-      maxWidth="max-w-6xl"
-    >
+  const panelBody = (
+    <>
       {isLoading && (
         <p className="text-sm text-gray-500 py-4">Loading portfolio and hedge positions...</p>
       )}
@@ -681,11 +699,11 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
             )}
           </div>
 
-          {lastProposal && (
-            <StagedProposalNotice proposal={lastProposal} className="mb-4">
-              staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
+          {lastProposals.map((proposal, index) => (
+            <StagedProposalNotice key={proposal.approval_id ?? `${proposal.entity_type}-${index}`} proposal={proposal} className="mb-4">
+              staged for {proposalSubjectLabel(proposal.entity_type)}. Review it in Workspace before app state changes.
             </StagedProposalNotice>
-          )}
+          ))}
 
           {tab === "Positions" ? (
             <>
@@ -715,6 +733,9 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     </ActionButton>
                   </div>
                 </div>
+                {ibkrImportSummary && !ibkrImportError && (
+                  <p className="mt-2 text-xs text-emerald-700">{ibkrImportSummary}</p>
+                )}
                 {ibkrImportError && (
                   <p className="mt-2 text-xs text-red-700">{ibkrImportError}</p>
                 )}
@@ -1344,13 +1365,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
           )}
 
           <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
             <ActionButton
               onClick={tab === "Positions" ? handleSavePositions : handleSaveHedges}
               loading={currentLoading}
@@ -1363,6 +1386,27 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
           </div>
         </>
       )}
+    </>
+  )
+
+  return panelBody
+}
+
+interface PortfolioEditorProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Edit Portfolio"
+      description="Stage internal portfolio or hedge changes for approval. Nothing is applied until an approval is reviewed and applied."
+      maxWidth="max-w-6xl"
+    >
+      {open ? <PortfolioEditorPanel onCancel={() => onOpenChange(false)} /> : null}
     </Dialog>
   )
 }
