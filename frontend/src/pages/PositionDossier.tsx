@@ -626,7 +626,7 @@ export function PositionDossier() {
         </StagedProposalNotice>
       )}
 
-      <WhatChangedPanel summary={data.what_changed} className="mb-4" from="dossier" maxItems={6} />
+      <WhatChangedPanel summary={data.what_changed} className="mb-4" from="dossier" maxItems={6} defaultExpanded={false} />
 
       {/* Tabs */}
       <div className="mb-4 flex w-full max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-app [-webkit-overflow-scrolling:touch]">

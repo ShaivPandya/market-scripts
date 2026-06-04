@@ -23,7 +23,13 @@ import pandas as pd
 
 from ontology.runtime_read_service import get_hedge_positions as _get_hedge_positions
 from ontology.runtime_read_service import get_positions_df as _get_positions_df
-from portfolio.instruments import display_ticker, infer_underlying_direction
+from portfolio.instruments import (
+    direction_sign,
+    display_ticker,
+    infer_underlying_direction,
+    notional_value,
+    option_exposure_sign,
+)
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BASE_CCY,
     BETA_EWMA_HALFLIFE_DAYS,
@@ -365,6 +371,94 @@ def _collapse_positions_to_underlyings(meta: pd.DataFrame) -> tuple[pd.DataFrame
     return collapsed_df, skipped
 
 
+def _leg_quantity(row: Mapping[str, Any]) -> float | None:
+    raw = row.get("quantity")
+    if raw is None:
+        raw = row.get("shares")
+    try:
+        qty = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(qty):
+        return None
+    return abs(qty)
+
+
+def _compute_current_underlying_dollar_exposure(
+    meta: pd.DataFrame,
+    underlying_prices: Mapping[str, float],
+) -> dict[str, float]:
+    """Signed current dollar exposure per underlying from share and option legs.
+
+    Options use premium notional (abs(quantity) * cost_basis * contract_multiplier)
+    with option_exposure_sign. Equity legs use quantity * latest underlying price
+    with direction_sign.
+    """
+    if meta.empty:
+        return {}
+
+    totals: dict[str, float] = {}
+    for record in meta.to_dict("records"):
+        key = str(display_ticker(record) or record.get("ticker") or "").strip().upper()
+        if not key:
+            continue
+        instrument_type = str(record.get("instrument_type") or "security").strip().lower()
+        if instrument_type == "option":
+            sign = option_exposure_sign(record)
+            if sign is None:
+                continue
+            magnitude = notional_value(
+                _leg_quantity(record),
+                record.get("cost_basis"),
+                record.get("contract_multiplier") or 1.0,
+            )
+            if magnitude is None:
+                continue
+            totals[key] = totals.get(key, 0.0) + magnitude * sign
+            continue
+
+        qty = _leg_quantity(record)
+        if qty is None:
+            continue
+        price = underlying_prices.get(key)
+        if price is None or not np.isfinite(float(price)) or float(price) <= 0:
+            continue
+        totals[key] = totals.get(key, 0.0) + qty * float(price) * direction_sign(record)
+
+    return totals
+
+
+def _attach_sizing_delta_columns(
+    weights_df: pd.DataFrame,
+    current_dollar_by_ticker: Mapping[str, float],
+) -> pd.DataFrame:
+    """Add current/target/delta dollar and quantity columns; targets stay in quantity/shares."""
+    if weights_df.empty or "ticker" not in weights_df.columns:
+        return weights_df
+
+    out = weights_df.copy()
+    tickers = out["ticker"].astype(str).str.strip().str.upper()
+    current_dollar = tickers.map(lambda t: float(current_dollar_by_ticker.get(t, 0.0)))
+    out["current_dollar_weight"] = current_dollar
+
+    if "dollar_weight" in out.columns:
+        target_dollar = pd.to_numeric(out["dollar_weight"], errors="coerce").fillna(0.0)
+        out["target_dollar_weight"] = target_dollar
+        out["delta_dollar_weight"] = target_dollar - current_dollar
+
+    unit_notional = unit_notional_in_base(out)
+    safe_unit = unit_notional.where(unit_notional.notna() & (unit_notional > 0))
+    current_qty = (current_dollar / safe_unit).round(0)
+    current_qty = current_qty.where(safe_unit.notna(), np.nan)
+    out["current_quantity"] = current_qty.astype("Int64")
+
+    if "target_quantity" in out.columns:
+        target_qty = pd.to_numeric(out["target_quantity"], errors="coerce")
+        out["delta_quantity"] = (target_qty - current_qty).round(0).astype("Int64")
+
+    return out
+
+
 def _build_conviction_weights(
     meta: pd.DataFrame,
     positions: dict[str, dict[str, Any]],
@@ -541,9 +635,10 @@ def size_portfolio(
         selected_hedges = _normalize_hedge_tickers(hedge_tickers, beta_hedge_mode)
         positions_by_ticker = _parse_positions(positions)
 
-        # Load portfolio metadata
-        meta = _get_positions_df(fallback_to_csv=True)
-        meta["direction"] = meta["direction"].fillna("")
+        # Load portfolio metadata (keep raw legs for current-size / delta math)
+        meta_raw = _get_positions_df(fallback_to_csv=True)
+        meta_raw["direction"] = meta_raw["direction"].fillna("")
+        meta = meta_raw.copy()
         # Collapse legs to one synthetic equity row per underlying so option
         # underlyings are sized as equity with a net inferred direction, and
         # nearly fully offsetting option structures are skipped.
@@ -808,6 +903,8 @@ def size_portfolio(
 
         # Build weights DataFrame
         latest_prices = usd_prices[tickers].iloc[-1]
+        underlying_price_map = {str(t).strip().upper(): float(latest_prices[t]) for t in tickers}
+        current_dollar_by_ticker = _compute_current_underlying_dollar_exposure(meta_raw, underlying_price_map)
         weights_df = pd.DataFrame(
             {
                 "ticker": tickers,
@@ -842,6 +939,7 @@ def size_portfolio(
             weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
             weights_df["base_units"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("spot_fx"))
             weights_df["shares"] = weights_df["quantity"]
+            weights_df = _attach_sizing_delta_columns(weights_df, current_dollar_by_ticker)
         weights_df = weights_df.sort_values("weight", ascending=False)
 
         # Build hedges DataFrame
@@ -932,6 +1030,7 @@ def size_portfolio(
                 max_scaled_weights_df["instrument_type"].eq("spot_fx")
             )
             max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
+            max_scaled_weights_df = _attach_sizing_delta_columns(max_scaled_weights_df, current_dollar_by_ticker)
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         benchmark_metrics: dict[str, Any] = {}

@@ -438,3 +438,103 @@ def test_collapse_skips_offsetting_option_underlying():
 
     assert skipped == ["TSLA"]
     assert collapsed.empty
+
+
+def test_compute_current_exposure_short_put_uses_premium_notional():
+    meta = pd.DataFrame(
+        [
+            {
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "short",
+                "instrument_type": "option",
+                "option_type": "put",
+                "underlying_ticker": "NVDA",
+                "quantity": 2,
+                "cost_basis": 6.0,
+                "contract_multiplier": 100,
+            }
+        ]
+    )
+    exposure = portfolio_sizer._compute_current_underlying_dollar_exposure(meta, {"NVDA": 500.0})
+    assert exposure["NVDA"] == pytest.approx(2 * 6.0 * 100.0)
+
+
+def test_compute_current_exposure_sums_equity_and_option_legs():
+    meta = pd.DataFrame(
+        [
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "security",
+                "quantity": 10,
+                "shares": 10,
+            },
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "call",
+                "underlying_ticker": "AAPL",
+                "quantity": 1,
+                "cost_basis": 5.0,
+                "contract_multiplier": 100,
+            },
+        ]
+    )
+    exposure = portfolio_sizer._compute_current_underlying_dollar_exposure(meta, {"AAPL": 100.0})
+    assert exposure["AAPL"] == pytest.approx(10 * 100.0 + 1 * 5.0 * 100.0)
+
+
+def test_attach_sizing_delta_columns_reduces_buy_when_option_exposure_exists():
+    weights_df = pd.DataFrame(
+        {
+            "ticker": ["NVDA"],
+            "instrument_type": ["security"],
+            "price": [500.0],
+            "contract_multiplier": [1.0],
+            "dollar_weight": [50_000.0],
+            "target_quantity": [100],
+        }
+    )
+    current_dollar = {"NVDA": 12_000.0}
+    out = portfolio_sizer._attach_sizing_delta_columns(weights_df, current_dollar)
+
+    assert out["current_dollar_weight"].iloc[0] == pytest.approx(12_000.0)
+    assert out["target_dollar_weight"].iloc[0] == pytest.approx(50_000.0)
+    assert out["delta_dollar_weight"].iloc[0] == pytest.approx(38_000.0)
+    assert int(out["current_quantity"].iloc[0]) == 24
+    assert int(out["delta_quantity"].iloc[0]) == 76
+
+
+def test_offsetting_options_contribute_near_zero_current_exposure():
+    meta = pd.DataFrame(
+        [
+            {
+                "ticker": "TSLA",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "call",
+                "underlying_ticker": "TSLA",
+                "quantity": 1,
+                "cost_basis": 10.0,
+                "contract_multiplier": 100,
+            },
+            {
+                "ticker": "TSLA",
+                "asset": "equity",
+                "direction": "long",
+                "instrument_type": "option",
+                "option_type": "put",
+                "underlying_ticker": "TSLA",
+                "quantity": 1,
+                "cost_basis": 10.0,
+                "contract_multiplier": 100,
+            },
+        ]
+    )
+    exposure = portfolio_sizer._compute_current_underlying_dollar_exposure(meta, {"TSLA": 200.0})
+    assert abs(exposure.get("TSLA", 0.0)) < 1e-6

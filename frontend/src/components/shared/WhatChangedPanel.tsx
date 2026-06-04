@@ -1,4 +1,5 @@
-import { AlertTriangle, Clock, GitBranch, Info } from "lucide-react"
+import { useState } from "react"
+import { AlertTriangle, ChevronDown, Clock, GitBranch, Info } from "lucide-react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 
@@ -40,6 +41,7 @@ interface WhatChangedPanelProps {
   from?: string
   maxItems?: number
   title?: string
+  defaultExpanded?: boolean
 }
 
 function formatTime(value: string | null | undefined): string {
@@ -102,7 +104,9 @@ export function WhatChangedPanel({
   from = "workspace",
   maxItems = 8,
   title = "What Changed",
+  defaultExpanded = true,
 }: WhatChangedPanelProps) {
+  const [open, setOpen] = useState(defaultExpanded)
   const items = summary?.items ?? []
   const visibleItems = items.slice(0, maxItems)
   const hiddenCount = Math.max(0, items.length - visibleItems.length)
@@ -110,71 +114,85 @@ export function WhatChangedPanel({
   const warningCount = summary?.counts?.by_severity?.warning ?? 0
 
   return (
-    <section className={cn("theme-surface rounded-xl p-4", className)}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-app">
-          <Clock size={14} className="text-blue-500" />
-          {title}
-        </h2>
-        <span className="ml-auto text-xs text-subtle">{baselineText(summary)}</span>
-      </div>
-
-      <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted">
-        <span>{summary?.counts?.total ?? 0} tracked changes</span>
-        {criticalCount ? <span>{criticalCount} critical</span> : null}
-        {warningCount ? <span>{warningCount} warning</span> : null}
-      </div>
-
-      {visibleItems.length === 0 ? (
-        <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
-          No tracked operational changes since the baseline.
+    <section className={cn("theme-surface overflow-hidden rounded-xl", className)}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="flex w-full flex-col gap-2 px-4 py-3.5 text-left"
+      >
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-app">
+            <Clock size={14} className="text-blue-500" />
+            {title}
+          </h2>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-subtle">{baselineText(summary)}</span>
+            <ChevronDown size={18} className={cn("shrink-0 text-subtle transition-transform", open && "rotate-180")} />
+          </div>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {visibleItems.map(item => {
-            const Icon = severityIcon(item.severity)
-            const pairs = diffPairs(item)
-            return (
-              <div key={`${item.object_uid}-${item.changed_at}`} className="rounded-lg border border-app px-3 py-2">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium", severityClass(item.severity))}>
-                    <Icon size={12} />
-                    {label(item.severity)}
-                  </span>
-                  <span className="rounded border border-app px-1.5 py-0.5 text-xs text-subtle">
-                    {label(item.category)}
-                  </span>
-                  {item.ticker ? (
-                    <Link
-                      to={`/dossier/${encodeURIComponent(item.ticker)}`}
-                      state={{ from }}
-                      className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      {item.ticker}
-                    </Link>
-                  ) : null}
-                  <span className="min-w-0 flex-1 truncate font-medium text-app">{item.title}</span>
-                  <span className="text-xs text-subtle">{formatTime(item.changed_at)}</span>
-                </div>
-                <p className="mt-1 text-xs text-muted">{item.summary}</p>
-                {item.change_kind === "updated" && pairs.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-subtle">
-                    {pairs.map(([key, before, after]) => (
-                      <span key={key} className="max-w-full truncate">
-                        {label(key)}: {displayValue(before)} {"->"} {displayValue(after)}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            )
-          })}
-          {hiddenCount > 0 ? (
-            <div className="flex items-center gap-2 rounded-lg border border-app px-3 py-2 text-xs text-subtle">
-              <GitBranch size={12} />
-              {hiddenCount} more tracked changes hidden.
+        <div className="flex flex-wrap gap-2 text-xs text-muted">
+          <span>{summary?.counts?.total ?? 0} tracked changes</span>
+          {criticalCount ? <span>{criticalCount} critical</span> : null}
+          {warningCount ? <span>{warningCount} warning</span> : null}
+        </div>
+      </button>
+
+      {open && (
+        <div className="space-y-2 border-t border-app px-4 pb-4 pt-3">
+          {visibleItems.length === 0 ? (
+            <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
+              No tracked operational changes since the baseline.
             </div>
-          ) : null}
+          ) : (
+            <>
+              {visibleItems.map(item => {
+                const Icon = severityIcon(item.severity)
+                const pairs = diffPairs(item)
+                return (
+                  <div key={`${item.object_uid}-${item.changed_at}`} className="rounded-lg border border-app px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium", severityClass(item.severity))}>
+                        <Icon size={12} />
+                        {label(item.severity)}
+                      </span>
+                      <span className="rounded border border-app px-1.5 py-0.5 text-xs text-subtle">
+                        {label(item.category)}
+                      </span>
+                      {item.ticker ? (
+                        <Link
+                          to={`/dossier/${encodeURIComponent(item.ticker)}`}
+                          state={{ from }}
+                          onClick={e => e.stopPropagation()}
+                          className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {item.ticker}
+                        </Link>
+                      ) : null}
+                      <span className="min-w-0 flex-1 truncate font-medium text-app">{item.title}</span>
+                      <span className="text-xs text-subtle">{formatTime(item.changed_at)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">{item.summary}</p>
+                    {item.change_kind === "updated" && pairs.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-subtle">
+                        {pairs.map(([key, before, after]) => (
+                          <span key={key} className="max-w-full truncate">
+                            {label(key)}: {displayValue(before)} {"->"} {displayValue(after)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+              {hiddenCount > 0 ? (
+                <div className="flex items-center gap-2 rounded-lg border border-app px-3 py-2 text-xs text-subtle">
+                  <GitBranch size={12} />
+                  {hiddenCount} more tracked changes hidden.
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </section>

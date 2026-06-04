@@ -735,12 +735,27 @@ export function PortfolioSizer() {
     for (const row of allRows) {
       const ticker = String(row.ticker ?? "").trim().toUpperCase()
       if (!ticker) continue
-      const targetShares = toNumber(row.target_quantity) ?? toNumber(row.contracts) ?? toNumber(row.quantity) ?? toNumber(row.shares) ?? 0
+      const isHedge = row.type === "hedge"
+      const targetShares =
+        toNumber(row.target_quantity) ??
+        toNumber(row.contracts) ??
+        toNumber(row.quantity) ??
+        toNumber(row.shares) ??
+        0
       const price = toNumber(row.price) ?? 0
       const multiplier = toNumber(row.contract_multiplier) ?? 1
-      const currentShares = currentHoldings[ticker] ?? 0
-      const delta = targetShares - currentShares
-      const type = row.type === "hedge" ? "Hedge" : "Position"
+      const backendCurrent =
+        toNumber(row.current_quantity) ??
+        toNumber(row.current_shares) ??
+        (isHedge ? toNumber(row.current_shares) : null)
+      const currentShares = backendCurrent ?? currentHoldings[ticker] ?? 0
+      const backendDelta =
+        toNumber(row.delta_quantity) ??
+        toNumber(row.delta_shares) ??
+        (isHedge ? toNumber(row.delta_shares) : null)
+      const delta = backendDelta ?? targetShares - currentShares
+      const backendNotional = toNumber(row.delta_dollar_weight)
+      const type = isHedge ? "Hedge" : "Position"
       const direction = String(row.direction ?? "")
 
       deltaList.push({
@@ -751,7 +766,9 @@ export function PortfolioSizer() {
         targetShares: Math.round(targetShares),
         delta: Math.round(delta),
         price,
-        notional: Math.round(delta) * price * multiplier,
+        notional:
+          backendNotional ??
+          Math.round(delta) * price * multiplier,
       })
     }
 
