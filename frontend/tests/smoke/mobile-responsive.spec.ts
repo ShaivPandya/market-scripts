@@ -33,11 +33,11 @@ test.describe("mobile responsive surfaces", () => {
     const nav = page.getByRole("navigation", { name: "Primary navigation" })
     await expect(nav.getByText("Command Portfolio")).toBeVisible()
     await dismissFloatingAlerts(page)
-    await nav.getByRole("link", { name: "Portfolio Commander" }).click()
+    await nav.getByRole("link", { name: "Workspace" }).click()
 
     await expect(page).toHaveURL(/\/workspace$/)
     await expect(page.getByText("Here's where your book stands and the few things worth your attention.")).toBeVisible()
-    await expect(page.locator(".theme-floating").getByText("Portfolio Commander", { exact: true })).toBeVisible()
+    await expect(page.locator(".theme-floating").getByText("Workspace", { exact: true })).toBeVisible()
   })
 
   test("reviews workspace approvals with stacked dialog actions", async ({ page }) => {

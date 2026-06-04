@@ -16,7 +16,7 @@ export const NAV_SECTIONS: NavSection[] = [
     pages: [
       { label: "Portfolio Dashboard", path: "/" },
       { label: "Edit Portfolio", path: "/portfolio/edit" },
-      { label: "Portfolio Commander", path: "/workspace" },
+      { label: "Workspace", path: "/workspace" },
       { label: "Investment Theses", path: "/theses" },
     ],
   },

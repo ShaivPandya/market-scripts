@@ -24,7 +24,7 @@ test("navigates via workflow sidebar links on desktop", async ({ page }) => {
 
   const nav = primaryNav(page)
 
-  await nav.getByRole("link", { name: "Portfolio Commander" }).click()
+  await nav.getByRole("link", { name: "Workspace" }).click()
   await expect(page).toHaveURL(/\/workspace$/)
   await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()
 
@@ -48,8 +48,8 @@ test("navigates via command palette workflow search", async ({ page }) => {
   await page.getByRole("button", { name: "Search workflows" }).click()
   await expect(page.getByPlaceholder("Search workflows")).toBeVisible()
 
-  await page.getByPlaceholder("Search workflows").fill("Portfolio Commander")
-  await page.getByRole("option", { name: /Portfolio Commander/ }).click()
+  await page.getByPlaceholder("Search workflows").fill("Workspace")
+  await page.getByRole("option", { name: /Workspace/ }).click()
 
   await expect(page).toHaveURL(/\/workspace$/)
   await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible()

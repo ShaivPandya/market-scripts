@@ -1607,7 +1607,7 @@ export function Workspace() {
     isPending,
   ])
 
-  if (isPending) return <LoadingSpinner message="Loading portfolio commander..." />
+  if (isPending) return <LoadingSpinner message="Loading workspace..." />
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
