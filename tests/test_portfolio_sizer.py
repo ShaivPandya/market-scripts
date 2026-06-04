@@ -104,6 +104,46 @@ def test_spot_fx_prices_are_not_double_converted(monkeypatch):
     assert captured["fx_tickers"] == []
 
 
+def test_prepare_instrument_metadata_allows_duplicate_ticker_index():
+    meta = pd.DataFrame(
+        {
+            "price_symbol": ["AAPL", "AAPL260116P00150000"],
+            "instrument_type": ["security", "option"],
+            "asset": ["equity", "equity"],
+        },
+        index=["AAPL", "AAPL"],
+    )
+
+    out = portfolio_analyzer.prepare_instrument_metadata(meta)
+
+    assert out["price_symbol"].tolist() == ["AAPL", "AAPL260116P00150000"]
+    assert out["instrument_type"].tolist() == ["security", "option"]
+
+
+def test_leg_price_map_allows_duplicate_raw_ticker_legs():
+    meta = pd.DataFrame(
+        [
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "instrument_type": "security",
+                "price_symbol": "AAPL",
+            },
+            {
+                "ticker": "AAPL",
+                "asset": "equity",
+                "instrument_type": "option",
+                "price_symbol": "AAPL260116P00150000",
+            },
+        ]
+    )
+    prices = pd.DataFrame({"AAPL": [100.0], "AAPL260116P00150000": [5.0]})
+
+    price_map = portfolio_sizer._leg_price_map(meta, prices)
+
+    assert price_map == {"AAPL": 100.0, "AAPL260116P00150000": 5.0}
+
+
 def test_spot_fx_unit_notional_uses_base_units():
     rows = pd.DataFrame(
         {

@@ -1781,19 +1781,25 @@ def prepare_instrument_metadata(meta: pd.DataFrame) -> pd.DataFrame:
     else:
         out["instrument_type"] = out["instrument_type"].fillna("security").astype(str).str.strip().str.lower()
         out.loc[out["instrument_type"].eq(""), "instrument_type"] = "security"
-    for ticker in list(out.index):
-        symbol = str(out.loc[ticker, "price_symbol"] or ticker).strip().upper()
-        instrument_type = str(out.loc[ticker, "instrument_type"] or "security").strip().lower()
+
+    def _set_cell(row_idx: int, column: str, value: Any) -> None:
+        if column not in out.columns:
+            out[column] = None
+        out.iat[row_idx, out.columns.get_loc(column)] = value
+
+    for row_idx, ticker in enumerate(list(out.index)):
+        symbol = str(out["price_symbol"].iat[row_idx] or ticker).strip().upper()
+        instrument_type = str(out["instrument_type"].iat[row_idx] or "security").strip().lower()
         if instrument_type == "spot_fx" or (symbol.endswith("=X") and is_spot_fx_symbol(symbol)):
             symbol = normalize_spot_fx_symbol(symbol)
             fx_base, fx_quote = spot_fx_currencies(symbol)
-            out.loc[ticker, "instrument_type"] = "spot_fx"
-            out.loc[ticker, "asset"] = "fx"
-            out.loc[ticker, "price_symbol"] = symbol
-            out.loc[ticker, "fx_base_currency"] = fx_base
-            out.loc[ticker, "fx_quote_currency"] = fx_quote
-            out.loc[ticker, "currency"] = fx_quote
-            out.loc[ticker, "contract_multiplier"] = 1.0
+            _set_cell(row_idx, "instrument_type", "spot_fx")
+            _set_cell(row_idx, "asset", "fx")
+            _set_cell(row_idx, "price_symbol", symbol)
+            _set_cell(row_idx, "fx_base_currency", fx_base)
+            _set_cell(row_idx, "fx_quote_currency", fx_quote)
+            _set_cell(row_idx, "currency", fx_quote)
+            _set_cell(row_idx, "contract_multiplier", 1.0)
     if "contract_multiplier" not in out.columns:
         out["contract_multiplier"] = 1.0
     out["contract_multiplier"] = pd.to_numeric(out["contract_multiplier"], errors="coerce").fillna(1.0)

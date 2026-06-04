@@ -452,9 +452,12 @@ def _leg_price_map(meta_raw: pd.DataFrame, usd_prices: pd.DataFrame) -> dict[str
     prepared = prepare_instrument_metadata(prepared)
     latest = usd_prices.iloc[-1]
     out: dict[str, float] = {}
-    for ticker in prepared.index:
+    for ticker, row in prepared.iterrows():
         traded = str(ticker).strip().upper()
-        price_symbol = str(prepared.loc[ticker, "price_symbol"] or traded).strip().upper()
+        price_symbol_raw = row.get("price_symbol")
+        price_symbol = str(price_symbol_raw).strip().upper() if pd.notna(price_symbol_raw) else traded
+        if not price_symbol:
+            price_symbol = traded
         for key in (traded, price_symbol):
             if key in latest.index and key not in out:
                 value = float(latest[key])
