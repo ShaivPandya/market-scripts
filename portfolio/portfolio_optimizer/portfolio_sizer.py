@@ -375,6 +375,8 @@ def _leg_quantity(row: Mapping[str, Any]) -> float | None:
     raw = row.get("quantity")
     if raw is None:
         raw = row.get("shares")
+    if raw is None:
+        return None
     try:
         qty = float(raw)
     except (TypeError, ValueError):
