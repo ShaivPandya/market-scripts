@@ -49,3 +49,34 @@ def test_canonicalize_position_group_rows_preserves_first_display_name():
                 {"ticker": "SSNLF", "direction": "short", "group_name": "Memory", "group_conviction": 5},
             ]
         )
+
+
+def test_group_validation_uses_option_exposure_direction():
+    validate_position_groups(
+        [
+            {"ticker": "MRVL", "direction": "long", "group_name": "Semiconductors", "group_conviction": 5},
+            {
+                "ticker": "MRVL",
+                "direction": "short",
+                "instrument_type": "option",
+                "option_type": "put",
+                "group_name": "Semiconductors",
+                "group_conviction": 5,
+            },
+        ]
+    )
+
+    with pytest.raises(ValueError, match="cannot mix long and short"):
+        validate_position_groups(
+            [
+                {"ticker": "MRVL", "direction": "long", "group_name": "Semiconductors", "group_conviction": 5},
+                {
+                    "ticker": "MRVL",
+                    "direction": "long",
+                    "instrument_type": "option",
+                    "option_type": "put",
+                    "group_name": "Semiconductors",
+                    "group_conviction": 5,
+                },
+            ]
+        )

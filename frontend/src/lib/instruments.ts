@@ -19,6 +19,28 @@ export const OPTION_TYPE_OPTIONS = [
   { value: "put", label: "Put" },
 ] as const
 
+type ExposureDirection = "long" | "short"
+
+function normalizedDirection(value?: string | null): ExposureDirection | null {
+  const direction = String(value ?? "").trim().toLowerCase()
+  if (direction === "long" || direction === "short") return direction
+  return null
+}
+
+export function exposureDirection(row: {
+  direction?: string | null
+  option_type?: string | null
+}): ExposureDirection | null {
+  const direction = normalizedDirection(row.direction)
+  const optionType = String(row.option_type ?? "").trim().toLowerCase()
+  if (optionType === "call" || optionType === "put") {
+    const legSign = direction === "short" ? -1 : 1
+    const optionSign = optionType === "call" ? 1 : -1
+    return legSign * optionSign > 0 ? "long" : "short"
+  }
+  return direction
+}
+
 const OCC_SYMBOL_RE = /^([A-Z]{1,6})(\d{6})([CP])(\d{8})$/
 
 export interface ParsedOptionContract {

@@ -27,6 +27,7 @@ import {
   canonicalSpotFxSymbol,
   displayTicker,
   effectivePriceSymbol,
+  exposureDirection,
   inferInstrumentType,
   nextContractMultiplier,
   normalizedSymbol,
@@ -239,13 +240,14 @@ function positionGroupState(rows: EditorRow[]) {
       errors.push(`Group ${name} requires a conviction.`)
       continue
     }
+    const direction = exposureDirection(row) ?? row.direction
     const existing = groups.get(key)
     if (!existing) {
       groups.set(key, {
         key,
         name,
         conviction,
-        direction: row.direction,
+        direction,
         ids: [row._id],
         tickers: [displayTicker(row) || row.ticker || "New position"],
       })
@@ -256,8 +258,8 @@ function positionGroupState(rows: EditorRow[]) {
     if (existing.conviction !== conviction) {
       errors.push(`Group ${existing.name} has inconsistent convictions.`)
     }
-    if (existing.direction !== row.direction) {
-      errors.push(`Group ${existing.name} cannot mix ${existing.direction} and ${row.direction} positions.`)
+    if (existing.direction !== direction) {
+      errors.push(`Group ${existing.name} cannot mix ${existing.direction} and ${direction} exposure.`)
     }
   }
   return { groups, errors: Array.from(new Set(errors)) }

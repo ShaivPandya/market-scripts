@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from math import isnan
 from typing import Any
 
+from portfolio.instruments import option_exposure_sign
+
 CONVICTION_MIN = 1
 CONVICTION_MAX = 5
 
@@ -55,6 +57,14 @@ def normalize_position_group_fields(row: Mapping[str, Any]) -> tuple[str | None,
     return name, conviction
 
 
+def position_group_direction(row: Mapping[str, Any]) -> str:
+    """Return the underlying exposure direction used for group compatibility."""
+    option_sign = option_exposure_sign(row)
+    if option_sign is not None:
+        return "long" if option_sign > 0 else "short"
+    return str(row.get("direction") or "").strip().lower()
+
+
 def validate_position_groups(rows: Sequence[Mapping[str, Any]]) -> None:
     groups: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -65,7 +75,7 @@ def validate_position_groups(rows: Sequence[Mapping[str, Any]]) -> None:
         conviction = normalize_group_conviction(row.get("group_conviction"))
         if conviction is None:
             raise ValueError(f"Group '{name}' requires a group conviction.")
-        direction = str(row.get("direction") or "").strip().lower()
+        direction = position_group_direction(row)
         ticker = str(row.get("ticker") or "").strip().upper() or "position"
         existing = groups.setdefault(
             key,
@@ -101,7 +111,7 @@ def canonicalize_position_group_rows(rows: Sequence[Mapping[str, Any]]) -> list[
         conviction = normalize_group_conviction(item.get("group_conviction"))
         if conviction is None:
             raise ValueError(f"Group '{name}' requires a group conviction.")
-        direction = str(item.get("direction") or "").strip().lower()
+        direction = position_group_direction(item)
         ticker = str(item.get("ticker") or "").strip().upper() or "position"
         group = groups.setdefault(
             key,
@@ -130,7 +140,7 @@ def group_summaries(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         if not key:
             continue
         conviction = normalize_group_conviction(row.get("group_conviction"))
-        direction = str(row.get("direction") or "").strip().lower()
+        direction = position_group_direction(row)
         ticker = str(row.get("ticker") or "").strip().upper()
         group = groups.setdefault(
             key,
