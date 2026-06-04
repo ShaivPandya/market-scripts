@@ -107,6 +107,74 @@ export function normalizedSymbol(value?: string | null) {
   return (value ?? "").trim().toUpperCase()
 }
 
+/** Curated single-name leveraged / inverse ETFs (traded -> underlying, factor). */
+export const STATIC_ECONOMIC_EXPOSURE: Record<string, { underlying: string; factor: number }> = {
+  METU: { underlying: "META", factor: 2 },
+  METD: { underlying: "META", factor: -1 },
+  NVDU: { underlying: "NVDA", factor: 2 },
+  NVDD: { underlying: "NVDA", factor: -1 },
+  AMZU: { underlying: "AMZN", factor: 2 },
+  AMZD: { underlying: "AMZN", factor: -1 },
+  MSFU: { underlying: "MSFT", factor: 2 },
+  MSFD: { underlying: "MSFT", factor: -1 },
+  AAPU: { underlying: "AAPL", factor: 2 },
+  AAPD: { underlying: "AAPL", factor: -1 },
+  TSLU: { underlying: "TSLA", factor: 2 },
+  TSLD: { underlying: "TSLA", factor: -1 },
+  GOOU: { underlying: "GOOGL", factor: 2 },
+  GOOD: { underlying: "GOOGL", factor: -1 },
+}
+
+export function resolveEconomicExposure(row: {
+  ticker?: string | null
+  underlying_ticker?: string | null
+  instrument_type?: InstrumentType | string | null
+  economic_underlying_ticker?: string | null
+  exposure_multiplier?: number | null
+}) {
+  const traded = normalizedSymbol(row.ticker)
+  if (!traded) {
+    return { traded_ticker: "", underlying_ticker: "", factor: 1, source: "identity" as const }
+  }
+  if (inferInstrumentType(row.ticker ?? "", row.instrument_type) === "option") {
+    const underlying = normalizedSymbol(row.underlying_ticker) || traded
+    return { traded_ticker: traded, underlying_ticker: underlying, factor: 1, source: "identity" as const }
+  }
+  const mapped = STATIC_ECONOMIC_EXPOSURE[traded]
+  if (mapped) {
+    return {
+      traded_ticker: traded,
+      underlying_ticker: mapped.underlying,
+      factor: mapped.factor,
+      source: "static" as const,
+    }
+  }
+  const explicitUnderlying = normalizedSymbol(row.economic_underlying_ticker)
+  if (explicitUnderlying) {
+    const factor = row.exposure_multiplier ?? 1
+    return {
+      traded_ticker: traded,
+      underlying_ticker: explicitUnderlying,
+      factor,
+      source: "static" as const,
+    }
+  }
+  return { traded_ticker: traded, underlying_ticker: traded, factor: 1, source: "identity" as const }
+}
+
+export function exposureGroupKey(row: {
+  ticker?: string | null
+  underlying_ticker?: string | null
+  instrument_type?: InstrumentType | string | null
+  economic_underlying_ticker?: string | null
+  exposure_multiplier?: number | null
+}) {
+  if (inferInstrumentType(row.ticker ?? "", row.instrument_type) === "option") {
+    return displayTicker(row)
+  }
+  return resolveEconomicExposure(row).underlying_ticker
+}
+
 export function displayTicker(row: {
   ticker?: string | null
   underlying_ticker?: string | null

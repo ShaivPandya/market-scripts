@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Any
 
+from portfolio.economic_exposure import (
+    economic_exposure_fields,
+    resolve_economic_exposure,
+    scale_signed_notional_for_exposure,
+)
+
 CALCULATION_VERSION = "scenario_simulator_v2"
 SUPPORTED_ACTIONS = {"hold", "add", "trim", "exit"}
 DEFAULT_MAX_ADV_PARTICIPATION = 1.0
@@ -280,10 +286,12 @@ def _normalize_position(position: Mapping[str, Any]) -> dict[str, Any]:
     if notional is None and quantity is not None and price is not None:
         notional = abs(quantity * price * multiplier)
     signed_notional = _signed(notional, direction)
+    exposure_meta = economic_exposure_fields(position)
     return {
         "ticker": ticker,
         "asset": str(position.get("asset") or "equity").strip().lower(),
         "direction": direction,
+        **exposure_meta,
         "quantity": quantity,
         "shares": quantity,
         "current_price": price,
@@ -518,11 +526,10 @@ def _scenario_outcome(
     friction: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     price_move = _float_or_none(scenario.get("price_move_ratio")) or 0.0
-    direction = str(base.get("direction") or "long")
     current_notional = _positive_float(base.get("notional_base")) or 0.0
     target_notional = _positive_float(target.get("notional_base")) or 0.0
-    current_pnl = _signed(current_notional * price_move, direction) or 0.0
-    target_pnl_gross = _signed(target_notional * price_move, direction) or 0.0
+    current_pnl = _economic_scenario_pnl(base, current_notional, price_move)
+    target_pnl_gross = _economic_scenario_pnl(base, target_notional, price_move)
     friction_cost = _float_or_none((friction or {}).get("total_friction_base")) or 0.0
     target_pnl_net = target_pnl_gross - friction_cost
     incremental_pnl_gross = target_pnl_gross - current_pnl
@@ -784,22 +791,43 @@ def _evaluate_policy_gate(payload: Mapping[str, Any], *, context: Mapping[str, A
         }
 
 
+def _economic_scenario_pnl(position: Mapping[str, Any], notional: float, price_move: float) -> float:
+    """PnL from an underlying price move, scaled by economic leverage factor when mapped."""
+    exposure = resolve_economic_exposure(position)
+    if exposure.source == "identity" and abs(exposure.factor) == 1.0:
+        direction = str(position.get("direction") or "long")
+        return _signed(notional * price_move, direction) or 0.0
+    economic = scale_signed_notional_for_exposure(notional, position)
+    if economic is None:
+        return 0.0
+    return economic * price_move
+
+
 def _exposure_summary(
     base: Mapping[str, Any], target: Mapping[str, Any], *, portfolio_book: float | None
 ) -> dict[str, Any]:
     current_notional = _positive_float(base.get("notional_base")) or 0.0
     target_notional = _positive_float(target.get("notional_base")) or 0.0
-    direction = str(base.get("direction") or "long")
-    current_signed = _signed(current_notional, direction) or 0.0
-    target_signed = _signed(target_notional, direction) or 0.0
+    current_signed = scale_signed_notional_for_exposure(current_notional, base)
+    if current_signed is None:
+        direction = str(base.get("direction") or "long")
+        current_signed = _signed(current_notional, direction) or 0.0
+    target_signed = scale_signed_notional_for_exposure(target_notional, base)
+    if target_signed is None:
+        direction = str(base.get("direction") or "long")
+        target_signed = _signed(target_notional, direction) or 0.0
     delta = target_signed - current_signed
+    current_economic = abs(current_signed)
+    target_economic = abs(target_signed)
     return {
         "current_notional_base": _round(current_notional),
         "target_notional_base": _round(target_notional),
         "delta_notional_base": _round(delta),
         "gross_delta_notional_base": _round(target_notional - current_notional),
-        "current_weight_pct": _pct_ratio(current_notional, portfolio_book),
-        "target_weight_pct": _pct_ratio(target_notional, portfolio_book),
+        "economic_underlying_ticker": base.get("economic_underlying_ticker"),
+        "exposure_multiplier": base.get("exposure_multiplier"),
+        "current_weight_pct": _pct_ratio(current_economic, portfolio_book),
+        "target_weight_pct": _pct_ratio(target_economic, portfolio_book),
         "delta_weight_pct": _pct_ratio(delta, portfolio_book),
     }
 

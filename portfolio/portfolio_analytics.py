@@ -16,8 +16,14 @@ import math
 
 import pandas as pd
 
+from portfolio.economic_exposure import (
+    economic_exposure_fields,
+    exposure_group_key,
+    scale_gross_notional_for_exposure,
+)
 from portfolio.instruments import (
     NEAR_ZERO_NET_RATIO,
+    chart_price_symbol,
     display_ticker,
     notional_value,
     position_row_id,
@@ -236,7 +242,8 @@ def compute_analytics(
     for leg_id, pos in pos_lookup.items():
         instrument_type = str(pos.get("instrument_type") or "security").strip().lower()
         display = display_ticker(pos)
-        series = prices.get(display)
+        price_key = chart_price_symbol(pos) if instrument_type != "option" else display
+        series = _price_series(prices, display, price_key)
         if instrument_type == "option":
             cp = _option_current_price(pos)
         else:
@@ -264,7 +271,7 @@ def compute_analytics(
     # legs into a single net directional exposure per underlying.
     exposure_groups: dict[str, dict[str, list[str]]] = {}
     for leg_id, pos in pos_lookup.items():
-        key = display_ticker(pos)
+        key = exposure_group_key(pos)
         is_option = str(pos.get("instrument_type") or "security").strip().lower() == "option"
         group = exposure_groups.setdefault(key, {"option_legs": [], "other_legs": []})
         (group["option_legs"] if is_option else group["other_legs"]).append(leg_id)
@@ -307,15 +314,16 @@ def compute_analytics(
         if str(pos.get("instrument_type") or "security").strip().lower() == "option":
             continue
         value = leg_current_notional.get(leg_id)
-        if value is not None:
-            total_notional += value
+        scaled = scale_gross_notional_for_exposure(value, pos)
+        if scaled is not None:
+            total_notional += scaled
     for agg in underlying_exposure.values():
         total_notional += agg["option_size_current"]
 
     weights: dict[str, float] = {}
     if total_notional > 0:
         for leg_id, pos in pos_lookup.items():
-            key = display_ticker(pos)
+            key = exposure_group_key(pos)
             is_option = str(pos.get("instrument_type") or "security").strip().lower() == "option"
             if is_option:
                 agg = underlying_exposure.get(key, {})
@@ -327,7 +335,7 @@ def compute_analytics(
                 else:
                     weights[leg_id] = 0.0
             else:
-                leg_cur = leg_current_notional.get(leg_id)
+                leg_cur = scale_gross_notional_for_exposure(leg_current_notional.get(leg_id), pos)
                 weights[leg_id] = (leg_cur / total_notional) if leg_cur is not None else 0.0
     else:
         eq = 1.0 / n_positions
@@ -337,7 +345,9 @@ def compute_analytics(
     for leg_id, pos in pos_lookup.items():
         instrument_type = str(pos.get("instrument_type") or "security").strip().lower()
         display = display_ticker(pos)
-        series = prices.get(display)
+        group_key = exposure_group_key(pos)
+        price_key = chart_price_symbol(pos) if instrument_type != "option" else display
+        series = _price_series(prices, display, price_key)
         direction = pos.get("direction", "long")
         cost_basis = pos.get("cost_basis")
         quantity = pos.get("quantity", pos.get("shares"))
@@ -356,7 +366,7 @@ def compute_analytics(
         cost_notional = leg_cost_notional[leg_id]
         signed_current = leg_signed_current[leg_id]
         signed_cost = leg_signed_cost[leg_id]
-        agg = underlying_exposure.get(display, {})
+        agg = underlying_exposure.get(group_key, {})
         underlying_has_options = bool(agg.get("has_options"))
         high_52w, dd_pct = (
             (None, None)
@@ -378,9 +388,12 @@ def compute_analytics(
         weekly_contrib = round(weekly_ret * w, 4) if weekly_ret is not None else None
         monthly_contrib = round(monthly_ret * w, 4) if monthly_ret is not None else None
 
+        exposure_meta = economic_exposure_fields(pos)
         per_position[leg_id] = {
             "ticker": pos.get("ticker"),
             "display_ticker": display,
+            "exposure_group_key": group_key,
+            **exposure_meta,
             "position_id": leg_id,
             "cost_basis": cost_basis,
             "current_price": cp,
@@ -421,6 +434,14 @@ def compute_analytics(
 
     portfolio = _portfolio_summary(per_position)
     return {"per_position": per_position, "portfolio": portfolio}
+
+
+def _price_series(prices: dict, display: str, price_key: str) -> pd.Series | None:
+    for key in (display, price_key):
+        series = prices.get(key)
+        if series is not None and not getattr(series, "empty", True):
+            return series
+    return None
 
 
 def _float_or_none(value) -> float | None:

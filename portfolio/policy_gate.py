@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from portfolio.economic_exposure import exposure_group_key, resolve_economic_exposure
 from portfolio.policy_matrix import FinancialPolicyFacts, evaluate_financial_policy_matrix
 
 POLICY_GATE_DECISIONS = ("pass", "warn", "review_required", "blocked", "error")
@@ -599,17 +600,21 @@ def _portfolio_constraint_checks(
     book_size = _book_size_for_concentration(payload, fallback=total_abs)
 
     max_position = float(_deep_get(policy, ("policy", "max_position_weight_pct")) or 0)
+    economic_totals: dict[str, float] = {}
     for row in valued_exposures:
         if row.get("is_hedge"):
             continue
-        weight = abs(row["notional"]) / book_size
+        key = str(row.get("economic_ticker") or row["ticker"])
+        economic_totals[key] = economic_totals.get(key, 0.0) + abs(row["notional"] or 0.0)
+    for economic_ticker, notional in economic_totals.items():
+        weight = notional / book_size
         if max_position and weight > max_position:
             checks.append(
                 _check(
                     "concentration.position",
                     "fail",
                     "concentration_limit",
-                    f"{row['ticker']} exceeds max position concentration.",
+                    f"{economic_ticker} exceeds max position concentration.",
                     severity="fail",
                     observed=round(weight, 4),
                     limit=max_position,
@@ -785,9 +790,15 @@ def _position_exposures(positions: list[Mapping[str, Any]], *, hedge_action: boo
                     valuation_status = "missing_position_inputs"
         if notional is not None and direction == "short":
             notional *= -1
+        exposure = resolve_economic_exposure(raw)
+        instrument_type = str(raw.get("instrument_type") or "security").strip().lower()
+        economic_ticker = exposure_group_key(raw) if instrument_type != "option" else ticker
+        if notional is not None and instrument_type != "option" and exposure.source != "identity":
+            notional = notional * exposure.factor
         exposures.append(
             {
                 "ticker": ticker or "UNKNOWN",
+                "economic_ticker": economic_ticker or ticker or "UNKNOWN",
                 "asset": asset,
                 "direction": direction,
                 "is_hedge": is_hedge,

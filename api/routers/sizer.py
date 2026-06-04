@@ -13,7 +13,8 @@ from api.exceptions import DataFetchError
 from api.portfolio_settings import get_portfolio_book_size
 from api.serializers import serialize_dataframe, serialize_value
 from ontology.runtime_read_service import OntologyRuntimeReadService
-from portfolio.instruments import display_ticker, infer_underlying_direction
+from portfolio.economic_exposure import exposure_group_key
+from portfolio.instruments import infer_underlying_direction
 from portfolio.position_groups import (
     canonicalize_position_group_rows,
     group_key,
@@ -255,7 +256,7 @@ def get_sizer_prefill():
             asset = str(record.get("asset") or "equity").strip().lower()
             if asset != "equity":
                 continue
-            key = str(display_ticker(record) or "").strip().upper()
+            key = exposure_group_key(record)
             if not key:
                 continue
             if key not in groups:

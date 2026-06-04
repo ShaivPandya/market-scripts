@@ -1010,7 +1010,8 @@ def _build_agent_portfolio_payload(
     include_hedges: bool,
     book_size: float | None = None,
 ) -> dict[str, Any]:
-    from portfolio.instruments import display_ticker, position_row_id
+    from portfolio.economic_exposure import economic_exposure_fields
+    from portfolio.instruments import chart_price_symbol, display_ticker, position_row_id
 
     analytics_raw = raw.get("analytics")
     analytics: dict[str, Any] = analytics_raw if isinstance(analytics_raw, dict) else {}
@@ -1031,9 +1032,14 @@ def _build_agent_portfolio_payload(
             continue
         leg_id = position_row_id(holding)
         display = display_ticker(holding)
+        instrument_type = str(holding.get("instrument_type") or "security")
+        price_chart_key = chart_price_symbol(holding) if instrument_type != "option" else display
         perf = per_position.get(leg_id)
         perf = perf if isinstance(perf, dict) else {}
-        last = _series_edge_point(raw_positions.get(display), first=False)
+        last = _series_edge_point(
+            raw_positions.get(display) or raw_positions.get(price_chart_key),
+            first=False,
+        )
         current_price = _to_float(perf.get("current_price"))
         last_price = (
             current_price
@@ -1044,7 +1050,6 @@ def _build_agent_portfolio_payload(
         quantity = holding.get("quantity")
         if quantity is None:
             quantity = holding.get("shares")
-        instrument_type = holding.get("instrument_type") or "security"
         contract_multiplier = holding.get("contract_multiplier")
         if contract_multiplier is None:
             contract_multiplier = 1
@@ -1057,10 +1062,21 @@ def _build_agent_portfolio_payload(
             if weight_notional is not None and book_size is not None and book_size > 0
             else None
         )
+        exposure_meta = economic_exposure_fields(holding)
+        if isinstance(perf, dict):
+            for key in (
+                "exposure_group_key",
+                "economic_underlying_ticker",
+                "exposure_multiplier",
+                "economic_exposure_source",
+            ):
+                if perf.get(key) is not None:
+                    exposure_meta[key] = perf.get(key)
         row = {
             "ticker": ticker,
             "display_ticker": display,
             "position_id": leg_id,
+            **exposure_meta,
             "asset": holding.get("asset"),
             "direction": holding.get("direction"),
             "instrument_type": instrument_type,
@@ -1122,6 +1138,8 @@ def _build_agent_portfolio_payload(
                 "options_quantity": "contracts",
                 "options_notional_pnl": "quantity * premium * contract_multiplier; delayed yfinance option quotes",
                 "display_ticker": "underlying ticker used for dossier routing and dashboard charts",
+                "economic_underlying_ticker": "underlying for economic risk when holding leveraged/inverse ETFs",
+                "exposure_multiplier": "signed leverage factor applied to economic exposure (e.g. 2 for 2x long, -1 for inverse)",
             },
             "summary": {
                 "position_count": len(rows),

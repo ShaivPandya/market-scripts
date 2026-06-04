@@ -19,6 +19,11 @@ from typing import Any
 import pandas as pd
 
 from ontology.runtime_read_service import get_positions, get_positions_df
+from portfolio.economic_exposure import (
+    economic_exposure_fields,
+    exposure_group_key,
+    scale_signed_notional_for_exposure,
+)
 from portfolio.instruments import chart_price_symbol, display_ticker, position_row_id, signed_notional
 from portfolio.portfolio_analytics import NEAR_ZERO_NET_RATIO, compute_analytics
 from portfolio.position_groups import group_key, normalize_position_group_fields
@@ -37,9 +42,12 @@ def _load_portfolio() -> pd.DataFrame:
 def _leg_metadata(row: dict[str, Any]) -> dict[str, Any]:
     leg_id = position_row_id(row)
     display = display_ticker(row)
+    exposure = economic_exposure_fields(row)
     return {
         "ticker": row.get("ticker"),
         "display_ticker": display,
+        "exposure_group_key": exposure_group_key(row),
+        **exposure,
         "position_id": leg_id,
         "asset": row.get("asset"),
         "direction": row.get("direction"),
@@ -191,12 +199,13 @@ def _underlying_exposures(leg_metadata: dict[str, dict]) -> list[dict]:
     groups: dict[str, dict] = {}
     for leg_id, meta in leg_metadata.items():
         display = str(meta.get("display_ticker") or meta.get("ticker") or "").upper()
-        if not display:
+        group_key = str(meta.get("exposure_group_key") or display).upper()
+        if not group_key:
             continue
         group = groups.setdefault(
-            display,
+            group_key,
             {
-                "underlying_ticker": display,
+                "underlying_ticker": group_key,
                 "tickers": [],
                 "legs": [],
                 "current_notional": 0.0,
@@ -240,9 +249,9 @@ def _underlying_exposures(leg_metadata: dict[str, dict]) -> list[dict]:
             if group["_other_direction"] is None:
                 group["_other_direction"] = str(meta.get("direction") or "long").strip().lower() or "long"
             if current is not None:
-                group["equity_current_notional"] += signed_notional(current, meta) or 0.0
+                group["equity_current_notional"] += scale_signed_notional_for_exposure(current, meta) or 0.0
             if cost is not None:
-                group["equity_cost_notional"] += signed_notional(cost, meta) or 0.0
+                group["equity_cost_notional"] += scale_signed_notional_for_exposure(cost, meta) or 0.0
 
     result: list[dict] = []
     for group in groups.values():

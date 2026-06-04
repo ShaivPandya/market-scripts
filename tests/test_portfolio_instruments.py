@@ -1,5 +1,6 @@
 import pytest
 
+from portfolio.economic_exposure import resolve_economic_exposure
 from portfolio.instruments import (
     build_option_contract_symbol,
     display_ticker,
@@ -99,3 +100,9 @@ def test_multiple_meta_option_legs_have_distinct_position_ids():
     assert position_row_id(call) != position_row_id(put)
     assert position_row_id(shares) == "META"
     assert display_ticker(call) == display_ticker(put) == display_ticker(shares) == "META"
+
+
+def test_metu_economic_exposure_resolves_to_meta_2x():
+    exposure = resolve_economic_exposure({"ticker": "METU", "instrument_type": "security"})
+    assert exposure.underlying_ticker == "META"
+    assert exposure.factor == 2.0

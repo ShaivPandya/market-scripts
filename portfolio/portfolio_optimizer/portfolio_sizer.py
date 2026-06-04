@@ -23,7 +23,9 @@ import pandas as pd
 
 from ontology.runtime_read_service import get_hedge_positions as _get_hedge_positions
 from ontology.runtime_read_service import get_positions_df as _get_positions_df
+from portfolio.economic_exposure import exposure_group_key, scale_signed_notional_for_exposure
 from portfolio.instruments import (
+    chart_price_symbol,
     direction_sign,
     display_ticker,
     infer_underlying_direction,
@@ -327,7 +329,7 @@ def _collapse_positions_to_underlyings(meta: pd.DataFrame) -> tuple[pd.DataFrame
     groups: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
     for record in meta.to_dict("records"):
-        key = str(display_ticker(record) or record.get("ticker") or "").strip().upper()
+        key = exposure_group_key(record)
         if not key:
             continue
         if key not in groups:
@@ -342,7 +344,11 @@ def _collapse_positions_to_underlyings(meta: pd.DataFrame) -> tuple[pd.DataFrame
         non_option = [r for r in legs if str(r.get("instrument_type") or "security").strip().lower() != "option"]
         options = [r for r in legs if str(r.get("instrument_type") or "security").strip().lower() == "option"]
         if non_option:
-            base = dict(non_option[0])
+            preferred = next(
+                (r for r in non_option if str(r.get("ticker") or "").strip().upper() == key),
+                non_option[0],
+            )
+            base = dict(preferred)
             base["ticker"] = key
             collapsed.append(base)
             continue
@@ -401,7 +407,7 @@ def _compute_current_underlying_dollar_exposure(
 
     totals: dict[str, float] = {}
     for record in meta.to_dict("records"):
-        key = str(display_ticker(record) or record.get("ticker") or "").strip().upper()
+        key = exposure_group_key(record)
         if not key:
             continue
         instrument_type = str(record.get("instrument_type") or "security").strip().lower()
@@ -422,12 +428,39 @@ def _compute_current_underlying_dollar_exposure(
         qty = _leg_quantity(record)
         if qty is None:
             continue
-        price = underlying_prices.get(key)
+        traded = str(record.get("ticker") or "").strip().upper()
+        price_key = chart_price_symbol(record)
+        price = underlying_prices.get(price_key) or underlying_prices.get(traded) or underlying_prices.get(key)
         if price is None or not np.isfinite(float(price)) or float(price) <= 0:
             continue
-        totals[key] = totals.get(key, 0.0) + qty * float(price) * direction_sign(record)
+        magnitude = qty * float(price)
+        economic = scale_signed_notional_for_exposure(magnitude, record)
+        if economic is None:
+            continue
+        totals[key] = totals.get(key, 0.0) + economic
 
     return totals
+
+
+def _leg_price_map(meta_raw: pd.DataFrame, usd_prices: pd.DataFrame) -> dict[str, float]:
+    """Latest USD price per traded symbol and price_symbol for raw portfolio legs."""
+    if meta_raw.empty or usd_prices.empty:
+        return {}
+    prepared = meta_raw.copy()
+    if "ticker" in prepared.columns:
+        prepared = prepared.set_index("ticker")
+    prepared = prepare_instrument_metadata(prepared)
+    latest = usd_prices.iloc[-1]
+    out: dict[str, float] = {}
+    for ticker in prepared.index:
+        traded = str(ticker).strip().upper()
+        price_symbol = str(prepared.loc[ticker, "price_symbol"] or traded).strip().upper()
+        for key in (traded, price_symbol):
+            if key in latest.index and key not in out:
+                value = float(latest[key])
+                if np.isfinite(value) and value > 0:
+                    out[key] = value
+    return out
 
 
 def _attach_sizing_delta_columns(
@@ -687,6 +720,18 @@ def size_portfolio(
             ccy = ticker_currencies.get(t, BASE_CCY)
             usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
 
+        raw_meta = meta_raw.copy()
+        if "ticker" in raw_meta.columns:
+            raw_meta = raw_meta.set_index("ticker")
+        raw_meta = prepare_instrument_metadata(raw_meta)
+        extra_raw = [str(t).strip().upper() for t in raw_meta.index if str(t).strip().upper() not in usd_prices.columns]
+        if extra_raw:
+            prices_extra, extra_ccy, _ = fetch_prices_for_portfolio_symbols(raw_meta.loc[extra_raw], extra_raw, [])
+            for t in extra_raw:
+                if t not in prices_extra.columns:
+                    continue
+                usd_prices[t] = to_usd_price(prices_extra[t], extra_ccy.get(t, BASE_CCY), prices_extra)
+
         # Returns
         usd_prices = usd_prices.ffill()
         rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
@@ -905,7 +950,9 @@ def size_portfolio(
 
         # Build weights DataFrame
         latest_prices = usd_prices[tickers].iloc[-1]
-        underlying_price_map = {str(t).strip().upper(): float(latest_prices[t]) for t in tickers}
+        underlying_price_map = _leg_price_map(meta_raw, usd_prices)
+        if not underlying_price_map:
+            underlying_price_map = {str(t).strip().upper(): float(latest_prices[t]) for t in tickers}
         current_dollar_by_ticker = _compute_current_underlying_dollar_exposure(meta_raw, underlying_price_map)
         weights_df = pd.DataFrame(
             {
