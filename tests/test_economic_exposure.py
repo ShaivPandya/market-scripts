@@ -6,9 +6,9 @@ from portfolio.economic_exposure import (
     scale_gross_notional_for_exposure,
     scale_signed_notional_for_exposure,
 )
+from portfolio.policy_gate import evaluate_policy_gate
 from portfolio.portfolio_analytics import compute_analytics
 from portfolio.portfolio_dashboard import _underlying_exposures
-from portfolio.policy_gate import evaluate_policy_gate
 from portfolio.portfolio_optimizer import portfolio_sizer
 from portfolio.scenario_simulator import _economic_scenario_pnl, _normalize_position
 
@@ -144,9 +144,7 @@ def test_policy_concentration_aggregates_meta_and_metu():
             ],
         },
     )
-    concentration = next(
-        check for check in gate["check_results"] if check.get("check") == "concentration.position"
-    )
+    concentration = next(check for check in gate["check_results"] if check.get("check") == "concentration.position")
     assert concentration is not None
     assert concentration["observed"] == 0.3
     assert gate["decision"] in {"review_required", "blocked"}
