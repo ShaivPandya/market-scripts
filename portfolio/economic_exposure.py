@@ -108,12 +108,12 @@ def _underlying_from_metadata(metadata: Mapping[str, Any] | None, traded: str) -
     if not long_name:
         return None
     # e.g. "Direxion Daily META Bull 2X Shares" -> try to find META-like token
-    tokens = re.findall(r"\b([A-Z]{1,5})\b", long_name.upper())
+    tokens: list[str] = re.findall(r"\b([A-Z]{1,5})\b", long_name.upper())
     for token in tokens:
         if token == traded or token in {"ETF", "ETN", "THE", "AND", "FOR", "DAILY", "SHARES", "FUND"}:
             continue
         if len(token) >= 2:
-            return token
+            return str(token)
     return None
 
 
