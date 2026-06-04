@@ -1,7 +1,7 @@
 {
-  "active_model_path": "/private/var/folders/mv/5bfh1j6d6jg7vrr90w4_m8k00000gn/T/pytest-of-shaivpandya/pytest-184/test_supervised_route_predicti0/models/20260603_145430/model.joblib",
-  "active_version": "20260603_145430",
-  "updated_at": "2026-06-03T14:54:30.816011+00:00",
+  "active_model_path": "/private/var/folders/mv/5bfh1j6d6jg7vrr90w4_m8k00000gn/T/pytest-of-shaivpandya/pytest-202/test_supervised_route_predicti0/models/20260604_234243/model.joblib",
+  "active_version": "20260604_234243",
+  "updated_at": "2026-06-04T23:42:43.277188+00:00",
   "metrics": {
     "count": 1,
     "intent_accuracy": 0.0,
