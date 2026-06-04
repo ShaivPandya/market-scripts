@@ -487,10 +487,13 @@ def infer_underlying_direction(legs: Iterable[Mapping[str, Any]]) -> tuple[str |
         quantity = row.get("quantity")
         if quantity is None:
             quantity = row.get("shares")
-        try:
-            qty = abs(float(quantity))
-        except (TypeError, ValueError):
+        if quantity is None:
             qty = None
+        else:
+            try:
+                qty = abs(float(quantity))
+            except (TypeError, ValueError):
+                qty = None
         magnitude = notional_value(qty, row.get("cost_basis"), row.get("contract_multiplier") or 1.0)
         if magnitude is None:
             magnitude = 1.0
