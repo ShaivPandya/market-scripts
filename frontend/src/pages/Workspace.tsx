@@ -1,6 +1,6 @@
 import { Link, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Bell, CheckCircle, AlertTriangle, Play, Clock, GitBranch, Database, FileText, X, ChevronDown, Shield, Flag, RefreshCw } from "lucide-react"
+import { Bell, CheckCircle, AlertTriangle, Play, Clock, GitBranch, Database, X, ChevronDown, Shield, Flag, RefreshCw } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
@@ -733,7 +733,7 @@ function buildBriefingFacts(
   }
 }
 
-function templateBriefingSummary(f: BriefingFacts): string {
+function buildBriefingSummary(f: BriefingFacts): string {
   const parts: string[] = []
   if (f.regime && f.positions != null) {
     const bandClause = f.riskBand ? ` carrying ${f.riskBand} average risk` : ""
@@ -778,7 +778,7 @@ function StatInline({ tone, value, label }: { tone: "success" | "warning" | "err
 
 function BriefingSummaryCard({ facts }: { facts: BriefingFacts }) {
   const [generatedAt, setGeneratedAt] = useState(() => new Date())
-  const summary = templateBriefingSummary(facts)
+  const summary = buildBriefingSummary(facts)
   const regimeStat = facts.regime
     ? <StatInline tone={facts.regimeTone ?? "neutral"} value={facts.regime} label={facts.regimeScore != null ? `regime · score ${facts.regimeScore}` : "regime"} />
     : null
@@ -794,14 +794,11 @@ function BriefingSummaryCard({ facts }: { facts: BriefingFacts }) {
     <section className="theme-surface mb-6 rounded-xl p-5 sm:p-6">
       <div className="mb-4 flex items-center gap-2">
         <span className="text-xs font-bold uppercase tracking-[0.13em] text-subtle">Today's read</span>
-        <span className="ml-auto inline-flex items-center gap-1.5 theme-badge theme-badge-neutral">
-          <FileText size={12} aria-hidden="true" /> Template
-        </span>
         <button
           type="button"
           onClick={() => setGeneratedAt(new Date())}
           title="Regenerate summary"
-          className="theme-icon-button h-8 w-8"
+          className="theme-icon-button ml-auto h-8 w-8"
         >
           <RefreshCw size={15} />
         </button>
@@ -992,9 +989,7 @@ function ActionQueueCard({
             >
               Dismiss all
             </button>
-          ) : (
-            <span className="ml-auto text-xs text-subtle">What needs you, in order</span>
-          )}
+          ) : null}
         </div>
         <div className="inline-flex gap-1 rounded-full border border-app bg-card-muted p-1">
           {tabs.map(([id, label]) => (
