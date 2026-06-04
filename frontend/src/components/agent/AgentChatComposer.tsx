@@ -9,7 +9,8 @@ interface AgentChatComposerProps {
   onInputSelectionChange: (start: number, end: number) => void
   onSend: () => void
   onStop: () => void
-  isStreaming: boolean
+  /** True while the current turn is in progress (stream, job poll, or active tools). */
+  isBusy: boolean
   queuedCount?: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
   compactWorkflowSlot?: ReactNode
@@ -23,7 +24,7 @@ export function AgentChatComposer({
   onInputSelectionChange,
   onSend,
   onStop,
-  isStreaming,
+  isBusy,
   queuedCount = 0,
   textareaRef,
   compactWorkflowSlot,
@@ -31,7 +32,7 @@ export function AgentChatComposer({
   onToggleWorkflows,
 }: AgentChatComposerProps) {
   const hasInput = Boolean(input.trim())
-  const showStop = isStreaming && !hasInput
+  const showStop = isBusy && !hasInput
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -44,8 +45,8 @@ export function AgentChatComposer({
     onInputSelectionChange(element.selectionStart, element.selectionEnd)
   }
 
-  const sendLabel = isStreaming ? "Queue follow-up" : "Send message"
-  const sendTitle = isStreaming ? "Queue follow-up" : "Send message"
+  const sendLabel = isBusy ? "Queue follow-up" : "Send message"
+  const sendTitle = isBusy ? "Queue follow-up" : "Send message"
 
   return (
     <div className="safe-bottom shrink-0 border-t border-app bg-card px-4 py-3">
@@ -65,7 +66,7 @@ export function AgentChatComposer({
         </div>
       )}
 
-      {isStreaming && (
+      {isBusy && (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-app bg-card-muted px-3 py-2 text-xs text-muted" aria-live="polite">
           <span>
             Generating response

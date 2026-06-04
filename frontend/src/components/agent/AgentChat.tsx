@@ -104,6 +104,7 @@ export function AgentChat({
   const {
     messages,
     isStreaming,
+    isComposerBusy,
     error,
     sessionId,
     sessionTitle,
@@ -283,7 +284,12 @@ export function AgentChat({
     inputSelectionRef.current = { start: 0, end: 0 }
     setInput("")
     setActivePanel("chat")
-    sendMessage(trimmed, screenContext, activePreferences)
+    void sendMessage(
+      trimmed,
+      screenContext,
+      activePreferences,
+      isComposerBusy ? { mode: "enqueue" } : undefined,
+    )
   }
 
   function handleQuickPrompt(prompt: string) {
@@ -500,7 +506,7 @@ export function AgentChat({
                     onInputSelectionChange={handleInputSelectionChange}
                     onSend={handleSend}
                     onStop={stopStreaming}
-                    isStreaming={isStreaming}
+                    isBusy={isComposerBusy}
                     queuedCount={queuedMessages.length}
                     textareaRef={textareaRef}
                     compactWorkflowSlot={compactWorkflowSlot}

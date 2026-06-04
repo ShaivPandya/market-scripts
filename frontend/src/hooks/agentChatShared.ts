@@ -58,3 +58,19 @@ export interface QueuedAgentMessage {
   responsePreferences?: AgentResponsePreferences | null
   options?: AgentSendOptions
 }
+
+const ACTIVE_TOOL_STATUSES: ReadonlySet<ToolCall["status"]> = new Set([
+  "pending",
+  "running",
+  "retrying",
+])
+
+/** True when an assistant turn is still in flight (streaming text or active tools). */
+export function assistantTurnInProgress(messages: AgentMessage[]): boolean {
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    if (message.isStreaming || message.statusText) return true
+    if (message.toolCalls?.some(tool => ACTIVE_TOOL_STATUSES.has(tool.status))) return true
+  }
+  return false
+}

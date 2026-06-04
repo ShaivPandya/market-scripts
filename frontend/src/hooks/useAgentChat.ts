@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 import type { AgentResponsePreferences } from "@/lib/api"
-import type {
-  ActiveAgentJob,
-  AgentMessage,
-  AgentSendOptions,
-  EgressRecord,
-  QueuedAgentMessage,
-  ToolCall,
+import {
+  assistantTurnInProgress,
+  type ActiveAgentJob,
+  type AgentMessage,
+  type AgentSendOptions,
+  type EgressRecord,
+  type QueuedAgentMessage,
+  type ToolCall,
 } from "./agentChatShared"
 import {
   readActiveJobs,
@@ -852,6 +853,10 @@ export function useAgentChat() {
       if (sessionId && next.sessionId !== sessionId) {
         next = { ...next, sessionId }
       }
+      if (sessionId && inFlightBySessionRef.current["pending"]) {
+        inFlightBySessionRef.current[sessionId] = true
+        delete inFlightBySessionRef.current["pending"]
+      }
       return next
     }
 
@@ -1045,10 +1050,14 @@ export function useAgentChat() {
   }, [pollJob])
 
   const sessionIsBusy = useCallback((sessionId: string | null) => {
+    if (inFlightBySessionRef.current["pending"]) return true
     if (!sessionId) return false
     if (inFlightBySessionRef.current[sessionId]) return true
     const job = activeJobRef.current
-    return Boolean(job && job.sessionId === sessionId)
+    if (job?.sessionId === sessionId) return true
+    if (stateRef.current.sessionId !== sessionId) return false
+    if (stateRef.current.isStreaming || stateRef.current.activeJob) return true
+    return assistantTurnInProgress(stateRef.current.messages)
   }, [])
 
   const executeSendMessage = useCallback(async (
@@ -1422,9 +1431,15 @@ export function useAgentChat() {
     })
   }, [])
 
+  const isComposerBusy =
+    state.isStreaming
+    || Boolean(state.activeJob)
+    || assistantTurnInProgress(state.messages)
+
   return {
     messages: state.messages,
     isStreaming: state.isStreaming,
+    isComposerBusy,
     error: state.error,
     sessionId: state.sessionId,
     sessionTitle: state.sessionTitle,
