@@ -286,17 +286,6 @@ export function AgentChat({
     sendMessage(trimmed, screenContext, activePreferences)
   }
 
-  function handleSteerNow() {
-    const trimmed = input.trim()
-    if (!trimmed) return
-    pendingWorkflowInvalidationRef.current = workflowTargetFromCommand(trimmed)
-    inputValueRef.current = ""
-    inputSelectionRef.current = { start: 0, end: 0 }
-    setInput("")
-    setActivePanel("chat")
-    void sendMessage(trimmed, screenContext, activePreferences, { mode: "immediate" })
-  }
-
   function handleQuickPrompt(prompt: string) {
     pendingWorkflowInvalidationRef.current = null
     setActivePanel("chat")
@@ -510,7 +499,6 @@ export function AgentChat({
                     onInputChange={handleInputChange}
                     onInputSelectionChange={handleInputSelectionChange}
                     onSend={handleSend}
-                    onSteerNow={handleSteerNow}
                     onStop={stopStreaming}
                     isStreaming={isStreaming}
                     queuedCount={queuedMessages.length}

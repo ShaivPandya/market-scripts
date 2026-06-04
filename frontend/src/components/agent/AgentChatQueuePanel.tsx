@@ -45,8 +45,8 @@ export function AgentChatQueuePanel({
                 type="button"
                 onClick={() => onSendNow(entry.id)}
                 className="rounded-md p-1 text-muted transition-colors hover:bg-card-muted hover:text-app"
-                aria-label="Send now"
-                title="Send now (steer)"
+                aria-label="Send queued message now and steer"
+                title="Send now (interrupt current response and steer)"
               >
                 <ArrowUp size={14} aria-hidden="true" />
               </button>
