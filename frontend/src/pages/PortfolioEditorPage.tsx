@@ -31,9 +31,7 @@ export function PortfolioEditorPage() {
         Nothing is applied until proposals are reviewed and approved in Workspace.
       </Notice>
 
-      <div className="theme-surface p-4 sm:p-6">
-        <PortfolioEditorPanel />
-      </div>
+      <PortfolioEditorPanel />
     </div>
   )
 }

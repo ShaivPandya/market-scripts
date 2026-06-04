@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Trash2 } from "lucide-react"
+import { ChevronDown, Layers, Plus, Trash2, Upload } from "lucide-react"
 import { Dialog } from "@/components/shared/Dialog"
 import { ActionButton, SegmentedControl, SelectInput } from "@/components/shared/FormControls"
 import { StagedProposalNotice } from "@/components/shared/StagedProposalNotice"
@@ -23,12 +23,14 @@ import {
   INSTRUMENT_TYPE_OPTIONS,
   OPTION_TYPE_OPTIONS,
   applyOptionPaste,
+  assetLabel,
   buildOptionContractSymbol,
   canonicalSpotFxSymbol,
   displayTicker,
   effectivePriceSymbol,
   exposureDirection,
   inferInstrumentType,
+  instrumentTypeLabel,
   nextContractMultiplier,
   normalizedSymbol,
   positionRowId,
@@ -47,6 +49,7 @@ interface HedgeEditorRow extends HedgePosition {
   _contractMultiplierTouched: boolean
 }
 
+type AnyRow = EditorRow | HedgeEditorRow
 type EditorTab = "Positions" | "Hedges"
 type InstrumentType = NonNullable<PortfolioPosition["instrument_type"]>
 
@@ -67,6 +70,33 @@ const CONVICTION_LABELS: Record<number, string> = {
   4: "High",
   5: "Very High",
 }
+
+/* ── Visual ramps ──────────────────────────────────────────────────────── */
+const CONV_HSL: Record<number, string> = {
+  1: "215 16% 52%",
+  2: "212 48% 52%",
+  3: "211 78% 52%",
+  4: "224 74% 57%",
+  5: "250 72% 61%",
+}
+const convColor = (c: number) => `hsl(${CONV_HSL[c] ?? CONV_HSL[3]})`
+const convTint = (c: number, a = 0.14) => `hsl(${CONV_HSL[c] ?? CONV_HSL[3]} / ${a})`
+
+const GROUP_HUES = [248, 30, 168, 211, 330, 96, 280, 12]
+function groupHue(key: string) {
+  let hash = 0
+  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  return GROUP_HUES[hash % GROUP_HUES.length]
+}
+const groupColor = (key: string) => `hsl(${groupHue(key)} 64% 55%)`
+const groupTint = (key: string, a = 0.12) => `hsl(${groupHue(key)} 64% 55% / ${a})`
+
+/* ── Formatters ────────────────────────────────────────────────────────── */
+const fmtUSD0 = (v: number) =>
+  (v < 0 ? "−" : "") +
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.abs(v))
+const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`
+const fmtSignedPct = (v: number) => `${v >= 0 ? "+" : "−"}${(Math.abs(v) * 100).toFixed(1)}%`
 
 function makeId() {
   return Math.random().toString(36).slice(2, 10)
@@ -99,6 +129,52 @@ function parseBookSizeInput(value: string) {
 
 function rowInstrumentType(row: { ticker: string; instrument_type?: InstrumentType | null }) {
   return inferInstrumentType(row.ticker, row.instrument_type)
+}
+
+function rowMultiplier(row: AnyRow) {
+  const type = rowInstrumentType(row)
+  if (type === "future") return row.contract_multiplier ?? 1
+  if (type === "option") return row.contract_multiplier ?? 100
+  return 1
+}
+
+/* Notional uses entry cost (cost_basis) as the best locally-known price. */
+function grossNotional(row: AnyRow) {
+  const qty = rowQuantity(row) ?? 0
+  const price = row.cost_basis ?? 0
+  return Math.abs(qty * price * rowMultiplier(row))
+}
+function netNotional(row: AnyRow) {
+  return grossNotional(row) * (exposureDirection(row) === "short" ? -1 : 1)
+}
+
+interface BookSummary {
+  gross: number
+  net: number
+  longN: number
+  shortN: number
+  byAsset: Record<string, number>
+  leverage: number
+  netPct: number
+}
+
+function summarize(rows: AnyRow[], bookSize: number): BookSummary {
+  let gross = 0
+  let net = 0
+  let longN = 0
+  let shortN = 0
+  const byAsset: Record<string, number> = {}
+  for (const row of rows) {
+    const g = grossNotional(row)
+    const n = netNotional(row)
+    gross += g
+    net += n
+    if (n >= 0) longN += g
+    else shortN += g
+    const asset = row.asset ?? "equity"
+    byAsset[asset] = (byAsset[asset] ?? 0) + n
+  }
+  return { gross, net, longN, shortN, byAsset, leverage: bookSize > 0 ? gross / bookSize : 0, netPct: bookSize > 0 ? net / bookSize : 0 }
 }
 
 function optionContractSymbolForRow(row: {
@@ -198,6 +274,7 @@ function serializeInstrumentRow<T extends PortfolioPosition | HedgePosition>(
   } as T
 }
 
+/* Backend-fetched descriptor shown read-only under the ticker (only when it adds info). */
 function valuationSummary(row: PortfolioPosition | HedgePosition) {
   const parts: string[] = []
   const market = [row.country, row.exchange].filter(Boolean).join(" / ")
@@ -218,18 +295,20 @@ function valuationSummary(row: PortfolioPosition | HedgePosition) {
   if (row.valuation_status && row.valuation_status !== "ok") {
     parts.push(row.valuation_status.replace(/_/g, " "))
   }
-  return parts.join(" - ")
+  return parts.join(" · ")
+}
+
+interface GroupState {
+  key: string
+  name: string
+  conviction: number
+  direction: PortfolioPosition["direction"]
+  ids: string[]
+  tickers: string[]
 }
 
 function positionGroupState(rows: EditorRow[]) {
-  const groups = new Map<string, {
-    key: string
-    name: string
-    conviction: number
-    direction: PortfolioPosition["direction"]
-    ids: string[]
-    tickers: string[]
-  }>()
+  const groups = new Map<string, GroupState>()
   const errors: string[] = []
   for (const row of rows) {
     const name = normalizeGroupName(row.group_name)
@@ -343,6 +422,626 @@ function newHedgeRow(): HedgeEditorRow {
   }
 }
 
+/* ── Patch builders (shared by position & hedge rows) ──────────────────── */
+function tickerChangePatch<T extends AnyRow>(row: T, rawValue: string): Partial<T> {
+  const nextTicker = rawValue.toUpperCase()
+  if (rowInstrumentType(row) === "option") {
+    return applyOptionPaste({ ...row, underlying_ticker: nextTicker, ticker: nextTicker }) as unknown as Partial<T>
+  }
+  const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
+  const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
+    ? nextTicker
+    : row.price_symbol
+  const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
+  const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol) : { fx_base_currency: null, fx_quote_currency: null }
+  return {
+    ticker: nextTicker,
+    price_symbol: nextPriceSymbol,
+    instrument_type: nextInstrumentType,
+    asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+    fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+    fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
+    contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
+  } as Partial<T>
+}
+
+function typeChangePatch<T extends AnyRow>(row: T, value: string): Partial<T> {
+  const nextInstrumentType = value as InstrumentType
+  const nextPriceSymbol = nextInstrumentType === "spot_fx"
+    ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
+    : row.price_symbol
+  const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
+  const nextUnderlying = normalizedSymbol(row.underlying_ticker || row.ticker)
+  return {
+    instrument_type: nextInstrumentType,
+    price_symbol: nextPriceSymbol,
+    asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
+    fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
+    fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
+    underlying_ticker: nextInstrumentType === "option" ? nextUnderlying : row.underlying_ticker,
+    ticker: nextInstrumentType === "option" ? nextUnderlying : row.ticker,
+    contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol ?? "")),
+    _contractMultiplierTouched: nextInstrumentType === "future" || nextInstrumentType === "option"
+      ? row._contractMultiplierTouched
+      : false,
+  } as Partial<T>
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Presentational pieces
+   ════════════════════════════════════════════════════════════════════════ */
+
+function ConvictionChips({ value, onChange }: { value: number; onChange: (c: number) => void }) {
+  return (
+    <div className="inline-flex items-center" style={{ gap: 3 }} title={`Conviction: ${CONVICTION_LABELS[value] ?? value}`}>
+      {[1, 2, 3, 4, 5].map(c => {
+        const active = c <= value
+        return (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            aria-label={`Conviction ${c} — ${CONVICTION_LABELS[c]}`}
+            style={{
+              width: 27,
+              height: 27,
+              borderRadius: 7,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12,
+              fontWeight: 700,
+              border: active ? "none" : "1px solid hsl(var(--border))",
+              background: active ? convColor(value) : "hsl(var(--background-card-muted))",
+              color: active ? "#fff" : "hsl(var(--foreground-quaternary))",
+              boxShadow: active ? "0 1px 2px hsl(var(--shadow-color) / 0.14)" : "none",
+              transition: "background 120ms ease, border-color 120ms ease",
+            }}
+          >
+            {c}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function DirectionTag({ direction, exposure }: { direction: string; exposure?: string | null }) {
+  const isLong = direction === "long"
+  const mismatch = exposure && exposure !== direction
+  return (
+    <span
+      className="theme-badge"
+      title={mismatch ? `Economic exposure: ${exposure}` : undefined}
+      style={{
+        backgroundColor: isLong ? "hsl(var(--success-muted))" : "hsl(var(--destructive-muted))",
+        color: isLong ? "hsl(var(--success))" : "hsl(var(--destructive))",
+        borderColor: isLong ? "hsl(var(--success) / 0.18)" : "hsl(var(--destructive) / 0.18)",
+      }}
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" style={{ transform: isLong ? "none" : "scaleY(-1)" }} aria-hidden="true">
+        <path d="M1 7 L5 3 L9 7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {isLong ? "Long" : "Short"}
+      {mismatch ? <span style={{ opacity: 0.6, fontWeight: 600 }}>≈{exposure![0].toUpperCase()}</span> : null}
+    </span>
+  )
+}
+
+const ASSET_BADGE_STYLE: Record<string, string> = {
+  equity: "info",
+  commodity: "warning",
+  fx: "success",
+  bond: "neutral",
+}
+function AssetBadge({ asset }: { asset?: string | null }) {
+  const key = asset ?? "equity"
+  return <span className={`theme-badge theme-badge-${ASSET_BADGE_STYLE[key] ?? "neutral"}`}>{assetLabel(key)}</span>
+}
+
+const INSTRUMENT_ICON: Record<string, string> = { security: "▣", future: "⬡", spot_fx: "⇄", option: "◇" }
+function InstrumentBadge({ type }: { type?: string | null }) {
+  return (
+    <span className="theme-badge theme-badge-neutral">
+      <span style={{ opacity: 0.7 }}>{INSTRUMENT_ICON[type ?? "security"] ?? "▣"}</span>
+      {instrumentTypeLabel(type)}
+    </span>
+  )
+}
+
+function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "pos" | "neg" }) {
+  const color = tone === "pos" ? "hsl(var(--positive))" : tone === "neg" ? "hsl(var(--negative))" : "hsl(var(--foreground))"
+  return (
+    <div>
+      <div className="label-text" style={{ marginBottom: 4 }}>{label}</div>
+      <div className="mono-text" style={{ fontSize: "1.05rem", fontWeight: 700, color, lineHeight: 1.1 }}>{value}</div>
+      {sub ? <div className="text-subtle" style={{ fontSize: "0.72rem", marginTop: 2 }}>{sub}</div> : null}
+    </div>
+  )
+}
+
+const ASSET_EXPOSURE_HSL: Record<string, string> = {
+  equity: "211 90% 54%",
+  commodity: "30 84% 50%",
+  fx: "142 60% 42%",
+  bond: "260 50% 58%",
+}
+function ExposureBar({ summary }: { summary: BookSummary }) {
+  const entries = Object.entries(summary.byAsset).filter(([, v]) => Math.abs(v) > 0)
+  const total = entries.reduce((s, [, v]) => s + Math.abs(v), 0) || 1
+  if (entries.length === 0) {
+    return <div className="text-subtle" style={{ fontSize: "0.78rem" }}>No exposure yet — add cost basis and quantity to size positions.</div>
+  }
+  return (
+    <div>
+      <div style={{ height: 10, borderRadius: 999, overflow: "hidden", display: "flex", background: "hsl(var(--separator))" }}>
+        {entries.map(([a, v]) => (
+          <div key={a} title={`${assetLabel(a)} ${fmtUSD0(v)}`} style={{ width: `${(Math.abs(v) / total) * 100}%`, background: `hsl(${ASSET_EXPOSURE_HSL[a] ?? "211 50% 54%"})` }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 8 }}>
+        {entries.map(([a, v]) => (
+          <span key={a} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "0.72rem", color: "hsl(var(--foreground-secondary))" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: `hsl(${ASSET_EXPOSURE_HSL[a] ?? "211 50% 54%"})` }} />
+            {assetLabel(a)} <span className="mono-text" style={{ fontWeight: 600 }}>{fmtUSD0(v)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* Grid templates: positions carry a conviction column; hedges do not. */
+const GRID_POSITION = "14px minmax(190px,1fr) 116px 168px 188px 38px"
+const GRID_HEDGE = "14px minmax(190px,1fr) 116px 168px 38px"
+
+interface RowCallbacks {
+  onUpdate: (id: string, patch: Partial<AnyRow>) => void
+  onRemove: (id: string) => void
+}
+
+interface EditorRowViewProps extends RowCallbacks {
+  row: AnyRow
+  bookSize: number
+  isHedge: boolean
+  spine?: string | null
+  groups?: GroupState[]
+  onConviction?: (id: string, c: number) => void
+  onAssignGroup?: (id: string, name: string | null) => void
+}
+
+function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemove, onConviction, onAssignGroup }: EditorRowViewProps) {
+  const [open, setOpen] = useState(false)
+  const type = rowInstrumentType(row)
+  const isOption = type === "option"
+  const expo = exposureDirection(row) ?? row.direction
+  const gross = grossNotional(row)
+  const pct = bookSize > 0 ? gross / bookSize : 0
+  const subtext = valuationSummary(row)
+  const grid = isHedge ? GRID_HEDGE : GRID_POSITION
+  const editorRow = row as EditorRow
+
+  const toggle = () => setOpen(o => !o)
+
+  return (
+    <div style={{ borderTop: "1px solid hsl(var(--separator))", background: open ? "hsl(var(--background-card-muted) / 0.5)" : "transparent" }}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={e => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            toggle()
+          }
+        }}
+        style={{ display: "grid", gridTemplateColumns: grid, alignItems: "center", gap: 8, padding: "6px 12px", minHeight: 54, cursor: "pointer" }}
+      >
+        <div style={{ alignSelf: "stretch", borderRadius: 999, background: spine || "transparent", width: 4 }} />
+
+        {/* Instrument */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+            <span className="theme-icon-button" style={{ width: 22, height: 22, flex: "0 0 auto" }} aria-hidden="true">
+              <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
+            </span>
+            <span className="mono-text" style={{ fontWeight: 700, fontSize: "0.95rem", flex: "0 0 auto" }}>{displayTicker(row) || "—"}</span>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", minWidth: 0 }}>
+              <InstrumentBadge type={type} />
+              <AssetBadge asset={row.asset} />
+            </div>
+          </div>
+          {subtext ? (
+            <div className="text-subtle" style={{ fontSize: "0.74rem", paddingLeft: 29, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{subtext}</div>
+          ) : null}
+        </div>
+
+        {/* Direction — read-only color-coded tag */}
+        <div><DirectionTag direction={row.direction} exposure={expo} /></div>
+
+        {/* Notional + % of book */}
+        <div style={{ textAlign: "right" }}>
+          <div className="mono-text" style={{ fontSize: "0.92rem", fontWeight: 700, color: expo === "short" ? "hsl(var(--negative))" : "hsl(var(--foreground))" }}>
+            {expo === "short" ? "−" : ""}{fmtUSD0(gross)}
+          </div>
+          <div className="text-subtle" style={{ fontSize: "0.72rem" }}>{fmtPct(pct)} of book</div>
+        </div>
+
+        {/* Conviction — positions only, editable in-row */}
+        {!isHedge ? (
+          <div style={{ display: "flex", justifyContent: "center" }} onClick={e => e.stopPropagation()}>
+            <ConvictionChips value={editorRow.conviction} onChange={c => onConviction?.(row._id, c)} />
+          </div>
+        ) : null}
+
+        {/* Delete */}
+        <button
+          type="button"
+          className="theme-icon-button"
+          style={{ width: 32, height: 32 }}
+          onClick={e => {
+            e.stopPropagation()
+            onRemove(row._id)
+          }}
+          aria-label="Remove position"
+          title="Remove"
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+
+      {open ? (
+        <div style={{ padding: "6px 18px 20px 42px", display: "grid", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+            <div>
+              <div className="label-text" style={{ marginBottom: 8 }}>Direction</div>
+              {isHedge || editorRow._isNew ? (
+                <SegmentedControl
+                  options={DIRECTION_OPTIONS}
+                  value={row.direction}
+                  onChange={v => onUpdate(row._id, { direction: v as PortfolioPosition["direction"] })}
+                  size="sm"
+                />
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <DirectionTag direction={row.direction} exposure={expo} />
+                  <span className="text-subtle" style={{ fontSize: "0.72rem" }}>Direction is fixed for existing positions.</span>
+                </div>
+              )}
+            </div>
+            {!isHedge ? (
+              <label style={{ display: "block" }}>
+                <span className="theme-field-label">Group</span>
+                <select
+                  className="theme-input"
+                  value={editorRow.group_name ?? ""}
+                  onChange={e => onAssignGroup?.(row._id, e.target.value || null)}
+                >
+                  <option value="">— Ungrouped —</option>
+                  {(groups ?? []).map(g => (
+                    <option key={g.key} value={g.name}>{g.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : <div />}
+          </div>
+
+          <div>
+            <div className="label-text" style={{ marginBottom: 10 }}>Instrument Detail</div>
+            <InstrumentDetailFields row={row} onUpdate={onUpdate} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label>
+              <span className="theme-field-label">Quantity</span>
+              <input
+                className="theme-input mono-text"
+                type="number"
+                value={rowQuantity(row) ?? ""}
+                placeholder={type === "spot_fx" ? "Base units" : type === "future" || isOption ? "Contracts" : "Shares"}
+                onChange={e => {
+                  const v = e.target.value
+                  const quantity = v === "" ? null : Number(v)
+                  onUpdate(row._id, { shares: quantity, quantity })
+                }}
+              />
+            </label>
+            <label>
+              <span className="theme-field-label">{type === "spot_fx" ? "Entry Rate" : "Cost Basis"}</span>
+              <input
+                className="theme-input mono-text"
+                type="number"
+                value={row.cost_basis ?? ""}
+                placeholder="Price"
+                onChange={e => {
+                  const v = e.target.value
+                  onUpdate(row._id, { cost_basis: v === "" ? null : Number(v) })
+                }}
+              />
+            </label>
+          </div>
+
+          {!isHedge ? (
+            <label className="flex items-center gap-3 select-none" style={{ cursor: "pointer" }}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(editorRow.contrarian)}
+                onClick={() => onUpdate(row._id, { contrarian: !editorRow.contrarian } as Partial<AnyRow>)}
+                className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
+                style={{ backgroundColor: editorRow.contrarian ? "hsl(var(--accent))" : "hsl(var(--separator))" }}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 mt-[2px] ${editorRow.contrarian ? "translate-x-[20px]" : "translate-x-[2px]"}`}
+                  style={{ backgroundColor: "hsl(var(--background-elevated))" }}
+                />
+              </button>
+              <span>
+                <span className="text-sm font-medium text-app">Contrarian</span>
+                <span className="mt-0.5 block text-xs text-subtle">Flag positions that run against consensus.</span>
+              </span>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function InstrumentDetailFields({ row, onUpdate }: { row: AnyRow; onUpdate: (id: string, patch: Partial<AnyRow>) => void }) {
+  const type = rowInstrumentType(row)
+  const isOption = type === "option"
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <label style={{ display: "block" }}>
+          <span className="theme-field-label">Instrument Type</span>
+          <SelectInput
+            value={type}
+            onChange={v => onUpdate(row._id, typeChangePatch(row, v))}
+            options={INSTRUMENT_TYPE_OPTIONS}
+          />
+        </label>
+        <label style={{ display: "block" }}>
+          <span className="theme-field-label">Asset Class</span>
+          <SelectInput
+            value={row.asset ?? "equity"}
+            onChange={v => onUpdate(row._id, { asset: v as PortfolioPosition["asset"] })}
+            options={ASSET_OPTIONS}
+            disabled={type === "spot_fx"}
+          />
+        </label>
+      </div>
+
+      {!isOption ? (
+        <label style={{ display: "block" }}>
+          <span className="theme-field-label">{type === "spot_fx" ? "FX Pair" : type === "future" ? "Price Symbol" : "Ticker"}</span>
+          <input
+            className="theme-input mono-text"
+            value={row.ticker}
+            placeholder={type === "spot_fx" ? "EURUSD=X" : type === "future" ? "CL=F" : "AAPL"}
+            onChange={e => onUpdate(row._id, tickerChangePatch(row, e.target.value))}
+          />
+        </label>
+      ) : null}
+
+      {isOption ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          <label style={{ display: "block" }}>
+            <span className="theme-field-label">OCC Contract Symbol</span>
+            <input
+              className="theme-input mono-text"
+              value={row.option_contract_symbol ?? ""}
+              placeholder="NVDA251219C00150000"
+              onChange={e => onUpdate(row._id, applyOptionPaste({ ...row, option_contract_symbol: e.target.value.toUpperCase() }) as Partial<AnyRow>)}
+            />
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label style={{ display: "block" }}>
+              <span className="theme-field-label">Underlying</span>
+              <input
+                className="theme-input mono-text"
+                value={row.underlying_ticker ?? ""}
+                onChange={e => onUpdate(row._id, applyOptionPaste({ ...row, underlying_ticker: e.target.value.toUpperCase(), ticker: e.target.value.toUpperCase() }) as Partial<AnyRow>)}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span className="theme-field-label">Call / Put</span>
+              <div style={{ paddingTop: 2 }}>
+                <SegmentedControl
+                  options={[...OPTION_TYPE_OPTIONS]}
+                  value={row.option_type ?? "call"}
+                  onChange={v => onUpdate(row._id, { option_type: v as PortfolioPosition["option_type"] })}
+                  size="sm"
+                />
+              </div>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <label style={{ display: "block" }}>
+              <span className="theme-field-label">Strike</span>
+              <input
+                className="theme-input mono-text"
+                type="number"
+                value={row.option_strike ?? ""}
+                onChange={e => {
+                  const v = e.target.value
+                  onUpdate(row._id, { option_strike: v === "" ? null : Number(v) })
+                }}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span className="theme-field-label">Expiration</span>
+              <input
+                className="theme-input"
+                type="date"
+                value={row.option_expiration ?? ""}
+                onChange={e => onUpdate(row._id, { option_expiration: e.target.value || null })}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span className="theme-field-label">Multiplier</span>
+              <input
+                className="theme-input mono-text"
+                type="number"
+                value={row.contract_multiplier ?? ""}
+                placeholder="100"
+                onChange={e => {
+                  const v = e.target.value
+                  onUpdate(row._id, { contract_multiplier: v === "" ? null : Number(v), _contractMultiplierTouched: true })
+                }}
+              />
+            </label>
+          </div>
+          <p className="text-subtle" style={{ fontSize: "0.74rem" }}>
+            {optionContractSymbolForRow(row) ?? "Enter fields or paste an OCC symbol"}
+          </p>
+        </div>
+      ) : null}
+
+      {type === "future" ? (
+        <label style={{ display: "block", maxWidth: 240 }}>
+          <span className="theme-field-label">Contract Multiplier</span>
+          <input
+            className="theme-input mono-text"
+            type="number"
+            value={row.contract_multiplier ?? ""}
+            placeholder="Auto"
+            onChange={e => {
+              const v = e.target.value
+              onUpdate(row._id, { contract_multiplier: v === "" ? null : Number(v), _contractMultiplierTouched: true })
+            }}
+          />
+        </label>
+      ) : null}
+
+      {type === "spot_fx" && row.fx_base_currency && row.fx_quote_currency ? (
+        <p className="text-subtle" style={{ fontSize: "0.74rem" }}>{row.fx_base_currency} / {row.fx_quote_currency} spot pair</p>
+      ) : null}
+    </div>
+  )
+}
+
+interface GroupBandProps {
+  group: GroupState
+  members: EditorRow[]
+  bookSize: number
+  onRename: (key: string, name: string) => void
+  onConvictionAll: (name: string, c: number) => void
+  onAddToGroup: (name: string, conviction: number) => void
+  onDisband: (key: string) => void
+  rowCallbacks: RowCallbacks
+  groups: GroupState[]
+  onRowConviction: (id: string, c: number) => void
+  onAssignGroup: (id: string, name: string | null) => void
+}
+
+function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddToGroup, onDisband, rowCallbacks, groups, onRowConviction, onAssignGroup }: GroupBandProps) {
+  if (members.length === 0) return null
+  const col = groupColor(group.key)
+  const gross = members.reduce((s, m) => s + grossNotional(m), 0)
+  const net = members.reduce((s, m) => s + netNotional(m), 0)
+  const wConv = gross > 0 ? members.reduce((s, m) => s + m.conviction * grossNotional(m), 0) / gross : group.conviction
+  const directions = new Set(members.map(m => exposureDirection(m) ?? m.direction))
+  const mixed = directions.size > 1
+  const pct = bookSize > 0 ? Math.abs(net) / bookSize : 0
+
+  return (
+    <div style={{ marginTop: 14, borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid hsl(var(--border))", boxShadow: "var(--shadow-soft)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", background: groupTint(group.key, 0.1), borderLeft: `4px solid ${col}`, flexWrap: "wrap" }}>
+        <span style={{ color: col, display: "inline-flex" }}><Layers size={15} /></span>
+        <input
+          value={group.name}
+          onChange={e => onRename(group.key, e.target.value)}
+          style={{
+            border: "1px solid transparent",
+            borderRadius: 8,
+            background: "transparent",
+            padding: "0.25rem 0.4rem",
+            fontSize: "0.98rem",
+            fontWeight: 650,
+            color: "hsl(var(--foreground))",
+            outline: "none",
+            minWidth: 120,
+            width: `${Math.max(8, group.name.length + 1)}ch`,
+          }}
+          onFocus={e => (e.target.style.background = "hsl(var(--background-input))")}
+          onBlur={e => (e.target.style.background = "transparent")}
+          aria-label={`Group name for ${group.name}`}
+        />
+        <span className="theme-badge theme-badge-neutral">{members.length} {members.length === 1 ? "position" : "positions"}</span>
+        {mixed ? <span className="theme-badge theme-badge-warning" title="Group positions should share one direction">⚠ Mixed direction</span> : null}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span className="label-text" style={{ whiteSpace: "nowrap" }}>Group Conviction</span>
+          <ConvictionChips value={group.conviction} onChange={c => onConvictionAll(group.name, c)} />
+        </div>
+        <div style={{ textAlign: "right", minWidth: 120 }}>
+          <div className="label-text">Net Notional</div>
+          <div className="mono-text" style={{ fontSize: "0.92rem", fontWeight: 700, color: net < 0 ? "hsl(var(--negative))" : "hsl(var(--foreground))" }}>{fmtUSD0(net)}</div>
+          <div className="text-subtle" style={{ fontSize: "0.7rem" }}>{fmtPct(pct)} of book</div>
+        </div>
+        <button
+          type="button"
+          className="theme-icon-button"
+          onClick={() => onAddToGroup(group.name, group.conviction)}
+          title="Add to group"
+          style={{ background: "hsl(var(--background-elevated))", border: "1px solid hsl(var(--border))" }}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", background: "hsl(var(--background-card-muted) / 0.5)" }}>
+        <span className="text-subtle" style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}>Weighted conviction</span>
+        <div style={{ flex: 1, height: 5, borderRadius: 999, background: "hsl(var(--separator))", maxWidth: 220 }}>
+          <div style={{ height: "100%", borderRadius: 999, width: `${(wConv / 5) * 100}%`, background: convColor(Math.round(wConv)) }} />
+        </div>
+        <span className="mono-text" style={{ fontSize: "0.74rem", fontWeight: 700 }}>{wConv.toFixed(2)} / 5</span>
+        <button
+          type="button"
+          className="theme-button-base theme-button-ghost"
+          style={{ minHeight: 30, fontSize: "0.76rem", paddingInline: 12, marginLeft: "auto" }}
+          onClick={() => onDisband(group.key)}
+        >
+          Disband
+        </button>
+      </div>
+
+      <div style={{ background: "hsl(var(--background-card) / 0.6)" }}>
+        {members.map(m => (
+          <EditorRowView
+            key={m._id}
+            row={m}
+            bookSize={bookSize}
+            isHedge={false}
+            spine={col}
+            groups={groups}
+            onUpdate={rowCallbacks.onUpdate}
+            onRemove={rowCallbacks.onRemove}
+            onConviction={onRowConviction}
+            onAssignGroup={onAssignGroup}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SectionCard({ title, icon, count, children, footer }: { title: string; icon: ReactNode; count: number; children: ReactNode; footer?: ReactNode }) {
+  return (
+    <div className="theme-surface" style={{ marginTop: 14, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px" }}>
+        <span style={{ color: "hsl(var(--foreground-tertiary))", display: "inline-flex" }}>{icon}</span>
+        <span style={{ fontWeight: 650, fontSize: "0.95rem", whiteSpace: "nowrap" }}>{title}</span>
+        <span className="theme-badge theme-badge-neutral">{count}</span>
+      </div>
+      {children}
+      {footer ? <div style={{ borderTop: "1px solid hsl(var(--separator))", padding: 10, display: "flex", gap: 10 }}>{footer}</div> : null}
+    </div>
+  )
+}
+
 export interface PortfolioEditorPanelProps {
   onCancel?: () => void
 }
@@ -402,23 +1101,17 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
 
   function handleIbkrImportSuccess(result: IbkrFlexImportResponse) {
     setIbkrImportError(null)
-    const proposals = result.staged_proposals?.length
-      ? result.staged_proposals
-      : [result]
+    const proposals = result.staged_proposals?.length ? result.staged_proposals : [result]
     handleSaved(proposals)
     const summary = result.import_summary
     if (summary) {
       const hedgeCount = summary.hedge_imported_count ?? 0
-      const hedgeTickers = summary.hedge_tickers?.length
-        ? summary.hedge_tickers.join(", ")
-        : null
+      const hedgeTickers = summary.hedge_tickers?.length ? summary.hedge_tickers.join(", ") : null
       const parts = [
         `${summary.imported_count} row(s) parsed`,
         `${summary.portfolio_imported_count ?? summary.imported_count - hedgeCount} portfolio`,
       ]
-      if (hedgeCount > 0) {
-        parts.push(`${hedgeCount} hedge${hedgeTickers ? ` (${hedgeTickers})` : ""}`)
-      }
+      if (hedgeCount > 0) parts.push(`${hedgeCount} hedge${hedgeTickers ? ` (${hedgeTickers})` : ""}`)
       setIbkrImportSummary(parts.join(" · "))
     } else {
       setIbkrImportSummary(null)
@@ -451,12 +1144,12 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
     },
   })
 
-  function updatePositionRow(id: string, patch: Partial<EditorRow>) {
-    setPositionRows(prev => prev.map(r => (r._id === id ? { ...r, ...patch } : r)))
+  function updatePositionRow(id: string, patch: Partial<AnyRow>) {
+    setPositionRows(prev => prev.map(r => (r._id === id ? { ...r, ...(patch as Partial<EditorRow>) } : r)))
   }
 
-  function updateHedgeRow(id: string, patch: Partial<HedgeEditorRow>) {
-    setHedgeRows(prev => prev.map(r => (r._id === id ? { ...r, ...patch } : r)))
+  function updateHedgeRow(id: string, patch: Partial<AnyRow>) {
+    setHedgeRows(prev => prev.map(r => (r._id === id ? { ...r, ...(patch as Partial<HedgeEditorRow>) } : r)))
   }
 
   function removePositionRow(id: string) {
@@ -467,31 +1160,66 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
     setHedgeRows(prev => prev.filter(r => r._id !== id))
   }
 
+  function setPositionConviction(id: string, conviction: number) {
+    setPositionRows(prev => prev.map(r => (r._id === id ? { ...r, conviction } : r)))
+  }
+
   function addPositionRow() {
     setPositionRows(prev => [...prev, newRow()])
   }
 
-  function updatePositionGroupName(id: string, value: string) {
+  function addGroup() {
     setPositionRows(prev => {
-      const target = prev.find(row => row._id === id)
-      const name = normalizeGroupName(value)
-      if (!target || !name) {
-        return prev.map(row => (row._id === id ? { ...row, group_name: null, group_conviction: null } : row))
+      const existing = new Set(prev.map(r => groupKey(r.group_name)).filter(Boolean) as string[])
+      const base = "New Group"
+      let name = base
+      let n = 2
+      while (existing.has(groupKey(name) as string)) {
+        name = `${base} ${n}`
+        n += 1
       }
-      const key = groupKey(name)
-      const existing = prev.find(row => row._id !== id && groupKey(row.group_name) === key)
-      const groupName = normalizeGroupName(existing?.group_name) ?? name
-      const groupConviction = normalizeGroupConviction(existing?.group_conviction) ?? normalizeGroupConviction(target.group_conviction) ?? target.conviction
-      return prev.map(row => (row._id === id ? { ...row, group_name: groupName, group_conviction: groupConviction } : row))
+      return [...prev, { ...newRow(), group_name: name, group_conviction: 3 }]
     })
   }
 
-  function updatePositionGroupConviction(group: string | null | undefined, conviction: number) {
-    const key = groupKey(group)
-    if (!key) return
-    setPositionRows(prev => prev.map(row => (
-      groupKey(row.group_name) === key ? { ...row, group_conviction: conviction } : row
+  function addPositionToGroup(name: string, conviction: number) {
+    setPositionRows(prev => [...prev, { ...newRow(), group_name: name, group_conviction: conviction }])
+  }
+
+  function renameGroup(key: string, value: string) {
+    const nextName = normalizeGroupName(value)
+    setPositionRows(prev => prev.map(item => (
+      groupKey(item.group_name) === key
+        ? { ...item, group_name: nextName, group_conviction: nextName ? item.group_conviction : null }
+        : item
     )))
+  }
+
+  function setGroupConviction(name: string | null | undefined, conviction: number) {
+    const key = groupKey(name)
+    if (!key) return
+    setPositionRows(prev => prev.map(row => (groupKey(row.group_name) === key ? { ...row, group_conviction: conviction } : row)))
+  }
+
+  function disbandGroup(key: string) {
+    setPositionRows(prev => prev.map(row => (groupKey(row.group_name) === key ? { ...row, group_name: null, group_conviction: null } : row)))
+  }
+
+  function assignGroup(id: string, name: string | null) {
+    setPositionRows(prev => {
+      const normalized = normalizeGroupName(name)
+      if (!normalized) {
+        return prev.map(row => (row._id === id ? { ...row, group_name: null, group_conviction: null } : row))
+      }
+      const key = groupKey(normalized)
+      const existing = prev.find(row => row._id !== id && groupKey(row.group_name) === key)
+      const target = prev.find(row => row._id === id)
+      const conviction = normalizeGroupConviction(existing?.group_conviction)
+        ?? normalizeGroupConviction(target?.group_conviction)
+        ?? target?.conviction
+        ?? 3
+      return prev.map(row => (row._id === id ? { ...row, group_name: normalized, group_conviction: conviction } : row))
+    })
   }
 
   function addHedgeRow() {
@@ -629,769 +1357,289 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
   const currentGroupState = positionGroupState(positionRows)
   const saveDisabled = tab === "Positions" && currentGroupState.errors.length > 0
 
-  const panelBody = (
-    <>
-      {isLoading && (
-        <p className="text-sm text-gray-500 py-4">Loading portfolio and hedge positions...</p>
-      )}
+  const bookSizeNum = (() => {
+    const parsed = parseBookSizeInput(bookSizeInput)
+    return parsed && parsed > 0 ? parsed : DEFAULT_BOOK_SIZE
+  })()
+  const activeRows: AnyRow[] = tab === "Positions" ? positionRows : hedgeRows
+  const summary = summarize(activeRows, bookSizeNum)
+  const orderedGroups = Array.from(currentGroupState.groups.values())
+  const ungroupedPositions = positionRows.filter(r => !groupKey(r.group_name))
 
-      {loadError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-4">
-          {loadError}
+  if (isLoading) {
+    return <p className="text-sm text-muted py-4">Loading portfolio and hedge positions...</p>
+  }
+
+  if (loadError) {
+    return (
+      <div className="theme-notice theme-notice-error">{loadError}</div>
+    )
+  }
+
+  const positionRowCallbacks: RowCallbacks = { onUpdate: updatePositionRow, onRemove: removePositionRow }
+
+  return (
+    <div className="tal-root">
+      {/* Action header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+        <SegmentedControl
+          options={[
+            { value: "Positions", label: "Positions" },
+            { value: "Hedges", label: "Hedges" },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {tab === "Positions" ? (
+            <>
+              <input
+                ref={ibkrImportInputRef}
+                type="file"
+                accept=".xml,application/xml,text/xml"
+                className="hidden"
+                onChange={handleIbkrFlexImport}
+              />
+              <button
+                type="button"
+                className="theme-button-base theme-button-secondary px-4"
+                onClick={() => ibkrImportInputRef.current?.click()}
+                disabled={ibkrImportMutation.isPending}
+              >
+                <Upload size={15} /> {ibkrImportMutation.isPending ? "Importing…" : "Import IBKR Flex"}
+              </button>
+            </>
+          ) : null}
+          {onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="theme-button-base theme-button-ghost px-4"
+            >
+              Cancel
+            </button>
+          ) : null}
+          <ActionButton
+            onClick={tab === "Positions" ? handleSavePositions : handleSaveHedges}
+            loading={currentLoading}
+            loadingText={currentLoadingText}
+            disabled={saveDisabled}
+            className="w-auto px-5"
+          >
+            {currentSaveLabel}
+          </ActionButton>
         </div>
-      )}
+      </div>
 
-      {!isLoading && !loadError && (
-        <>
-          <div className="mb-4">
-            <SegmentedControl
-              options={[
-                { value: "Positions", label: "Positions" },
-                { value: "Hedges", label: "Hedges" },
-              ]}
-              value={tab}
-              onChange={setTab}
-              size="sm"
-            />
-          </div>
+      {(ibkrImportSummary || ibkrImportError) && tab === "Positions" ? (
+        <div className={`theme-notice ${ibkrImportError ? "theme-notice-error" : "theme-notice-success"}`} style={{ marginBottom: 14 }}>
+          {ibkrImportError ?? ibkrImportSummary}
+        </div>
+      ) : null}
 
-          <div className="mb-5 border-b border-gray-200 pb-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="w-full sm:max-w-xs">
-                <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="portfolio-book-size">
-                  Book Size
-                </label>
+      {lastProposals.map((proposal, index) => (
+        <StagedProposalNotice key={proposal.approval_id ?? `${proposal.entity_type}-${index}`} proposal={proposal} className="mb-4">
+          staged for {proposalSubjectLabel(proposal.entity_type)}. Review it in Workspace before app state changes.
+        </StagedProposalNotice>
+      ))}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 312px", gap: 22, alignItems: "start" }} className="portfolio-editor-grid">
+        {/* Ledger */}
+        <div style={{ minWidth: 0 }}>
+          {tab === "Positions" ? (
+            <>
+              <div className="theme-surface" style={{ padding: 14, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="theme-button-base theme-button-ghost" style={{ minHeight: 38 }} onClick={addPositionRow}>
+                  <Plus size={16} /> Position
+                </button>
+                <button type="button" className="theme-button-base theme-button-secondary" style={{ minHeight: 38 }} onClick={addGroup}>
+                  <Layers size={15} /> Group
+                </button>
+              </div>
+
+              {orderedGroups.map(group => (
+                <GroupBand
+                  key={group.key}
+                  group={group}
+                  members={positionRows.filter(r => groupKey(r.group_name) === group.key)}
+                  bookSize={bookSizeNum}
+                  onRename={renameGroup}
+                  onConvictionAll={setGroupConviction}
+                  onAddToGroup={addPositionToGroup}
+                  onDisband={disbandGroup}
+                  rowCallbacks={positionRowCallbacks}
+                  groups={orderedGroups}
+                  onRowConviction={setPositionConviction}
+                  onAssignGroup={assignGroup}
+                />
+              ))}
+
+              <SectionCard
+                title="Ungrouped positions"
+                icon={<span>◇</span>}
+                count={ungroupedPositions.length}
+                footer={(
+                  <>
+                    <button type="button" className="theme-button-base theme-button-ghost" style={{ minHeight: 38 }} onClick={addPositionRow}>
+                      <Plus size={16} /> Add position
+                    </button>
+                    <button type="button" className="theme-button-base theme-button-ghost" style={{ minHeight: 38 }} onClick={addGroup}>
+                      <Layers size={15} /> New group
+                    </button>
+                  </>
+                )}
+              >
+                {ungroupedPositions.map(row => (
+                  <EditorRowView
+                    key={row._id}
+                    row={row}
+                    bookSize={bookSizeNum}
+                    isHedge={false}
+                    spine={null}
+                    groups={orderedGroups}
+                    onUpdate={updatePositionRow}
+                    onRemove={removePositionRow}
+                    onConviction={setPositionConviction}
+                    onAssignGroup={assignGroup}
+                  />
+                ))}
+              </SectionCard>
+
+              {currentGroupState.errors.length > 0 ? (
+                <div className="theme-notice theme-notice-warning" style={{ marginTop: 14 }}>{currentGroupState.errors[0]}</div>
+              ) : null}
+            </>
+          ) : (
+            <SectionCard
+              title="Hedge positions"
+              icon={<span>◇</span>}
+              count={hedgeRows.length}
+              footer={(
+                <button type="button" className="theme-button-base theme-button-ghost" style={{ minHeight: 38 }} onClick={addHedgeRow}>
+                  <Plus size={16} /> Add hedge
+                </button>
+              )}
+            >
+              {hedgeRows.map(row => (
+                <EditorRowView
+                  key={row._id}
+                  row={row}
+                  bookSize={bookSizeNum}
+                  isHedge
+                  spine={null}
+                  onUpdate={updateHedgeRow}
+                  onRemove={removeHedgeRow}
+                />
+              ))}
+            </SectionCard>
+          )}
+
+          {(currentValidationError || currentMutationError) ? (
+            <div className="theme-notice theme-notice-error" style={{ marginTop: 14 }}>{currentValidationError ?? currentMutationError}</div>
+          ) : null}
+        </div>
+
+        {/* Live Summary */}
+        <div className="theme-surface portfolio-editor-summary" style={{ padding: 18, position: "sticky", top: 12, display: "grid", gap: 18 }}>
+          <div>
+            <div className="label-text" style={{ marginBottom: 12 }}>Live Summary</div>
+            <div>
+              <div className="label-text" style={{ marginBottom: 4 }}>Book Size</div>
+              <div style={{ display: "flex", alignItems: "center", border: "1px solid hsl(var(--border))", borderRadius: "var(--radius-md)", background: "hsl(var(--background-input))", height: "2.4rem", paddingInline: 10 }}>
+                <span className="text-subtle" style={{ fontSize: "0.9rem" }}>$</span>
                 <input
-                  id="portfolio-book-size"
-                  type="number"
+                  className="mono-text"
                   value={bookSizeInput}
                   onChange={e => {
                     setBookSizeInput(e.target.value)
                     setSettingsSavedMessage(null)
                   }}
-                  placeholder={String(DEFAULT_BOOK_SIZE)}
-                  className="theme-input w-full text-sm"
-                  step="1000"
-                  min={MIN_BOOK_SIZE}
-                  max={MAX_BOOK_SIZE}
+                  inputMode="decimal"
+                  style={{ width: "100%", border: "none", background: "transparent", color: "hsl(var(--foreground))", fontSize: "0.9rem", outline: "none", fontWeight: 600, paddingLeft: 6 }}
+                  aria-label="Book size"
                 />
               </div>
-              <ActionButton
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, gap: 8 }}>
+                  <span className="label-text" style={{ whiteSpace: "nowrap" }}>Gross Lev.</span>
+                  <span className="mono-text" style={{ fontSize: "0.78rem", fontWeight: 700, color: summary.leverage > 1.5 ? "hsl(var(--warning))" : "hsl(var(--foreground))" }}>{summary.leverage.toFixed(2)}×</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 999, background: "hsl(var(--separator))", overflow: "hidden", display: "flex" }}>
+                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.longN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--success))" }} />
+                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.shortN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--destructive))" }} />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="theme-button-base theme-button-ghost"
+                style={{ minHeight: 32, fontSize: "0.78rem", paddingInline: 10, marginTop: 8 }}
                 onClick={handleSaveBookSize}
-                loading={settingsMutation.isPending}
-                loadingText="Saving book size..."
-                className="w-auto px-4"
+                disabled={settingsMutation.isPending}
               >
-                Save Book Size
-              </ActionButton>
-              <span className="pb-2 text-xs text-gray-400">
-                {formatBaseCurrency(MIN_BOOK_SIZE)} - {formatBaseCurrency(MAX_BOOK_SIZE)}
-              </span>
+                {settingsMutation.isPending ? "Saving…" : "Save book size"}
+              </button>
+              {(settingsValidationError || settingsMutation.isError || settingsSavedMessage) ? (
+                <p
+                  style={{ marginTop: 6, fontSize: "0.72rem" }}
+                  className={settingsSavedMessage && !settingsValidationError && !settingsMutation.isError ? "text-positive" : "text-negative"}
+                >
+                  {settingsValidationError ?? (settingsMutation.isError ? String(settingsMutation.error) : settingsSavedMessage)}
+                </p>
+              ) : (
+                <p className="text-subtle" style={{ marginTop: 6, fontSize: "0.7rem" }}>
+                  {formatBaseCurrency(MIN_BOOK_SIZE)} – {formatBaseCurrency(MAX_BOOK_SIZE)}
+                </p>
+              )}
             </div>
-            {(settingsValidationError || settingsMutation.isError || settingsSavedMessage) && (
-              <p
-                className={`mt-2 text-xs ${
-                  settingsSavedMessage && !settingsValidationError && !settingsMutation.isError
-                    ? "text-emerald-700"
-                    : "text-red-700"
-                }`}
-              >
-                {settingsValidationError ?? (settingsMutation.isError ? String(settingsMutation.error) : settingsSavedMessage)}
-              </p>
-            )}
           </div>
 
-          {lastProposals.map((proposal, index) => (
-            <StagedProposalNotice key={proposal.approval_id ?? `${proposal.entity_type}-${index}`} proposal={proposal} className="mb-4">
-              staged for {proposalSubjectLabel(proposal.entity_type)}. Review it in Workspace before app state changes.
-            </StagedProposalNotice>
-          ))}
+          <div style={{ height: 1, background: "hsl(var(--separator))" }} />
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <Stat label="Net Exposure" value={fmtUSD0(summary.net)} sub={fmtSignedPct(summary.netPct)} tone={summary.net < 0 ? "neg" : "pos"} />
+            <Stat label="Gross" value={fmtUSD0(summary.gross)} sub={`${summary.leverage.toFixed(2)}×`} />
+            <Stat label="Long" value={fmtUSD0(summary.longN)} tone="pos" />
+            <Stat label="Short" value={fmtUSD0(summary.shortN)} tone="neg" />
+          </div>
+
+          <div>
+            <div className="label-text" style={{ marginBottom: 10 }}>Exposure by Asset</div>
+            <ExposureBar summary={summary} />
+          </div>
 
           {tab === "Positions" ? (
             <>
-              <div className="mb-4 rounded-lg border border-app bg-card-muted px-3 py-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-app">Import IBKR Flex</p>
-                    <p className="text-xs text-muted">
-                      Imports IBKR Flex Open Positions and stages a replacement proposal.
-                    </p>
+              <div style={{ height: 1, background: "hsl(var(--separator))" }} />
+              <div>
+                <div className="label-text" style={{ marginBottom: 10 }}>Group Rollups</div>
+                {orderedGroups.length === 0 ? (
+                  <p className="text-subtle" style={{ fontSize: "0.78rem" }}>No groups yet.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: 9 }}>
+                    {orderedGroups.map(group => {
+                      const members = positionRows.filter(r => groupKey(r.group_name) === group.key)
+                      const net = members.reduce((s, m) => s + netNotional(m), 0)
+                      const gross = members.reduce((s, m) => s + grossNotional(m), 0)
+                      const wConv = gross > 0 ? members.reduce((s, m) => s + m.conviction * grossNotional(m), 0) / gross : group.conviction
+                      const rounded = Math.round(wConv)
+                      return (
+                        <div key={group.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: groupColor(group.key), flex: "0 0 auto" }} />
+                          <span style={{ fontSize: "0.8rem", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{group.name}</span>
+                          <span className="theme-badge" style={{ background: convTint(rounded), color: convColor(rounded), borderColor: convTint(rounded, 0.3), minHeight: "1.3rem", padding: "0.1rem 0.4rem" }}>{wConv.toFixed(1)}</span>
+                          <span className="mono-text" style={{ fontSize: "0.76rem", color: "hsl(var(--foreground-secondary))", minWidth: 62, textAlign: "right" }}>{fmtUSD0(net)}</span>
+                        </div>
+                      )
+                    })}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={ibkrImportInputRef}
-                      type="file"
-                      accept=".xml,application/xml,text/xml"
-                      className="hidden"
-                      onChange={handleIbkrFlexImport}
-                    />
-                    <ActionButton
-                      onClick={() => ibkrImportInputRef.current?.click()}
-                      loading={ibkrImportMutation.isPending}
-                      loadingText="Importing..."
-                      className="w-auto px-4"
-                    >
-                      Upload Flex XML
-                    </ActionButton>
-                  </div>
-                </div>
-                {ibkrImportSummary && !ibkrImportError && (
-                  <p className="mt-2 text-xs text-emerald-700">{ibkrImportSummary}</p>
-                )}
-                {ibkrImportError && (
-                  <p className="mt-2 text-xs text-red-700">{ibkrImportError}</p>
                 )}
               </div>
-
-              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Group</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Group Conv.</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Cost / Entry</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Qty / Base Units</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
-                <p className="col-span-1 text-xs font-medium text-gray-500">Contrarian</p>
-                <p className="col-span-1 text-xs font-medium text-gray-500"></p>
-              </div>
-
-              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {positionRows.map((row, idx) => {
-                  const key = groupKey(row.group_name)
-                  const previousKey = idx > 0 ? groupKey(positionRows[idx - 1]?.group_name) : null
-                  const group = key ? currentGroupState.groups.get(key) : null
-                  const showGroupHeader = Boolean(group && key !== previousKey)
-                  const currentType = rowInstrumentType(row)
-                  const isOption = currentType === "option"
-                  return (
-                  <div key={row._id} className="space-y-1">
-                    {showGroupHeader && group && (
-                      <div className="rounded-lg border border-app bg-card-muted px-3 py-2">
-                        <div className="grid grid-cols-12 items-center gap-3">
-                          <div className="col-span-4 min-w-0">
-                            <input
-                              type="text"
-                              value={group.name}
-                              onChange={e => {
-                                const nextName = normalizeGroupName(e.target.value)
-                                setPositionRows(prev => prev.map(item => (
-                                  groupKey(item.group_name) === group.key
-                                    ? { ...item, group_name: nextName, group_conviction: nextName ? group.conviction : null }
-                                    : item
-                                )))
-                              }}
-                              className="theme-input w-full text-sm font-medium"
-                            />
-                          </div>
-                          <div className="col-span-4">
-                            <input
-                              type="range"
-                              min={1}
-                              max={5}
-                              step={1}
-                              value={group.conviction}
-                              onChange={e => updatePositionGroupConviction(group.name, Number(e.target.value))}
-                              className="hig-slider w-full cursor-pointer"
-                              style={{ accentColor: "hsl(var(--accent))" }}
-                              aria-label={`Group conviction for ${group.name}`}
-                            />
-                          </div>
-                          <div className="col-span-4 truncate text-xs text-muted">
-                            {group.conviction} · {CONVICTION_LABELS[group.conviction]} · {group.tickers.join(", ")}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  <div className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}>
-                    <div className="col-span-2">
-                      <input
-                        type="text"
-                        value={isOption ? (row.underlying_ticker ?? row.ticker) : row.ticker}
-                        onChange={e => {
-                          const nextTicker = e.target.value.toUpperCase()
-                          if (isOption) {
-                            updatePositionRow(row._id, applyOptionPaste({
-                              ...row,
-                              underlying_ticker: nextTicker,
-                              ticker: nextTicker,
-                            }))
-                            return
-                          }
-                          const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
-                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
-                            ? nextTicker
-                            : row.price_symbol
-                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
-                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol) : { fx_base_currency: null, fx_quote_currency: null }
-                          updatePositionRow(row._id, {
-                            ticker: nextTicker,
-                            price_symbol: nextPriceSymbol,
-                            instrument_type: nextInstrumentType,
-                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
-                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
-                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
-                          })
-                        }}
-                        placeholder={isOption ? "META" : currentType === "spot_fx" ? "EURUSD=X" : currentType === "future" ? "ES=F" : "AAPL"}
-                        className="theme-input w-full font-mono text-sm"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <SelectInput
-                        value={currentType}
-                        onChange={v => {
-                          const nextInstrumentType = v as InstrumentType
-                          const nextPriceSymbol = nextInstrumentType === "spot_fx"
-                            ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
-                            : row.price_symbol
-                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
-                          const nextUnderlying = normalizedSymbol(row.underlying_ticker || row.ticker)
-                          updatePositionRow(row._id, {
-                            instrument_type: nextInstrumentType,
-                            price_symbol: nextPriceSymbol,
-                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
-                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
-                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            underlying_ticker: nextInstrumentType === "option" ? nextUnderlying : row.underlying_ticker,
-                            ticker: nextInstrumentType === "option" ? nextUnderlying : row.ticker,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol ?? "")),
-                            _contractMultiplierTouched: nextInstrumentType === "future" || nextInstrumentType === "option"
-                              ? row._contractMultiplierTouched
-                              : false,
-                          })
-                        }}
-                        options={INSTRUMENT_TYPE_OPTIONS}
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <SelectInput
-                        value={row.asset}
-                        onChange={v => updatePositionRow(row._id, { asset: v as PortfolioPosition["asset"] })}
-                        options={ASSET_OPTIONS}
-                        disabled={currentType === "spot_fx"}
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      {row._isNew ? (
-                        <SelectInput
-                          value={row.direction}
-                          onChange={v => updatePositionRow(row._id, { direction: v as PortfolioPosition["direction"] })}
-                          options={DIRECTION_OPTIONS}
-                        />
-                      ) : (
-                        <span
-                          className="inline-flex w-full items-center justify-center rounded-lg border px-2 py-1.5 text-center text-xs font-medium"
-                          style={
-                            row.direction === "long"
-                              ? {
-                                  backgroundColor: "hsl(var(--success-muted))",
-                                  color: "hsl(var(--success))",
-                                  borderColor: "hsl(var(--success) / 0.25)",
-                                }
-                              : {
-                                  backgroundColor: "hsl(var(--destructive-muted))",
-                                  color: "hsl(var(--destructive))",
-                                  borderColor: "hsl(var(--destructive) / 0.25)",
-                                }
-                          }
-                        >
-                          {row.direction}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="text"
-                        value={row.group_name ?? ""}
-                        onChange={e => updatePositionGroupName(row._id, e.target.value)}
-                        placeholder="Optional"
-                        className="theme-input w-full text-sm"
-                      />
-                    </div>
-
-                    <div className="col-span-2 min-w-0">
-                      <div className="flex min-w-0 flex-col justify-center gap-1 px-1">
-                        <input
-                          type="range"
-                          min={1}
-                          max={5}
-                          step={1}
-                          value={normalizeGroupConviction(row.group_conviction) ?? row.conviction}
-                          onChange={e => updatePositionGroupConviction(row.group_name, Number(e.target.value))}
-                          aria-label={`Group conviction for ${row.group_name || row.ticker || "position"}`}
-                          className="hig-slider w-full min-w-0 cursor-pointer"
-                          style={{ accentColor: "hsl(var(--accent))" }}
-                          disabled={!normalizeGroupName(row.group_name)}
-                        />
-                        <span className="block truncate text-center text-[11px] leading-none text-gray-500">
-                          {normalizeGroupName(row.group_name)
-                            ? `${normalizeGroupConviction(row.group_conviction) ?? row.conviction} · ${CONVICTION_LABELS[normalizeGroupConviction(row.group_conviction) ?? row.conviction]}`
-                            : "Ungrouped"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="col-span-2 min-w-0">
-                      <div className="flex min-w-0 flex-col justify-center gap-1 px-1">
-                        <input
-                          type="range"
-                          min={1}
-                          max={5}
-                          step={1}
-                          value={row.conviction}
-                          onChange={e => updatePositionRow(row._id, { conviction: Number(e.target.value) })}
-                          aria-label={`Conviction for ${row.ticker || "position"}`}
-                          aria-valuetext={`${row.conviction} ${CONVICTION_LABELS[row.conviction] ?? ""}`}
-                          className="hig-slider w-full min-w-0 cursor-pointer"
-                          style={{ accentColor: "hsl(var(--accent))" }}
-                        />
-                        <span
-                          className="block truncate text-center text-[11px] leading-none text-gray-500"
-                          title={`${row.conviction} · ${CONVICTION_LABELS[row.conviction] ?? ""}`}
-                        >
-                          {row.conviction} · {CONVICTION_LABELS[row.conviction]}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={row.cost_basis ?? ""}
-                        onChange={e => {
-                          const v = e.target.value
-                          updatePositionRow(row._id, { cost_basis: v === "" ? null : Number(v) })
-                        }}
-                        placeholder={currentType === "spot_fx" ? "Entry rate" : "Optional"}
-                        className="theme-input w-full text-sm"
-                        step="0.01"
-                        min="0"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={rowQuantity(row) ?? ""}
-                        onChange={e => {
-                          const v = e.target.value
-                          const quantity = v === "" ? null : Number(v)
-                          updatePositionRow(row._id, { shares: quantity, quantity })
-                        }}
-                        placeholder={currentType === "spot_fx" ? "Base units" : currentType === "future" || isOption ? "Contracts" : "Optional"}
-                        className="theme-input w-full text-sm"
-                        step="any"
-                        min="0"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={currentType === "future" || isOption ? row.contract_multiplier ?? "" : 1}
-                        onChange={e => {
-                          const v = e.target.value
-                          updatePositionRow(row._id, {
-                            contract_multiplier: v === "" ? null : Number(v),
-                            _contractMultiplierTouched: true,
-                          })
-                        }}
-                        placeholder={currentType === "future" ? "Auto" : isOption ? "100" : "1"}
-                        className="theme-input w-full text-sm"
-                        step="any"
-                        min="0"
-                        disabled={currentType !== "future" && !isOption}
-                      />
-                    </div>
-
-                    <div className="col-span-1 flex justify-center">
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={row.contrarian}
-                        onClick={() => updatePositionRow(row._id, { contrarian: !row.contrarian })}
-                        className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
-                        style={{ backgroundColor: row.contrarian ? "hsl(var(--accent))" : "hsl(var(--separator))" }}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 mt-[2px] ${row.contrarian ? "translate-x-[20px]" : "translate-x-[2px]"}`}
-                          style={{ backgroundColor: "hsl(var(--background-elevated))" }}
-                        />
-                      </button>
-                    </div>
-
-                    <div className="col-span-1 flex justify-center">
-                      <button
-                        type="button"
-                        onClick={() => removePositionRow(row._id)}
-                        className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
-                        aria-label="Remove position"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-
-                    {valuationSummary(row) && (
-                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
-                        {valuationSummary(row)}
-                      </div>
-                    )}
-                    {isOption && (
-                      <div
-                        className="grid gap-2 items-center rounded-lg border border-app bg-card-muted px-2 py-2"
-                        style={{ gridColumn: "1 / -1", gridTemplateColumns: "repeat(22, minmax(0, 1fr))" }}
-                      >
-                        <div className="col-span-6">
-                          <label className="mb-1 block text-[11px] font-medium text-gray-500">OCC / Contract</label>
-                          <input
-                            type="text"
-                            value={row.option_contract_symbol ?? ""}
-                            onChange={e => updatePositionRow(row._id, applyOptionPaste({
-                              ...row,
-                              option_contract_symbol: e.target.value.toUpperCase(),
-                            }))}
-                            placeholder="META260116C00500000"
-                            className="theme-input w-full font-mono text-sm"
-                          />
-                        </div>
-                        <div className="col-span-4">
-                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Expiration</label>
-                          <input
-                            type="date"
-                            value={row.option_expiration ?? ""}
-                            onChange={e => updatePositionRow(row._id, { option_expiration: e.target.value || null })}
-                            className="theme-input w-full text-sm"
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Type</label>
-                          <SelectInput
-                            value={row.option_type ?? "call"}
-                            onChange={v => updatePositionRow(row._id, { option_type: v as PortfolioPosition["option_type"] })}
-                            options={[...OPTION_TYPE_OPTIONS]}
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <label className="mb-1 block text-[11px] font-medium text-gray-500">Strike</label>
-                          <input
-                            type="number"
-                            value={row.option_strike ?? ""}
-                            onChange={e => {
-                              const v = e.target.value
-                              updatePositionRow(row._id, { option_strike: v === "" ? null : Number(v) })
-                            }}
-                            placeholder="500"
-                            className="theme-input w-full text-sm"
-                            step="0.01"
-                            min="0"
-                          />
-                        </div>
-                        <div className="col-span-6 flex items-end">
-                          <p className="pb-2 text-[11px] text-muted truncate">
-                            {optionContractSymbolForRow(row) ?? "Enter fields or paste OCC symbol"}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  </div>
-                  )
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={addPositionRow}
-                className="mt-4 flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors"
-              >
-                <Plus size={15} />
-                Add Position
-              </button>
             </>
-          ) : (
-            <>
-              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Cost / Entry</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Qty / Base Units</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500"></p>
-              </div>
-
-              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {hedgeRows.map(row => {
-                  const hedgeType = rowInstrumentType(row)
-                  const hedgeIsOption = hedgeType === "option"
-                  return (
-                  <div key={row._id} className="space-y-1">
-                  <div className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
-                    <div className="col-span-2">
-                      <input
-                        type="text"
-                        value={hedgeIsOption ? (row.underlying_ticker ?? row.ticker) : row.ticker}
-                        onChange={e => {
-                          const nextTicker = e.target.value.toUpperCase()
-                          if (hedgeIsOption) {
-                            updateHedgeRow(row._id, applyOptionPaste({
-                              ...row,
-                              underlying_ticker: nextTicker,
-                              ticker: nextTicker,
-                            }))
-                            return
-                          }
-                          const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
-                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
-                            ? nextTicker
-                            : row.price_symbol
-                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
-                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol) : { fx_base_currency: null, fx_quote_currency: null }
-                          updateHedgeRow(row._id, {
-                            ticker: nextTicker,
-                            price_symbol: nextPriceSymbol,
-                            instrument_type: nextInstrumentType,
-                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
-                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
-                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
-                          })
-                        }}
-                        placeholder={hedgeIsOption ? "META" : hedgeType === "spot_fx" ? "EURUSD=X" : hedgeType === "future" ? "ES=F" : "SPY"}
-                        className="theme-input w-full font-mono text-sm"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <SelectInput
-                        value={hedgeType}
-                        onChange={v => {
-                          const nextInstrumentType = v as InstrumentType
-                          const nextPriceSymbol = nextInstrumentType === "spot_fx"
-                            ? canonicalSpotFxSymbol(effectivePriceSymbol(row)) ?? row.price_symbol
-                            : row.price_symbol
-                          const nextFx = nextInstrumentType === "spot_fx" ? spotFxCurrencies(nextPriceSymbol || row.ticker) : { fx_base_currency: null, fx_quote_currency: null }
-                          const nextUnderlying = normalizedSymbol(row.underlying_ticker || row.ticker)
-                          updateHedgeRow(row._id, {
-                            instrument_type: nextInstrumentType,
-                            price_symbol: nextPriceSymbol,
-                            asset: nextInstrumentType === "spot_fx" ? "fx" : row.asset,
-                            fx_base_currency: nextFx.fx_base_currency ?? row.fx_base_currency,
-                            fx_quote_currency: nextFx.fx_quote_currency ?? row.fx_quote_currency,
-                            underlying_ticker: nextInstrumentType === "option" ? nextUnderlying : row.underlying_ticker,
-                            ticker: nextInstrumentType === "option" ? nextUnderlying : row.ticker,
-                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol ?? "")),
-                            _contractMultiplierTouched: nextInstrumentType === "future" || nextInstrumentType === "option"
-                              ? row._contractMultiplierTouched
-                              : false,
-                          })
-                        }}
-                        options={INSTRUMENT_TYPE_OPTIONS}
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <SelectInput
-                        value={row.asset ?? "equity"}
-                        onChange={v => updateHedgeRow(row._id, { asset: v as HedgePosition["asset"] })}
-                        options={ASSET_OPTIONS}
-                        disabled={hedgeType === "spot_fx"}
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <SelectInput
-                        value={row.direction}
-                        onChange={v => updateHedgeRow(row._id, { direction: v as HedgePosition["direction"] })}
-                        options={DIRECTION_OPTIONS}
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={row.cost_basis ?? ""}
-                        onChange={e => {
-                          const v = e.target.value
-                          updateHedgeRow(row._id, { cost_basis: v === "" ? null : Number(v) })
-                        }}
-                        placeholder={hedgeType === "spot_fx" ? "Entry rate" : "Optional"}
-                        className="theme-input w-full text-sm"
-                        step="0.01"
-                        min="0"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={rowQuantity(row) ?? ""}
-                        onChange={e => {
-                          const v = e.target.value
-                          const quantity = v === "" ? null : Number(v)
-                          updateHedgeRow(row._id, { shares: quantity, quantity })
-                        }}
-                        placeholder={hedgeType === "spot_fx" ? "Base units" : hedgeType === "future" || hedgeIsOption ? "Contracts" : "Optional"}
-                        className="theme-input w-full text-sm"
-                        step="any"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        value={hedgeType === "future" || hedgeIsOption ? row.contract_multiplier ?? "" : 1}
-                        onChange={e => {
-                          const v = e.target.value
-                          updateHedgeRow(row._id, {
-                            contract_multiplier: v === "" ? null : Number(v),
-                            _contractMultiplierTouched: true,
-                          })
-                        }}
-                        placeholder={hedgeType === "future" ? "Auto" : hedgeIsOption ? "100" : "1"}
-                        className="theme-input w-full text-sm"
-                        step="any"
-                        min="0"
-                        disabled={hedgeType !== "future" && !hedgeIsOption}
-                      />
-                    </div>
-
-                    <div className="col-span-2 flex justify-center">
-                      <button
-                        type="button"
-                        onClick={() => removeHedgeRow(row._id)}
-                        className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
-                        aria-label="Remove hedge position"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-
-                    {valuationSummary(row) && (
-                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
-                        {valuationSummary(row)}
-                      </div>
-                    )}
-                  </div>
-                  {hedgeIsOption && (
-                    <div
-                      className="grid gap-2 items-center rounded-lg border border-app bg-card-muted px-2 py-2"
-                      style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}
-                    >
-                      <div className="col-span-5">
-                        <label className="mb-1 block text-[11px] font-medium text-gray-500">OCC / Contract</label>
-                        <input
-                          type="text"
-                          value={row.option_contract_symbol ?? ""}
-                          onChange={e => updateHedgeRow(row._id, applyOptionPaste({
-                            ...row,
-                            option_contract_symbol: e.target.value.toUpperCase(),
-                          }))}
-                          placeholder="META260116C00500000"
-                          className="theme-input w-full font-mono text-sm"
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Expiration</label>
-                        <input
-                          type="date"
-                          value={row.option_expiration ?? ""}
-                          onChange={e => updateHedgeRow(row._id, { option_expiration: e.target.value || null })}
-                          className="theme-input w-full text-sm"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Type</label>
-                        <SelectInput
-                          value={row.option_type ?? "call"}
-                          onChange={v => updateHedgeRow(row._id, { option_type: v as HedgePosition["option_type"] })}
-                          options={[...OPTION_TYPE_OPTIONS]}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="mb-1 block text-[11px] font-medium text-gray-500">Strike</label>
-                        <input
-                          type="number"
-                          value={row.option_strike ?? ""}
-                          onChange={e => {
-                            const v = e.target.value
-                            updateHedgeRow(row._id, { option_strike: v === "" ? null : Number(v) })
-                          }}
-                          placeholder="500"
-                          className="theme-input w-full text-sm"
-                          step="0.01"
-                          min="0"
-                        />
-                      </div>
-                      <div className="col-span-4 flex items-end">
-                        <p className="pb-2 text-[11px] text-muted truncate">
-                          {optionContractSymbolForRow(row) ?? "Enter fields or paste OCC symbol"}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  </div>
-                )})}
-              </div>
-
-              <button
-                type="button"
-                onClick={addHedgeRow}
-                className="mt-4 flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors"
-              >
-                <Plus size={15} />
-                Add Hedge
-              </button>
-            </>
-          )}
-
-          {tab === "Positions" && currentGroupState.errors.length > 0 && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              {currentGroupState.errors[0]}
-            </div>
-          )}
-
-          {(currentValidationError || currentMutationError) && (
-            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {currentValidationError ?? currentMutationError}
-            </div>
-          )}
-
-          <div className="mt-6 flex justify-end gap-3">
-            {onCancel && (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-            )}
-            <ActionButton
-              onClick={tab === "Positions" ? handleSavePositions : handleSaveHedges}
-              loading={currentLoading}
-              loadingText={currentLoadingText}
-              disabled={saveDisabled}
-              className="w-auto px-6"
-            >
-              {currentSaveLabel}
-            </ActionButton>
-          </div>
-        </>
-      )}
-    </>
+          ) : null}
+        </div>
+      </div>
+    </div>
   )
-
-  return panelBody
 }
 
 interface PortfolioEditorProps {

@@ -934,3 +934,13 @@
   border-radius: 999px;
   background: hsl(var(--separator));
 }
+
+/* Portfolio editor — stack the ledger + live-summary grid on narrow viewports */
+@media (max-width: 1024px) {
+  .portfolio-editor-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .portfolio-editor-summary {
+    position: static !important;
+  }
+}
