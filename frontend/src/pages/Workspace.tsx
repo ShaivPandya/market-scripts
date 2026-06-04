@@ -889,7 +889,7 @@ function WorkspaceTriggersCard({
         <p className="text-xs text-subtle">No active triggers.</p>
       ) : (
         <div className="-mx-1 max-h-[22rem] space-y-1 overflow-y-auto px-1">
-          {triggers.slice(0, 6).map(t => (
+          {triggers.map(t => (
             <div key={t.id} className="rounded-lg px-2 py-2 text-sm transition-colors hover:bg-[hsl(var(--background-card-muted))]">
               <div className="flex items-center gap-2">
                 {t.ticker && (
