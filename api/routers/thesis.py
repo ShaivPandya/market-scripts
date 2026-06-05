@@ -385,7 +385,7 @@ def get_thesis_detail(ticker: str):
     return {
         "meta": meta,
         "content": content,
-        "status_history": [],
+        "status_history": reads.thesis_status_history(normalized_ticker, limit=20),
         "evaluations": [_object_props(row) for row in reads.evaluations(normalized_ticker, limit=52)],
     }
 

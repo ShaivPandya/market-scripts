@@ -122,7 +122,12 @@ interface ThesisMeta {
   last_evaluated: string | null
 }
 
-interface StatusEntry { status: string; changed_at: string; reason: string | null }
+interface StatusEntry {
+  old_status: string | null
+  new_status: string
+  changed_at: string
+  reason: string | null
+}
 interface Evaluation {
   id: number
   ticker: string
@@ -1492,7 +1497,15 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
             {thesis.status_history.map((s, i) => (
               <div key={i} className="flex items-center gap-3 text-xs text-muted">
                 <span className="text-subtle">{formatTime(s.changed_at)}</span>
-                <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.status] ?? "")}>{s.status}</span>
+                {s.old_status && (
+                  <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.old_status] ?? "")}>
+                    {s.old_status}
+                  </span>
+                )}
+                {s.old_status && <span className="text-subtle">→</span>}
+                <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.new_status] ?? "")}>
+                  {s.new_status}
+                </span>
                 {s.reason && <span className="truncate">{s.reason}</span>}
               </div>
             ))}

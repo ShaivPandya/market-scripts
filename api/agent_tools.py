@@ -1459,7 +1459,7 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
     reads = OntologyRuntimeReadService()
     meta = reads.thesis(ticker)
     evaluations = reads.evaluations(ticker, limit=limit)
-    status_history: list[dict[str, Any]] = []
+    status_history = reads.thesis_status_history(ticker, limit=20)
 
     if meta is None and not evaluations:
         return {

@@ -201,6 +201,66 @@ class OntologyRuntimeReadService:
         rows = self.list_objects("Evaluation", filters=filters, limit=limit)
         return sorted(rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)
 
+    def thesis_status_history(self, ticker: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        normalized = _ticker(ticker)
+        if not normalized:
+            return []
+
+        current = self.thesis(normalized)
+        version_rows = [
+            object_props(row)
+            for row in self.objects.query_objects(
+                "Thesis",
+                filters={"ticker": normalized},
+                include_history=True,
+                limit=500,
+            )
+        ]
+        transitions = _thesis_status_transitions(version_rows)
+        approvals = _thesis_status_approvals(self, normalized)
+        action_runs_by_approval = _action_runs_by_approval_id(self, approvals)
+        used_approval_ids: set[str] = set()
+
+        history: list[dict[str, Any]] = []
+        for index, transition in enumerate(transitions):
+            approval = _match_thesis_status_approval(transition, approvals, used_approval_ids)
+            if approval:
+                approval_uid = str(approval.get("id") or approval.get("object_uid") or "")
+                if approval_uid:
+                    used_approval_ids.add(approval_uid)
+            entry = _thesis_status_history_entry(
+                normalized,
+                transition,
+                approval=approval,
+                action_run=action_runs_by_approval.get(str(approval.get("id") or approval.get("object_uid") or ""))
+                if approval
+                else None,
+                entry_id=index + 1,
+            )
+            history.append(entry)
+
+        if not history and current:
+            status = str(current.get("status") or "").strip()
+            if status:
+                history.append(
+                    {
+                        "id": 0,
+                        "ticker": normalized,
+                        "old_status": None,
+                        "new_status": status,
+                        "reason": None,
+                        "changed_at": str(current.get("updated_at") or current.get("created_at") or ""),
+                        "actor": None,
+                        "source": None,
+                        "approval_id": None,
+                        "action_run_id": None,
+                        "provenance_event_id": None,
+                    }
+                )
+
+        history.sort(key=lambda row: str(row.get("changed_at") or ""), reverse=True)
+        return history[: max(1, int(limit))]
+
     def latest_evaluations(self, *, limit: int = 1000) -> list[dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for row in self.evaluations(limit=limit):
@@ -684,6 +744,186 @@ def _sort_workflow_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _first(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return rows[0] if rows else None
+
+
+def _thesis_version_timestamp(row: dict[str, Any]) -> str:
+    for key in ("updated_at", "created_at"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    meta = row.get("_meta")
+    temporal = meta.get("temporal") if isinstance(meta, dict) else None
+    if isinstance(temporal, dict):
+        for key in ("tx_from", "valid_from"):
+            value = str(temporal.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _thesis_version_sort_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (_thesis_version_timestamp(row), str(row.get("id") or row.get("object_uid") or ""))
+
+
+def _thesis_status_transitions(version_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sorted_versions = sorted(version_rows, key=_thesis_version_sort_key)
+    transitions: list[dict[str, Any]] = []
+    previous_status: str | None = None
+    for version in sorted_versions:
+        status = str(version.get("status") or "").strip().lower()
+        if not status:
+            continue
+        changed_at = _thesis_version_timestamp(version)
+        if previous_status is not None and status != previous_status:
+            transitions.append(
+                {
+                    "old_status": previous_status,
+                    "new_status": status,
+                    "changed_at": changed_at,
+                }
+            )
+        previous_status = status
+    return transitions
+
+
+def _thesis_status_approvals(reads: OntologyRuntimeReadService, ticker: str) -> list[dict[str, Any]]:
+    rows = [
+        object_props(row)
+        for row in reads.objects.query_objects(
+            "Approval",
+            filters={
+                "ticker": ticker,
+                "action_id": "change_thesis_status",
+                "application_status": "applied",
+            },
+            limit=200,
+        )
+    ]
+    return sorted(rows, key=lambda row: str(row.get("application_completed_at") or row.get("resolved_at") or ""))
+
+
+def _action_runs_by_approval_id(
+    reads: OntologyRuntimeReadService,
+    approvals: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for approval in approvals:
+        approval_uid = str(approval.get("id") or approval.get("object_uid") or "").strip()
+        if not approval_uid:
+            continue
+        for row in reads.objects.query_objects("ActionRun", limit=200):
+            props = object_props(row)
+            if str(props.get("approval_id") or "") == approval_uid:
+                indexed[approval_uid] = props
+                break
+    return indexed
+
+
+def _approval_new_status(approval: dict[str, Any]) -> str:
+    proposed = approval.get("proposed_change")
+    if not isinstance(proposed, dict):
+        return ""
+    return str(proposed.get("new_status") or proposed.get("status") or "").strip().lower()
+
+
+def _approval_timestamp(approval: dict[str, Any]) -> str:
+    return str(
+        approval.get("application_completed_at") or approval.get("resolved_at") or approval.get("created_at") or ""
+    ).strip()
+
+
+def _match_thesis_status_approval(
+    transition: dict[str, Any],
+    approvals: list[dict[str, Any]],
+    used_approval_ids: set[str],
+) -> dict[str, Any] | None:
+    target_status = str(transition.get("new_status") or "").strip().lower()
+    transition_at = str(transition.get("changed_at") or "").strip()
+    candidates = [
+        approval
+        for approval in approvals
+        if _approval_new_status(approval) == target_status
+        and str(approval.get("id") or approval.get("object_uid") or "") not in used_approval_ids
+    ]
+    if not candidates:
+        return None
+    if not transition_at:
+        return candidates[-1]
+    return min(
+        candidates,
+        key=lambda approval: abs(
+            _timestamp_sort_value(_approval_timestamp(approval)) - _timestamp_sort_value(transition_at)
+        ),
+    )
+
+
+def _timestamp_sort_value(value: str) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        normalized = text.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _thesis_status_source(approval: dict[str, Any] | None) -> str | None:
+    if not approval:
+        return None
+    source_type = str(approval.get("source_type") or "").strip()
+    source_id = str(approval.get("source_id") or "").strip()
+    if source_type and source_id:
+        return f"{source_type}:{source_id}"
+    return source_type or source_id or None
+
+
+def _thesis_status_history_entry(
+    ticker: str,
+    transition: dict[str, Any],
+    *,
+    approval: dict[str, Any] | None,
+    action_run: dict[str, Any] | None,
+    entry_id: int,
+) -> dict[str, Any]:
+    proposed = approval.get("proposed_change") if isinstance(approval, dict) else {}
+    proposed = proposed if isinstance(proposed, dict) else {}
+    approval_uid = str(approval.get("id") or approval.get("object_uid") or "") if approval else ""
+    numeric_id = _history_numeric_id(approval_uid, entry_id)
+    return {
+        "id": numeric_id,
+        "ticker": ticker,
+        "old_status": transition.get("old_status"),
+        "new_status": transition.get("new_status"),
+        "reason": (str(approval.get("reason") or proposed.get("reason") or "").strip() or None if approval else None),
+        "changed_at": (
+            _approval_timestamp(approval)
+            if approval and _approval_timestamp(approval)
+            else str(transition.get("changed_at") or "")
+        ),
+        "actor": (approval.get("resolved_by_actor_id") or approval.get("requested_by_actor_id") if approval else None),
+        "source": _thesis_status_source(approval),
+        "approval_id": approval_uid or None,
+        "action_run_id": (str(action_run.get("id") or action_run.get("object_uid") or "") if action_run else None),
+        "provenance_event_id": (
+            str(
+                (action_run or {}).get("provenance_event_id") or (approval or {}).get("provenance_event_id") or ""
+            ).strip()
+            or None
+            if approval or action_run
+            else None
+        ),
+    }
+
+
+def _history_numeric_id(approval_uid: str, fallback: int) -> int:
+    if approval_uid.startswith("approval:"):
+        suffix = approval_uid.split(":", 1)[1]
+        if suffix.isdigit():
+            return int(suffix)
+    return fallback
 
 
 def _management_quality_parsed_from_assessment(assessment: dict[str, Any]) -> dict[str, Any]:

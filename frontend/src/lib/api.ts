@@ -1363,17 +1363,24 @@ export interface ThesisMeta {
   latest_evaluation?: ThesisEvaluation | null
 }
 
+export interface ThesisStatusHistoryEntry {
+  id: number
+  ticker: string
+  old_status: string | null
+  new_status: string
+  reason: string | null
+  changed_at: string
+  actor?: string | null
+  source?: string | null
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+}
+
 export interface ThesisDetail {
   meta: ThesisMeta
   content: string | null
-  status_history: Array<{
-    id: number
-    ticker: string
-    old_status: string | null
-    new_status: string
-    reason: string | null
-    changed_at: string
-  }>
+  status_history: ThesisStatusHistoryEntry[]
   evaluations: ThesisEvaluation[]
 }
 
