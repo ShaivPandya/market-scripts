@@ -937,6 +937,7 @@ interface GroupBandProps {
 }
 
 function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddToGroup, onDisband, rowCallbacks, groups, onRowConviction, onAssignGroup }: GroupBandProps) {
+  const [draftName, setDraftName] = useState(group.name)
   if (members.length === 0) return null
   const col = groupColor(group.key)
   const gross = members.reduce((s, m) => s + grossNotional(m), 0)
@@ -946,13 +947,25 @@ function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddT
   const mixed = directions.size > 1
   const pct = bookSize > 0 ? Math.abs(net) / bookSize : 0
 
+  function commitName() {
+    const nextName = normalizeGroupName(draftName) ?? ""
+    setDraftName(nextName)
+    onRename(group.key, nextName)
+  }
+
   return (
     <div style={{ marginTop: 14, borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid hsl(var(--border))", boxShadow: "var(--shadow-soft)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", background: groupTint(group.key, 0.1), borderLeft: `4px solid ${col}`, flexWrap: "wrap" }}>
         <span style={{ color: col, display: "inline-flex" }}><Layers size={15} /></span>
         <input
-          value={group.name}
-          onChange={e => onRename(group.key, e.target.value)}
+          value={draftName}
+          onChange={e => setDraftName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              e.currentTarget.blur()
+            }
+          }}
           style={{
             border: "1px solid transparent",
             borderRadius: 8,
@@ -963,10 +976,13 @@ function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddT
             color: "hsl(var(--foreground))",
             outline: "none",
             minWidth: 120,
-            width: `${Math.max(8, group.name.length + 1)}ch`,
+            width: `${Math.max(8, draftName.length + 1)}ch`,
           }}
           onFocus={e => (e.target.style.background = "hsl(var(--background-input))")}
-          onBlur={e => (e.target.style.background = "transparent")}
+          onBlur={e => {
+            e.target.style.background = "transparent"
+            commitName()
+          }}
           aria-label={`Group name for ${group.name}`}
         />
         <span className="theme-badge theme-badge-neutral">{members.length} {members.length === 1 ? "position" : "positions"}</span>
@@ -1443,7 +1459,100 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
         </StagedProposalNotice>
       ))}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 312px", gap: 22, alignItems: "start" }} className="portfolio-editor-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 22, alignItems: "start" }} className="portfolio-editor-grid">
+        {/* Summary */}
+        <div className="theme-surface portfolio-editor-summary" style={{ padding: 18, display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 24, alignItems: "start" }}>
+            <div>
+              <div className="label-text" style={{ marginBottom: 4 }}>Book Size</div>
+              <div style={{ display: "flex", alignItems: "center", border: "1px solid hsl(var(--border))", borderRadius: "var(--radius-md)", background: "hsl(var(--background-input))", height: "2.4rem", paddingInline: 10 }}>
+                <span className="text-subtle" style={{ fontSize: "0.9rem" }}>$</span>
+                <input
+                  className="mono-text"
+                  value={bookSizeInput}
+                  onChange={e => {
+                    setBookSizeInput(e.target.value)
+                    setSettingsSavedMessage(null)
+                  }}
+                  inputMode="decimal"
+                  style={{ width: "100%", border: "none", background: "transparent", color: "hsl(var(--foreground))", fontSize: "0.9rem", outline: "none", fontWeight: 600, paddingLeft: 6 }}
+                  aria-label="Book size"
+                />
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, gap: 8 }}>
+                  <span className="label-text" style={{ whiteSpace: "nowrap" }}>Gross Lev.</span>
+                  <span className="mono-text" style={{ fontSize: "0.78rem", fontWeight: 700, color: summary.leverage > 1.5 ? "hsl(var(--warning))" : "hsl(var(--foreground))" }}>{summary.leverage.toFixed(2)}×</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 999, background: "hsl(var(--separator))", overflow: "hidden", display: "flex" }}>
+                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.longN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--success))" }} />
+                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.shortN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--destructive))" }} />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="theme-button-base theme-button-ghost"
+                style={{ minHeight: 32, fontSize: "0.78rem", paddingInline: 10, marginTop: 8 }}
+                onClick={handleSaveBookSize}
+                disabled={settingsMutation.isPending}
+              >
+                {settingsMutation.isPending ? "Saving…" : "Save book size"}
+              </button>
+              {(settingsValidationError || settingsMutation.isError || settingsSavedMessage) ? (
+                <p
+                  style={{ marginTop: 6, fontSize: "0.72rem" }}
+                  className={settingsSavedMessage && !settingsValidationError && !settingsMutation.isError ? "text-positive" : "text-negative"}
+                >
+                  {settingsValidationError ?? (settingsMutation.isError ? String(settingsMutation.error) : settingsSavedMessage)}
+                </p>
+              ) : (
+                <p className="text-subtle" style={{ marginTop: 6, fontSize: "0.7rem" }}>
+                  {formatBaseCurrency(MIN_BOOK_SIZE)} – {formatBaseCurrency(MAX_BOOK_SIZE)}
+                </p>
+              )}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Stat label="Net Exposure" value={fmtUSD0(summary.net)} sub={fmtSignedPct(summary.netPct)} tone={summary.net < 0 ? "neg" : "pos"} />
+              <Stat label="Gross" value={fmtUSD0(summary.gross)} sub={`${summary.leverage.toFixed(2)}×`} />
+              <Stat label="Long" value={fmtUSD0(summary.longN)} tone="pos" />
+              <Stat label="Short" value={fmtUSD0(summary.shortN)} tone="neg" />
+            </div>
+
+            <div>
+              <div className="label-text" style={{ marginBottom: 10 }}>Exposure by Asset</div>
+              <ExposureBar summary={summary} />
+            </div>
+
+            {tab === "Positions" ? (
+              <div>
+                <div className="label-text" style={{ marginBottom: 10 }}>Group Rollups</div>
+                {orderedGroups.length === 0 ? (
+                  <p className="text-subtle" style={{ fontSize: "0.78rem" }}>No groups yet.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: 9 }}>
+                    {orderedGroups.map(group => {
+                      const members = positionRows.filter(r => groupKey(r.group_name) === group.key)
+                      const net = members.reduce((s, m) => s + netNotional(m), 0)
+                      const gross = members.reduce((s, m) => s + grossNotional(m), 0)
+                      const wConv = gross > 0 ? members.reduce((s, m) => s + m.conviction * grossNotional(m), 0) / gross : group.conviction
+                      const rounded = Math.round(wConv)
+                      return (
+                        <div key={group.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: groupColor(group.key), flex: "0 0 auto" }} />
+                          <span style={{ fontSize: "0.8rem", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{group.name}</span>
+                          <span className="theme-badge" style={{ background: convTint(rounded), color: convColor(rounded), borderColor: convTint(rounded, 0.3), minHeight: "1.3rem", padding: "0.1rem 0.4rem" }}>{wConv.toFixed(1)}</span>
+                          <span className="mono-text" style={{ fontSize: "0.76rem", color: "hsl(var(--foreground-secondary))", minWidth: 62, textAlign: "right" }}>{fmtUSD0(net)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
         {/* Ledger */}
         <div style={{ minWidth: 0 }}>
           {tab === "Positions" ? (
@@ -1536,105 +1645,6 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
 
           {(currentValidationError || currentMutationError) ? (
             <div className="theme-notice theme-notice-error" style={{ marginTop: 14 }}>{currentValidationError ?? currentMutationError}</div>
-          ) : null}
-        </div>
-
-        {/* Live Summary */}
-        <div className="theme-surface portfolio-editor-summary" style={{ padding: 18, position: "sticky", top: 12, display: "grid", gap: 18 }}>
-          <div>
-            <div className="label-text" style={{ marginBottom: 12 }}>Live Summary</div>
-            <div>
-              <div className="label-text" style={{ marginBottom: 4 }}>Book Size</div>
-              <div style={{ display: "flex", alignItems: "center", border: "1px solid hsl(var(--border))", borderRadius: "var(--radius-md)", background: "hsl(var(--background-input))", height: "2.4rem", paddingInline: 10 }}>
-                <span className="text-subtle" style={{ fontSize: "0.9rem" }}>$</span>
-                <input
-                  className="mono-text"
-                  value={bookSizeInput}
-                  onChange={e => {
-                    setBookSizeInput(e.target.value)
-                    setSettingsSavedMessage(null)
-                  }}
-                  inputMode="decimal"
-                  style={{ width: "100%", border: "none", background: "transparent", color: "hsl(var(--foreground))", fontSize: "0.9rem", outline: "none", fontWeight: 600, paddingLeft: 6 }}
-                  aria-label="Book size"
-                />
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, gap: 8 }}>
-                  <span className="label-text" style={{ whiteSpace: "nowrap" }}>Gross Lev.</span>
-                  <span className="mono-text" style={{ fontSize: "0.78rem", fontWeight: 700, color: summary.leverage > 1.5 ? "hsl(var(--warning))" : "hsl(var(--foreground))" }}>{summary.leverage.toFixed(2)}×</span>
-                </div>
-                <div style={{ height: 6, borderRadius: 999, background: "hsl(var(--separator))", overflow: "hidden", display: "flex" }}>
-                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.longN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--success))" }} />
-                  <div style={{ width: `${summary.gross > 0 ? Math.min(100, (summary.shortN / summary.gross) * 100 * Math.min(1, summary.leverage / 2)) : 0}%`, background: "hsl(var(--destructive))" }} />
-                </div>
-              </div>
-              <button
-                type="button"
-                className="theme-button-base theme-button-ghost"
-                style={{ minHeight: 32, fontSize: "0.78rem", paddingInline: 10, marginTop: 8 }}
-                onClick={handleSaveBookSize}
-                disabled={settingsMutation.isPending}
-              >
-                {settingsMutation.isPending ? "Saving…" : "Save book size"}
-              </button>
-              {(settingsValidationError || settingsMutation.isError || settingsSavedMessage) ? (
-                <p
-                  style={{ marginTop: 6, fontSize: "0.72rem" }}
-                  className={settingsSavedMessage && !settingsValidationError && !settingsMutation.isError ? "text-positive" : "text-negative"}
-                >
-                  {settingsValidationError ?? (settingsMutation.isError ? String(settingsMutation.error) : settingsSavedMessage)}
-                </p>
-              ) : (
-                <p className="text-subtle" style={{ marginTop: 6, fontSize: "0.7rem" }}>
-                  {formatBaseCurrency(MIN_BOOK_SIZE)} – {formatBaseCurrency(MAX_BOOK_SIZE)}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div style={{ height: 1, background: "hsl(var(--separator))" }} />
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <Stat label="Net Exposure" value={fmtUSD0(summary.net)} sub={fmtSignedPct(summary.netPct)} tone={summary.net < 0 ? "neg" : "pos"} />
-            <Stat label="Gross" value={fmtUSD0(summary.gross)} sub={`${summary.leverage.toFixed(2)}×`} />
-            <Stat label="Long" value={fmtUSD0(summary.longN)} tone="pos" />
-            <Stat label="Short" value={fmtUSD0(summary.shortN)} tone="neg" />
-          </div>
-
-          <div>
-            <div className="label-text" style={{ marginBottom: 10 }}>Exposure by Asset</div>
-            <ExposureBar summary={summary} />
-          </div>
-
-          {tab === "Positions" ? (
-            <>
-              <div style={{ height: 1, background: "hsl(var(--separator))" }} />
-              <div>
-                <div className="label-text" style={{ marginBottom: 10 }}>Group Rollups</div>
-                {orderedGroups.length === 0 ? (
-                  <p className="text-subtle" style={{ fontSize: "0.78rem" }}>No groups yet.</p>
-                ) : (
-                  <div style={{ display: "grid", gap: 9 }}>
-                    {orderedGroups.map(group => {
-                      const members = positionRows.filter(r => groupKey(r.group_name) === group.key)
-                      const net = members.reduce((s, m) => s + netNotional(m), 0)
-                      const gross = members.reduce((s, m) => s + grossNotional(m), 0)
-                      const wConv = gross > 0 ? members.reduce((s, m) => s + m.conviction * grossNotional(m), 0) / gross : group.conviction
-                      const rounded = Math.round(wConv)
-                      return (
-                        <div key={group.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 2, background: groupColor(group.key), flex: "0 0 auto" }} />
-                          <span style={{ fontSize: "0.8rem", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{group.name}</span>
-                          <span className="theme-badge" style={{ background: convTint(rounded), color: convColor(rounded), borderColor: convTint(rounded, 0.3), minHeight: "1.3rem", padding: "0.1rem 0.4rem" }}>{wConv.toFixed(1)}</span>
-                          <span className="mono-text" style={{ fontSize: "0.76rem", color: "hsl(var(--foreground-secondary))", minWidth: 62, textAlign: "right" }}>{fmtUSD0(net)}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
           ) : null}
         </div>
       </div>
