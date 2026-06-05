@@ -12,7 +12,7 @@ from api.document_generation_jobs import classify_upload_document, enqueue_docum
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.auth import ActorDep
 from api.routers.portfolio_edit import _TICKER_RE
-from llm_utils import MODEL_MID, call_llm_pdf_text
+from llm_utils import MODEL_MID, call_llm_pdf_text, strip_assistant_citation_tokens
 from ontology.runtime_read_service import OntologyRuntimeReadService
 from paths import PROJECT_ROOT
 from portfolio import thesis_content
@@ -93,7 +93,7 @@ def _strip_outer_markdown_fence(text: str) -> str:
 
 
 def _normalize_output_markdown(ticker: str, content: str) -> str:
-    cleaned = _strip_outer_markdown_fence(content)
+    cleaned = strip_assistant_citation_tokens(_strip_outer_markdown_fence(content))
     lines = cleaned.splitlines()
     if lines and lines[0].startswith("# "):
         lines[0] = f"# {ticker}"
@@ -116,7 +116,7 @@ def _decode_markdown_upload(markdown_bytes: bytes) -> str:
         raise ValidationError("Markdown file must be UTF-8 encoded.") from e
     if not content.strip():
         raise ValidationError("Markdown file is empty.")
-    return content
+    return strip_assistant_citation_tokens(content)
 
 
 def _llm_error_message(exc: Exception) -> str:
@@ -169,6 +169,42 @@ def _call_llm_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     return _normalize_output_markdown(ticker, generated)
 
 
+def _stage_kill_condition_proposals(
+    ticker: str,
+    kill_conditions: list[dict],
+    *,
+    existing_keys: set[str],
+) -> tuple[list[dict], int]:
+    from portfolio.thesis_sync import _normalize_match_text
+    from portfolio.thesis_upload_extraction import dedupe_kill_condition_candidates
+
+    staged_proposals: list[dict] = []
+    unique, skipped = dedupe_kill_condition_candidates(
+        kill_conditions,
+        existing_keys=existing_keys,
+    )
+    for candidate in unique:
+        condition = str(candidate.get("condition") or "").strip()
+        if not condition:
+            skipped += 1
+            continue
+        proposal = stage_api_action(
+            "create_kill_condition",
+            {
+                "ticker": ticker,
+                "condition": condition,
+                "metric": candidate.get("metric"),
+                "threshold": candidate.get("threshold"),
+            },
+            source_id="thesis.generate_thesis.kill_condition",
+            reason=f"Propose kill condition from thesis upload for {ticker}",
+            apply=False,
+        )
+        staged_proposals.append(proposal)
+        existing_keys.add(_normalize_match_text(condition))
+    return staged_proposals, skipped
+
+
 def generate_thesis_from_upload_bytes(
     ticker: str,
     upload_bytes: bytes,
@@ -176,6 +212,13 @@ def generate_thesis_from_upload_bytes(
     content_type: str,
     filename: str,
 ) -> dict:
+    from portfolio.thesis_upload_extraction import (
+        count_meaningful_catalyst_bullets,
+        existing_kill_condition_keys,
+        extract_entities_from_thesis_upload,
+        merge_catalyst_bullets_into_thesis,
+    )
+
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
     if not upload_bytes:
@@ -195,15 +238,40 @@ def generate_thesis_from_upload_bytes(
     else:
         content = _normalize_output_markdown(normalized_ticker, _decode_markdown_upload(upload_bytes))
 
+    extracted = extract_entities_from_thesis_upload(normalized_ticker, content)
+    content = merge_catalyst_bullets_into_thesis(content, list(extracted.get("catalysts") or []))
+
     _configure_thesis_content_storage()
-    return stage_api_action(
+    save_result = stage_api_action(
         "save_thesis_content",
-        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        {
+            "ticker": normalized_ticker,
+            "content": content,
+            "preserve_exact_content": True,
+            "project_risk_factors_to_kill_conditions": False,
+        },
         source_id="thesis.generate_thesis",
         reason=f"Generate thesis for {normalized_ticker} from uploaded document",
         apply=True,
         approval_note=f"Apply uploaded thesis for {normalized_ticker}.",
     )
+
+    existing_keys = existing_kill_condition_keys(normalized_ticker)
+    staged_proposals, skipped_duplicates = _stage_kill_condition_proposals(
+        normalized_ticker,
+        list(extracted.get("kill_conditions") or []),
+        existing_keys=existing_keys,
+    )
+
+    return {
+        **save_result,
+        "staged_proposals": staged_proposals,
+        "extraction_summary": {
+            "catalyst_count": count_meaningful_catalyst_bullets(content),
+            "kill_condition_proposal_count": len(staged_proposals),
+            "skipped_duplicate_count": skipped_duplicates,
+        },
+    }
 
 
 @router.post("/thesis/generate")

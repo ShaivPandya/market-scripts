@@ -117,6 +117,17 @@ export interface StagedMutationResponse {
   }
 }
 
+export interface ThesisUploadExtractionSummary {
+  catalyst_count: number
+  kill_condition_proposal_count: number
+  skipped_duplicate_count: number
+}
+
+export interface ThesisUploadResponse extends StagedMutationResponse {
+  staged_proposals?: StagedMutationResponse[]
+  extraction_summary?: ThesisUploadExtractionSummary
+}
+
 export interface PolicyGateReason {
   code?: string
   check?: string
@@ -1263,7 +1274,7 @@ const uploadDocumentForGeneration = <T>(kind: DocumentGenerationKind, ticker: st
 }
 
 export const uploadThesisDocument = (ticker: string, file: File) =>
-  uploadDocumentForGeneration<StagedMutationResponse>("thesis", ticker, file)
+  uploadDocumentForGeneration<ThesisUploadResponse>("thesis", ticker, file)
 
 // --- Overview ---
 

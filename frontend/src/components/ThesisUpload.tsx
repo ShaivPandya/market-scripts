@@ -3,7 +3,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { FileUp, Loader2 } from "lucide-react"
 
 import { useDocumentGenerationUpload } from "@/hooks/useDocumentGenerationUpload"
-import type { StagedMutationResponse, ThesisStatus } from "@/lib/api"
+import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
+import type { ThesisStatus, ThesisUploadResponse } from "@/lib/api"
 
 type ThesisUploadProps = {
   ticker: string
@@ -15,11 +16,21 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { isUploading, startUpload } = useDocumentGenerationUpload<StagedMutationResponse>({
+  const { isUploading, startUpload } = useDocumentGenerationUpload<ThesisUploadResponse>({
     kind: "thesis",
     ticker,
-    onSuccess: async () => {
-      setNotice("Saved")
+    onSuccess: async result => {
+      const summary = result.extraction_summary
+      const killCount = summary?.kill_condition_proposal_count ?? 0
+      const catalystCount = summary?.catalyst_count ?? 0
+      if (killCount > 0) {
+        setNotice(`Saved; proposed ${killCount} kill condition${killCount === 1 ? "" : "s"}`)
+      } else if (catalystCount > 0) {
+        setNotice(`Saved; ${catalystCount} catalyst${catalystCount === 1 ? "" : "s"} tracked`)
+      } else {
+        setNotice("Saved")
+      }
+      await invalidateApprovalSummaries(queryClient)
       await queryClient.invalidateQueries({ queryKey: ["thesis", "status"] })
       await queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
     },

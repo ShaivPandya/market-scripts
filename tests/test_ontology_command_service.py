@@ -1583,6 +1583,52 @@ def test_save_thesis_content_writes_native_markdown_entities_and_relations(monke
     assert indexed and indexed[0]["doc_type"] == "thesis"
 
 
+def test_save_thesis_content_skips_kill_conditions_when_flag_false(monkeypatch, tmp_path):
+    import portfolio.thesis_content as thesis_content
+
+    indexed: list[dict[str, Any]] = []
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    monkeypatch.setattr(thesis_content, "THESES_DIR", thesis_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+    content = """# META
+
+## Thesis
+- AI ad tools improve monetization.
+
+## Key Catalysts
+- **AI capex ramp:** Investments convert into revenue growth.
+
+## Risk Factors
+- **Ad deceleration:** Reels and AI ad load stop improving.
+"""
+
+    approval = service.propose_action(
+        "save_thesis_content",
+        {
+            "ticker": "meta",
+            "content": content,
+            "project_risk_factors_to_kill_conditions": False,
+        },
+        context,
+        reason="unit",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    object_types = {row["object_type"] for row in repo.objects.values()}
+    assert "Catalyst" in object_types
+    assert "KillCondition" not in object_types
+    relation_types = {row["relation_type"] for row in repo.relations}
+    assert "has_catalyst" in relation_types
+    assert "thesis_has_kill_condition" not in relation_types
+
+
 def test_save_management_quality_content_writes_ontology_children_and_markdown(monkeypatch, tmp_path):
     import portfolio.management_quality_content as management_quality_content
 

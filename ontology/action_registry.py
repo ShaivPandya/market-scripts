@@ -766,6 +766,7 @@ class ReplaceWatchTriggerInput(CreateWatchTriggerInput):
 class SaveThesisContentInput(TickerMixin):
     content: str
     preserve_exact_content: bool = False
+    project_risk_factors_to_kill_conditions: bool = True
 
     @field_validator("content")
     @classmethod

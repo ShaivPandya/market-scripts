@@ -3119,6 +3119,9 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
+        project_risk = payload.get("project_risk_factors_to_kill_conditions")
+        if project_risk is None:
+            project_risk = True
         refs.extend(
             self._write_thesis_markdown_entities(
                 ticker=ticker,
@@ -3128,6 +3131,7 @@ class OntologyCommandService:
                 provenance_id=provenance_id,
                 input_hash=input_hash,
                 now=now,
+                project_risk_factors_to_kill_conditions=bool(project_risk),
             )
         )
         _best_effort_index_document(
@@ -3151,6 +3155,7 @@ class OntologyCommandService:
         provenance_id: str,
         input_hash: str,
         now: str,
+        project_risk_factors_to_kill_conditions: bool = True,
     ) -> list[dict[str, Any]]:
         """Project thesis markdown sections into ontology-native process objects."""
         from portfolio.thesis_backfill import _categorize_catalyst, _extract_label_and_description, _parse_bullets
@@ -3218,46 +3223,47 @@ class OntologyCommandService:
                     input_hash=input_hash,
                 )
 
-        for bullet in _parse_bullets(content, "Risk Factors"):
-            if _blank_markdown_item(bullet):
-                continue
-            label, desc = _extract_label_and_description(bullet)
-            condition = f"{label}: {desc}" if desc != label else label
-            row = self.objects.write_object(
-                "KillCondition",
-                f"{ticker}:{condition}",
-                {
-                    "ticker": ticker,
-                    "condition": condition,
-                    "status": "active",
-                    "created_at": now,
-                    "updated_at": now,
-                    "created_by": "thesis_markdown",
-                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-                },
-                now,
-                actor=actor,
-                provenance=provenance_id,
-                input_hash=input_hash,
-            )
-            ref = _version_ref_from_row(row)
-            refs.append(ref)
-            kill_condition_uid = str(ref.get("object_uid") or "")
-            if kill_condition_uid:
-                for key in {label, condition}:
-                    normalized = _normalize_match_text(str(key))
-                    if normalized:
-                        kill_condition_by_label[normalized] = kill_condition_uid
-                self.objects.write_relation(
-                    thesis_uid,
-                    kill_condition_uid,
-                    "thesis_has_kill_condition",
-                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+        if project_risk_factors_to_kill_conditions:
+            for bullet in _parse_bullets(content, "Risk Factors"):
+                if _blank_markdown_item(bullet):
+                    continue
+                label, desc = _extract_label_and_description(bullet)
+                condition = f"{label}: {desc}" if desc != label else label
+                row = self.objects.write_object(
+                    "KillCondition",
+                    f"{ticker}:{condition}",
+                    {
+                        "ticker": ticker,
+                        "condition": condition,
+                        "status": "active",
+                        "created_at": now,
+                        "updated_at": now,
+                        "created_by": "thesis_markdown",
+                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    },
                     now,
                     actor=actor,
                     provenance=provenance_id,
                     input_hash=input_hash,
                 )
+                ref = _version_ref_from_row(row)
+                refs.append(ref)
+                kill_condition_uid = str(ref.get("object_uid") or "")
+                if kill_condition_uid:
+                    for key in {label, condition}:
+                        normalized = _normalize_match_text(str(key))
+                        if normalized:
+                            kill_condition_by_label[normalized] = kill_condition_uid
+                    self.objects.write_relation(
+                        thesis_uid,
+                        kill_condition_uid,
+                        "thesis_has_kill_condition",
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                        now,
+                        actor=actor,
+                        provenance=provenance_id,
+                        input_hash=input_hash,
+                    )
 
         parsed_claims = _parse_structured_claims(content)
         claim_records = parsed_claims if parsed_claims is not None else _parse_text_claims(content)
