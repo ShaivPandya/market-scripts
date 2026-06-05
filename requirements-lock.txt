@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements.txt -c requirements-lock.txt
 ace_tools==0.0
 aiofiles==25.1.0
-aiohappyeyeballs==2.6.1
+aiohappyeyeballs==2.6.2
 aiohttp==3.13.5
 aiosignal==1.4.0
 alembic==1.18.4
