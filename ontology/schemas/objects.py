@@ -3049,6 +3049,48 @@ class InvestmentIdea(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class IdeaLifecycleEvent(OntologySchemaBase):
+    event_id: NonBlankStr
+    id: str | int | None = None
+    idea_id: NonBlankStr
+    ticker: NonBlankStr
+    event_type: NonBlankStr
+    changed_at: NonBlankStr
+    changed_fields: list[str] = Field(default_factory=list)
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+    evaluation_id: str | int | None = None
+    recommendation_id: str | int | None = None
+    approval_id: str | int | None = None
+    action_approval_id: str | int | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("event_id", "idea_id", "event_type", "changed_at", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "reason",
+        "source_type",
+        "source_id",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class IdeaEvaluation(OntologySchemaBase):
     evaluation_id: NonBlankStr
     id: str | int | None = None

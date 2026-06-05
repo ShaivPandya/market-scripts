@@ -25,6 +25,7 @@ import {
   type IdeaEvaluationJobResponse,
   type IdeaStatus,
   type InstrumentType,
+  type IdeaLifecycleEvent,
   type InvestmentIdea,
   type PortfolioAsset,
   type StagedMutationResponse,
@@ -71,6 +72,32 @@ const ANALYZER_DIRECTIONS: { value: IdeaAnalyzerDirection; label: string }[] = [
   { value: "long", label: "Long" },
   { value: "short", label: "Short" },
 ]
+
+function lifecycleEventLabel(eventType: string) {
+  return formatLabel(eventType.replaceAll("_", " "))
+}
+
+function lifecycleChangeSummary(event: IdeaLifecycleEvent) {
+  if (event.event_type === "evaluation_accepted") {
+    const action = typeof event.after.action === "string" ? event.after.action : null
+    return action ? `Accepted ${action} evaluation` : "Accepted evaluation"
+  }
+  return event.changed_fields
+    .map(field => {
+      const before = event.before?.[field]
+      const after = event.after?.[field]
+      const label = formatLabel(field)
+      if (Array.isArray(before) || Array.isArray(after)) {
+        const beforeText = Array.isArray(before) ? before.join(", ") : String(before ?? "")
+        const afterText = Array.isArray(after) ? after.join(", ") : String(after ?? "")
+        return `${label}: ${beforeText || "—"} → ${afterText || "—"}`
+      }
+      if (before == null && after != null) return `${label} → ${String(after)}`
+      if (before != null && after == null) return `${label} cleared`
+      return `${label}: ${String(before ?? "—")} → ${String(after ?? "—")}`
+    })
+    .join("; ")
+}
 
 const STATUS_TONE: Record<string, StatusTone> = {
   watching: "neutral",
@@ -795,9 +822,39 @@ export function IdeaDetail() {
 	                />
                 {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
 
+                {detail?.lifecycle_history && detail.lifecycle_history.length > 0 && (
+                  <section className="space-y-3">
+                    <h3 className="section-title text-sm">Lifecycle History</h3>
+                    <div className="space-y-2">
+                      {detail.lifecycle_history.slice(0, 8).map(event => (
+                        <div
+                          key={event.id}
+                          className="w-full rounded-lg border border-app bg-card-muted px-3 py-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-app bg-card px-2 py-0.5 text-xs font-medium text-app">
+                              {lifecycleEventLabel(event.event_type)}
+                            </span>
+                            <span className="text-sm text-subtle">{formatDate(event.changed_at)}</span>
+                          </div>
+                          <p className="mt-2 text-sm text-muted">{lifecycleChangeSummary(event)}</p>
+                          {event.reason && <p className="mt-1 text-sm text-subtle">Reason: {event.reason}</p>}
+                          {(event.evaluation_id || event.recommendation_id) && (
+                            <p className="mt-1 text-xs text-subtle">
+                              {event.evaluation_id ? `Evaluation ${event.evaluation_id}` : null}
+                              {event.evaluation_id && event.recommendation_id ? " · " : null}
+                              {event.recommendation_id ? `Recommendation ${event.recommendation_id}` : null}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 {detail?.evaluations && detail.evaluations.length > 1 && (
                   <section className="space-y-3">
-                    <h3 className="section-title text-sm">History</h3>
+                    <h3 className="section-title text-sm">Evaluation History</h3>
                     <div className="space-y-2">
                       {detail.evaluations.slice(1, 8).map(evaluation => (
                         <div

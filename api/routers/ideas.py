@@ -86,6 +86,16 @@ IDEA_INSTRUMENT_FIELDS = {
     "country",
     "exchange",
 }
+IDEA_LIFECYCLE_TRACKED_FIELDS = (
+    "status",
+    "user_notes",
+    "tags",
+    "analyzer_direction",
+    "use_portfolio_context",
+    *IDEA_INSTRUMENT_FIELDS,
+    "rejection_note",
+    "rejected_at",
+)
 
 
 class IdeaCreateRequest(BaseModel):
@@ -415,6 +425,160 @@ def _idea_uid(value: Any) -> str:
 def _evaluation_uid(value: Any) -> str:
     text = str(value or "").strip()
     return text if text.startswith("idea_evaluation:") else f"idea_evaluation:{text}"
+
+
+def _lifecycle_event_uid(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text.startswith("idea_lifecycle_event:") else f"idea_lifecycle_event:{text}"
+
+
+def _idea_lifecycle_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    tags = idea.get("tags")
+    return {
+        "status": idea.get("status"),
+        "user_notes": idea.get("user_notes"),
+        "tags": sorted(str(tag) for tag in (tags if isinstance(tags, list) else [])),
+        "analyzer_direction": _idea_analyzer_direction(idea),
+        "use_portfolio_context": _idea_uses_portfolio_context(idea),
+        "ticker": idea.get("ticker"),
+        "asset": idea.get("asset"),
+        "instrument_type": idea.get("instrument_type"),
+        "price_symbol": idea.get("price_symbol"),
+        "contract_multiplier": idea.get("contract_multiplier"),
+        "fx_base_currency": idea.get("fx_base_currency"),
+        "fx_quote_currency": idea.get("fx_quote_currency"),
+        "currency": idea.get("currency"),
+        "country": idea.get("country"),
+        "exchange": idea.get("exchange"),
+        "rejection_note": metadata.get("rejection_note"),
+        "rejected_at": metadata.get("rejected_at"),
+    }
+
+
+def _diff_idea_lifecycle_changes(
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    changed_fields: list[str] = []
+    before_values: dict[str, Any] = {}
+    after_values: dict[str, Any] = {}
+    for field in IDEA_LIFECYCLE_TRACKED_FIELDS:
+        before_value = before.get(field)
+        after_value = after.get(field)
+        if before_value != after_value:
+            changed_fields.append(field)
+            before_values[field] = before_value
+            after_values[field] = after_value
+    return changed_fields, before_values, after_values
+
+
+def _lifecycle_event_type_for_changes(changed_fields: list[str]) -> str:
+    field_type_map = {
+        "status": "status_changed",
+        "user_notes": "notes_edited",
+        "tags": "tags_edited",
+        "analyzer_direction": "analyzer_direction_changed",
+        "use_portfolio_context": "portfolio_context_changed",
+    }
+    if len(changed_fields) == 1 and changed_fields[0] in field_type_map:
+        return field_type_map[changed_fields[0]]
+    if set(changed_fields).issubset(IDEA_INSTRUMENT_FIELDS):
+        return "instrument_changed"
+    if {"rejection_note", "rejected_at"}.intersection(changed_fields):
+        return "rejected"
+    return "idea_updated"
+
+
+def _write_idea_lifecycle_event(
+    idea: dict[str, Any],
+    *,
+    event_type: str,
+    changed_fields: list[str],
+    before: dict[str, Any],
+    after: dict[str, Any],
+    reason: str | None = None,
+    evaluation_id: str | None = None,
+    recommendation_id: str | None = None,
+    approval_id: str | None = None,
+    action_approval_id: str | None = None,
+    source_type: str = "user",
+    source_id: str | None = None,
+    changed_at: str | None = None,
+) -> dict[str, Any]:
+    if not changed_fields:
+        return {}
+    timestamp = changed_at or _now()
+    idea_uid = _idea_uid(idea.get("id") or idea.get("object_uid") or idea.get("idea_id"))
+    from ontology.schemas.identity import idea_lifecycle_event_id
+
+    event_uid = idea_lifecycle_event_id(
+        _stable_hash(
+            {
+                "idea_id": idea_uid,
+                "event_type": event_type,
+                "changed_at": timestamp,
+                "changed_fields": changed_fields,
+                "before": before,
+                "after": after,
+            }
+        )
+    )
+    payload = {
+        "event_id": event_uid,
+        "idea_id": idea_uid,
+        "ticker": str(idea.get("ticker") or ""),
+        "event_type": event_type,
+        "changed_at": timestamp,
+        "changed_fields": changed_fields,
+        "before": before,
+        "after": after,
+        "reason": reason,
+        "evaluation_id": evaluation_id,
+        "recommendation_id": recommendation_id,
+        "approval_id": approval_id,
+        "action_approval_id": action_approval_id,
+        "source_type": source_type,
+        "source_id": source_id,
+        "metadata": {},
+        "ontology_run_id": "operational",
+    }
+    return _write_runtime_object("IdeaLifecycleEvent", event_uid, payload)
+
+
+def _record_idea_lifecycle_changes(
+    before_idea: dict[str, Any],
+    after_idea: dict[str, Any],
+    *,
+    event_type: str | None = None,
+    reason: str | None = None,
+    evaluation_id: str | None = None,
+    recommendation_id: str | None = None,
+    approval_id: str | None = None,
+    action_approval_id: str | None = None,
+    source_type: str = "user",
+    source_id: str | None = None,
+) -> dict[str, Any]:
+    before = _idea_lifecycle_snapshot(before_idea)
+    after = _idea_lifecycle_snapshot(after_idea)
+    changed_fields, before_values, after_values = _diff_idea_lifecycle_changes(before, after)
+    if not changed_fields:
+        return {}
+    resolved_type = event_type or _lifecycle_event_type_for_changes(changed_fields)
+    return _write_idea_lifecycle_event(
+        after_idea,
+        event_type=resolved_type,
+        changed_fields=changed_fields,
+        before=before_values,
+        after=after_values,
+        reason=reason,
+        evaluation_id=evaluation_id,
+        recommendation_id=recommendation_id,
+        approval_id=approval_id,
+        action_approval_id=action_approval_id,
+        source_type=source_type,
+        source_id=source_id,
+    )
 
 
 def _comparison_uid(value: Any) -> str:
@@ -798,6 +962,12 @@ def _list_idea_evaluations(idea_id: Any | None = None, *, limit: int = 100) -> l
     filters = {"idea_id": _idea_uid(idea_id)} if idea_id is not None else None
     rows = OntologyRuntimeReadService().list_objects("IdeaEvaluation", filters=filters, limit=limit)
     return sorted(rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)
+
+
+def _list_idea_lifecycle_events(idea_id: Any | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    filters = {"idea_id": _idea_uid(idea_id)} if idea_id is not None else None
+    rows = OntologyRuntimeReadService().list_objects("IdeaLifecycleEvent", filters=filters, limit=limit)
+    return sorted(rows, key=lambda row: str(row.get("changed_at") or ""), reverse=True)
 
 
 def _get_idea_evaluation(evaluation_id: Any) -> dict[str, Any] | None:
@@ -2602,6 +2772,7 @@ def _idea_detail(idea_id: str) -> dict[str, Any]:
     return {
         "idea": idea,
         "evaluations": _list_idea_evaluations(idea_id, limit=20),
+        "lifecycle_history": _list_idea_lifecycle_events(idea_id, limit=20),
         "documents": {
             "overview_present": bool(overview),
             "overview_content": _safe_text(overview, max_len=120_000),
@@ -2694,6 +2865,7 @@ def update_idea(idea_id: str, body: IdeaUpdateRequest):
     current = _get_idea(idea_id)
     if not current:
         raise NotFoundError("Investment idea", str(idea_id))
+    before_idea = json.loads(json.dumps(current, default=str))
     updates = body.model_dump(exclude_unset=True)
     if "analyzer_direction" in updates or "use_portfolio_context" in updates:
         metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
@@ -2727,6 +2899,7 @@ def update_idea(idea_id: str, body: IdeaUpdateRequest):
     current.pop("id", None)
     current.pop("object_uid", None)
     _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), current)
+    _record_idea_lifecycle_changes(before_idea, current, source_id=f"ideas.update:{idea_id}")
     return _idea_detail(idea_id)
 
 
@@ -2766,6 +2939,7 @@ def start_idea_evaluation(idea_id: str, body: dict[str, Any] | None = OPTIONAL_J
         cache_key=None if force_refresh else _cache_key(req),
         reuse_completed=not force_refresh,
     )
+    before_idea = json.loads(json.dumps(idea, default=str))
     idea.update({"latest_job_id": str(row.get("job_id") or ""), "updated_at": _now()})
     if str(row.get("status") or "") in {"queued", "running"}:
         idea["status"] = "researching"
@@ -2773,6 +2947,13 @@ def start_idea_evaluation(idea_id: str, body: dict[str, Any] | None = OPTIONAL_J
     idea.pop("id", None)
     idea.pop("object_uid", None)
     _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), idea)
+    if before_idea.get("status") != idea.get("status"):
+        _record_idea_lifecycle_changes(
+            before_idea,
+            idea,
+            event_type="evaluation_started",
+            source_id=f"ideas.evaluate:{idea_id}",
+        )
     return enqueue_response(row, "/api/ideas/evaluate/async/{job_id}")
 
 
@@ -2882,6 +3063,23 @@ def accept_idea_evaluation(
     accepted_payload.pop("id", None)
     accepted_payload.pop("object_uid", None)
     accepted = _write_runtime_object("IdeaEvaluation", _evaluation_uid(evaluation_id), accepted_payload)
+    _write_idea_lifecycle_event(
+        idea,
+        event_type="evaluation_accepted",
+        changed_fields=["evaluation_accepted"],
+        before={},
+        after={
+            "evaluation_id": _evaluation_uid(evaluation_id),
+            "action": evaluation.get("action"),
+            "recommendation_id": recommendation_object_id or recommendation_id,
+        },
+        reason=(body.note if body else None),
+        evaluation_id=_evaluation_uid(evaluation_id),
+        recommendation_id=str(recommendation_object_id or recommendation_id or ""),
+        approval_id=str(recommendation_approval_id or "") or None,
+        action_approval_id=str(action_proposal["approval_id"]) if action_proposal else None,
+        source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
+    )
     return {
         "status": "accepted",
         "idea": _get_idea(idea_id),
@@ -2897,11 +3095,23 @@ def reject_idea(idea_id: str, body: IdeaRejectRequest | None = None):
     idea = _get_idea(idea_id)
     if not idea:
         raise NotFoundError("Investment idea", str(idea_id))
-    idea.update(
-        {"status": "rejected", "metadata": {"rejection_note": body.note if body else None, "rejected_at": _now()}}
-    )
+    before_idea = json.loads(json.dumps(idea, default=str))
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    next_metadata = {
+        **cast(dict[str, Any], metadata),
+        "rejection_note": body.note if body else None,
+        "rejected_at": _now(),
+    }
+    idea.update({"status": "rejected", "metadata": next_metadata})
     idea.pop("_meta", None)
     idea.pop("id", None)
     idea.pop("object_uid", None)
     idea = _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), idea)
+    _record_idea_lifecycle_changes(
+        before_idea,
+        idea,
+        event_type="rejected",
+        reason=body.note if body else None,
+        source_id=f"ideas.reject:{idea_id}",
+    )
     return {"status": "rejected", "idea": idea}

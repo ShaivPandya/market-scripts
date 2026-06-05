@@ -518,6 +518,13 @@ def idea_evaluation_id(identifier: object) -> str:
     return f"idea_evaluation:{slug(text)}"
 
 
+def idea_lifecycle_event_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_lifecycle_event:"):
+        text = text.split(":", 1)[1]
+    return f"idea_lifecycle_event:{slug(text)}"
+
+
 def idea_comparison_run_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("idea_comparison_run:"):

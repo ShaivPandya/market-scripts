@@ -680,6 +680,26 @@ export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
   }
 }
 
+export interface IdeaLifecycleEvent {
+  id: string
+  event_id?: string
+  idea_id: string
+  ticker: string
+  event_type: string
+  changed_at: string
+  changed_fields: string[]
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+  reason?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  approval_id?: string | null
+  action_approval_id?: string | null
+  source_type?: string | null
+  source_id?: string | null
+  metadata?: Record<string, unknown>
+}
+
 export interface IdeaEvaluation {
   id: string
   source_id?: number | null
@@ -717,6 +737,7 @@ export interface IdeaEvaluation {
 export interface IdeaDetailResponse {
   idea: InvestmentIdea
   evaluations: IdeaEvaluation[]
+  lifecycle_history?: IdeaLifecycleEvent[]
   documents?: {
     overview_present?: boolean
     overview_content?: string | null
