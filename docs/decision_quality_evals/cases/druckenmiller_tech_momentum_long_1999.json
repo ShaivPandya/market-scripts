@@ -1,0 +1,243 @@
+{
+  "id": "druckenmiller_tech_momentum_long_1999",
+  "status": "draft",
+  "decision_type": "macro_stance",
+  "as_of_date": "1999-07-31",
+  "user_question": "Using the post-Sun-Valley summer 1999 setup for Druckenmiller and Quantum, should buying or adding long technology and internet equity risk have been actionable, watch, research, avoid, or do_nothing?",
+  "input_refs": [
+    {
+      "type": "source_document",
+      "path": "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+      "sha256": "2314c88c20bc0ae4181fd04c2a6397f616a07ef13b6b0c5399d8385e133fb7b9",
+      "description": "Historical source-case summary for Druckenmiller's summer 1999 pivot to long technology and internet equities.",
+      "required": true
+    },
+    {
+      "type": "market_data",
+      "path": "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json",
+      "sha256": "75fc47d3664fa69d5b97d40af8d641a4fafd8e1b38a2c6c5f5d7f8fdd5350fc9",
+      "description": "Macro, market-structure, price-action, catalyst, and invalidation setup using the July 30, 1999 close.",
+      "required": true
+    },
+    {
+      "type": "portfolio_context",
+      "path": "docs/decision_quality_evals/inputs/druckenmiller_tech_long_portfolio_context_1999-07-31.json",
+      "sha256": "b8685013aaea84ea88ef9a0eb505f52e817bb4bee40181e421f8610340308114",
+      "description": "Portfolio context: add-risk posture after a failed short, delegated specialist implementation, and conviction 4.",
+      "required": true
+    },
+    {
+      "type": "user_notes",
+      "path": "docs/decision_quality_evals/inputs/druckenmiller_tech_long_initiation_notes_1999-07-31.json",
+      "sha256": "6030622d28c82c06cb11e5782001d9fe1a18687bffb4c2c8b7487bbf8ebf76fb",
+      "description": "User-requested framing and initiation rationale for the summer 1999 technology long case.",
+      "required": true
+    }
+  ],
+  "assumptions": [
+    "This is a historical decision-quality case, not a live trading recommendation.",
+    "The decision date is 1999-07-31, selected from the supplied research as a proxy for the post-Sun-Valley add-risk decision; market data uses the 1999-07-30 close.",
+    "The recommended action is buy, but the thesis is tactical and reflexive rather than a claim that dot-com valuations were fundamentally justified.",
+    "The supplied markdown includes numeric citation placeholders instead of stable URLs; the case remains draft until source snapshots or links are attached.",
+    "Later 1999 performance, the March 2000 Nasdaq peak, and the subsequent crash are excluded from the solver inputs and from the gold-output rationale."
+  ],
+  "gold_output": {
+    "simple_thesis": "Buy or add long technology and internet equity risk because the dominant summer 1999 regime was a liquidity- and momentum-driven reflexive process, and Druckenmiller had both the flexibility to stop fighting it and the operational structure to capture it through specialists and forced-seller opportunities.",
+    "opportunity_type": "reflexive_process",
+    "embedded_macro_exposure": "Long U.S. risk liquidity, the technology productivity narrative, Nasdaq and internet momentum, and forced-seller liquidity provision; short the persistence of traditional value-manager discipline and valuation-based shorting as the dominant price-setting force.",
+    "mispricing": {
+      "consensus_view": "The bullish market consensus treated internet and technology as a new-economy paradigm worth paying almost any price for, while the value-investor consensus treated the same market as an obvious bubble that should be shorted or avoided.",
+      "variant_view": "Druckenmiller's variant view was not that the valuations were sound; it was that the active, tradeable regime was reflexive. Liquidity, Fed tolerance, career risk, retail and institutional flows, and vertical price action could keep the bubble moving longer than fundamental shorts could survive.",
+      "pricing_evidence": "Quantum had lost about 18% in the first five months of 1999 trying to short the bubble, technology leadership was still intact, the supplied research says Nasdaq remained above key long-term moving averages after the July 30 inflation scare, and Tiger's forced liquidations created flow-driven entry points such as SK Telecom.",
+      "why_consensus_is_wrong": "The skeptical consensus was directionally right about valuation excess but wrong about timing and price-setting. It treated valuation as the immediate driver even though liquidity, benchmark pressure, delegated specialist flow, and forced selling were dominating the tape."
+    },
+    "catalyst_or_reason_now": {
+      "event_or_condition": "The summer 1999 post-Sun-Valley conversion, scaled allocation to technology specialists, Tiger forced-selling pressure, and a July 30 macro-driven dip inside an intact technology uptrend.",
+      "expected_timeframe": "Immediate buy/add-risk decision as of 1999-07-31, with validation over the next 1-8 weeks through Nasdaq trend behavior, Fed posture, IPO and fund-flow demand, and specialist-manager drawdowns.",
+      "why_now": "The May allocation was only a probe; by late July Druckenmiller had accepted the regime shift, built a specialist execution structure, and had an actionable liquidity-provider setup while the technology trend remained intact despite an inflation scare.",
+      "source_evidence": [
+        "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json: timeline, post-Sun-Valley pivot, specialist hiring, and forced-seller setup",
+        "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json: July 30 price action, Fed/liquidity setup, and risk/reward",
+        "docs/decision_quality_evals/inputs/druckenmiller_tech_long_initiation_notes_1999-07-31.json: buy/add-risk rationale and selected inputs"
+      ]
+    },
+    "invalidation": {
+      "observable": "The technology momentum and liquidity regime breaks rather than merely pulling back.",
+      "metric_or_event": "Nasdaq or internet-index trend, volume, market breadth, Fed policy path, technology and growth fund flows, IPO demand, and drawdown or liquidity stress in the Levit/Hakala specialist books.",
+      "threshold": "Reduce or exit if Nasdaq or the chosen tech index has a decisive high-volume weekly close below the 150-day moving average and fails to reclaim the 50-day moving average on the next relief rally; if the Fed shifts to sequential 50 bp hikes or explicit asset-price deflation rhetoric; if technology/growth funds show two consecutive months of outflows with failed technology IPOs; or if either specialist book draws down 15% from peak equity or becomes materially illiquid.",
+      "timeframe": "Daily monitoring, with key confirmation or failure expected over 1-8 weeks after 1999-07-31.",
+      "implication": "The reflexive bid is breaking and the trade has no durable valuation floor; treat the buy as wrong, cut exposure, and do not rationalize the drawdown as a long-term fundamental investment."
+    },
+    "evidence_for": [
+      {
+        "claim": "The prior short thesis had failed in practice.",
+        "support": "The supplied case context says Quantum was down about 18% in the first five months of 1999 after shorting the technology bubble. A macro manager should treat that as evidence that valuation was not the active price-setting variable.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_portfolio_context_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "The post-Sun-Valley shift created a real reason-now.",
+        "support": "The inputs distinguish the May 1999 probe from the late-July scale-up: after Sun Valley, Druckenmiller allocated more capital, added Diane Hakala, and accepted that the technology regime had to be ridden rather than fought.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_initiation_notes_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Liquidity and Fed tolerance still supported risk assets.",
+        "support": "The supplied market setup says residual post-1998 liquidity remained powerful and Greenspan's July 1999 posture was interpreted as gradual rather than an aggressive attempt to pop the equity bubble.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Price action supported a tactical long despite volatility.",
+        "support": "On July 30, the Nasdaq fell 65.83 points to 2640.01 on wage-inflation fears, but the supplied research says the index remained above its 100-day and 150-day moving averages and the primary trend was intact.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Delegating to specialists improved execution quality.",
+        "support": "Druckenmiller admitted he lacked micro-level knowledge of many speculative technology names, so allocating to Carson Levit and Diane Hakala created a way to capture the theme without pretending to have single-name expertise overnight.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_portfolio_context_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Tiger's distress created flow-driven asymmetry.",
+        "support": "The supplied research says Tiger redemptions forced liquidation of attractive assets such as SK Telecom. Buying into non-economic selling provided a more concrete edge than simply chasing the most extended internet names.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      }
+    ],
+    "evidence_against": [
+      {
+        "claim": "Valuation risk was extreme.",
+        "support": "The case inputs acknowledge that many technology and internet equities were detached from cash flows and that value-oriented investors such as Buffett and Robertson viewed the market as a bubble. This was not decisive only because the recommended expression is tactical and trend-following, not buy-and-hold valuation underwriting.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "The Fed had started tightening.",
+        "support": "The market setup notes a June 1999 25 bp rate hike. That mattered because liquidity was the oxygen for the trade; it was not yet decisive because the supplied research frames policy as gradual and still tolerant of the productivity boom.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "The July 30 ECI shock showed real inflation risk.",
+        "support": "The supplied market data says the Employment Cost Index rose 1.1%, triggering a sharp Dow and Nasdaq selloff. This capped sizing and required close Fed monitoring, but one data point did not yet prove a sustained tightening shock.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Vertical charts created crash and gap-down risk.",
+        "support": "Representative technology names such as Qualcomm had moved parabolically by July 1999. The risk was material because stop-losses may not execute cleanly in a break, so the trade required liquid beta exposure and strict reduction rules.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "Delegated stock selection created operational risk.",
+        "support": "The principal was relying on Levit and Hakala for single-name judgment in a sector he admitted he did not fully understand. This was acceptable only if their books had explicit drawdown, liquidity, and exposure limits.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_portfolio_context_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_initiation_notes_1999-07-31.json"
+        ]
+      },
+      {
+        "claim": "The thesis depended on psychology and flows, not a valuation floor.",
+        "support": "The inputs explicitly frame the trade as reflexive. If the marginal buyer disappeared, valuation would not protect the position. That made the trade actionable only with mechanical exits tied to trend, flows, IPO demand, and policy.",
+        "source_refs": [
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_source_case_1999-07-31.json",
+          "docs/decision_quality_evals/inputs/druckenmiller_tech_long_market_setup_1999-07-31.json"
+        ]
+      }
+    ],
+    "price_action_read": {
+      "observed_behavior": "As of the July 30, 1999 close, Nasdaq closed at 2640.01 after falling 65.83 points on ECI-driven inflation fears; the Dow and S&P 500 also fell, while the Russell 2000 rose. The supplied research says Nasdaq still remained above its 100-day and 150-day moving averages and that technology momentum was intact.",
+      "interpretation": "Price action confirmed the tactical thesis but not a fundamental valuation thesis: the tape showed volatility and macro stress, yet the primary technology trend had not broken. For a reflexive trade, that supported buying or adding risk with explicit stops.",
+      "confirms_thesis": true,
+      "data_needed": [
+        "Exact Nasdaq, Nasdaq 100, internet index, and representative-stock moving-average values on 1999-07-30",
+        "Market breadth and new-high/new-low data",
+        "Technology and growth fund-flow data",
+        "Exact QCOM, VRSN, GMST, and SKM price-action snapshots",
+        "Volume confirmation on the July 30 selloff and subsequent rebound"
+      ]
+    },
+    "actionability": {
+      "status": "actionable",
+      "reason": "The buy had a clear regime thesis, a concrete post-Sun-Valley reason-now, an execution structure through specialists, confirming long-term price action, flow-driven opportunities from Tiger's distress, and explicit invalidation for the lack of valuation support.",
+      "missing_inputs": [
+        "Stable URLs or archived snapshots for numeric citations in the supplied research",
+        "Exact moving averages and breadth data for the July 30, 1999 close",
+        "Exact Quantum gross and net technology exposure",
+        "Levit and Hakala position books and risk limits",
+        "Tiger redemption schedule and exact SK Telecom liquidation details",
+        "Contemporaneous technology fund-flow and IPO-demand data"
+      ]
+    },
+    "recommended_action": "buy",
+    "expression": {
+      "primary": "Long Nasdaq/technology beta plus specialist-managed internet and technology single names, with opportunistic liquidity provision into forced-selling blocks such as SK Telecom.",
+      "instrument_type": "equity_index_basket_and_single_name_equities",
+      "directness": "mixed",
+      "alternatives": [
+        "Use Nasdaq 100 futures or index options for liquid beta instead of only single-name dot-com exposure",
+        "Use a smaller specialist-only allocation if portfolio risk limits cannot tolerate broad beta",
+        "Keep forced-liquidation purchases separate from parabolic internet momentum names for risk reporting"
+      ],
+      "follow_on": "Add on orderly pullbacks if Nasdaq trend, breadth, fund flows, IPO demand, and Fed posture remain supportive; reduce immediately if the reflexive regime breaks."
+    },
+    "conviction": {
+      "level": 4,
+      "max_level": 5,
+      "raw_target_weight": null,
+      "upgrade_condition": "Upgrade only if the market absorbs the July ECI scare, breadth and fund flows stay positive, specialist books outperform without liquidity stress, and forced-seller opportunities can be bought without chasing the most extended names."
+    },
+    "confidence": 0.78,
+    "confidence_reason": "Moderately high because regime, price action, liquidity, and forced-seller evidence aligned, but capped below the supplied research's 0.85 because valuation risk was severe, the Fed had begun tightening, source citations need stabilization, and exact exposure, breadth, fund-flow, and specialist-book data are missing.",
+    "sizing_context": {
+      "starting_size": "Large tactical add-risk posture relative to the May probe, but not an unconstrained maximum allocation because the thesis lacks a valuation floor and exact portfolio exposure is unknown.",
+      "add_conditions": "Add on low-volume pullbacks or post-stress recoveries if Nasdaq remains above key moving averages, Fed tightening remains gradual, breadth and fund flows remain constructive, and the specialist books do not breach drawdown limits.",
+      "liquidity_constraints": "Broad Nasdaq beta was liquid, but single-name internet positions and forced-liquidation blocks could become illiquid in a break; size should preserve the ability to exit quickly.",
+      "portfolio_constraints": "Constrain by total technology beta, high-duration growth exposure, specialist-manager concentration, drawdown tolerance after the prior 18% loss, and exposure to forced sellers whose timing is not fully known.",
+      "sizing_delta": {
+        "direction": "increase",
+        "amount": null,
+        "unit": "notional",
+        "basis": "risk_budget",
+        "condition": "Increase long technology risk after the post-Sun-Valley regime shift while the primary trend is intact and explicit exit thresholds are in force."
+      }
+    },
+    "trade_after_trade": {
+      "if_right": "Continue riding technology beta and specialist alpha while monitoring for more forced-seller opportunities, especially where redemptions create non-economic selling in real businesses.",
+      "if_wrong": "If the Nasdaq trend breaks, Fed tightening accelerates, flows reverse, or specialist books draw down beyond limits, cut the long quickly rather than converting a tactical momentum trade into a valuation argument.",
+      "next_review_trigger": "Review daily on Nasdaq trend and specialist drawdowns; review at each Fed communication, fund-flow release, IPO failure, high-volume break of key moving averages, or confirmed Tiger liquidation event."
+    }
+  },
+  "rubric_scores": {
+    "thesis_clarity": null,
+    "mispricing": null,
+    "catalyst_reason_now": null,
+    "evidence_quality": null,
+    "disconfirming_evidence": null,
+    "invalidation": null,
+    "price_action_market_behavior": null,
+    "actionability_discipline": null,
+    "confidence_calibration": null,
+    "sizing_risk_context": null,
+    "total": null,
+    "notes": ""
+  },
+  "human_notes": "Draft case created from /Users/shaivpandya/Downloads/Druckenmiller's 1999 Tech Long Eval.md and the user-provided historical excerpt. Keep as draft until the source register's numeric citations are replaced with stable URLs or local source snapshots."
+}

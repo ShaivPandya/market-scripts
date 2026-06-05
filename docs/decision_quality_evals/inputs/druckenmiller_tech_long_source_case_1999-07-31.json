@@ -1,0 +1,63 @@
+{
+  "case": "Druckenmiller / Quantum Fund long technology and internet equities",
+  "as_of_date": "1999-07-31",
+  "source_type": "historical_case_study",
+  "as_of_date_basis": "Proxy decision date selected from the supplied research. July 31, 1999 captures the post-Sun-Valley conversion, the move from exploratory May exposure to scaled technology risk, and the July 30 market stress test; market prices use the July 30, 1999 close.",
+  "source_quality_notes": [
+    "This input is distilled from /Users/shaivpandya/Downloads/Druckenmiller's 1999 Tech Long Eval.md plus the user-provided historical excerpt.",
+    "Several citations in the supplied research are numeric placeholders rather than stable URLs; the case should remain draft until source links or snapshots are attached.",
+    "The source intentionally excludes later 1999 performance, the March 2000 Nasdaq peak, and the subsequent dot-com crash as evidence for the decision."
+  ],
+  "source_register_summary": [
+    {
+      "source_name": "Historical case context supplied by user",
+      "availability": "Available as authoring source for this eval",
+      "key_facts": "Druckenmiller shorted the bubble earlier in 1999, Quantum was down 18% in the first five months, Carson Levit received capital in May, Druckenmiller returned from Sun Valley with stronger conviction, Diane Hakala was hired, and the technology specialists bought speculative technology and internet names."
+    },
+    {
+      "source_name": "Associated Press / Spokesman-Review, July 30, 1999",
+      "availability": "Contemporaneous market news",
+      "key_facts": "Dow Jones Industrial Average fell 180.78 points and Nasdaq Composite fell 65.83 to 2640.01 after a 1.1% Employment Cost Index increase raised inflation and rate-hike fears."
+    },
+    {
+      "source_name": "Federal Reserve Board testimony, July 1999",
+      "availability": "Contemporaneous policy source",
+      "key_facts": "Greenspan acknowledged strong economic performance, productivity gains, and the role of capital investment while maintaining a gradual, preemptive policy posture."
+    },
+    {
+      "source_name": "Sun Valley / Buffett contemporaneous context",
+      "availability": "Event occurred before the proxy date; some descriptive sources were published later",
+      "key_facts": "The Allen & Co. Sun Valley conference concentrated technology, media, finance, and political elites and also featured value-oriented skepticism about forward equity returns."
+    },
+    {
+      "source_name": "Tiger Management / SK Telecom context",
+      "availability": "Events occurred in the July-August 1999 window; supplied research uses later corroborating sources",
+      "key_facts": "Tiger redemptions and forced selling created flow-driven opportunities, including South Korea Telecom exposure that the supplied research treats as fundamentally sound but temporarily pressured."
+    }
+  ],
+  "source_summary": {
+    "setup": "Quantum had been hurt by shorting technology and internet equities too early. By summer 1999 the dominant market regime had shifted from valuation discipline to liquidity, reflexivity, career risk, and price momentum.",
+    "decision_window": "May 1999 was the exploratory allocation to Carson Levit. The stronger actionable pivot came after the July Sun Valley conference, when Druckenmiller returned with greater conviction, allocated more capital to technology specialists, and hired Diane Hakala.",
+    "variant_view": "The correct process was not to declare dot-com valuations sound. It was to recognize that a liquidity-driven reflexive bubble could keep moving higher, that shorting it had failed, and that specialized managers plus technical discipline could capture the trend while forced sellers created discrete entry points.",
+    "macro_context": "The residual liquidity from the Asian crisis, Russian default, and LTCM response remained a powerful backdrop. The Fed had begun modest tightening in June 1999, but the supplied research frames Greenspan's July productivity discussion as not yet an aggressive attempt to pop the equity bubble.",
+    "market_context": "Technology equities and internet-related names were parabolic and volatile. On July 30, 1999, inflation and rate fears hit the market, but the supplied research says the primary Nasdaq trend remained intact.",
+    "forced_seller_context": "Tiger Management's underperformance and redemptions created mechanical selling pressure in attractive assets. Buying into liquidation flow, especially in South Korea Telecom, gave the broad technology-long trade a more concrete implementation edge than simply chasing the most extended dot-com names.",
+    "bear_case": "Valuations were extreme, many businesses lacked earnings or durable cash flows, the Fed had started tightening, wage inflation was a real threat, single-name charts were vertical, and Druckenmiller was delegating micro-level stock selection in an area he admitted he did not deeply understand."
+  },
+  "key_claims": [
+    "The May 1999 technology allocation was initially exploratory; the more important buy/add-risk decision was the post-Sun-Valley summer 1999 scale-up.",
+    "The opportunity type was a reflexive process, not a traditional undervalued-asset thesis.",
+    "The market could remain detached from valuation while liquidity, flows, and career risk reinforced the technology trend.",
+    "Shorting the bubble had produced a large drawdown, so price action gave direct evidence that the prior short thesis was not actionable.",
+    "Hiring Carson Levit and Diane Hakala reduced Druckenmiller's stock-selection knowledge gap while preserving top-down control over gross and net exposure.",
+    "Tiger Management's forced selling created a separate flow-driven opportunity to buy assets unrelated to their fundamentals.",
+    "The trade required mechanical invalidation because there was no reliable fundamental valuation floor for much of the exposure."
+  ],
+  "future_information_excluded": [
+    "Quantum's final 1999 return",
+    "The March 2000 Nasdaq peak",
+    "The 2000-2002 dot-com crash",
+    "Later commentary validating or condemning the trade after the outcome was known"
+  ],
+  "human_notes": "Distilled from the user-supplied markdown research and source excerpt. Keep this as a draft until the numeric source citations are replaced with stable source URLs or local snapshots."
+}

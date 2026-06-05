@@ -1,0 +1,16 @@
+{
+  "as_of_date": "1999-07-31",
+  "position_status": "add_risk_after_initial_probe",
+  "position_direction": "long_technology_and_internet_equities",
+  "portfolio_role": "Tactical reflexive momentum trade plus opportunistic liquidity provision to forced sellers",
+  "prior_positioning": "Quantum had shorted the technology bubble earlier in 1999 and was down about 18% in the first five months according to the supplied case context.",
+  "operational_structure": "Druckenmiller delegated micro-level technology stock selection to Carson Levit and Diane Hakala while retaining top-down control over capital allocation and macro exposure.",
+  "conviction_at_initiation": 4,
+  "raw_target_weight_at_initiation": null,
+  "target_size": "Large tactical risk allocation relative to the May probe, but exact gross exposure, net exposure, and risk-budget limits are not selected.",
+  "initial_size": null,
+  "liquidity_notes": "Nasdaq beta and large-cap technology exposure were liquid; single-name dot-com positions and liquidation blocks such as SK Telecom required tighter exit discipline.",
+  "risk_budget_notes": "Because the trade was reflexive and valuation-light, sizing needed to be governed by price-action invalidation, Fed/liquidity monitoring, fund-flow data, and specialist-manager drawdown limits.",
+  "sizing_principle": "Scale into a dominant liquidity and momentum regime only while the primary trend remains intact; treat the position as tactical exposure to rent, not a long-duration ownership thesis.",
+  "human_notes": "The case should teach flexible macro process and reflexive risk management, not hindsight praise for participating in a bubble."
+}

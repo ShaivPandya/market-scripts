@@ -1,0 +1,62 @@
+{
+  "instrument": "Technology and internet equity basket, Nasdaq beta, specialist-managed single names, and opportunistic SK Telecom liquidity-provision",
+  "as_of_date": "1999-07-31",
+  "market_price_date": "1999-07-30",
+  "trade_direction": "long_technology_and_internet_equities",
+  "market_structure": {
+    "regime": "Late-stage technology bubble with valuation-insensitive momentum, reflexive capital raising, retail and institutional flows, and severe career risk for managers underexposed to technology.",
+    "dominant_price_setting_variable": "Liquidity, momentum, fund flows, and the persistence of the technology productivity narrative, rather than near-term earnings or conventional valuation.",
+    "market_error": "Fundamental skeptics correctly identified valuation excess but underestimated how far a reflexive, liquidity-supported trend could run and how forced liquidations could create tactical buying opportunities."
+  },
+  "macro_setup": {
+    "supportive_conditions": [
+      "Residual liquidity from the 1998 crisis-response easing cycle remained in the system.",
+      "The U.S. economy was strong, and productivity gains gave institutional cover to the new-economy narrative.",
+      "Greenspan's July 1999 posture was interpreted in the supplied research as gradual rather than aggressively bubble-popping.",
+      "Underinvested managers faced severe relative-performance and redemption pressure as technology continued to lead."
+    ],
+    "risk_conditions": [
+      "The Fed had raised rates by 25 basis points in June 1999, starting a tightening cycle.",
+      "The July 30 Employment Cost Index increase of 1.1% raised wage inflation and rate-hike fears.",
+      "Technology valuations were extreme and many internet business models lacked cash-flow support.",
+      "Vertical price moves increased crash, liquidity, and gap-down risk."
+    ]
+  },
+  "price_action": {
+    "nasdaq_composite_close": 2640.01,
+    "nasdaq_composite_daily_change_points": -65.83,
+    "nasdaq_composite_daily_change_context": "Down about 2.4% on July 30, 1999 after ECI-driven inflation and rate fears.",
+    "dow_jones_industrial_average_close": 10791.29,
+    "dow_jones_industrial_average_daily_change_points": -180.78,
+    "sp_500_close": 1341.03,
+    "sp_500_daily_change_points": -24.37,
+    "russell_2000_close": 444.77,
+    "russell_2000_daily_change_points": 3.19,
+    "qualcomm_reference": "The supplied research says QCOM traded around $12 split-adjusted in July 1999 after a massive multi-month run.",
+    "moving_average_status": "The supplied research says Nasdaq remained firmly above its 100-day and 150-day moving averages and that the long-term trend was intact; exact moving-average values were not supplied.",
+    "interpretation": "High volatility inside an intact primary uptrend. The July 30 selloff was a useful stress test: inflation fear hit the tape, but the supplied research still treats the dominant technology momentum regime as intact."
+  },
+  "trigger": {
+    "event": "Post-Sun-Valley technology conviction shift plus Tiger forced-selling pressure and a July 30 macro-driven market dip.",
+    "date_window": "1999-07 to 1999-08",
+    "interpretation": "The exploratory May technology exposure became an actionable buy/add-risk decision after Druckenmiller accepted the regime shift, built an operational structure to execute it, and found specific flow-driven opportunities."
+  },
+  "risk_reward": {
+    "upside_if_right": "Nasdaq beta and specialist-selected technology names continue to re-rate as liquidity and flows reinforce the bubble; forced liquidations provide discrete alpha opportunities such as SK Telecom.",
+    "downside_if_wrong": "A policy or flow reversal causes high-duration technology equities to gap down with little fundamental support; delegated single-name books may be crowded or illiquid.",
+    "probability_view": "Actionable but tactical: the trend, liquidity, and forced-seller evidence supported a buy, while valuation and policy risk required strict invalidation."
+  },
+  "liquidity_and_capacity": {
+    "market_liquidity": "Broad Nasdaq exposure was liquid for a large macro fund, but individual internet names and liquidation blocks carried crowding and exit-risk constraints.",
+    "position_scale_note": "The supplied research describes a large add-risk posture and Druckenmiller 'plowing in on top' of specialist positions, but no exact gross exposure, net exposure, or risk-budget limit is selected."
+  },
+  "data_needed_for_upgrade": [
+    "Exact Nasdaq 100, internet index, and representative-stock moving averages on July 30, 1999",
+    "Market breadth and new-high/new-low data",
+    "Technology mutual-fund flow data through July 1999",
+    "Exact Quantum gross and net technology exposure",
+    "Levit and Hakala position books, liquidity, and drawdown limits",
+    "Tiger redemption schedule and exact SK Telecom liquidation details"
+  ],
+  "human_notes": "Market data distilled from the supplied markdown. Numeric source citations should be replaced with stable source refs before approval."
+}

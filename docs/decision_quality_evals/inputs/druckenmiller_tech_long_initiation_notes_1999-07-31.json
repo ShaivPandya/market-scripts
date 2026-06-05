@@ -1,0 +1,22 @@
+{
+  "as_of_date": "1999-07-31",
+  "decision_context": "Buy/add technology and internet risk after Druckenmiller's summer 1999 pivot from shorting the bubble to riding the trend.",
+  "human_initiation_rationale": "The position was actionable because the dominant regime was liquidity- and momentum-driven, shorting the bubble had failed in practice, post-Sun-Valley conviction and specialist hiring created an execution structure, and Tiger's redemptions created forced-seller opportunities.",
+  "selected_inputs": [
+    "May 1999 exploratory allocation to Carson Levit",
+    "July Sun Valley conference as psychological and network-effect catalyst",
+    "Hiring Diane Hakala and allocating more capital to technology specialists",
+    "Residual post-1998 liquidity and Greenspan productivity narrative",
+    "Nasdaq and technology price-action leadership",
+    "Tiger Management redemptions and forced selling",
+    "July 30, 1999 ECI inflation shock as a stress test",
+    "Strict technical invalidation because valuation support was weak"
+  ],
+  "known_catalyst": {
+    "event_or_condition": "Post-Sun-Valley conversion, specialist-manager deployment, and forced-seller flow opportunities in late July and early August 1999.",
+    "expected_date": "1999-07 to 1999-08",
+    "why_it_mattered": "The setup transformed from an exploratory hedge into a deliberate buy/add-risk decision with a clear reflexive regime thesis, an execution team, and specific liquidation opportunities."
+  },
+  "risk_management_notes": "The buy thesis depends on momentum and liquidity. Reduce or exit if Nasdaq/technology leadership breaks, the Fed turns aggressively restrictive, technology fund flows reverse, IPO demand fails, or the delegated specialist books draw down sharply.",
+  "human_notes": "User provided source narrative and markdown research. The gold output should use recommended_action=buy."
+}
