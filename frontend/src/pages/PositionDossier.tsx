@@ -82,7 +82,7 @@ import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
 import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
 import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import { cn } from "@/lib/utils"
-import { cleanDossierDisplayText } from "@/lib/dossierText"
+import { cleanDossierDisplayText, stripCitationTokens } from "@/lib/dossierText"
 import { openStanWithCommand } from "@/lib/stanLauncher"
 
 interface DossierData {
@@ -1348,9 +1348,9 @@ function ManagementQualityTab({
           <div className="space-y-3 md:hidden">
             {parsed.scorecard.map(row => (
               <div key={row.question} className="rounded-lg border border-app p-3">
-                <p className="text-sm font-medium text-app">{row.question}</p>
+                <p className="text-sm font-medium text-app">{cleanDossierDisplayText(row.question)}</p>
                 <div className="mt-2"><ManagementRatingBadge value={row.rating} /></div>
-                <p className="mt-2 text-sm text-muted">{row.evidence}</p>
+                <p className="mt-2 text-sm text-muted">{cleanDossierDisplayText(row.evidence)}</p>
               </div>
             ))}
           </div>
@@ -1366,9 +1366,9 @@ function ManagementQualityTab({
               <tbody className="divide-y divide-[hsl(var(--border))]">
                 {parsed.scorecard.map(row => (
                   <tr key={row.question}>
-                    <td className="px-3 py-2 text-app">{row.question}</td>
+                    <td className="px-3 py-2 text-app">{cleanDossierDisplayText(row.question)}</td>
                     <td className="px-3 py-2"><ManagementRatingBadge value={row.rating} /></td>
-                    <td className="px-3 py-2 text-muted">{row.evidence}</td>
+                    <td className="px-3 py-2 text-muted">{cleanDossierDisplayText(row.evidence)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1394,7 +1394,7 @@ function ManagementQualityTab({
       <section className="border-t border-app pt-4">
         <h3 className="mb-2 text-sm font-semibold text-app">Full Assessment</h3>
         <div className="prose prose-sm dark:prose-invert max-w-none">
-          <MarkdownRenderer content={content} />
+          <MarkdownRenderer content={stripCitationTokens(content)} />
         </div>
       </section>
     </div>
@@ -1480,7 +1480,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
           </div>
           {thesis.content && (
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownRenderer content={thesis.content} />
+              <MarkdownRenderer content={stripCitationTokens(thesis.content)} />
             </div>
           )}
         </>

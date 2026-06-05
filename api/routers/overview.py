@@ -13,7 +13,7 @@ from api.document_generation_jobs import classify_upload_document, enqueue_docum
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.auth import ActorDep
 from api.routers.portfolio_edit import _TICKER_RE
-from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
+from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text, strip_assistant_citation_tokens
 from paths import PROJECT_ROOT
 from portfolio import overview_content
 
@@ -456,7 +456,7 @@ def parse_overview_markdown(content: str) -> dict | None:
 
 
 def _normalize_overview_markdown(ticker: str, content: str) -> str:
-    cleaned = _strip_outer_markdown_fence(content)
+    cleaned = strip_assistant_citation_tokens(_strip_outer_markdown_fence(content))
     lines = cleaned.splitlines()
     if lines and lines[0].startswith("# "):
         lines[0] = f"# {ticker} Overview"
@@ -479,7 +479,7 @@ def _decode_markdown_upload(markdown_bytes: bytes) -> str:
         raise ValidationError("Markdown file must be UTF-8 encoded.") from e
     if not content.strip():
         raise ValidationError("Markdown file is empty.")
-    return content
+    return strip_assistant_citation_tokens(content)
 
 
 def _finish_llm_overview(ticker: str, generated: str) -> str:

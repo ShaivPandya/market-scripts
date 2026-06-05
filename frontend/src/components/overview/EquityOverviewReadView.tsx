@@ -8,7 +8,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { SegmentedControl } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { runFinancials } from "@/lib/api"
-import { cleanDossierDisplayText } from "@/lib/dossierText"
+import { cleanDossierDisplayText, stripCitationTokens } from "@/lib/dossierText"
 import type {
   OutlookPoint,
   ParsedFinancials,
@@ -682,7 +682,7 @@ export function EquityOverviewReadView({
 
   return (
     <div className="prose prose-sm max-w-none dark:prose-invert">
-      <MarkdownRenderer content={content} />
+      <MarkdownRenderer content={stripCitationTokens(content)} />
     </div>
   )
 }

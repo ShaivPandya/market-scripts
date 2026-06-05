@@ -9,6 +9,35 @@ import threading
 from collections.abc import Sequence
 from typing import Any
 
+# Assistant-export citation/navigation tokens (e.g. from ChatGPT web/file search) wrap
+# references in Unicode Private Use Area delimiters: U+E200 (start), U+E202 (separator),
+# U+E201 (end) -- producing blocks like "\ue200cite\ue202turn8view0\ue202turn3view0\ue201".
+# Those delimiters have no glyph, so pasted markdown renders the leftover literal
+# "citeturn8view0turn3view0" (often next to tofu boxes). They are navigation handles that
+# only resolve inside the originating assistant UI, so they must be stripped on ingestion.
+_ASSISTANT_CITATION_BLOCK_RE = re.compile(" ?\ue200[\\s\\S]*?\ue201")
+_ASSISTANT_CITATION_BARE_RE = re.compile(
+    r" ?(?:cite|navlist|filecite|videocite)?(?:turn\d+[a-z]+\d+)+",
+    re.IGNORECASE,
+)
+_ASSISTANT_CITATION_STRAY_RE = re.compile("[\ue200-\ue20f]")
+
+
+def strip_assistant_citation_tokens(text: str) -> str:
+    """Remove ChatGPT-style citation/navigation tokens from ingested text.
+
+    Handles both the fully delimited form (with U+E200/E201/E202 markers) and the
+    de-delimited "citeturn8view0turn3view0" form left behind when an editor drops the
+    invisible markers. Genuine prose such as the word "cited" is preserved.
+    """
+    if not text:
+        return text
+    cleaned = _ASSISTANT_CITATION_BLOCK_RE.sub("", text)
+    cleaned = _ASSISTANT_CITATION_BARE_RE.sub("", cleaned)
+    cleaned = _ASSISTANT_CITATION_STRAY_RE.sub("", cleaned)
+    return cleaned
+
+
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
