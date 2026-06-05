@@ -39,6 +39,11 @@ class _InMemoryOntology:
             props.setdefault("idea_id", props.get("id") or uid)
         elif object_type == "IdeaLifecycleEvent":
             props.setdefault("event_id", props.get("id") or uid)
+        elif object_type == "IdeaEvaluation":
+            props.setdefault("evaluation_id", props.get("id") or uid)
+        elif object_type == "IdeaComparisonRun":
+            props.setdefault("comparison_run_id", props.get("id") or uid)
+            props.setdefault("run_id", props.get("run_id") or uid)
         NODE_SCHEMAS[object_type].model_validate(props)
         row = {
             "object_uid": uid,
@@ -47,6 +52,15 @@ class _InMemoryOntology:
         }
         self.rows[uid] = row
         return row
+
+    def write_relation(self, source_uid, target_uid, relation_type, properties, valid_from, **kwargs):
+        return {
+            "relation_uid": f"{relation_type}:{source_uid}->{target_uid}",
+            "source_object_uid": source_uid,
+            "target_object_uid": target_uid,
+            "relation_type": relation_type,
+            "properties": dict(properties or {}),
+        }
 
     def get_object(self, object_uid: str, **kwargs):
         return self.rows.get(str(object_uid))
@@ -65,6 +79,9 @@ class _InMemoryOntology:
                     filtered.append(row)
             rows = filtered
         return rows[:limit]
+
+    def query_relations(self, **kwargs):
+        return []
 
 
 @pytest.fixture
@@ -175,3 +192,140 @@ def test_write_idea_lifecycle_event_records_accept_decision(ideas_store):
     assert event["evaluation_id"] == "idea_evaluation:test"
     assert event["recommendation_id"] == "recommendation:test"
     assert event["approval_id"] == "approval:test"
+
+
+def _sample_evaluation_result(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "action": "watch",
+        "recommendation_status": "clear",
+        "score": 55,
+        "confidence": 0.5,
+        "rationale": "test rationale",
+        "factor_scores": {},
+        "missing_information": [],
+        "data_quality": {"quality": "ok"},
+        "evidence": [],
+        "disconfirming_evidence": [],
+        "portfolio_fit": {},
+        "evaluated_at": "2026-06-05T10:00:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _seed_evaluation(store: _InMemoryOntology, evaluation_uid: str, **overrides: Any) -> dict[str, Any]:
+    evaluation = {
+        "evaluation_id": evaluation_uid,
+        "id": evaluation_uid,
+        "idea_id": "investment_idea:testlc",
+        "ticker": "TESTLC",
+        "evaluated_at": "2026-06-05T10:00:00+00:00",
+        "action": "buy",
+        "recommendation_status": "clear",
+        "score": 72,
+        "confidence": 0.7,
+        "rationale": "compelling setup",
+        "factor_scores": {},
+        "missing_information": [],
+        "data_quality": {},
+        "evidence": [],
+        "disconfirming_evidence": [],
+        "portfolio_fit": {},
+        "recommendation_record": {"ticker": "TESTLC", "action": "buy"},
+        "ontology_run_id": "operational",
+    }
+    evaluation.update(overrides)
+    store.write_object("IdeaEvaluation", evaluation_uid, evaluation, "2026-06-05T10:00:00+00:00")
+    return evaluation
+
+
+def test_compute_idea_evaluation_result_updates_latest_evaluation_id(ideas_store, monkeypatch):
+    from api.routers import ideas as ideas_router
+    from api.routers.ideas import IdeaEvaluationRequest, _compute_idea_evaluation_result, _get_idea
+
+    monkeypatch.setattr(ideas_router, "_call_llm_evaluator", lambda _context: _sample_evaluation_result())
+    monkeypatch.setattr(ideas_router, "_build_context_for_evaluation", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(ideas_router, "_write_idea_evaluation_graph", lambda *_args, **_kwargs: None)
+
+    response = _compute_idea_evaluation_result(IdeaEvaluationRequest(idea_id="testlc", use_portfolio_context=False))
+
+    idea = response["idea"]
+    evaluation = response["evaluation"]
+    assert idea["latest_evaluation_id"] == evaluation["id"]
+    persisted = _get_idea("testlc")
+    assert persisted is not None
+    assert persisted["latest_evaluation_id"] == evaluation["id"]
+
+
+def test_compute_idea_comparison_evaluation_result_updates_each_idea_latest_evaluation_id(ideas_store, monkeypatch):
+    from api.routers import ideas as ideas_router
+    from api.routers.ideas import IdeaComparisonEvaluationRequest, _compute_idea_comparison_evaluation_result, _get_idea
+
+    second_idea = _sample_idea(
+        id="investment_idea:testlc2",
+        idea_id="investment_idea:testlc2",
+        ticker="TESTLC2",
+        status="ready_for_review",
+    )
+    ideas_store.write_object("InvestmentIdea", "investment_idea:testlc2", second_idea, "2026-06-05T10:00:00+00:00")
+    ideas_store.rows["investment_idea:testlc"]["properties"]["status"] = "watching"
+
+    monkeypatch.setattr(ideas_router, "_call_llm_evaluator", lambda _context: _sample_evaluation_result())
+    monkeypatch.setattr(ideas_router, "_build_context_for_evaluation", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: {"summary": "ranked", "rankings": []},
+    )
+    monkeypatch.setattr(ideas_router, "_write_idea_evaluation_graph", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ideas_router, "_write_idea_comparison_graph", lambda *_args, **_kwargs: None)
+
+    response = _compute_idea_comparison_evaluation_result(
+        IdeaComparisonEvaluationRequest(use_portfolio_context=False),
+        job_id="job:comparison",
+    )
+
+    assert len(response["evaluations"]) == 2
+    for evaluation in response["evaluations"]:
+        idea = _get_idea(evaluation["idea_id"])
+        assert idea is not None
+        assert idea["latest_evaluation_id"] == evaluation["id"]
+
+
+def test_accept_idea_evaluation_updates_idea_and_evaluation_refs(ideas_store, monkeypatch):
+    from api.routers import ideas as ideas_router
+    from api.routers.ideas import _get_idea, _get_idea_evaluation, accept_idea_evaluation
+    from ontology.policy import admin_actor
+
+    evaluation_uid = "idea_evaluation:testlc_eval"
+    _seed_evaluation(ideas_store, evaluation_uid)
+
+    class _FakeCommandService:
+        def propose_action(self, action_id, payload, context, *, reason):
+            assert action_id == "create_recommendation"
+            return {"id": "approval:rec-test"}
+
+    monkeypatch.setattr("ontology.command_service.OntologyCommandService", _FakeCommandService)
+    monkeypatch.setattr(
+        ideas_router,
+        "stage_api_action",
+        lambda *_args, **_kwargs: {"approval_id": "approval:action-test"},
+    )
+
+    response = accept_idea_evaluation("testlc", evaluation_uid, admin_actor(source="test"))
+
+    idea = response["idea"]
+    evaluation = response["evaluation"]
+    assert idea["accepted_recommendation_id"] == "approval:rec-test"
+    assert idea["latest_evaluation_id"] == evaluation_uid
+    assert evaluation["accepted"] is True
+    assert evaluation["accepted_at"]
+    assert evaluation["recommendation_approval_id"] == "approval:rec-test"
+    assert evaluation["action_approval_id"] == "approval:action-test"
+
+    persisted_idea = _get_idea("testlc")
+    persisted_evaluation = _get_idea_evaluation(evaluation_uid)
+    assert persisted_idea is not None
+    assert persisted_evaluation is not None
+    assert persisted_idea["accepted_recommendation_id"] == "approval:rec-test"
+    assert persisted_evaluation["accepted"] is True

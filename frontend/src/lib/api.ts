@@ -728,7 +728,9 @@ export interface IdeaEvaluation {
   evaluation_schema_version?: string | null
   recommendation_id: string | null
   approval_id: string | null
+  recommendation_approval_id?: string | null
   action_approval_id: string | null
+  accepted?: boolean
   accepted_at: string | null
   accepted_by: string | null
   created_at: string

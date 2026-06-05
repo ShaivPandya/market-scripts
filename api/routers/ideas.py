@@ -614,6 +614,18 @@ def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> 
     return written
 
 
+def _update_idea_refs(idea_id: Any, updates: dict[str, Any]) -> dict[str, Any]:
+    idea = _get_idea(idea_id)
+    if not idea:
+        raise NotFoundError("Investment idea", str(idea_id))
+    idea.update(updates)
+    idea["updated_at"] = _now()
+    idea.pop("_meta", None)
+    idea.pop("id", None)
+    idea.pop("object_uid", None)
+    return _write_runtime_object("InvestmentIdea", _idea_uid(idea_id), idea)
+
+
 def _object_uid_from_row(row: dict[str, Any]) -> str:
     props = _object_props(row) or {}
     return str(row.get("object_uid") or props.get("object_uid") or props.get("id") or "").strip()
@@ -2657,7 +2669,7 @@ def _compute_idea_evaluation_result(
     if callable(progress_callback):
         progress_callback("persisting", 4, total)
     evaluation = _write_idea_evaluation(idea, result, job_id=job_id)
-    idea = _get_idea(req.idea_id)
+    idea = _update_idea_refs(req.idea_id, {"latest_evaluation_id": evaluation.get("id")})
     return {"idea": idea, "evaluation": evaluation, "result": result, "final_count": total}
 
 
@@ -2714,7 +2726,9 @@ def _compute_idea_comparison_evaluation_result(
             result = _merge_analyzer_context_into_result(context, result)
             result["recommendation_record"] = _recommendation_record_from_result(idea, result)
         result["job_id"] = job_id
-        evaluations.append(_write_idea_evaluation(idea, result, job_id=job_id))
+        evaluation = _write_idea_evaluation(idea, result, job_id=job_id)
+        _update_idea_refs(idea.get("id"), {"latest_evaluation_id": evaluation.get("id")})
+        evaluations.append(evaluation)
 
     if callable(progress_callback):
         progress_callback("ranking", len(ideas) + 2, total)
@@ -3000,6 +3014,8 @@ def accept_idea_evaluation(
     recommendation_id = recommendation["id"]
     recommendation_approval_id = recommendation_id if str(recommendation_id).startswith("approval:") else None
     recommendation_object_id = recommendation_id if str(recommendation_id).startswith("recommendation:") else None
+    accepted_recommendation_ref = recommendation_approval_id or recommendation_object_id or recommendation_id
+    evaluation_uid = _evaluation_uid(evaluation_id)
 
     action_proposal = None
     action_error = None
@@ -3015,7 +3031,7 @@ def accept_idea_evaluation(
             action_type = "hedge"
         else:
             action_type = "research"
-        recommendation_ref = recommendation_approval_id or recommendation_object_id or recommendation_id
+        recommendation_ref = accepted_recommendation_ref
         recommendation_ref_label = "approval" if recommendation_approval_id else "record"
         description = (
             f"{'Evaluate position change' if action in DECISION_ACTIONABLE_ACTIONS else 'Research remaining evidence'} for "
@@ -3055,26 +3071,34 @@ def accept_idea_evaluation(
         "accepted": True,
         "accepted_by": "user",
         "accepted_at": _now(),
+        "recommendation_id": recommendation_object_id,
+        "approval_id": recommendation_approval_id,
         "recommendation_approval_id": recommendation_approval_id,
-        "recommendation_object_id": recommendation_object_id,
         "action_approval_id": action_proposal["approval_id"] if action_proposal else None,
     }
     accepted_payload.pop("_meta", None)
     accepted_payload.pop("id", None)
     accepted_payload.pop("object_uid", None)
-    accepted = _write_runtime_object("IdeaEvaluation", _evaluation_uid(evaluation_id), accepted_payload)
+    accepted = _write_runtime_object("IdeaEvaluation", evaluation_uid, accepted_payload)
+    _update_idea_refs(
+        idea_id,
+        {
+            "accepted_recommendation_id": accepted_recommendation_ref,
+            "latest_evaluation_id": evaluation_uid,
+        },
+    )
     _write_idea_lifecycle_event(
         idea,
         event_type="evaluation_accepted",
         changed_fields=["evaluation_accepted"],
         before={},
         after={
-            "evaluation_id": _evaluation_uid(evaluation_id),
+            "evaluation_id": evaluation_uid,
             "action": evaluation.get("action"),
             "recommendation_id": recommendation_object_id or recommendation_id,
         },
         reason=(body.note if body else None),
-        evaluation_id=_evaluation_uid(evaluation_id),
+        evaluation_id=evaluation_uid,
         recommendation_id=str(recommendation_object_id or recommendation_id or ""),
         approval_id=str(recommendation_approval_id or "") or None,
         action_approval_id=str(action_proposal["approval_id"]) if action_proposal else None,
