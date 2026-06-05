@@ -231,6 +231,9 @@ def test_get_thesis_detail_returns_status_history(monkeypatch):
         def evaluations(self, ticker: str, *, limit: int = 1000):
             return [{"id": 1, "ticker": ticker, "evaluated_at": "2026-06-05T09:00:00+00:00"}]
 
+        def conviction_summary(self, ticker: str):
+            return {"current": None, "group_current": None, "group_name": None, "timeline": []}
+
     monkeypatch.setattr(thesis_router, "OntologyRuntimeReadService", lambda: _Reads())
     monkeypatch.setattr(thesis_router, "_thesis_exists", lambda ticker: True)
     monkeypatch.setattr(thesis_router, "_read_thesis", lambda ticker: "thesis body")
@@ -262,6 +265,9 @@ def test_fetch_thesis_evaluations_returns_status_history(monkeypatch):
                     "changed_at": "2026-06-05T10:00:00+00:00",
                 }
             ]
+
+        def conviction_summary(self, ticker: str):
+            return {"current": None, "group_current": None, "group_name": None, "timeline": []}
 
     monkeypatch.setattr("ontology.runtime_read_service.OntologyRuntimeReadService", lambda: _Reads())
 

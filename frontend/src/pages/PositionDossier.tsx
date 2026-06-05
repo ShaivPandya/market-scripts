@@ -4,6 +4,7 @@ import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchDossier,
+  type ConvictionSummary,
   fetchApprovalSummary,
   approveItem,
   rejectItem,
@@ -89,6 +90,7 @@ interface DossierData {
   ticker: string
   position: Record<string, unknown> | null
   related_portfolio_legs?: Array<Record<string, unknown>>
+  conviction?: ConvictionSummary | null
   overview_content: string | null
   overview_parsed: ParsedOverview | null
   management_quality: {
@@ -586,6 +588,12 @@ export function PositionDossier() {
             <div><span className="text-subtle">Option</span> <span className="font-medium text-app ml-1">{String(pos.option_type).toUpperCase()} {String(pos.option_strike)}{pos.option_expiration ? ` exp ${String(pos.option_expiration)}` : ""}</span></div>
           )}
           {pos.instrument_type === "option" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
+          {(data.conviction?.current != null || pos.conviction != null) && (
+            <div>
+              <span className="text-subtle">Conviction</span>
+              <span className="font-medium text-app ml-1">{String(data.conviction?.current ?? pos.conviction)}</span>
+            </div>
+          )}
           {pos.group_name != null && <div><span className="text-subtle">Group</span> <span className="font-medium text-app ml-1">{String(pos.group_name)}{pos.group_conviction != null ? ` (${String(pos.group_conviction)})` : ""}</span></div>}
           {pos.avg_cost != null && <div><span className="text-subtle">Avg Cost</span> <span className="font-medium text-app ml-1">${Number(pos.avg_cost).toFixed(2)}</span></div>}
           {pos.market_value != null && <div><span className="text-subtle">Mkt Value</span> <span className="font-medium text-app ml-1">${Number(pos.market_value).toLocaleString()}</span></div>}
@@ -667,7 +675,7 @@ export function PositionDossier() {
           />
         )}
         {activeTab === "Valuation" && <PositionValuationTab ticker={data.ticker} />}
-        {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
+        {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} conviction={data.conviction} ticker={data.ticker} position={data.position} />}
         {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} monitorHits={monitorHits} ticker={ticker!} />}
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} monitorHits={monitorHits} ticker={ticker!} />}
@@ -1406,7 +1414,50 @@ function ManagementQualityTab({
   )
 }
 
-function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]; ticker: string; position: Record<string, unknown> | null }) {
+function convictionFieldLabel(field: string | null | undefined): string {
+  return field === "group_conviction" ? "group" : "position"
+}
+
+function ConvictionHistoryPanel({ conviction }: { conviction?: ConvictionSummary | null }) {
+  const timeline = conviction?.timeline ?? []
+  if (timeline.length === 0) return null
+  return (
+    <div className="mt-4 pt-4 border-t border-app">
+      <h3 className="text-xs font-semibold text-subtle uppercase mb-2">Conviction History</h3>
+      <div className="space-y-1">
+        {timeline.map((entry, index) => (
+          <div key={String(entry.id ?? entry.entry_id ?? index)} className="flex flex-wrap items-center gap-3 text-xs text-muted">
+            <span className="text-subtle">{formatTime(entry.changed_at)}</span>
+            <span className="px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+              {convictionFieldLabel(entry.conviction_field)}
+            </span>
+            {entry.previous_conviction != null && (
+              <span className="font-medium text-app">{String(entry.previous_conviction)}</span>
+            )}
+            {entry.previous_conviction != null && <span className="text-subtle">→</span>}
+            <span className="font-medium text-app">{entry.new_conviction != null ? String(entry.new_conviction) : "—"}</span>
+            {entry.reason && <span className="truncate">{entry.reason}</span>}
+            {entry.ai_confidence != null && (
+              <span className="text-subtle">AI conf {Math.round(entry.ai_confidence * 100)}%</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ThesisTab({
+  thesis,
+  conviction,
+  ticker,
+  position,
+}: {
+  thesis: DossierData["thesis"]
+  conviction?: ConvictionSummary | null
+  ticker: string
+  position: Record<string, unknown> | null
+}) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
@@ -1457,9 +1508,24 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
   return (
     <div>
       <StagedProposalNotice proposal={proposal} className="mb-3 text-xs" />
-      {(position || thesis.meta) && (
+      {(position || thesis.meta || conviction) && (
         <div className="flex flex-wrap gap-4 text-sm mb-4 pb-4 border-b border-app">
           {position?.direction != null && <div><span className="text-subtle">Direction:</span> <span className="font-medium text-app">{String(position.direction)}</span></div>}
+          {(conviction?.current != null || position?.conviction != null) && (
+            <div>
+              <span className="text-subtle">Conviction:</span>
+              <span className="font-medium text-app ml-1">{String(conviction?.current ?? position?.conviction)}</span>
+            </div>
+          )}
+          {conviction?.group_name != null && (
+            <div>
+              <span className="text-subtle">Group:</span>
+              <span className="font-medium text-app ml-1">
+                {String(conviction.group_name)}
+                {conviction.group_current != null ? ` (${String(conviction.group_current)})` : ""}
+              </span>
+            </div>
+          )}
           {thesis.meta?.last_evaluated && <div><span className="text-subtle">Last Evaluated:</span> <span className="font-medium text-app">{formatTime(thesis.meta.last_evaluated)}</span></div>}
         </div>
       )}
@@ -1490,6 +1556,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
           )}
         </>
       )}
+      <ConvictionHistoryPanel conviction={conviction} />
       {thesis.status_history.length > 0 && (
         <div className="mt-4 pt-4 border-t border-app">
           <h3 className="text-xs font-semibold text-subtle uppercase mb-2">Status History</h3>

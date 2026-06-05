@@ -2982,11 +2982,89 @@ class OpportunityCandidate(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+ConvictionEntityType = Literal["position", "hedge_position", "investment_idea", "position_group"]
+ConvictionField = Literal["conviction", "group_conviction"]
+ConvictionSourceKind = Literal[
+    "human",
+    "portfolio_update",
+    "hedge_update",
+    "idea_update",
+    "decision_quality",
+    "backfill",
+]
+
+
+class ConvictionHistoryEntry(OntologySchemaBase):
+    entry_id: NonBlankStr
+    id: str | int | None = None
+    entity_type: ConvictionEntityType
+    entity_id: NonBlankStr
+    ticker: NonBlankStr
+    conviction_field: ConvictionField = "conviction"
+    previous_conviction: int | None = Field(default=None, ge=1, le=5)
+    new_conviction: int | None = Field(default=None, ge=1, le=5)
+    conviction_scale: int = Field(default=5, ge=1, le=5)
+    conviction_source_kind: ConvictionSourceKind = "human"
+    reason: str | None = None
+    note: str | None = None
+    changed_at: NonBlankStr
+    actor_type: str | None = None
+    actor_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    raw_target_weight: float | None = None
+    upgrade_condition: str | None = None
+    downgrade_condition: str | None = None
+    ai_confidence: float | None = Field(default=None, ge=0, le=1)
+    ai_confidence_reason: str | None = None
+    approval_id: str | None = None
+    action_run_id: str | None = None
+    provenance_event_id: str | None = None
+    evaluation_id: str | None = None
+    recommendation_id: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    linked_refs: list[str] = Field(default_factory=list)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("entry_id", "entity_id", "entity_type", "changed_at", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "reason",
+        "note",
+        "actor_type",
+        "actor_id",
+        "source_type",
+        "source_id",
+        "upgrade_condition",
+        "downgrade_condition",
+        "ai_confidence_reason",
+        "approval_id",
+        "action_run_id",
+        "provenance_event_id",
+        "evaluation_id",
+        "recommendation_id",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class InvestmentIdea(OntologySchemaBase):
     idea_id: NonBlankStr
     id: str | int | None = None
     ticker: NonBlankStr
     company_name: str | None = None
+    conviction: int | None = Field(default=None, ge=1, le=5)
     asset: NonBlankStr = "equity"
     instrument_type: NonBlankStr = "security"
     price_symbol: str | None = None
@@ -3689,6 +3767,7 @@ OntologyObject = (
     | ThesisDocument
     | ThesisSection
     | InvestmentIdea
+    | ConvictionHistoryEntry
     | IdeaEvaluation
     | IdeaComparisonRun
     | IdeaComparisonRanking

@@ -94,6 +94,7 @@ def get_dossier(ticker: str, since: str | None = None):
 
     evaluations = ontology_bundle.get("evaluations", [])
     status_history = reads.thesis_status_history(ticker, limit=20)
+    conviction = reads.conviction_summary(ticker)
     catalysts = ontology_bundle.get("catalysts", [])
     kill_conditions = ontology_bundle.get("kill_conditions", [])
     thesis_claims = ontology_bundle.get("thesis_claims", [])
@@ -138,6 +139,7 @@ def get_dossier(ticker: str, since: str | None = None):
             "content": thesis_content,
             "status_history": status_history,
         },
+        "conviction": conviction,
         "evaluations": evaluations,
         "catalysts": catalysts,
         "kill_conditions": kill_conditions,

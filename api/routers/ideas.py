@@ -88,6 +88,7 @@ IDEA_INSTRUMENT_FIELDS = {
 }
 IDEA_LIFECYCLE_TRACKED_FIELDS = (
     "status",
+    "conviction",
     "user_notes",
     "tags",
     "analyzer_direction",
@@ -112,6 +113,7 @@ class IdeaCreateRequest(BaseModel):
     exchange: str | None = None
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
+    conviction: int | None = Field(default=None, ge=1, le=5)
     status: IdeaStatus = "watching"
     analyzer_direction: Literal["inactive", "long", "short"] = "inactive"
     use_portfolio_context: bool = True
@@ -146,6 +148,7 @@ class IdeaUpdateRequest(BaseModel):
     exchange: str | None = None
     user_notes: str | None = None
     tags: list[str] | None = None
+    conviction: int | None = Field(default=None, ge=1, le=5)
     status: IdeaStatus | None = None
     analyzer_direction: Literal["inactive", "long", "short"] | None = None
     use_portfolio_context: bool | None = None
@@ -437,6 +440,7 @@ def _idea_lifecycle_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
     tags = idea.get("tags")
     return {
         "status": idea.get("status"),
+        "conviction": idea.get("conviction"),
         "user_notes": idea.get("user_notes"),
         "tags": sorted(str(tag) for tag in (tags if isinstance(tags, list) else [])),
         "analyzer_direction": _idea_analyzer_direction(idea),
@@ -478,6 +482,7 @@ def _lifecycle_event_type_for_changes(changed_fields: list[str]) -> str:
         "status": "status_changed",
         "user_notes": "notes_edited",
         "tags": "tags_edited",
+        "conviction": "conviction_changed",
         "analyzer_direction": "analyzer_direction_changed",
         "use_portfolio_context": "portfolio_context_changed",
     }
@@ -546,6 +551,58 @@ def _write_idea_lifecycle_event(
     return _write_runtime_object("IdeaLifecycleEvent", event_uid, payload)
 
 
+def _record_idea_conviction_history(
+    before_idea: dict[str, Any],
+    after_idea: dict[str, Any],
+    *,
+    reason: str | None = None,
+    evaluation_id: str | None = None,
+    recommendation_id: str | None = None,
+    approval_id: str | None = None,
+    source_type: str = "user",
+    source_id: str | None = None,
+) -> dict[str, Any] | None:
+    from ontology.conviction_history import record_conviction_change
+    from ontology.object_service import OntologyObjectService
+
+    before_conviction = before_idea.get("conviction")
+    after_conviction = after_idea.get("conviction")
+    if before_conviction == after_conviction:
+        return None
+    idea_uid = _idea_uid(after_idea.get("id") or after_idea.get("object_uid") or after_idea.get("idea_id"))
+    ticker = str(after_idea.get("ticker") or "").strip().upper()
+    if not ticker:
+        return None
+    return record_conviction_change(
+        OntologyObjectService(),
+        entity_type="investment_idea",
+        entity_id=idea_uid,
+        ticker=ticker,
+        conviction_field="conviction",
+        previous_conviction=before_conviction,
+        new_conviction=after_conviction,
+        changed_at=_now(),
+        conviction_source_kind="idea_update",
+        reason=reason,
+        actor=actor_to_dict(admin_actor(source="ideas")),
+        actor_type=source_type,
+        source_type=source_type,
+        source_id=source_id,
+        evaluation_id=evaluation_id,
+        recommendation_id=recommendation_id,
+        approval_id=approval_id,
+        provenance=f"pv:idea_conviction:{idea_uid}",
+        input_hash=_stable_hash(
+            {
+                "idea_id": idea_uid,
+                "before": before_conviction,
+                "after": after_conviction,
+                "changed_at": _now(),
+            }
+        ),
+    )
+
+
 def _record_idea_lifecycle_changes(
     before_idea: dict[str, Any],
     after_idea: dict[str, Any],
@@ -564,6 +621,17 @@ def _record_idea_lifecycle_changes(
     changed_fields, before_values, after_values = _diff_idea_lifecycle_changes(before, after)
     if not changed_fields:
         return {}
+    if "conviction" in changed_fields:
+        _record_idea_conviction_history(
+            before_idea,
+            after_idea,
+            reason=reason,
+            evaluation_id=evaluation_id,
+            recommendation_id=recommendation_id,
+            approval_id=approval_id,
+            source_type=source_type,
+            source_id=source_id,
+        )
     resolved_type = event_type or _lifecycle_event_type_for_changes(changed_fields)
     return _write_idea_lifecycle_event(
         after_idea,
@@ -2783,10 +2851,22 @@ def _idea_detail(idea_id: str) -> dict[str, Any]:
             management_quality_parsed = parse_management_quality_markdown(management_quality)
         except Exception:
             management_quality_parsed = None
+    idea_uid = _idea_uid(idea.get("id") or idea.get("object_uid") or idea.get("idea_id"))
+    reads = OntologyRuntimeReadService()
+    conviction_timeline = reads.conviction_history(
+        str(idea.get("ticker") or ""),
+        entity_type="investment_idea",
+        entity_id=idea_uid,
+        limit=20,
+    )
     return {
         "idea": idea,
         "evaluations": _list_idea_evaluations(idea_id, limit=20),
         "lifecycle_history": _list_idea_lifecycle_events(idea_id, limit=20),
+        "conviction": {
+            "current": idea.get("conviction"),
+            "timeline": conviction_timeline,
+        },
         "documents": {
             "overview_present": bool(overview),
             "overview_content": _safe_text(overview, max_len=120_000),

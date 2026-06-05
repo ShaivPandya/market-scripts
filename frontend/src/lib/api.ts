@@ -3291,6 +3291,44 @@ export interface EvidenceLedgerSummary {
   }
 }
 
+export interface ConvictionHistoryEntry {
+  id?: number | string | null
+  entry_id?: string | null
+  ticker?: string | null
+  entity_type?: string | null
+  entity_id?: string | null
+  conviction_field?: "conviction" | "group_conviction" | string | null
+  previous_conviction?: number | null
+  new_conviction?: number | null
+  conviction_scale?: number | null
+  conviction_source_kind?: string | null
+  reason?: string | null
+  note?: string | null
+  changed_at?: string | null
+  actor?: string | null
+  actor_type?: string | null
+  source?: string | null
+  raw_target_weight?: number | null
+  upgrade_condition?: string | null
+  downgrade_condition?: string | null
+  ai_confidence?: number | null
+  ai_confidence_reason?: string | null
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  source_refs?: string[]
+  linked_refs?: string[]
+}
+
+export interface ConvictionSummary {
+  current?: number | null
+  group_current?: number | null
+  group_name?: string | null
+  timeline: ConvictionHistoryEntry[]
+}
+
 export const fetchDossier = (ticker: string) =>
   client.get(`/dossier/${encodeURIComponent(ticker)}`).then(r => r.data)
 

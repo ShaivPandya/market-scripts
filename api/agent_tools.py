@@ -1460,11 +1460,13 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
     meta = reads.thesis(ticker)
     evaluations = reads.evaluations(ticker, limit=limit)
     status_history = reads.thesis_status_history(ticker, limit=20)
+    conviction = reads.conviction_summary(ticker)
 
     if meta is None and not evaluations:
         return {
             "error": f"No thesis or evaluations found for ticker '{ticker}'",
             "ticker": ticker,
+            "conviction": conviction,
         }
 
     return {
@@ -1474,6 +1476,7 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
         "evaluations": evaluations,
         "evaluation_count": len(evaluations),
         "status_history": status_history,
+        "conviction": conviction,
     }
 
 

@@ -261,6 +261,96 @@ class OntologyRuntimeReadService:
         history.sort(key=lambda row: str(row.get("changed_at") or ""), reverse=True)
         return history[: max(1, int(limit))]
 
+    def conviction_history(
+        self,
+        ticker: str,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        limit: int = 20,
+        backfill: bool = True,
+    ) -> list[dict[str, Any]]:
+        from ontology.conviction_history import compact_conviction_history_entry
+
+        normalized = _ticker(ticker)
+        if not normalized:
+            return []
+
+        filters = _clean_filters({"ticker": normalized, "entity_type": entity_type, "entity_id": entity_id})
+        rows = [
+            object_props(row)
+            for row in self.objects.query_objects(
+                "ConvictionHistoryEntry",
+                filters=filters or None,
+                limit=500,
+            )
+        ]
+        if not rows and backfill:
+            from datetime import UTC, datetime
+
+            from ontology.conviction_history import backfill_conviction_history
+
+            backfill_conviction_history(
+                self.objects,
+                ticker=normalized,
+                now=datetime.now(UTC).isoformat(),
+            )
+            rows = [
+                object_props(row)
+                for row in self.objects.query_objects(
+                    "ConvictionHistoryEntry",
+                    filters=filters or None,
+                    limit=500,
+                )
+            ]
+
+        history = [compact_conviction_history_entry(row, entry_id=index + 1) for index, row in enumerate(rows)]
+        if not history:
+            position = None
+            for pos in self.positions(include_hedges=True):
+                if _ticker(pos.get("ticker")) == normalized:
+                    position = pos
+                    break
+            current_conviction = position.get("conviction") if position else None
+            if current_conviction is not None:
+                history.append(
+                    compact_conviction_history_entry(
+                        {
+                            "entry_id": f"current:{normalized}",
+                            "ticker": normalized,
+                            "entity_type": "position",
+                            "entity_id": str(
+                                position.get("id") or position.get("object_uid") or f"position:{normalized}"
+                            ),
+                            "conviction_field": "conviction",
+                            "previous_conviction": None,
+                            "new_conviction": current_conviction,
+                            "changed_at": str(
+                                position.get("updated_at") or position.get("created_at") or position.get("as_of") or ""
+                            ),
+                            "conviction_source_kind": "human",
+                        },
+                        entry_id=0,
+                    )
+                )
+
+        history.sort(key=lambda row: str(row.get("changed_at") or ""), reverse=True)
+        return history[: max(1, int(limit))]
+
+    def conviction_summary(self, ticker: str) -> dict[str, Any]:
+        normalized = _ticker(ticker)
+        position = None
+        for pos in self.positions(include_hedges=True):
+            if _ticker(pos.get("ticker")) == normalized:
+                position = pos
+                break
+        return {
+            "current": position.get("conviction") if position else None,
+            "group_current": position.get("group_conviction") if position else None,
+            "group_name": position.get("group_name") if position else None,
+            "timeline": self.conviction_history(normalized, limit=20),
+        }
+
     def latest_evaluations(self, *, limit: int = 1000) -> list[dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for row in self.evaluations(limit=limit):
