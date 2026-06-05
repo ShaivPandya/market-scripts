@@ -51,4 +51,4 @@ slowapi>=0.1.9
 sentry-sdk[fastapi]>=2.0.0
 
 # Terminal formatting (used by liquidity dashboard CLI)
-rich>=13.0.0
+rich>=15.0.0
