@@ -387,6 +387,7 @@ def get_thesis_detail(ticker: str):
         "content": content,
         "status_history": reads.thesis_status_history(normalized_ticker, limit=20),
         "conviction": reads.conviction_summary(normalized_ticker),
+        "record_timeline": reads.record_timeline(context="thesis", ticker=normalized_ticker, limit=30),
         "evaluations": [_object_props(row) for row in reads.evaluations(normalized_ticker, limit=52)],
     }
 

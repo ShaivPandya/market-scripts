@@ -18,6 +18,7 @@ TOOL_RELIABILITY_TIERS: dict[str, str] = {
     "get_dossier": "standard",
     "get_thesis": "standard",
     "get_thesis_evaluations": "standard",
+    "get_record_evolution_timeline": "standard",
     "get_position_valuation": "standard",
     "get_portfolio": "standard",
     "search_knowledge_base": "supplemental",

@@ -53,6 +53,7 @@ import {
   scoreText,
   writeActiveJobs,
 } from "@/lib/ideaUtils"
+import { RecordEvolutionTimeline } from "@/components/shared/RecordEvolutionTimeline"
 import { cn } from "@/lib/utils"
 
 const TABS = ["Overview", "Management Quality", "Valuation", "Thesis", "Evaluation"] as const
@@ -540,6 +541,9 @@ export function IdeaDetail() {
                   <StatusPill status={selectedIdea.status} />
                   <StatusBadge tone="neutral">{assetLabel(selectedIdea.asset)}</StatusBadge>
                   <StatusBadge tone="neutral">{instrumentTypeLabel(selectedIdea.instrument_type)}</StatusBadge>
+                  {detail?.conviction?.current != null && (
+                    <StatusBadge tone="info">Conviction {detail.conviction.current}</StatusBadge>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-subtle">{selectedIdeaSubtitle}</p>
 	              </div>
@@ -660,6 +664,10 @@ export function IdeaDetail() {
                 ) : (
                   <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No overview stored.</p>
                 )}
+                <RecordEvolutionTimeline
+                  entries={detail?.record_timeline}
+                  className="mt-6 border-t-0 pt-0"
+                />
               </section>
             )}
 
@@ -822,7 +830,7 @@ export function IdeaDetail() {
 	                />
                 {acceptMessage && <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">{acceptMessage}</p>}
 
-                {detail?.lifecycle_history && detail.lifecycle_history.length > 0 && (
+                {!detail?.record_timeline?.length && detail?.lifecycle_history && detail.lifecycle_history.length > 0 && (
                   <section className="space-y-3">
                     <h3 className="section-title text-sm">Lifecycle History</h3>
                     <div className="space-y-2">

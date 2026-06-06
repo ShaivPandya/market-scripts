@@ -5,6 +5,7 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchDossier,
   type ConvictionSummary,
+  type RecordTimelineEntry,
   fetchApprovalSummary,
   approveItem,
   rejectItem,
@@ -85,12 +86,14 @@ import { useDecisionTrace } from "@/contexts/DecisionTraceContext"
 import { cn } from "@/lib/utils"
 import { cleanDossierDisplayText, stripCitationTokens } from "@/lib/dossierText"
 import { openStanWithCommand } from "@/lib/stanLauncher"
+import { RecordEvolutionTimeline } from "@/components/shared/RecordEvolutionTimeline"
 
 interface DossierData {
   ticker: string
   position: Record<string, unknown> | null
   related_portfolio_legs?: Array<Record<string, unknown>>
   conviction?: ConvictionSummary | null
+  record_timeline?: RecordTimelineEntry[]
   overview_content: string | null
   overview_parsed: ParsedOverview | null
   management_quality: {
@@ -675,7 +678,15 @@ export function PositionDossier() {
           />
         )}
         {activeTab === "Valuation" && <PositionValuationTab ticker={data.ticker} />}
-        {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} conviction={data.conviction} ticker={data.ticker} position={data.position} />}
+        {activeTab === "Thesis" && (
+          <ThesisTab
+            thesis={data.thesis}
+            conviction={data.conviction}
+            recordTimeline={data.record_timeline}
+            ticker={data.ticker}
+            position={data.position}
+          />
+        )}
         {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} monitorHits={monitorHits} ticker={ticker!} />}
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} monitorHits={monitorHits} ticker={ticker!} />}
@@ -1450,11 +1461,13 @@ function ConvictionHistoryPanel({ conviction }: { conviction?: ConvictionSummary
 function ThesisTab({
   thesis,
   conviction,
+  recordTimeline,
   ticker,
   position,
 }: {
   thesis: DossierData["thesis"]
   conviction?: ConvictionSummary | null
+  recordTimeline?: RecordTimelineEntry[]
   ticker: string
   position: Record<string, unknown> | null
 }) {
@@ -1556,28 +1569,34 @@ function ThesisTab({
           )}
         </>
       )}
-      <ConvictionHistoryPanel conviction={conviction} />
-      {thesis.status_history.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-app">
-          <h3 className="text-xs font-semibold text-subtle uppercase mb-2">Status History</h3>
-          <div className="space-y-1">
-            {thesis.status_history.map((s, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs text-muted">
-                <span className="text-subtle">{formatTime(s.changed_at)}</span>
-                {s.old_status && (
-                  <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.old_status] ?? "")}>
-                    {s.old_status}
-                  </span>
-                )}
-                {s.old_status && <span className="text-subtle">→</span>}
-                <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.new_status] ?? "")}>
-                  {s.new_status}
-                </span>
-                {s.reason && <span className="truncate">{s.reason}</span>}
+      {recordTimeline && recordTimeline.length > 0 ? (
+        <RecordEvolutionTimeline entries={recordTimeline} />
+      ) : (
+        <>
+          <ConvictionHistoryPanel conviction={conviction} />
+          {thesis.status_history.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-app">
+              <h3 className="text-xs font-semibold text-subtle uppercase mb-2">Status History</h3>
+              <div className="space-y-1">
+                {thesis.status_history.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs text-muted">
+                    <span className="text-subtle">{formatTime(s.changed_at)}</span>
+                    {s.old_status && (
+                      <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.old_status] ?? "")}>
+                        {s.old_status}
+                      </span>
+                    )}
+                    {s.old_status && <span className="text-subtle">→</span>}
+                    <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[s.new_status] ?? "")}>
+                      {s.new_status}
+                    </span>
+                    {s.reason && <span className="truncate">{s.reason}</span>}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

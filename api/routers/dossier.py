@@ -114,6 +114,7 @@ def get_dossier(ticker: str, since: str | None = None):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     evidence_ledger = reads.evidence_ledger(ticker)
+    record_timeline = reads.record_timeline(context="position", ticker=ticker, limit=30)
 
     # Ontology risk is loaded lazily by the frontend Risk tab to avoid
     # expensive macro ingestion during dossier navigation.
@@ -140,6 +141,7 @@ def get_dossier(ticker: str, since: str | None = None):
             "status_history": status_history,
         },
         "conviction": conviction,
+        "record_timeline": record_timeline,
         "evaluations": evaluations,
         "catalysts": catalysts,
         "kill_conditions": kill_conditions,

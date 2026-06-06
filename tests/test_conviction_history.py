@@ -378,11 +378,28 @@ def test_get_dossier_returns_conviction(monkeypatch):
         def evidence_ledger(self, ticker: str):
             return {"ticker": ticker, "items": []}
 
+        def record_timeline(
+            self, *, context: str, ticker: str | None = None, idea_id: str | None = None, limit: int = 30
+        ):
+            return [
+                {
+                    "id": 1,
+                    "kind": "conviction_change",
+                    "label": "Conviction",
+                    "summary": "conviction 3 → 4",
+                    "changed_at": "2026-06-05T10:00:00+00:00",
+                    "ticker": ticker,
+                    "refs": {"approval_id": "approval:101"},
+                    "payload": {},
+                }
+            ]
+
     monkeypatch.setattr(dossier_router, "OntologyRuntimeReadService", lambda: _Reads())
 
     payload = dossier_router.get_dossier("MU")
     assert payload["conviction"]["current"] == 4
     assert payload["conviction"]["timeline"][0]["new_conviction"] == 4
+    assert payload["record_timeline"][0]["kind"] == "conviction_change"
 
 
 def test_fetch_thesis_evaluations_returns_conviction(monkeypatch):

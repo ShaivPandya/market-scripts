@@ -351,6 +351,57 @@ class OntologyRuntimeReadService:
             "timeline": self.conviction_history(normalized, limit=20),
         }
 
+    @staticmethod
+    def idea_uid(value: Any) -> str:
+        text = str(value or "").strip()
+        return text if text.startswith("investment_idea:") else f"investment_idea:{text}"
+
+    def idea_by_id(self, idea_id: Any) -> dict[str, Any] | None:
+        uid = self.idea_uid(idea_id)
+        idea = self.get(uid)
+        if idea:
+            return idea
+        rows = self.list_objects("InvestmentIdea", filters={"idea_id": uid}, limit=1)
+        if rows:
+            return rows[0]
+        short_id = str(idea_id or "").strip()
+        if short_id:
+            rows = self.list_objects("InvestmentIdea", filters={"id": short_id}, limit=1)
+            if rows:
+                return rows[0]
+        return None
+
+    def idea_evaluations(self, idea_id: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+        filters = {"idea_id": self.idea_uid(idea_id)}
+        rows = self.list_objects("IdeaEvaluation", filters=filters, limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)
+
+    def idea_lifecycle_events(self, idea_id: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+        filters = {"idea_id": self.idea_uid(idea_id)}
+        rows = self.list_objects("IdeaLifecycleEvent", filters=filters, limit=limit)
+        return sorted(rows, key=lambda row: str(row.get("changed_at") or ""), reverse=True)
+
+    def record_timeline(
+        self,
+        *,
+        context: str,
+        ticker: str | None = None,
+        idea_id: str | None = None,
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        from ontology.record_timeline import build_record_timeline
+
+        normalized_context = str(context or "position").strip().lower()
+        if normalized_context not in {"position", "thesis", "idea"}:
+            normalized_context = "position"
+        return build_record_timeline(
+            self,
+            context=normalized_context,  # type: ignore[arg-type]
+            ticker=ticker,
+            idea_id=idea_id,
+            limit=limit,
+        )
+
     def latest_evaluations(self, *, limit: int = 1000) -> list[dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for row in self.evaluations(limit=limit):

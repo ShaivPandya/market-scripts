@@ -234,6 +234,22 @@ def test_get_thesis_detail_returns_status_history(monkeypatch):
         def conviction_summary(self, ticker: str):
             return {"current": None, "group_current": None, "group_name": None, "timeline": []}
 
+        def record_timeline(
+            self, *, context: str, ticker: str | None = None, idea_id: str | None = None, limit: int = 30
+        ):
+            return [
+                {
+                    "id": 101,
+                    "kind": "thesis_status_change",
+                    "label": "Thesis status",
+                    "summary": "active → under_review",
+                    "changed_at": "2026-06-05T10:00:00+00:00",
+                    "ticker": ticker,
+                    "refs": {},
+                    "payload": {},
+                }
+            ]
+
     monkeypatch.setattr(thesis_router, "OntologyRuntimeReadService", lambda: _Reads())
     monkeypatch.setattr(thesis_router, "_thesis_exists", lambda ticker: True)
     monkeypatch.setattr(thesis_router, "_read_thesis", lambda ticker: "thesis body")
@@ -242,6 +258,7 @@ def test_get_thesis_detail_returns_status_history(monkeypatch):
     assert detail["status_history"][0]["new_status"] == "under_review"
     assert detail["evaluations"][0]["ticker"] == "MU"
     assert detail["evaluations"][0]["evaluated_at"] == "2026-06-05T09:00:00+00:00"
+    assert detail["record_timeline"][0]["kind"] == "thesis_status_change"
 
 
 def test_fetch_thesis_evaluations_returns_status_history(monkeypatch):

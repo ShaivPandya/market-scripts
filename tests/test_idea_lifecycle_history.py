@@ -65,7 +65,13 @@ class _InMemoryOntology:
     def get_object(self, object_uid: str, **kwargs):
         return self.rows.get(str(object_uid))
 
-    def query_objects(self, object_type: str | None = None, filters: dict[str, Any] | None = None, limit: int = 100):
+    def query_objects(
+        self,
+        object_type: str | None = None,
+        filters: dict[str, Any] | None = None,
+        limit: int = 100,
+        **kwargs: Any,
+    ):
         rows = [
             row
             for row in self.rows.values()
@@ -164,6 +170,20 @@ def test_update_idea_emits_ordered_lifecycle_history(ideas_store):
     assert history[0]["changed_at"] >= history[1]["changed_at"]
     assert history[0]["event_type"] in {"tags_edited", "notes_edited", "idea_updated"}
     assert history[1]["event_type"] == "status_changed"
+
+
+def test_idea_detail_includes_record_timeline(ideas_store):
+    from api.routers.ideas import IdeaUpdateRequest, _idea_detail, update_idea
+
+    update_idea("testlc", IdeaUpdateRequest(status="ready_for_review"))
+
+    detail = _idea_detail("testlc")
+    timeline = detail["record_timeline"]
+
+    assert isinstance(timeline, list)
+    assert len(timeline) >= 1
+    assert timeline[0]["kind"] == "lifecycle_event"
+    assert timeline[0]["label"] == "Idea lifecycle"
 
 
 def test_write_idea_lifecycle_event_records_accept_decision(ideas_store):

@@ -736,10 +736,36 @@ export interface IdeaEvaluation {
   created_at: string
 }
 
+export interface RecordTimelineRefs {
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  source_refs?: string[]
+  linked_refs?: string[]
+  evidence_refs?: string[]
+}
+
+export interface RecordTimelineEntry {
+  id: string | number
+  kind: string
+  label: string
+  summary: string
+  changed_at: string
+  ticker?: string | null
+  entity_type?: string | null
+  entity_id?: string | null
+  refs?: RecordTimelineRefs
+  payload?: Record<string, unknown>
+}
+
 export interface IdeaDetailResponse {
   idea: InvestmentIdea
   evaluations: IdeaEvaluation[]
   lifecycle_history?: IdeaLifecycleEvent[]
+  record_timeline?: RecordTimelineEntry[]
+  conviction?: ConvictionSummary | null
   documents?: {
     overview_present?: boolean
     overview_content?: string | null
@@ -1381,6 +1407,8 @@ export interface ThesisDetail {
   meta: ThesisMeta
   content: string | null
   status_history: ThesisStatusHistoryEntry[]
+  conviction?: ConvictionSummary | null
+  record_timeline?: RecordTimelineEntry[]
   evaluations: ThesisEvaluation[]
 }
 

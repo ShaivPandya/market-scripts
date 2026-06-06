@@ -2863,6 +2863,12 @@ def _idea_detail(idea_id: str) -> dict[str, Any]:
         "idea": idea,
         "evaluations": _list_idea_evaluations(idea_id, limit=20),
         "lifecycle_history": _list_idea_lifecycle_events(idea_id, limit=20),
+        "record_timeline": reads.record_timeline(
+            context="idea",
+            ticker=str(idea.get("ticker") or ""),
+            idea_id=idea_id,
+            limit=30,
+        ),
         "conviction": {
             "current": idea.get("conviction"),
             "timeline": conviction_timeline,

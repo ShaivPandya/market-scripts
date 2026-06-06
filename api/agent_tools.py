@@ -134,6 +134,11 @@ _BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "query_ontology": ("ontology", "read", ("ontology", "risk exposure", "portfolio risk")),
     "get_thesis": ("thesis", "read", ("thesis", "investment thesis")),
     "get_thesis_evaluations": ("thesis", "read", ("thesis evaluations", "monitoring history")),
+    "get_record_evolution_timeline": (
+        "thesis",
+        "read",
+        ("record evolution timeline", "record timeline", "evolution timeline"),
+    ),
     "search_knowledge_base": (
         "research",
         "read",
@@ -1181,6 +1186,8 @@ def _compact_tool_output(name: str, payload: Any, max_chars: int = _MAX_TOOL_RES
         compacted = _compact_ontology_payload(payload)
     elif name == "get_portfolio":
         compacted = _compact_portfolio_payload(payload)
+    elif name == "get_record_evolution_timeline":
+        compacted = payload if isinstance(payload, dict) else {"timeline": payload}
     else:
         compacted = payload
 
@@ -1451,6 +1458,49 @@ def _with_catalyst_markdown_fallback(
         merged.append(candidate)
         existing_keys.update(candidate_keys)
     return merged
+
+
+def _fetch_record_evolution_timeline(
+    *,
+    ticker: str | None,
+    idea_id: str | None,
+    entity_type: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    reads = OntologyRuntimeReadService()
+    normalized_ticker = str(ticker or "").strip().upper() or None
+    normalized_idea_id = str(idea_id or "").strip() or None
+    context = str(entity_type or "").strip().lower()
+    if not context:
+        context = "idea" if normalized_idea_id else "position"
+    if context not in {"position", "thesis", "idea"}:
+        context = "idea" if normalized_idea_id else "position"
+    if context == "idea" and not normalized_idea_id:
+        return {
+            "error": "Missing required parameter: idea_id for idea timelines",
+            "context": context,
+        }
+    if context != "idea" and not normalized_ticker:
+        return {
+            "error": "Missing required parameter: ticker",
+            "context": context,
+        }
+
+    timeline = reads.record_timeline(
+        context=context,
+        ticker=normalized_ticker,
+        idea_id=normalized_idea_id,
+        limit=limit,
+    )
+    return {
+        "context": context,
+        "ticker": normalized_ticker,
+        "idea_id": normalized_idea_id,
+        "timeline": timeline,
+        "entry_count": len(timeline),
+    }
 
 
 def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
@@ -2529,6 +2579,25 @@ def _dispatch(
 
         def _load():
             return _fetch_thesis_evaluations(ticker_raw, limit)
+
+        data, meta = fetch(long_cache, key, _load)
+        return data, meta
+
+    if name == "get_record_evolution_timeline":
+        ticker_raw = str(args.get("ticker") or "").strip().upper() or None
+        idea_id_raw = str(args.get("idea_id") or "").strip() or None
+        entity_type_raw = str(args.get("entity_type") or "").strip().lower() or None
+        limit = int(args.get("limit", 20))
+        limit = max(1, min(limit, 50))
+        key = f"record_timeline:{entity_type_raw or 'auto'}:{ticker_raw or ''}:{idea_id_raw or ''}:{limit}"
+
+        def _load():
+            return _fetch_record_evolution_timeline(
+                ticker=ticker_raw,
+                idea_id=idea_id_raw,
+                entity_type=entity_type_raw,
+                limit=limit,
+            )
 
         data, meta = fetch(long_cache, key, _load)
         return data, meta
