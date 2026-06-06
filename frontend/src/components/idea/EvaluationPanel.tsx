@@ -402,7 +402,7 @@ export function EvaluationPanel({
     .filter((entry): entry is readonly [string, IdeaFactorScore] => Boolean(entry[1]))
   const evidence = evaluation.evidence || []
   const disconfirming = evaluation.disconfirming_evidence || []
-  const accepted = Boolean(evaluation.accepted_at || evaluation.recommendation_id)
+  const accepted = Boolean(evaluation.accepted || evaluation.accepted_at)
   const analyzerContext =
     evaluation.analyzer_context && Object.keys(evaluation.analyzer_context).length > 0
       ? evaluation.analyzer_context

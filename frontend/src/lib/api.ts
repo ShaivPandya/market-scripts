@@ -680,6 +680,26 @@ export interface IdeaEvaluationDataQuality extends Record<string, unknown> {
   }
 }
 
+export interface IdeaLifecycleEvent {
+  id: string
+  event_id?: string
+  idea_id: string
+  ticker: string
+  event_type: string
+  changed_at: string
+  changed_fields: string[]
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+  reason?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  approval_id?: string | null
+  action_approval_id?: string | null
+  source_type?: string | null
+  source_id?: string | null
+  metadata?: Record<string, unknown>
+}
+
 export interface IdeaEvaluation {
   id: string
   source_id?: number | null
@@ -708,15 +728,44 @@ export interface IdeaEvaluation {
   evaluation_schema_version?: string | null
   recommendation_id: string | null
   approval_id: string | null
+  recommendation_approval_id?: string | null
   action_approval_id: string | null
+  accepted?: boolean
   accepted_at: string | null
   accepted_by: string | null
   created_at: string
 }
 
+export interface RecordTimelineRefs {
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  source_refs?: string[]
+  linked_refs?: string[]
+  evidence_refs?: string[]
+}
+
+export interface RecordTimelineEntry {
+  id: string | number
+  kind: string
+  label: string
+  summary: string
+  changed_at: string
+  ticker?: string | null
+  entity_type?: string | null
+  entity_id?: string | null
+  refs?: RecordTimelineRefs
+  payload?: Record<string, unknown>
+}
+
 export interface IdeaDetailResponse {
   idea: InvestmentIdea
   evaluations: IdeaEvaluation[]
+  lifecycle_history?: IdeaLifecycleEvent[]
+  record_timeline?: RecordTimelineEntry[]
+  conviction?: ConvictionSummary | null
   documents?: {
     overview_present?: boolean
     overview_content?: string | null
@@ -1340,17 +1389,26 @@ export interface ThesisMeta {
   latest_evaluation?: ThesisEvaluation | null
 }
 
+export interface ThesisStatusHistoryEntry {
+  id: number
+  ticker: string
+  old_status: string | null
+  new_status: string
+  reason: string | null
+  changed_at: string
+  actor?: string | null
+  source?: string | null
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+}
+
 export interface ThesisDetail {
   meta: ThesisMeta
   content: string | null
-  status_history: Array<{
-    id: number
-    ticker: string
-    old_status: string | null
-    new_status: string
-    reason: string | null
-    changed_at: string
-  }>
+  status_history: ThesisStatusHistoryEntry[]
+  conviction?: ConvictionSummary | null
+  record_timeline?: RecordTimelineEntry[]
   evaluations: ThesisEvaluation[]
 }
 
@@ -3259,6 +3317,44 @@ export interface EvidenceLedgerSummary {
     recommendations?: number
     evidence_items?: number
   }
+}
+
+export interface ConvictionHistoryEntry {
+  id?: number | string | null
+  entry_id?: string | null
+  ticker?: string | null
+  entity_type?: string | null
+  entity_id?: string | null
+  conviction_field?: "conviction" | "group_conviction" | string | null
+  previous_conviction?: number | null
+  new_conviction?: number | null
+  conviction_scale?: number | null
+  conviction_source_kind?: string | null
+  reason?: string | null
+  note?: string | null
+  changed_at?: string | null
+  actor?: string | null
+  actor_type?: string | null
+  source?: string | null
+  raw_target_weight?: number | null
+  upgrade_condition?: string | null
+  downgrade_condition?: string | null
+  ai_confidence?: number | null
+  ai_confidence_reason?: string | null
+  approval_id?: string | null
+  action_run_id?: string | null
+  provenance_event_id?: string | null
+  evaluation_id?: string | null
+  recommendation_id?: string | null
+  source_refs?: string[]
+  linked_refs?: string[]
+}
+
+export interface ConvictionSummary {
+  current?: number | null
+  group_current?: number | null
+  group_name?: string | null
+  timeline: ConvictionHistoryEntry[]
 }
 
 export const fetchDossier = (ticker: string) =>

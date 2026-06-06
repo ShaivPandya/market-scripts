@@ -49,6 +49,7 @@ def test_build_context_pack_tool_calls_for_quality_entry():
             "get_position_valuation",
             "run_chart",
             "get_thesis_evaluations",
+            "get_record_evolution_timeline",
             "search_knowledge_base",
         },
     )
@@ -56,6 +57,7 @@ def test_build_context_pack_tool_calls_for_quality_entry():
     assert "get_thesis" in names
     assert "run_chart" in names
     assert "get_position_valuation" in names
+    assert "get_record_evolution_timeline" in names
 
 
 def test_assess_context_pack_marks_missing_price_confirmation():

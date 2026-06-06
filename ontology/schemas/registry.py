@@ -25,6 +25,7 @@ from ontology.schemas.identity import (
     classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
+    conviction_history_entry_id,
     course_of_action_comparison_id,
     course_of_action_dissent_id,
     course_of_action_id,
@@ -45,6 +46,7 @@ from ontology.schemas.identity import (
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
+    idea_lifecycle_event_id,
     industry_force_assessment_id,
     instrument_id,
     investment_idea_id,
@@ -123,6 +125,7 @@ from ontology.schemas.objects import (
     Classification,
     CompanyFinancialProfile,
     ComputedSnapshotRef,
+    ConvictionHistoryEntry,
     CourseOfAction,
     CourseOfActionComparison,
     CourseOfActionDissent,
@@ -142,6 +145,7 @@ from ontology.schemas.objects import (
     IdeaComparisonRanking,
     IdeaComparisonRun,
     IdeaEvaluation,
+    IdeaLifecycleEvent,
     IndustryForceAssessment,
     Instrument,
     InvestmentIdea,
@@ -301,6 +305,8 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "InvestmentIdea": InvestmentIdea,
     "OpportunityCandidate": OpportunityCandidate,
     "IdeaEvaluation": IdeaEvaluation,
+    "IdeaLifecycleEvent": IdeaLifecycleEvent,
+    "ConvictionHistoryEntry": ConvictionHistoryEntry,
     "IdeaComparisonRun": IdeaComparisonRun,
     "IdeaComparisonRanking": IdeaComparisonRanking,
     "FactorScore": FactorScore,
@@ -373,6 +379,8 @@ OPTIONAL_NODE_TYPES = {
     "InvestmentIdea",
     "OpportunityCandidate",
     "IdeaEvaluation",
+    "IdeaLifecycleEvent",
+    "ConvictionHistoryEntry",
     "IdeaComparisonRun",
     "IdeaComparisonRanking",
     "FactorScore",
@@ -804,6 +812,10 @@ def expected_node_id(node_type: str, model: OntologyObject) -> str:
         return opportunity_candidate_id(model.candidate_id or model.idempotency_key)
     if isinstance(model, IdeaEvaluation):
         return idea_evaluation_id(model.evaluation_id)
+    if isinstance(model, IdeaLifecycleEvent):
+        return idea_lifecycle_event_id(model.event_id)
+    if isinstance(model, ConvictionHistoryEntry):
+        return conviction_history_entry_id(model.entry_id)
     if isinstance(model, IdeaComparisonRun):
         return idea_comparison_run_id(model.comparison_run_id)
     if isinstance(model, IdeaComparisonRanking):

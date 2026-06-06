@@ -217,6 +217,17 @@ def test_dossier_router_uses_bundle_without_position_scan(monkeypatch):
                 "counts": {"claims": 0, "recommendations": 0, "evidence_items": 0},
             }
 
+        def thesis_status_history(self, ticker: str, *, limit: int = 20):
+            return []
+
+        def conviction_summary(self, ticker: str):
+            return {"current": None, "group_current": None, "group_name": None, "timeline": []}
+
+        def record_timeline(
+            self, *, context: str, ticker: str | None = None, idea_id: str | None = None, limit: int = 30
+        ):
+            return []
+
     monkeypatch.setattr(dossier_router, "OntologyRuntimeReadService", _Reads)
     monkeypatch.setattr(state_storage, "exists_text", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(management_quality_content, "management_quality_exists", lambda *_args, **_kwargs: False)

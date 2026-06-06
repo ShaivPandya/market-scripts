@@ -1245,6 +1245,10 @@ class OntologyCommandService:
                 row = dict(position)
                 ticker = _non_blank(row.get("ticker"), "ticker").upper()
                 pos_uid_key = portfolio_position_uid(row)
+                before_row = None
+                existing = self.objects.get_object(pos_uid_key)
+                if existing:
+                    before_row = _flatten_object(existing)
                 instr_key = str(
                     row.get("instrument_id") or row.get("option_contract_symbol") or row.get("price_symbol") or ticker
                 )
@@ -1289,6 +1293,27 @@ class OntologyCommandService:
                     input_hash=input_hash,
                 )
                 pos_uid = _flatten_object(pos)["id"]
+                from ontology.conviction_history import record_position_conviction_changes
+
+                record_position_conviction_changes(
+                    self.objects,
+                    before_row=before_row,
+                    after_row=_flatten_object(pos),
+                    entity_type="position",
+                    entity_id=pos_uid,
+                    changed_at=now,
+                    conviction_source_kind="portfolio_update",
+                    actor=actor,
+                    actor_type=context.actor.actor_type,
+                    actor_id=context.actor.actor_id,
+                    source_type=context.source_type,
+                    source_id=context.source_id,
+                    approval_id=approval_object_id,
+                    action_run_id=action_run_id,
+                    provenance_event_id=provenance_id,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
                 self.objects.write_relation(
                     portfolio_id(row["portfolio_id"]),
                     pos_uid,
@@ -1330,15 +1355,42 @@ class OntologyCommandService:
             for position in positions:
                 row = dict(position)
                 ticker = _non_blank(row.get("ticker"), "ticker").upper()
+                hedge_uid_key = hedge_position_uid(row)
+                before_row = None
+                existing = self.objects.get_object(hedge_uid_key)
+                if existing:
+                    before_row = _flatten_object(existing)
                 row.setdefault("asset", "equity")
                 row.setdefault("direction", "short")
                 row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
                 hedge = self.objects.write_object(
                     "HedgePosition",
-                    hedge_position_uid(row),
+                    hedge_uid_key,
                     row,
                     now,
                     actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                hedge_uid = _flatten_object(hedge)["id"]
+                from ontology.conviction_history import record_position_conviction_changes
+
+                record_position_conviction_changes(
+                    self.objects,
+                    before_row=before_row,
+                    after_row=_flatten_object(hedge),
+                    entity_type="hedge_position",
+                    entity_id=hedge_uid,
+                    changed_at=now,
+                    conviction_source_kind="hedge_update",
+                    actor=actor,
+                    actor_type=context.actor.actor_type,
+                    actor_id=context.actor.actor_id,
+                    source_type=context.source_type,
+                    source_id=context.source_id,
+                    approval_id=approval_object_id,
+                    action_run_id=action_run_id,
+                    provenance_event_id=provenance_id,
                     provenance=provenance_id,
                     input_hash=input_hash,
                 )

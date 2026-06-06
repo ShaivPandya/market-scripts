@@ -85,6 +85,8 @@ EntityType = Literal[
     "InvestmentIdea",
     "OpportunityCandidate",
     "IdeaEvaluation",
+    "IdeaLifecycleEvent",
+    "ConvictionHistoryEntry",
     "IdeaComparisonRun",
     "IdeaComparisonRanking",
     "FactorScore",

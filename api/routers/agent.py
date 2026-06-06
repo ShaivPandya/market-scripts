@@ -916,6 +916,7 @@ def _select_tool_names(user_text: str) -> list[str]:
             "get_dossier",
             "get_thesis",
             "get_thesis_evaluations",
+            "get_record_evolution_timeline",
             "get_position_valuation",
             "run_chart",
             "get_price_volume_signals",

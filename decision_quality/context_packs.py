@@ -60,7 +60,7 @@ CONTEXT_PACKS: dict[str, ContextPackTemplate] = {
         label="Quality compounder entry",
         opportunity_types=("quality_compounder", "undervalued_asset"),
         required_tools=("get_portfolio", "get_dossier", "get_thesis", "get_position_valuation", "run_chart"),
-        conditional_tools=("get_thesis_evaluations", "search_knowledge_base"),
+        conditional_tools=("get_thesis_evaluations", "get_record_evolution_timeline", "search_knowledge_base"),
         required_source_classes=("thesis", "valuation", "price_action"),
         min_reliability_tier="standard",
         required_dq_dimensions=(
@@ -80,6 +80,7 @@ CONTEXT_PACKS: dict[str, ContextPackTemplate] = {
             "get_position_valuation": "valuation and bear/base/bull framing",
             "run_chart": "price-action confirmation",
             "get_dossier": "position dossier context",
+            "get_record_evolution_timeline": "record evolution timeline",
         },
     ),
     "catalyst": ContextPackTemplate(
@@ -102,7 +103,7 @@ CONTEXT_PACKS: dict[str, ContextPackTemplate] = {
         label="Turnaround setup",
         opportunity_types=("undervalued_asset", "cyclical_upturn"),
         required_tools=("get_dossier", "get_thesis", "get_position_valuation", "run_chart"),
-        conditional_tools=("get_thesis_evaluations", "search_knowledge_base"),
+        conditional_tools=("get_thesis_evaluations", "get_record_evolution_timeline", "search_knowledge_base"),
         required_source_classes=("thesis", "valuation", "price_action"),
         min_reliability_tier="standard",
         required_dq_dimensions=("mispricing", "catalyst_or_reason_now", "price_action", "invalidation"),
@@ -132,12 +133,13 @@ CONTEXT_PACKS: dict[str, ContextPackTemplate] = {
         label="Portfolio hedge",
         opportunity_types=("regime_shift",),
         required_tools=("get_portfolio", "run_chart", "get_price_volume_signals"),
-        conditional_tools=("get_portfolio_risk", "query_ontology"),
+        conditional_tools=("get_portfolio_risk", "get_record_evolution_timeline", "query_ontology"),
         required_source_classes=("portfolio", "price_action"),
         min_reliability_tier="standard",
         required_dq_dimensions=("price_action", "missing_inputs", "confidence_sizing"),
         missing_input_labels={
             "get_portfolio": "portfolio exposure context",
+            "get_record_evolution_timeline": "record evolution timeline",
             "run_chart": "hedge instrument price confirmation",
             "get_price_volume_signals": "macro/hedge price confirmation",
         },
@@ -161,7 +163,7 @@ CONTEXT_PACKS: dict[str, ContextPackTemplate] = {
         label="Short or avoid setup",
         opportunity_types=("unsustainable_process", "crowded_narrative_avoid"),
         required_tools=("get_dossier", "get_thesis", "run_chart", "get_position_valuation"),
-        conditional_tools=("get_thesis_evaluations", "search_knowledge_base"),
+        conditional_tools=("get_thesis_evaluations", "get_record_evolution_timeline", "search_knowledge_base"),
         required_source_classes=("thesis", "valuation", "price_action", "crowding"),
         min_reliability_tier="standard",
         required_dq_dimensions=("mispricing", "evidence_against", "price_action", "invalidation"),
@@ -355,6 +357,8 @@ def build_context_pack_tool_calls(
             add("get_thesis", {"ticker": ticker})
         elif tool_name == "get_thesis_evaluations" and ticker:
             add("get_thesis_evaluations", {"ticker": ticker, "limit": 5})
+        elif tool_name == "get_record_evolution_timeline" and ticker:
+            add("get_record_evolution_timeline", {"ticker": ticker, "entity_type": "position", "limit": 20})
         elif tool_name == "get_position_valuation" and ticker:
             add("get_position_valuation", {"ticker": ticker})
         elif tool_name == "run_chart" and ticker:

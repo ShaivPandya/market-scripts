@@ -319,6 +319,59 @@ def test_placeholder_group_name_does_not_group_position():
     assert weights["MU"] == pytest.approx(portfolio_sizer.LONG_MAX)
 
 
+def test_sizer_accepts_leveraged_etf_position_after_underlying_collapse(monkeypatch):
+    monkeypatch.setattr(
+        portfolio_sizer,
+        "_get_positions_df",
+        lambda fallback_to_csv=True: pd.DataFrame(
+            [
+                {
+                    "ticker": "METU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "instrument_type": "security",
+                    "quantity": 10,
+                    "conviction": 4,
+                },
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "instrument_type": "security",
+                    "quantity": 20,
+                    "conviction": 3,
+                },
+            ]
+        ),
+    )
+
+    def fake_prices(meta, tickers, extra_tickers):
+        dates = pd.date_range("2026-01-01", periods=80, freq="B")
+        columns = list(dict.fromkeys([*tickers, *extra_tickers]))
+        prices = pd.DataFrame(
+            {ticker: np.linspace(100.0 + idx, 120.0 + idx, len(dates)) for idx, ticker in enumerate(columns)},
+            index=dates,
+        )
+        return prices, {ticker: "USD" for ticker in columns}, {ticker: ticker for ticker in tickers}
+
+    monkeypatch.setattr(portfolio_sizer, "fetch_prices_for_portfolio_symbols", fake_prices)
+    monkeypatch.setattr(portfolio_sizer, "_get_hedge_positions", lambda: [])
+
+    result = portfolio_sizer.size_portfolio(
+        positions=[
+            {"ticker": "METU", "conviction": 4},
+            {"ticker": "MU", "conviction": 3},
+        ],
+        book=100_000,
+        target_leverage=1.5,
+    )
+
+    assert result.get("error") is None
+    weights = result["weights_df"].set_index("ticker")
+    assert "META" in weights.index
+    assert weights.loc["META", "conviction"] == 4
+
+
 def test_grouped_convictions_reject_mixed_direction():
     meta = pd.DataFrame(
         {"direction": ["long", "short"]},

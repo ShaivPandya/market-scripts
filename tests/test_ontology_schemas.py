@@ -15,6 +15,7 @@ from ontology.schemas.identity import (
     course_of_action_id,
     evaluation_id,
     hedge_position_id,
+    idea_lifecycle_event_id,
     scenario_assumption_id,
     signal_id,
     simulated_outcome_id,
@@ -25,6 +26,7 @@ from ontology.schemas.objects import (
     FactorScore,
     HedgePosition,
     IdeaComparisonRanking,
+    IdeaLifecycleEvent,
     InvestmentIdea,
     ManagementQualityAssessment,
     MissingInformationRequirement,
@@ -216,6 +218,36 @@ def test_runtime_migration_schema_rejects_unregistered_fields():
             status="watching",
             unregistered_field=True,
         )
+
+
+def test_idea_lifecycle_event_schema_is_registered():
+    event = IdeaLifecycleEvent(
+        event_id="idea_lifecycle_event:test_event",
+        idea_id="investment_idea:TESTLC",
+        ticker="TESTLC",
+        event_type="status_changed",
+        changed_at="2026-06-05T12:00:00+00:00",
+        changed_fields=["status"],
+        before={"status": "watching"},
+        after={"status": "ready_for_review"},
+        reason="manual review",
+    )
+    normalized = normalize_node(
+        OntologyNode(
+            id=idea_lifecycle_event_id(event.event_id),
+            type="IdeaLifecycleEvent",
+            label="TESTLC lifecycle",
+            properties=event.model_dump(mode="json"),
+            schema_name="IdeaLifecycleEvent",
+            schema_version=1,
+        ),
+        allow_current=False,
+    )
+
+    assert NODE_SCHEMAS["IdeaLifecycleEvent"] is IdeaLifecycleEvent
+    assert normalized.id == "idea_lifecycle_event:test_event"
+    assert normalized.properties["event_type"] == "status_changed"
+    assert "IdeaLifecycleEvent" in {definition.schema_name for definition in ontology_schema_definitions()}
 
 
 def test_first_class_research_optimizer_and_management_quality_objects_accept_uid_links():

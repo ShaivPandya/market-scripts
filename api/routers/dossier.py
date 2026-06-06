@@ -93,7 +93,8 @@ def get_dossier(ticker: str, since: str | None = None):
             pass
 
     evaluations = ontology_bundle.get("evaluations", [])
-    status_history: list[dict[str, Any]] = []
+    status_history = reads.thesis_status_history(ticker, limit=20)
+    conviction = reads.conviction_summary(ticker)
     catalysts = ontology_bundle.get("catalysts", [])
     kill_conditions = ontology_bundle.get("kill_conditions", [])
     thesis_claims = ontology_bundle.get("thesis_claims", [])
@@ -113,6 +114,7 @@ def get_dossier(ticker: str, since: str | None = None):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     evidence_ledger = reads.evidence_ledger(ticker)
+    record_timeline = reads.record_timeline(context="position", ticker=ticker, limit=30)
 
     # Ontology risk is loaded lazily by the frontend Risk tab to avoid
     # expensive macro ingestion during dossier navigation.
@@ -138,6 +140,8 @@ def get_dossier(ticker: str, since: str | None = None):
             "content": thesis_content,
             "status_history": status_history,
         },
+        "conviction": conviction,
+        "record_timeline": record_timeline,
         "evaluations": evaluations,
         "catalysts": catalysts,
         "kill_conditions": kill_conditions,
