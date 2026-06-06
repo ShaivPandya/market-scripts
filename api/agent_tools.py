@@ -2584,18 +2584,18 @@ def _dispatch(
         return data, meta
 
     if name == "get_record_evolution_timeline":
-        ticker_raw = str(args.get("ticker") or "").strip().upper() or None
-        idea_id_raw = str(args.get("idea_id") or "").strip() or None
-        entity_type_raw = str(args.get("entity_type") or "").strip().lower() or None
+        record_ticker = str(args.get("ticker") or "").strip().upper() or None
+        record_idea_id = str(args.get("idea_id") or "").strip() or None
+        record_entity_type = str(args.get("entity_type") or "").strip().lower() or None
         limit = int(args.get("limit", 20))
         limit = max(1, min(limit, 50))
-        key = f"record_timeline:{entity_type_raw or 'auto'}:{ticker_raw or ''}:{idea_id_raw or ''}:{limit}"
+        key = f"record_timeline:{record_entity_type or 'auto'}:{record_ticker or ''}:{record_idea_id or ''}:{limit}"
 
         def _load():
             return _fetch_record_evolution_timeline(
-                ticker=ticker_raw,
-                idea_id=idea_id_raw,
-                entity_type=entity_type_raw,
+                ticker=record_ticker,
+                idea_id=record_idea_id,
+                entity_type=record_entity_type,
                 limit=limit,
             )
 

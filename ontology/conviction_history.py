@@ -37,7 +37,9 @@ def _stable_hash(payload: object) -> str:
 
 
 def _normalize_conviction(value: object) -> int | None:
-    if value is None or value == "":
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float, str)):
         return None
     try:
         level = int(value)

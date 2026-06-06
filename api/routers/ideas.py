@@ -436,7 +436,8 @@ def _lifecycle_event_uid(value: Any) -> str:
 
 
 def _idea_lifecycle_snapshot(idea: dict[str, Any]) -> dict[str, Any]:
-    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    metadata_raw = idea.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
     tags = idea.get("tags")
     return {
         "status": idea.get("status"),

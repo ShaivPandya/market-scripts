@@ -344,7 +344,8 @@ def _entry_from_approval(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dedup_key(entry: dict[str, Any]) -> str:
-    refs = entry.get("refs") if isinstance(entry.get("refs"), dict) else {}
+    refs_raw = entry.get("refs")
+    refs: dict[str, Any] = refs_raw if isinstance(refs_raw, dict) else {}
     for ref_name in ("approval_id", "action_run_id", "evaluation_id", "recommendation_id"):
         ref_value = refs.get(ref_name)
         if ref_value:

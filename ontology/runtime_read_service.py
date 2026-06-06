@@ -312,7 +312,7 @@ class OntologyRuntimeReadService:
                     position = pos
                     break
             current_conviction = position.get("conviction") if position else None
-            if current_conviction is not None:
+            if current_conviction is not None and position is not None:
                 history.append(
                     compact_conviction_history_entry(
                         {
