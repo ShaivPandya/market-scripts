@@ -377,6 +377,43 @@ def _collapse_positions_to_underlyings(meta: pd.DataFrame) -> tuple[pd.DataFrame
     return collapsed_df, skipped
 
 
+def _requested_position_sizing_key_map(meta: pd.DataFrame) -> dict[str, str]:
+    """Map traded position tickers to the exposure key used by collapsed metadata."""
+    if meta.empty or "ticker" not in meta.columns:
+        return {}
+
+    out: dict[str, str] = {}
+    for record in meta.to_dict("records"):
+        traded = str(record.get("ticker") or "").strip().upper()
+        if not traded or traded in out:
+            continue
+        key = exposure_group_key(record)
+        if key:
+            out[traded] = key
+    return out
+
+
+def _rekey_positions_to_sizing_universe(
+    positions: Mapping[str, Mapping[str, Any]],
+    sizing_key_by_ticker: Mapping[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Align requested convictions with the collapsed economic-exposure universe."""
+    rekeyed: dict[str, dict[str, Any]] = {}
+    for ticker, position in positions.items():
+        sizing_key = sizing_key_by_ticker.get(ticker, ticker)
+        next_position = dict(position)
+        next_position["ticker"] = sizing_key
+        if sizing_key == ticker:
+            rekeyed[sizing_key] = next_position
+            continue
+
+        next_position["traded_ticker"] = ticker
+        existing = rekeyed.get(sizing_key)
+        if existing is None or int(next_position.get("conviction") or 0) > int(existing.get("conviction") or 0):
+            rekeyed[sizing_key] = next_position
+    return rekeyed
+
+
 def _leg_quantity(row: Mapping[str, Any]) -> float | None:
     raw = row.get("quantity")
     if raw is None:
@@ -674,8 +711,9 @@ def size_portfolio(
         positions_by_ticker = _parse_positions(positions)
 
         # Load portfolio metadata (keep raw legs for current-size / delta math)
-        meta_raw = _get_positions_df(fallback_to_csv=True)
+        meta_raw = _get_positions_df()
         meta_raw["direction"] = meta_raw["direction"].fillna("")
+        sizing_key_by_ticker = _requested_position_sizing_key_map(meta_raw)
         meta = meta_raw.copy()
         # Collapse legs to one synthetic equity row per underlying so option
         # underlyings are sized as equity with a net inferred direction, and
@@ -683,17 +721,18 @@ def size_portfolio(
         meta, skipped_offsetting_tickers = _collapse_positions_to_underlyings(meta)
         meta = meta.set_index("ticker")
         meta = prepare_instrument_metadata(meta)
+        positions_by_ticker = _rekey_positions_to_sizing_universe(positions_by_ticker, sizing_key_by_ticker)
 
-        # Filter to user-requested tickers that exist in CSV
+        # Filter to user-requested exposure keys that exist in current portfolio metadata.
         requested = list(positions_by_ticker.keys())
         skipped_set = set(skipped_offsetting_tickers)
         skipped_requested = [t for t in requested if t in skipped_set]
         requested = [t for t in requested if t not in skipped_set]
-        missing_from_csv = [t for t in requested if t not in meta.index]
-        if missing_from_csv:
+        missing_from_portfolio = [t for t in requested if t not in meta.index]
+        if missing_from_portfolio:
             raise ValueError(
-                f"Tickers not found in portfolio.csv: {missing_from_csv}. "
-                f"Only tickers defined in the portfolio are allowed."
+                f"Tickers not found in current portfolio metadata: {missing_from_portfolio}. "
+                f"Only tickers defined in the current portfolio are allowed."
             )
 
         tickers, excluded_non_equity_tickers = _filter_equity_sizing_universe(meta, requested)
