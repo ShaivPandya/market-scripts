@@ -18,6 +18,7 @@ import time
 from collections import Counter
 from collections.abc import Sized
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from datetime import UTC, datetime
 from functools import cache, lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -408,6 +409,152 @@ def _done_payload(base: dict[str, Any], timings: dict[str, Any], turn_started: f
     return out
 
 
+def _record_agent_trajectory(
+    *,
+    req: AgentChatRequest,
+    session_id: str,
+    turn_started: float,
+    timings: dict[str, Any],
+    final_disposition: str,
+    messages: list[dict[str, Any]],
+    usage: dict[str, Any] | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    route_decision: RouteDecision | None = None,
+    route_meta: dict[str, Any] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    gate_outcomes: list[dict[str, Any]] | None = None,
+    provenance_event_id: str | None = None,
+    raw_payload: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort training trajectory capture that never changes chat behavior."""
+    try:
+        from api.agent_trajectories import insert_trajectory, trajectory_id_for
+
+        captured_at = datetime.fromtimestamp(time.time() - (time.perf_counter() - turn_started), tz=UTC).isoformat()
+        trajectory_id = trajectory_id_for(
+            session_id=session_id,
+            client_turn_id=req.client_turn_id,
+            captured_at=captured_at,
+        )
+        route_payload = {
+            "applied": route_decision.to_meta() if route_decision is not None else None,
+            "telemetry": route_meta or {},
+        }
+        steps: list[dict[str, Any]] = []
+
+        def add_step(
+            kind: str,
+            *,
+            name: str | None = None,
+            status: str | None = None,
+            payload: dict[str, Any] | None = None,
+            elapsed_ms: float | None = None,
+        ) -> None:
+            index = len(steps)
+            steps.append(
+                {
+                    "step_id": f"{trajectory_id}:step:{index:04d}:{kind}",
+                    "index": index,
+                    "kind": kind,
+                    "name": name,
+                    "status": status,
+                    "elapsed_ms": elapsed_ms,
+                    "payload": payload or {},
+                }
+            )
+
+        if route_decision is not None or route_meta:
+            add_step(
+                "route",
+                name="intent_router",
+                status=str((route_meta or {}).get("applied_source") or "applied"),
+                payload=route_payload,
+            )
+
+        for model_timing in timings.get("models") or []:
+            if not isinstance(model_timing, dict):
+                continue
+            add_step(
+                "model_call",
+                name=str(model_timing.get("purpose") or "agent_model"),
+                status=str(model_timing.get("status") or "unknown"),
+                elapsed_ms=model_timing.get("duration_ms"),
+                payload=model_timing,
+            )
+
+        tool_payload_by_name = {str(call.get("name")): call for call in tool_calls or [] if isinstance(call, dict)}
+        for tool_timing in timings.get("tools") or []:
+            if not isinstance(tool_timing, dict):
+                continue
+            name = str(tool_timing.get("name") or "tool")
+            payload = dict(tool_timing)
+            payload.update(tool_payload_by_name.get(name) or {})
+            add_step(
+                "tool_call",
+                name=name,
+                status=str(payload.get("status") or "unknown"),
+                elapsed_ms=payload.get("duration_ms") or payload.get("elapsed_ms"),
+                payload=payload,
+            )
+
+        for gate in gate_outcomes or []:
+            if isinstance(gate, dict):
+                add_step(
+                    "gate",
+                    name=str(gate.get("name") or "gate"),
+                    status=str(gate.get("status") or "unknown"),
+                    payload=gate,
+                )
+
+        add_step(
+            "final",
+            name="agent_turn",
+            status=final_disposition,
+            elapsed_ms=_elapsed_ms(turn_started),
+            payload={"usage": usage or {}, "message_count": len(messages)},
+        )
+
+        provider_model = model
+        if provider and provider_model is None:
+            try:
+                provider_model = resolve_model(MODEL_MID, provider)
+            except Exception:
+                provider_model = None
+
+        insert_trajectory(
+            {
+                "trajectory_id": trajectory_id,
+                "session_id": session_id,
+                "client_turn_id": req.client_turn_id,
+                "captured_at": captured_at,
+                "completed_at": datetime.now(UTC).isoformat(),
+                "final_disposition": final_disposition,
+                "provider": provider,
+                "model": provider_model,
+                "prompt_version": "agent_system_v1",
+                "code_version": os.getenv("RELEASE_SHA") or os.getenv("GIT_SHA"),
+                "route": route_payload,
+                "messages": messages,
+                "steps": steps,
+                "gate_outcomes": gate_outcomes or [],
+                "usage": usage or {},
+                "latency_ms": _elapsed_ms(turn_started),
+                "provenance": {"agent_turn_event_id": provenance_event_id} if provenance_event_id else {},
+                "source_provenance": {
+                    "source": "agent_chat",
+                    "session_id": session_id,
+                    "client_turn_id": req.client_turn_id,
+                },
+                "raw_payload": raw_payload or {},
+            }
+        )
+    except Exception:
+        logger.exception(
+            "agent_trajectory_capture_failed session_id=%s client_turn_id=%s", session_id, req.client_turn_id
+        )
+
+
 def _domain_guardrail_stream(classification: AgentDomainClassification):
     yield _sse_ping()
     yield _sse("delta", {"text": _domain_guardrail_text(classification)})
@@ -432,6 +579,24 @@ def _domain_guardrail_stream_v2(req: AgentChatRequest, classification: AgentDoma
     timings["first_token_ms"] = _elapsed_ms(turn_started)
     yield _sse("delta", {"text": text})
     finalize_turn_fn(session_id, user_msg, assistant_msg)
+    _record_agent_trajectory(
+        req=req,
+        session_id=session_id,
+        turn_started=turn_started,
+        timings=timings,
+        final_disposition="blocked",
+        messages=[user_msg, assistant_msg],
+        usage={},
+        gate_outcomes=[
+            {
+                "name": "domain_guardrail",
+                "status": classification.decision,
+                "reason": classification.reason,
+                "contains_unsupported_request": classification.contains_unsupported_request,
+            }
+        ],
+        raw_payload={"domain_classification": classification.__dict__},
+    )
     yield _sse(
         "done",
         _done_payload(
@@ -2945,6 +3110,18 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 output_value=text,
                 usage={},
             )
+            _record_agent_trajectory(
+                req=req,
+                session_id=session_id,
+                turn_started=turn_started,
+                timings=timings,
+                final_disposition="succeeded",
+                messages=[user_msg, assistant_msg],
+                usage={},
+                provider=selected_provider_for_tier(MODEL_MID),
+                provenance_event_id=agent_turn_event_id,
+                raw_payload={"path": "casual"},
+            )
             yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
             return
 
@@ -3174,6 +3351,24 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 status="succeeded",
                 output_value=synthesis_text,
                 usage=_usage_dict(final_message),
+            )
+            _record_agent_trajectory(
+                req=req,
+                session_id=session_id,
+                turn_started=turn_started,
+                timings=timings,
+                final_disposition="succeeded",
+                messages=[user_msg, assistant_msg],
+                usage=_usage_dict(final_message),
+                provider=provider,
+                model=locals().get("stream_kwargs", {}).get("model")
+                if isinstance(locals().get("stream_kwargs"), dict)
+                else None,
+                route_decision=route_decision,
+                route_meta=route_meta,
+                tool_calls=[tool_payload],
+                provenance_event_id=agent_turn_event_id,
+                raw_payload={"path": "portfolio_summary", "tool_result": portfolio_result},
             )
             yield _sse(
                 "done",
@@ -3710,6 +3905,41 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=synthesis_text,
                     usage=usage,
                 )
+                _record_agent_trajectory(
+                    req=req,
+                    session_id=session_id,
+                    turn_started=turn_started,
+                    timings=timings,
+                    final_disposition="succeeded",
+                    messages=[user_msg, assistant_msg],
+                    usage=usage,
+                    provider=provider,
+                    model=locals().get("stream_kwargs", {}).get("model")
+                    if isinstance(locals().get("stream_kwargs"), dict)
+                    else None,
+                    route_decision=route_decision,
+                    route_meta=route_meta,
+                    tool_calls=tool_payloads,
+                    gate_outcomes=[
+                        {
+                            "name": "opportunity_candidate_preflight",
+                            "status": "completed",
+                            "payload": _opportunity_candidate_done_meta(oc_result),
+                        },
+                        {
+                            "name": "decision_quality_chat",
+                            "status": "completed" if should_run_full_dq else "skipped",
+                            "payload": _decision_quality_chat_done_meta(dq_result),
+                        },
+                        {
+                            "name": "scout_skeptic_sizer_gate",
+                            "status": "completed",
+                            "payload": done_payload_data.get("scout_skeptic_sizer_gate"),
+                        },
+                    ],
+                    provenance_event_id=agent_turn_event_id,
+                    raw_payload={"path": "decision_quality_chat", "oc_result": oc_result, "dq_result": dq_result},
+                )
                 yield _sse(
                     "done",
                     _done_payload(
@@ -3726,6 +3956,24 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     status="failed",
                     usage={},
                     error=str(exc) or exc.__class__.__name__,
+                )
+                _record_agent_trajectory(
+                    req=req,
+                    session_id=session_id,
+                    turn_started=turn_started,
+                    timings=timings,
+                    final_disposition="failed",
+                    messages=[
+                        {"role": "user", "content": req.message, "timestamp": time.time()},
+                        {"role": "assistant", "content": _format_stream_error(exc), "timestamp": time.time()},
+                    ],
+                    usage={},
+                    provider=provider,
+                    route_decision=route_decision,
+                    route_meta=route_meta,
+                    tool_calls=tool_payloads,
+                    provenance_event_id=agent_turn_event_id,
+                    raw_payload={"path": "decision_quality_chat", "error": str(exc) or exc.__class__.__name__},
                 )
                 yield _sse("error", {"message": _format_stream_error(exc)})
                 yield _sse(
@@ -3923,6 +4171,24 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=synthesis_text,
                     usage=usage,
                 )
+                _record_agent_trajectory(
+                    req=req,
+                    session_id=session_id,
+                    turn_started=turn_started,
+                    timings=timings,
+                    final_disposition="succeeded",
+                    messages=[user_msg, assistant_msg],
+                    usage=usage,
+                    provider=provider,
+                    model=locals().get("stream_kwargs", {}).get("model")
+                    if isinstance(locals().get("stream_kwargs"), dict)
+                    else None,
+                    route_decision=route_decision,
+                    route_meta=route_meta,
+                    tool_calls=workflow_tool_calls,
+                    provenance_event_id=agent_turn_event_id,
+                    raw_payload={"path": "workflow", "workflow_run_id": run_id, "workflow_name": workflow_name},
+                )
                 yield _sse(
                     "done",
                     _done_payload(
@@ -3953,6 +4219,27 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     usage={},
                     error=str(exc) or exc.__class__.__name__,
                 )
+                _record_agent_trajectory(
+                    req=req,
+                    session_id=session_id,
+                    turn_started=turn_started,
+                    timings=timings,
+                    final_disposition="failed",
+                    messages=[
+                        {"role": "user", "content": req.message, "timestamp": time.time()},
+                        {"role": "assistant", "content": f"Workflow failed: {exc}", "timestamp": time.time()},
+                    ],
+                    usage={},
+                    provider=provider,
+                    route_decision=route_decision,
+                    route_meta=route_meta,
+                    provenance_event_id=agent_turn_event_id,
+                    raw_payload={
+                        "path": "workflow",
+                        "workflow_name": workflow_name,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                )
                 yield _sse("error", {"message": f"Workflow failed: {exc}"})
                 yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
                 return
@@ -3967,6 +4254,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
         output_continuation_rounds = 0
         text_only_continuation = False
         text_parts: list[str] = []
+        normal_tool_payloads: list[dict[str, Any]] = []
 
         try:
             while True:
@@ -4253,6 +4541,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             if err_msg:
                                 payload["message"] = err_msg
                             yield _sse("tool_result", payload)
+                            normal_tool_payloads.append(dict(payload))
                             if result_status == "blocked":
                                 yield _sse("policy_failure", payload)
                                 yield _sse("blocked", payload)
@@ -4331,6 +4620,24 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=full_text,
                     usage=usage,
                 )
+                _record_agent_trajectory(
+                    req=req,
+                    session_id=session_id,
+                    turn_started=turn_started,
+                    timings=timings,
+                    final_disposition="succeeded",
+                    messages=[user_msg, assistant_msg],
+                    usage=usage,
+                    provider=provider,
+                    model=locals().get("stream_kwargs", {}).get("model")
+                    if isinstance(locals().get("stream_kwargs"), dict)
+                    else None,
+                    route_decision=route_decision,
+                    route_meta=route_meta,
+                    tool_calls=normal_tool_payloads,
+                    provenance_event_id=agent_turn_event_id,
+                    raw_payload={"path": "agent_chat", "tool_calls": normal_tool_payloads},
+                )
                 yield _sse(
                     "done",
                     _done_payload(
@@ -4355,6 +4662,24 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 status="failed",
                 usage={},
                 error=str(exc) or exc.__class__.__name__,
+            )
+            _record_agent_trajectory(
+                req=req,
+                session_id=session_id,
+                turn_started=turn_started,
+                timings=timings,
+                final_disposition="failed",
+                messages=[
+                    {"role": "user", "content": req.message, "timestamp": time.time()},
+                    {"role": "assistant", "content": _format_stream_error(exc), "timestamp": time.time()},
+                ],
+                usage={},
+                provider=provider,
+                route_decision=route_decision,
+                route_meta=route_meta,
+                tool_calls=normal_tool_payloads,
+                provenance_event_id=agent_turn_event_id,
+                raw_payload={"path": "agent_chat", "error": str(exc) or exc.__class__.__name__},
             )
             yield _sse("error", {"message": _format_stream_error(exc)})
             yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
