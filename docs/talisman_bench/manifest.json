@@ -92,5 +92,15 @@
     "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
     "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
     "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL"
+  },
+  "candidate_matrix_path": "docs/talisman_bench/candidate_matrix.json",
+  "selection_protocol": {
+    "smoke_case_count": 3,
+    "full_case_count": 43,
+    "latency_tolerance_pct": 0.15,
+    "cost_tolerance_pct": 0.2,
+    "repeat_run_tolerance_pct": 0.05,
+    "temperature": 0.0,
+    "max_tokens": 4096
   }
 }

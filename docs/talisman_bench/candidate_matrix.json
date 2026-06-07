@@ -1,0 +1,235 @@
+{
+  "matrix_version": "1.0.0",
+  "name": "Talisman open-weight model and inference host matrix",
+  "description": "Versioned candidate matrix for TL-85 model/host selection. Combinations are evaluated through TalismanBench and the selection benchmark protocol.",
+  "models": [
+    {
+      "id": "qwen2.5-7b-instruct",
+      "display_name": "Qwen2.5 7B Instruct",
+      "weights_source": "Qwen/Qwen2.5-7B-Instruct",
+      "license": "Apache-2.0",
+      "data_handling": "Self-hosted weights; no third-party training on Talisman prompts when served locally.",
+      "context_length": 32768,
+      "quantization": "bf16",
+      "min_vram_gb": 16,
+      "tool_calling_support": "native",
+      "structured_output_support": "json_schema",
+      "status": "candidate",
+      "notes": "Strong tool-calling and structured-output baseline for mid-tier agent workloads."
+    },
+    {
+      "id": "llama-3.1-8b-instruct",
+      "display_name": "Llama 3.1 8B Instruct",
+      "weights_source": "meta-llama/Llama-3.1-8B-Instruct",
+      "license": "Llama-3.1",
+      "data_handling": "Self-hosted weights; license review required before production deployment.",
+      "context_length": 131072,
+      "quantization": "bf16",
+      "min_vram_gb": 20,
+      "tool_calling_support": "native",
+      "structured_output_support": "json_schema",
+      "status": "candidate",
+      "notes": "Long-context candidate; evaluate schema reliability and latency against Qwen."
+    },
+    {
+      "id": "mistral-7b-instruct-v0.3",
+      "display_name": "Mistral 7B Instruct v0.3",
+      "weights_source": "mistralai/Mistral-7B-Instruct-v0.3",
+      "license": "Apache-2.0",
+      "data_handling": "Self-hosted weights; no third-party training on Talisman prompts when served locally.",
+      "context_length": 32768,
+      "quantization": "bf16",
+      "min_vram_gb": 16,
+      "tool_calling_support": "native",
+      "structured_output_support": "json_mode",
+      "status": "candidate",
+      "notes": "Evaluate as a cost/latency alternative; may require relaxed JSON strictness in smoke runs."
+    }
+  ],
+  "hosts": [
+    {
+      "id": "local-vllm",
+      "display_name": "Local vLLM",
+      "runtime": "vllm",
+      "deployment": "local",
+      "endpoint_protocol": "openai_compatible",
+      "base_url_template": "http://localhost:8000/v1",
+      "hardware_profile": "single-gpu-workstation",
+      "autoscaling": false,
+      "operational_burden": "low",
+      "status": "candidate",
+      "notes": "Primary development and reproducible benchmark host."
+    },
+    {
+      "id": "managed-gpu-cloud",
+      "display_name": "Managed GPU cloud runtime",
+      "runtime": "vllm",
+      "deployment": "managed",
+      "endpoint_protocol": "openai_compatible",
+      "base_url_template": "https://<host>/v1",
+      "hardware_profile": "managed-l4-or-a10",
+      "autoscaling": true,
+      "operational_burden": "medium",
+      "status": "candidate",
+      "notes": "Second hosting approach for capacity, autoscaling, and production-like latency measurement."
+    }
+  ],
+  "combinations": [
+    {
+      "id": "qwen-local-vllm",
+      "model_id": "qwen2.5-7b-instruct",
+      "host_id": "local-vllm",
+      "served_model_name": "qwen2.5-7b-instruct",
+      "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
+      "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
+      "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL",
+      "hardware": {
+        "gpu": "NVIDIA L4 or RTX 4090 class",
+        "vram_gb": 24,
+        "tensor_parallel": 1
+      },
+      "serving": {
+        "runtime": "vllm",
+        "max_model_len": 32768,
+        "gpu_memory_utilization": 0.9,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "hermes"
+      },
+      "cost_per_1k_input_tokens_usd": 0.0,
+      "cost_per_1k_output_tokens_usd": 0.0,
+      "smoke_case_ids": [
+        "structured_dq:nvda_ai_platform_long_2026",
+        "chat_behavior:routing_catalyst_status_nvda_2026",
+        "opportunity_candidate:opportunity_candidate_watch_semiconductors_2026"
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "llama-local-vllm",
+      "model_id": "llama-3.1-8b-instruct",
+      "host_id": "local-vllm",
+      "served_model_name": "llama-3.1-8b-instruct",
+      "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
+      "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
+      "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL",
+      "hardware": {
+        "gpu": "NVIDIA L4 or RTX 4090 class",
+        "vram_gb": 24,
+        "tensor_parallel": 1
+      },
+      "serving": {
+        "runtime": "vllm",
+        "max_model_len": 65536,
+        "gpu_memory_utilization": 0.9,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "llama3_json"
+      },
+      "cost_per_1k_input_tokens_usd": 0.0,
+      "cost_per_1k_output_tokens_usd": 0.0,
+      "smoke_case_ids": [
+        "structured_dq:nvda_ai_platform_long_2026",
+        "chat_behavior:routing_catalyst_status_nvda_2026",
+        "opportunity_candidate:opportunity_candidate_watch_semiconductors_2026"
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "mistral-local-vllm",
+      "model_id": "mistral-7b-instruct-v0.3",
+      "host_id": "local-vllm",
+      "served_model_name": "mistral-7b-instruct-v0.3",
+      "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
+      "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
+      "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL",
+      "hardware": {
+        "gpu": "NVIDIA L4 or RTX 4090 class",
+        "vram_gb": 16,
+        "tensor_parallel": 1
+      },
+      "serving": {
+        "runtime": "vllm",
+        "max_model_len": 32768,
+        "gpu_memory_utilization": 0.9,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "mistral"
+      },
+      "cost_per_1k_input_tokens_usd": 0.0,
+      "cost_per_1k_output_tokens_usd": 0.0,
+      "smoke_case_ids": [
+        "structured_dq:nvda_ai_platform_long_2026",
+        "chat_behavior:routing_catalyst_status_nvda_2026",
+        "opportunity_candidate:opportunity_candidate_watch_semiconductors_2026"
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "qwen-managed-gpu",
+      "model_id": "qwen2.5-7b-instruct",
+      "host_id": "managed-gpu-cloud",
+      "served_model_name": "qwen2.5-7b-instruct",
+      "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
+      "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
+      "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL",
+      "hardware": {
+        "gpu": "NVIDIA L4",
+        "vram_gb": 24,
+        "tensor_parallel": 1
+      },
+      "serving": {
+        "runtime": "vllm",
+        "max_model_len": 32768,
+        "gpu_memory_utilization": 0.9,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "hermes"
+      },
+      "cost_per_1k_input_tokens_usd": 0.0002,
+      "cost_per_1k_output_tokens_usd": 0.0004,
+      "smoke_case_ids": [
+        "structured_dq:nvda_ai_platform_long_2026",
+        "chat_behavior:routing_catalyst_status_nvda_2026",
+        "opportunity_candidate:opportunity_candidate_watch_semiconductors_2026"
+      ],
+      "status": "candidate"
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "malformed_tool_call",
+      "description": "Candidate returns tool name outside the allowed schema.",
+      "expected_behavior": "Deterministic gate failure; no silent fallback during benchmark runs."
+    },
+    {
+      "id": "structured_output_invalid",
+      "description": "Candidate returns non-JSON or schema-invalid structured output.",
+      "expected_behavior": "Structured corpus deterministic failure recorded in release report."
+    },
+    {
+      "id": "context_overflow",
+      "description": "Prompt exceeds configured max_model_len.",
+      "expected_behavior": "Endpoint error surfaced; benchmark records failure without crashing runner."
+    },
+    {
+      "id": "endpoint_timeout",
+      "description": "Inference exceeds configured timeout.",
+      "expected_behavior": "Timeout recorded; smoke run fails with explicit error metadata."
+    },
+    {
+      "id": "endpoint_unavailable",
+      "description": "Candidate endpoint is unreachable.",
+      "expected_behavior": "Connection error recorded; release gate fails with explicit blocker message."
+    }
+  ],
+  "selection": {
+    "status": "provisional",
+    "primary_combination_id": "qwen-local-vllm",
+    "fallback_combination_id": "llama-local-vllm",
+    "revisit_triggers": [
+      "new open-weight generation with better tool-calling scores on smoke suite",
+      "latency P95 regression above 15% on chat corpus",
+      "license or data-handling policy change",
+      "managed host cost exceeds documented ceiling"
+    ],
+    "notes": "Provisional selection pending full TalismanBench evidence runs. Qwen2.5 on local vLLM is the default primary because it balances tool-calling support, structured JSON output, and local reproducibility."
+  },
+  "ruled_out": []
+}

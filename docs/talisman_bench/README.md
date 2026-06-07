@@ -15,13 +15,26 @@ The committed manifest lives at `docs/talisman_bench/manifest.json`. It defines:
 - scored metrics reported alongside blockers
 - graduation thresholds and baseline-regression tolerances
 - baseline and candidate model configuration
+- candidate matrix path and selection protocol defaults
+
+## Candidate matrix (TL-85)
+
+The open-weight model and inference-host matrix lives at `docs/talisman_bench/candidate_matrix.json`. It records:
+
+- at least three credible open-weight model candidates
+- at least two hosting approaches
+- combination metadata for model + host pairings
+- smoke-case subsets for fast viability checks
+- provisional primary/fallback selection and revisit triggers
+
+TalismanBench validates the matrix offline and annotates release reports with matrix version, selection metadata, and combination details.
 
 ## CI gate (offline, no LLM)
 
 The `eval-gates` job runs TalismanBench structural and leakage gates on every PR:
 
 ```bash
-pytest tests/test_talisman_bench.py -q --tb=short
+pytest tests/test_talisman_bench.py tests/test_bench_openai_client.py -q --tb=short
 
 python -m decision_quality.talisman_bench \
   --manifest docs/talisman_bench/manifest.json \
@@ -32,10 +45,44 @@ python -m decision_quality.talisman_bench \
 Offline gates validate:
 
 - manifest shape and referenced paths
+- candidate matrix shape and combination references
 - approved-case metadata and input-ref integrity
 - committed baseline inventory sync
 - split-group leakage across the benchmark inventory
 - dry-run execution across all three eval runners
+
+## Model selection protocol (TL-85)
+
+The selection protocol compares open-weight candidates against the frontier baseline using fixed settings:
+
+| Setting | Value |
+| --- | --- |
+| Temperature | 0.0 |
+| Max tokens | 4096 |
+| Baseline provider/tier | `openai` / `mid` |
+| Candidate protocol | OpenAI-compatible `chat.completions` |
+| Latency tolerance | 15% P95 regression |
+| Cost tolerance | 20% regression |
+| Repeat-run tolerance | 5% scored-metric drift |
+
+### Benchmark dimensions
+
+- tool-call name accuracy and argument-schema validity
+- structured-output schema validity
+- deterministic gate compliance across structured, chat, and opportunity corpora
+- latency P50/P95 from eval `elapsed_ms`
+- token totals and estimated cost when combination pricing is configured
+- failure behavior for malformed tool calls, schema failures, context overflow, timeout, and endpoint unavailability
+
+### Smoke and holdout scopes
+
+- `--smoke-only` runs the three-case smoke subset from the selected matrix combination.
+- `--holdout-only` runs only inventory rows assigned to the `holdout` split.
+- Full release checks run all 43 approved cases when neither flag is set.
+
+### Chat/tool candidate routing
+
+When TalismanBench evaluates a candidate against the chat corpus, it enables benchmark-only agent mode (`TALISMAN_BENCH_AGENT_MODE=1`). This routes agent streaming through the OpenAI-compatible candidate endpoint without changing production provider settings.
 
 ## Manual release check (LLM-backed)
 
@@ -44,14 +91,27 @@ Manual release checks compare one external baseline against one OpenAI-compatibl
 ```bash
 export TALISMAN_BENCH_CANDIDATE_BASE_URL="http://localhost:8000/v1"
 export TALISMAN_BENCH_CANDIDATE_API_KEY="local-key"
-export TALISMAN_BENCH_CANDIDATE_MODEL="talisman-owned-v1"
+export TALISMAN_BENCH_CANDIDATE_MODEL="qwen2.5-7b-instruct"
 
 python -m decision_quality.talisman_bench \
   --manifest docs/talisman_bench/manifest.json \
   --approved-only \
   --baseline-model mid \
+  --combination-id qwen-local-vllm \
   --candidate-openai-base-url "$TALISMAN_BENCH_CANDIDATE_BASE_URL" \
   --candidate-api-key-env TALISMAN_BENCH_CANDIDATE_API_KEY \
+  --candidate-model "$TALISMAN_BENCH_CANDIDATE_MODEL"
+```
+
+Smoke-only viability check:
+
+```bash
+python -m decision_quality.talisman_bench \
+  --manifest docs/talisman_bench/manifest.json \
+  --approved-only \
+  --combination-id qwen-local-vllm \
+  --smoke-only \
+  --candidate-openai-base-url "$TALISMAN_BENCH_CANDIDATE_BASE_URL" \
   --candidate-model "$TALISMAN_BENCH_CANDIDATE_MODEL"
 ```
 
@@ -63,6 +123,7 @@ Reports are written to `outputs/talisman_bench/<timestamp>/release_report.json`.
 
 - **Hard blockers**: manifest errors, leakage, structural failures, missing baseline inventory, deterministic failures, and baseline regressions. Any failed hard blocker rejects release.
 - **Scored metrics**: deterministic pass rate, judge totals, latency, token use, and estimated cost when available. Scored metrics inform review but cannot override hard blockers.
+- **Selection metadata**: smoke/holdout scope, combination id, and candidate matrix version.
 
 ## Graduation thresholds
 
@@ -93,4 +154,4 @@ Adjust thresholds in the manifest only after an intentional benchmark policy cha
 
 ## Documentation impact
 
-This issue adds TalismanBench operating docs and manifest references. Cross-cutting architecture guidance and the final documentation audit remain owned by `TL-97`.
+This issue adds TalismanBench operating docs, the candidate matrix, and ADR-010 for the initial open-weight model/host selection. Cross-cutting architecture guidance and the final documentation audit remain owned by `TL-97`.

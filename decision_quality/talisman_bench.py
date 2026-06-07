@@ -11,7 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from decision_quality.bench_openai_client import BenchOpenAIConfig, activate_bench_openai
+from decision_quality.bench_openai_client import (
+    BenchOpenAIConfig,
+    activate_bench_openai,
+    estimate_cost_usd,
+)
 from decision_quality.chat_eval_runner import (
     ChatEvalCase,
     run_agent_chat_in_process,
@@ -68,6 +72,7 @@ from decision_quality.supervised_labels import assign_split, check_split_leakage
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_PATH = ROOT / "docs" / "talisman_bench" / "manifest.json"
+DEFAULT_CANDIDATE_MATRIX_PATH = ROOT / "docs" / "talisman_bench" / "candidate_matrix.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "talisman_bench"
 
 REQUIRED_MANIFEST_KEYS = (
@@ -128,6 +133,77 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def load_manifest(path: Path) -> dict[str, Any]:
     return _read_json(path)
+
+
+def load_candidate_matrix(path: Path) -> dict[str, Any]:
+    return _read_json(path)
+
+
+def validate_candidate_matrix(matrix: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for key in ("matrix_version", "models", "hosts", "combinations"):
+        if key not in matrix:
+            errors.append(f"candidate matrix missing required key: {key}")
+
+    models = matrix.get("models")
+    hosts = matrix.get("hosts")
+    combinations = matrix.get("combinations")
+    if not isinstance(models, list) or len(models) < 3:
+        errors.append("candidate matrix must define at least three model candidates")
+    if not isinstance(hosts, list) or len(hosts) < 2:
+        errors.append("candidate matrix must define at least two hosting approaches")
+    if not isinstance(combinations, list) or not combinations:
+        errors.append("candidate matrix combinations must be a non-empty list")
+
+    model_ids = {str(item.get("id")) for item in models or [] if isinstance(item, dict) and item.get("id")}
+    host_ids = {str(item.get("id")) for item in hosts or [] if isinstance(item, dict) and item.get("id")}
+    for entry in combinations or []:
+        if not isinstance(entry, dict):
+            errors.append("candidate matrix combination entries must be objects")
+            continue
+        for key in ("id", "model_id", "host_id", "served_model_name"):
+            if key not in entry:
+                errors.append(f"combination {entry.get('id', '<unknown>')} missing {key}")
+        if entry.get("model_id") not in model_ids:
+            errors.append(f"combination {entry.get('id')} references unknown model_id {entry.get('model_id')}")
+        if entry.get("host_id") not in host_ids:
+            errors.append(f"combination {entry.get('id')} references unknown host_id {entry.get('host_id')}")
+    return errors
+
+
+def resolve_candidate_matrix_path(manifest: dict[str, Any], *, root: Path = ROOT) -> Path | None:
+    path_value = manifest.get("candidate_matrix_path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        return None
+    return _resolve_path(path_value, root=root)
+
+
+def find_combination(matrix: dict[str, Any], combination_id: str | None) -> dict[str, Any] | None:
+    if not combination_id:
+        return None
+    for entry in matrix.get("combinations") or []:
+        if isinstance(entry, dict) and str(entry.get("id")) == combination_id:
+            return entry
+    return None
+
+
+def _case_selector_key(corpus_id: str, case_id: str) -> str:
+    return f"{corpus_id}:{case_id}"
+
+
+def _filter_cases(
+    cases: list[Any],
+    *,
+    corpus_id: str,
+    smoke_case_ids: set[str] | None,
+    holdout_case_ids: set[str] | None,
+) -> list[Any]:
+    filtered = cases
+    if smoke_case_ids is not None:
+        filtered = [case for case in filtered if _case_selector_key(corpus_id, case.case_id) in smoke_case_ids]
+    if holdout_case_ids is not None:
+        filtered = [case for case in filtered if case.case_id in holdout_case_ids]
+    return filtered
 
 
 def _resolve_path(value: str, *, root: Path = ROOT) -> Path:
@@ -201,12 +277,25 @@ def corpus_configs(manifest: dict[str, Any], *, root: Path = ROOT) -> list[Corpu
     return [_parse_corpus_config(entry, root=root) for entry in corpora if isinstance(entry, dict)]
 
 
-def _load_cases_for_corpus(config: CorpusConfig, *, statuses: set[str]) -> list[Any]:
+def _load_cases_for_corpus(
+    config: CorpusConfig,
+    *,
+    statuses: set[str],
+    smoke_case_ids: set[str] | None = None,
+    holdout_case_ids: set[str] | None = None,
+) -> list[Any]:
     if config.runner == "structured":
-        return load_structured_cases(statuses=statuses, cases_dir=config.cases_dir)
-    if config.runner == "chat":
-        return load_chat_cases(statuses=statuses, cases_dir=config.cases_dir)
-    return load_opportunity_cases(statuses=statuses, cases_dir=config.cases_dir)
+        cases = load_structured_cases(statuses=statuses, cases_dir=config.cases_dir)
+    elif config.runner == "chat":
+        cases = load_chat_cases(statuses=statuses, cases_dir=config.cases_dir)
+    else:
+        cases = load_opportunity_cases(statuses=statuses, cases_dir=config.cases_dir)
+    return _filter_cases(
+        cases,
+        corpus_id=config.id,
+        smoke_case_ids=smoke_case_ids,
+        holdout_case_ids=holdout_case_ids,
+    )
 
 
 def _validate_input_refs_for_case(config: CorpusConfig, case: Any) -> list[str]:
@@ -391,6 +480,20 @@ def _run_opportunity_cases(
     ]
 
 
+def _usage_from_case_result(result: dict[str, Any]) -> dict[str, int]:
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    for key in ("diagnostics", "judge_diagnostics"):
+        diagnostics = result.get(key)
+        if not isinstance(diagnostics, dict):
+            continue
+        payload = diagnostics.get("usage")
+        if not isinstance(payload, dict):
+            continue
+        usage["input_tokens"] += int(payload.get("input_tokens") or 0)
+        usage["output_tokens"] += int(payload.get("output_tokens") or 0)
+    return usage
+
+
 def run_corpus(
     config: CorpusConfig,
     *,
@@ -398,8 +501,15 @@ def run_corpus(
     model_target: ModelTarget,
     dry_run: bool,
     judge_override: bool | None = None,
+    smoke_case_ids: set[str] | None = None,
+    holdout_case_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    cases = _load_cases_for_corpus(config, statuses=statuses)
+    cases = _load_cases_for_corpus(
+        config,
+        statuses=statuses,
+        smoke_case_ids=smoke_case_ids,
+        holdout_case_ids=holdout_case_ids,
+    )
     judge = config.judge_default if judge_override is None else judge_override
     fail_under_judge = config.fail_under_judge if config.fail_under_judge is not None else 14.0
 
@@ -423,7 +533,7 @@ def run_corpus(
         )
 
     if model_target.candidate_config is not None:
-        with activate_bench_openai(model_target.candidate_config):
+        with activate_bench_openai(model_target.candidate_config, agent_mode=config.runner == "chat"):
             results = execute()
     else:
         results = execute()
@@ -521,10 +631,16 @@ def _latency_p95_ms(corpus_runs: list[dict[str, Any]]) -> float | None:
     return latencies[index]
 
 
-def _aggregate_scored_metrics(corpus_runs: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate_scored_metrics(
+    corpus_runs: list[dict[str, Any]],
+    *,
+    cost_per_1k_input_tokens_usd: float | None = None,
+    cost_per_1k_output_tokens_usd: float | None = None,
+) -> dict[str, Any]:
     total_cases = sum(int(run.get("case_count") or 0) for run in corpus_runs)
     weighted_pass = 0.0
     judge_values: list[float] = []
+    usage_totals = {"input_tokens": 0, "output_tokens": 0}
     for run in corpus_runs:
         report = run.get("report") or {}
         case_count = int(run.get("case_count") or 0)
@@ -532,12 +648,27 @@ def _aggregate_scored_metrics(corpus_runs: list[dict[str, Any]]) -> dict[str, An
         judge_mean = _judge_total_mean(report)
         if judge_mean is not None:
             judge_values.append(judge_mean)
+        cases = report.get("cases")
+        entries = cases if isinstance(cases, list) else list((cases or {}).values()) if isinstance(cases, dict) else []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            usage = _usage_from_case_result(entry)
+            usage_totals["input_tokens"] += usage["input_tokens"]
+            usage_totals["output_tokens"] += usage["output_tokens"]
+    token_use_total = usage_totals["input_tokens"] + usage_totals["output_tokens"]
+    estimated_cost_usd = estimate_cost_usd(
+        usage_totals,
+        cost_per_1k_input_tokens_usd=cost_per_1k_input_tokens_usd,
+        cost_per_1k_output_tokens_usd=cost_per_1k_output_tokens_usd,
+    )
     return {
         "deterministic_pass_rate": (weighted_pass / total_cases) if total_cases else 0.0,
         "judge_total_mean": statistics.fmean(judge_values) if judge_values else None,
         "latency_p95_ms": _latency_p95_ms(corpus_runs),
-        "token_use_total": None,
-        "estimated_cost_usd": None,
+        "token_use_total": token_use_total if token_use_total else None,
+        "estimated_cost_usd": estimated_cost_usd,
+        "usage": usage_totals if token_use_total else None,
     }
 
 
@@ -622,6 +753,10 @@ def build_release_report(
     dry_run: bool,
     baseline_runs: list[dict[str, Any]] | None = None,
     candidate_runs: list[dict[str, Any]] | None = None,
+    candidate_matrix: dict[str, Any] | None = None,
+    candidate_matrix_errors: list[str] | None = None,
+    selection_metadata: dict[str, Any] | None = None,
+    candidate_cost_rates: dict[str, float | None] | None = None,
 ) -> dict[str, Any]:
     comparisons: dict[str, Any] | None = None
     if baseline_runs is not None and candidate_runs is not None and not dry_run:
@@ -649,9 +784,14 @@ def build_release_report(
         comparisons=comparisons,
         dry_run=dry_run,
     )
+    candidate_cost_rates = candidate_cost_rates or {}
     scored_metrics = {
         "baseline": _aggregate_scored_metrics(baseline_runs or []),
-        "candidate": _aggregate_scored_metrics(candidate_runs or []),
+        "candidate": _aggregate_scored_metrics(
+            candidate_runs or [],
+            cost_per_1k_input_tokens_usd=candidate_cost_rates.get("input"),
+            cost_per_1k_output_tokens_usd=candidate_cost_rates.get("output"),
+        ),
     }
     if baseline_runs and candidate_runs:
         base_rate = scored_metrics["baseline"]["deterministic_pass_rate"]
@@ -687,6 +827,12 @@ def build_release_report(
         "benchmark_name": manifest.get("name"),
         "generated_at": _now_iso(),
         "mode": "dry_run" if dry_run else "release",
+        "selection_metadata": selection_metadata,
+        "candidate_matrix": {
+            "matrix_version": (candidate_matrix or {}).get("matrix_version"),
+            "selection": (candidate_matrix or {}).get("selection"),
+            "validation_errors": candidate_matrix_errors or [],
+        },
         "inventory": {
             "case_count": inventory.get("case_count"),
             "corpora": inventory.get("corpora"),
@@ -732,15 +878,49 @@ def _candidate_model_target(
     base_url: str | None,
     api_key_env: str | None,
     model: str | None,
+    combination: dict[str, Any] | None = None,
 ) -> ModelTarget:
     candidate_model = manifest.get("candidate_model") or {}
     config = BenchOpenAIConfig.from_env(
         base_url=base_url,
         api_key_env=api_key_env or str(candidate_model.get("api_key_env") or "TALISMAN_BENCH_CANDIDATE_API_KEY"),
-        model=model,
+        model=model or (str(combination.get("served_model_name")) if combination else None),
         model_env=str(candidate_model.get("model_env") or "TALISMAN_BENCH_CANDIDATE_MODEL"),
+        combination_id=str(combination.get("id")) if combination else None,
+        host_id=str(combination.get("host_id")) if combination else None,
+        model_id=str(combination.get("model_id")) if combination else None,
+        cost_per_1k_input_tokens_usd=float(combination.get("cost_per_1k_input_tokens_usd"))
+        if combination and combination.get("cost_per_1k_input_tokens_usd") is not None
+        else None,
+        cost_per_1k_output_tokens_usd=float(combination.get("cost_per_1k_output_tokens_usd"))
+        if combination and combination.get("cost_per_1k_output_tokens_usd") is not None
+        else None,
     )
     return ModelTarget(label="candidate", candidate_config=config)
+
+
+def _selection_filters(
+    *,
+    inventory: dict[str, Any],
+    smoke_only: bool,
+    holdout_only: bool,
+    combination: dict[str, Any] | None,
+) -> tuple[set[str] | None, dict[str, set[str]]]:
+    smoke_case_ids: set[str] | None = None
+    holdout_by_corpus: dict[str, set[str]] = {}
+    if smoke_only:
+        smoke_case_ids = {
+            str(case_id) for case_id in (combination or {}).get("smoke_case_ids") or [] if isinstance(case_id, str)
+        }
+    if holdout_only:
+        for row in inventory.get("rows") or []:
+            if not isinstance(row, dict) or row.get("split") != "holdout":
+                continue
+            corpus_id = str(row.get("corpus_id") or "")
+            case_id = str(row.get("case_id") or "")
+            if corpus_id and case_id:
+                holdout_by_corpus.setdefault(corpus_id, set()).add(case_id)
+    return smoke_case_ids, holdout_by_corpus
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -762,6 +942,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--judge", dest="judge", action="store_true", default=False)
     parser.add_argument("--no-judge", dest="judge", action="store_false")
+    parser.add_argument(
+        "--candidate-matrix",
+        default=None,
+        help="Path to the open-weight model/host candidate matrix JSON.",
+    )
+    parser.add_argument(
+        "--combination-id",
+        default=None,
+        help="Candidate matrix combination id to annotate in the release report.",
+    )
+    parser.add_argument(
+        "--smoke-only",
+        action="store_true",
+        help="Run only the smoke subset defined by the selected candidate combination.",
+    )
+    parser.add_argument(
+        "--holdout-only",
+        action="store_true",
+        help="Run only inventory cases assigned to the holdout split.",
+    )
     return parser.parse_args(argv)
 
 
@@ -776,8 +976,41 @@ def main(argv: list[str] | None = None) -> int:
     inventory = build_inventory(manifest, approved_only=args.approved_only, root=ROOT)
     structural = run_structural_gates(manifest, approved_only=args.approved_only, root=ROOT)
 
+    candidate_matrix_path = (
+        Path(args.candidate_matrix) if args.candidate_matrix else resolve_candidate_matrix_path(manifest, root=ROOT)
+    )
+    candidate_matrix: dict[str, Any] | None = None
+    candidate_matrix_errors: list[str] = []
+    combination: dict[str, Any] | None = None
+    if candidate_matrix_path is not None:
+        if candidate_matrix_path.exists():
+            candidate_matrix = load_candidate_matrix(candidate_matrix_path)
+            candidate_matrix_errors = validate_candidate_matrix(candidate_matrix)
+            combination = find_combination(candidate_matrix, args.combination_id)
+            if args.combination_id and combination is None:
+                candidate_matrix_errors.append(f"unknown combination id: {args.combination_id}")
+        else:
+            candidate_matrix_errors.append(f"candidate matrix path does not exist: {candidate_matrix_path}")
+
+    smoke_case_ids, holdout_by_corpus = _selection_filters(
+        inventory=inventory,
+        smoke_only=args.smoke_only,
+        holdout_only=args.holdout_only,
+        combination=combination,
+    )
+    selection_metadata = {
+        "smoke_only": args.smoke_only,
+        "holdout_only": args.holdout_only,
+        "combination_id": args.combination_id,
+        "smoke_case_ids": sorted(smoke_case_ids) if smoke_case_ids is not None else None,
+        "holdout_case_ids_by_corpus": {corpus_id: sorted(case_ids) for corpus_id, case_ids in holdout_by_corpus.items()}
+        if holdout_by_corpus
+        else None,
+    }
+
     baseline_runs: list[dict[str, Any]] | None = None
     candidate_runs: list[dict[str, Any]] | None = None
+    candidate_cost_rates: dict[str, float | None] | None = None
 
     if args.dry_run:
         for config in corpus_configs(manifest, root=ROOT):
@@ -788,6 +1021,8 @@ def main(argv: list[str] | None = None) -> int:
                 model_target=target,
                 dry_run=True,
                 judge_override=False,
+                smoke_case_ids=smoke_case_ids,
+                holdout_case_ids=holdout_by_corpus.get(config.id),
             )
             if baseline_runs is None:
                 baseline_runs = []
@@ -805,7 +1040,13 @@ def main(argv: list[str] | None = None) -> int:
             base_url=args.candidate_openai_base_url,
             api_key_env=args.candidate_api_key_env,
             model=args.candidate_model,
+            combination=combination,
         )
+        if candidate_target.candidate_config is not None:
+            candidate_cost_rates = {
+                "input": candidate_target.candidate_config.cost_per_1k_input_tokens_usd,
+                "output": candidate_target.candidate_config.cost_per_1k_output_tokens_usd,
+            }
         baseline_runs = []
         candidate_runs = []
         for config in corpus_configs(manifest, root=ROOT):
@@ -816,6 +1057,8 @@ def main(argv: list[str] | None = None) -> int:
                     model_target=baseline_target,
                     dry_run=False,
                     judge_override=args.judge,
+                    smoke_case_ids=smoke_case_ids,
+                    holdout_case_ids=holdout_by_corpus.get(config.id),
                 )
             )
             candidate_runs.append(
@@ -825,6 +1068,8 @@ def main(argv: list[str] | None = None) -> int:
                     model_target=candidate_target,
                     dry_run=False,
                     judge_override=args.judge,
+                    smoke_case_ids=smoke_case_ids,
+                    holdout_case_ids=holdout_by_corpus.get(config.id),
                 )
             )
 
@@ -836,6 +1081,10 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         baseline_runs=baseline_runs,
         candidate_runs=candidate_runs,
+        candidate_matrix=candidate_matrix,
+        candidate_matrix_errors=candidate_matrix_errors,
+        selection_metadata=selection_metadata,
+        candidate_cost_rates=candidate_cost_rates,
     )
 
     output_dir = Path(args.output) if args.output else _default_output_path()

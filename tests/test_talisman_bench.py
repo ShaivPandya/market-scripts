@@ -8,11 +8,14 @@ import pytest
 
 from decision_quality.bench_openai_client import BenchOpenAIConfig, activate_bench_openai
 from decision_quality.talisman_bench import (
+    _aggregate_scored_metrics,
     build_inventory,
     build_release_report,
+    load_candidate_matrix,
     load_manifest,
     main,
     run_structural_gates,
+    validate_candidate_matrix,
     validate_manifest,
 )
 
@@ -293,6 +296,84 @@ def test_main_dry_run_against_committed_manifest(tmp_path: Path):
     assert report["mode"] == "dry_run"
     assert report["release_gate"]["passed"] is True
     assert report["inventory"]["case_count"] == 43
+
+
+def test_validate_committed_candidate_matrix():
+    matrix = load_candidate_matrix(Path("docs/talisman_bench/candidate_matrix.json"))
+    errors = validate_candidate_matrix(matrix)
+    assert errors == []
+    assert len(matrix["models"]) >= 3
+    assert len(matrix["hosts"]) >= 2
+
+
+def test_aggregate_scored_metrics_collects_tokens_and_cost():
+    corpus_runs = [
+        {
+            "case_count": 1,
+            "report": {
+                "cases": [
+                    {
+                        "case_id": "case_a",
+                        "diagnostics": {"usage": {"input_tokens": 100, "output_tokens": 50}},
+                    }
+                ]
+            },
+        }
+    ]
+    metrics = _aggregate_scored_metrics(
+        corpus_runs,
+        cost_per_1k_input_tokens_usd=0.0002,
+        cost_per_1k_output_tokens_usd=0.0004,
+    )
+    assert metrics["token_use_total"] == 150
+    assert metrics["estimated_cost_usd"] == pytest.approx(0.00004)
+
+
+def test_build_release_report_includes_candidate_matrix_metadata(tmp_path: Path):
+    manifest = _minimal_manifest(tmp_path)
+    matrix = {
+        "matrix_version": "1.0.0",
+        "models": [{"id": "m1"}, {"id": "m2"}, {"id": "m3"}],
+        "hosts": [{"id": "h1"}, {"id": "h2"}],
+        "combinations": [{"id": "c1", "model_id": "m1", "host_id": "h1", "served_model_name": "m1"}],
+        "selection": {"primary_combination_id": "c1"},
+    }
+    inventory = build_inventory(manifest, approved_only=True, root=tmp_path)
+    structural = run_structural_gates(manifest, approved_only=True, root=tmp_path)
+    report = build_release_report(
+        manifest=manifest,
+        manifest_errors=[],
+        inventory=inventory,
+        structural=structural,
+        dry_run=True,
+        baseline_runs=[],
+        candidate_matrix=matrix,
+        candidate_matrix_errors=[],
+        selection_metadata={"smoke_only": True, "combination_id": "c1"},
+    )
+    assert report["candidate_matrix"]["matrix_version"] == "1.0.0"
+    assert report["selection_metadata"]["combination_id"] == "c1"
+
+
+def test_main_dry_run_with_smoke_only_filters_inventory(tmp_path: Path):
+    exit_code = main(
+        [
+            "--manifest",
+            "docs/talisman_bench/manifest.json",
+            "--approved-only",
+            "--dry-run",
+            "--smoke-only",
+            "--combination-id",
+            "qwen-local-vllm",
+            "--output",
+            str(tmp_path / "bench_smoke"),
+        ]
+    )
+    assert exit_code == 0
+    report = json.loads((tmp_path / "bench_smoke" / "release_report.json").read_text(encoding="utf-8"))
+    assert report["selection_metadata"]["smoke_only"] is True
+    assert report["selection_metadata"]["combination_id"] == "qwen-local-vllm"
+    assert sum(run["case_count"] for run in report["baseline"]["corpora"]) == 3
 
 
 def test_activate_bench_openai_patches_llm_utils(monkeypatch):
