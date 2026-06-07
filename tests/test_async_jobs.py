@@ -446,6 +446,41 @@ def test_agent_worker_loop_claims_and_completes_one_job(monkeypatch):
     assert persisted["status"] == "completed"
 
 
+def test_worker_loop_backs_off_after_transient_claim_pool_timeout(monkeypatch):
+    from api import job_worker_loop
+
+    class PoolTimeout(Exception):
+        pass
+
+    PoolTimeout.__module__ = "psycopg_pool.pool"
+
+    class _StopAfterWait:
+        def __init__(self):
+            self.waits: list[float] = []
+
+        def is_set(self):
+            return bool(self.waits)
+
+        def wait(self, timeout):
+            self.waits.append(timeout)
+            return True
+
+    stop = _StopAfterWait()
+
+    monkeypatch.setenv("JOB_WORKER_DB_ERROR_BACKOFF_SECONDS", "2.5")
+    monkeypatch.setattr(job_worker_loop, "preload_job_path", lambda _job_type: None)
+    monkeypatch.setattr(job_worker_loop, "run_once", lambda **_kwargs: (_ for _ in ()).throw(PoolTimeout("busy")))
+
+    job_worker_loop.run_loop(
+        job_type="agent_chat_turn",
+        queue_name="agent",
+        poll_interval_s=0.25,
+        stop_event=stop,
+    )
+
+    assert stop.waits == [2.5]
+
+
 def test_generic_worker_loop_can_claim_and_complete_sizer_job(monkeypatch):
     from api import cache
     from api.job_queue import create_or_reuse_job, get_job

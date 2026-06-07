@@ -51,6 +51,21 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _is_transient_claim_error(exc: BaseException) -> bool:
+    exc_type = type(exc)
+    if exc_type.__name__ == "PoolTimeout" and exc_type.__module__.startswith("psycopg_pool"):
+        return True
+    try:
+        import psycopg
+    except ImportError:
+        return False
+    return isinstance(exc, psycopg.OperationalError)
+
+
+def _db_error_backoff_s(poll_interval_s: float) -> float:
+    return _env_float("JOB_WORKER_DB_ERROR_BACKOFF_SECONDS", max(1.0, poll_interval_s))
+
+
 def _worker_env_prefix(job_type: str) -> str:
     return job_type.upper().replace("-", "_")
 
@@ -110,7 +125,19 @@ def run_loop(
     )
 
     while not stop.is_set():
-        claimed = run_once(job_type=job_type, queue_name=queue_name)
+        try:
+            claimed = run_once(job_type=job_type, queue_name=queue_name)
+        except Exception as exc:
+            if not _is_transient_claim_error(exc):
+                raise
+            logger.warning(
+                "warm worker claim skipped after transient postgres connection error job_type=%s queue=%s",
+                job_type,
+                queue_name,
+                exc_info=True,
+            )
+            stop.wait(_db_error_backoff_s(interval))
+            continue
         if not claimed:
             stop.wait(interval)
 

@@ -138,6 +138,7 @@ def _new_pool(env_var: str = "DATABASE_URL", *, register_pgvector: bool = False)
         max_size=max_size,
         timeout=_pool_timeout(),
         configure=configure,
+        check=ConnectionPool.check_connection,
         open=True,
     )
 
