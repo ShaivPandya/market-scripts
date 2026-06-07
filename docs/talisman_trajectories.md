@@ -94,6 +94,7 @@ Training exports remain conservative:
 - Human-reviewed labels export separately through `export_human_reviewed_feedback()`.
 - Only labels with `training_eligible=true` and `signal_source=human_reviewed` are returned.
 - Governed SFT and preference dataset curation is owned by `TL-90` via `decision_quality/agent_training_datasets.py` and documented in `docs/talisman_training_datasets.md`.
+- SFT/LoRA training and candidate registry are owned by `TL-91` via `decision_quality/agent_model_training.py` and documented in `docs/talisman_agent_model_training.md`.
 
 ### UI Disclosure
 

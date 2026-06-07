@@ -147,12 +147,15 @@ Adjust thresholds in the manifest only after an intentional benchmark policy cha
 - Do not train on held-out TalismanBench cases.
 - `TL-90` strictly excludes all approved release-gate cases from governed training exports regardless of hash split assignment. See `docs/talisman_training_datasets.md`.
 
+## Candidate registration
+
+After a manual release check, attach `release_report.json` to the candidate registry workflow documented in `docs/talisman_agent_model_training.md`. Registry promotion requires `release_gate.passed=true`.
+
 ## Out of scope
 
 - Production `talisman` provider integration (`TL-86`)
-- SFT/LoRA registry (`TL-91`)
 - Shadow/canary rollout controls (`TL-92`)
 
 ## Documentation impact
 
-This issue adds TalismanBench operating docs, the candidate matrix, and ADR-010 for the initial open-weight model/host selection. Cross-cutting architecture guidance and the final documentation audit remain owned by `TL-97`.
+This issue adds TalismanBench operating docs, the candidate matrix, and ADR-010 for the initial open-weight model/host selection. SFT/LoRA training and candidate registry are owned by `TL-91` (`docs/talisman_agent_model_training.md`). Cross-cutting architecture guidance and the final documentation audit remain owned by `TL-97`.

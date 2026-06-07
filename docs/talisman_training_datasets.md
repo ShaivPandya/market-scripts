@@ -89,8 +89,18 @@ Human feedback promotion remains owned by `TL-88`:
 
 Synthetic and teacher seed rows may carry `review_status` of `pending`, `released`, or `rejected`. Only released rows should be included in downstream training jobs unless an operator explicitly overrides that policy in a future release workflow.
 
+## Downstream Training
+
+Governed exports feed the SFT/LoRA trainer and candidate registry owned by `TL-91`:
+
+- Trainer/registry CLI: `decision_quality/agent_model_training.py`
+- Operating docs: `docs/talisman_agent_model_training.md`
+
+Training jobs must reference the exported `manifest.json` path and refuse datasets with `leakage_check_passed=false`.
+
 ## Related Docs
 
 - Trajectory contract: `docs/talisman_trajectories.md`
 - TalismanBench held-out rules: `docs/talisman_bench/README.md`
+- Agent model training/registry: `docs/talisman_agent_model_training.md`
 - Cross-cutting architecture audit: `TL-97`
