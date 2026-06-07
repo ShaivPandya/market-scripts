@@ -145,11 +145,12 @@ Adjust thresholds in the manifest only after an intentional benchmark policy cha
 - Split groups are assigned deterministically from case metadata.
 - A split-group collision across train/eval/holdout partitions fails the run.
 - Do not train on held-out TalismanBench cases.
+- `TL-90` strictly excludes all approved release-gate cases from governed training exports regardless of hash split assignment. See `docs/talisman_training_datasets.md`.
 
 ## Out of scope
 
 - Production `talisman` provider integration (`TL-86`)
-- Training dataset curation (`TL-90`) and SFT/LoRA registry (`TL-91`)
+- SFT/LoRA registry (`TL-91`)
 - Shadow/canary rollout controls (`TL-92`)
 
 ## Documentation impact

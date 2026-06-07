@@ -93,6 +93,7 @@ Training exports remain conservative:
 - Trajectory export still uses `export_sanitized_trajectories()`.
 - Human-reviewed labels export separately through `export_human_reviewed_feedback()`.
 - Only labels with `training_eligible=true` and `signal_source=human_reviewed` are returned.
+- Governed SFT and preference dataset curation is owned by `TL-90` via `decision_quality/agent_training_datasets.py` and documented in `docs/talisman_training_datasets.md`.
 
 ### UI Disclosure
 
