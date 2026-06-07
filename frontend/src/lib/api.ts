@@ -906,7 +906,7 @@ export const authApi = {
     }),
 }
 
-export type LLMProvider = "anthropic" | "openai" | "gemini"
+export type LLMProvider = "anthropic" | "openai" | "gemini" | "talisman"
 export type LLMProviderMode = "single" | "custom"
 export type LLMModelTier = "low" | "mid" | "high"
 export type LLMReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"

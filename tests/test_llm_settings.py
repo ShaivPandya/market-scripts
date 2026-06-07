@@ -100,7 +100,12 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     anthropic = next(item for item in payload["available_providers"] if item["provider"] == "anthropic")
     openai = next(item for item in payload["available_providers"] if item["provider"] == "openai")
     gemini = next(item for item in payload["available_providers"] if item["provider"] == "gemini")
-    assert [item["provider"] for item in payload["available_providers"]] == ["anthropic", "openai", "gemini"]
+    assert [item["provider"] for item in payload["available_providers"]] == [
+        "anthropic",
+        "openai",
+        "gemini",
+        "talisman",
+    ]
     assert anthropic == {
         "provider": "anthropic",
         "label": "Claude",
@@ -114,7 +119,17 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
         "configured": False,
         "api_key_env": "GEMINI_API_KEY",
     }
+    talisman = next(item for item in payload["available_providers"] if item["provider"] == "talisman")
+    assert talisman == {
+        "provider": "talisman",
+        "label": "Talisman",
+        "configured": False,
+        "api_key_env": "TALISMAN_API_KEY",
+        "base_url_env": "TALISMAN_BASE_URL",
+        "base_url_configured": False,
+    }
     assert payload["gateway_policy"]["private_egress_mode"] == "allow_with_warning"
+    assert payload["gateway_policy"]["provider_lifecycle"]["talisman"] == "draft"
     assert "local" not in payload["gateway_policy"]["provider_lifecycle"]
     assert "local_provider" not in payload
     assert "sk-ant-test" not in response.text
@@ -159,6 +174,9 @@ def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
         "llm.reasoning_effort.gemini.low",
         "llm.reasoning_effort.gemini.mid",
         "llm.reasoning_effort.gemini.high",
+        "llm.reasoning_effort.talisman.low",
+        "llm.reasoning_effort.talisman.mid",
+        "llm.reasoning_effort.talisman.high",
     ]
 
 

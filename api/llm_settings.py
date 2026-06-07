@@ -20,7 +20,7 @@ LLM_PROVIDER_MODE_KEY = "llm.provider_mode"
 LLM_PROVIDER_BY_TIER_KEY = "llm.provider_by_tier"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
 LLM_GATEWAY_POLICY_KEY = "llm.gateway_policy"
-ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "talisman"}
 ALLOWED_LLM_PROVIDER_MODES = {"single", "custom"}
 LEGACY_LLM_PROVIDERS = {"local"}
 MODEL_TIERS = {"low", "mid", "high"}
@@ -29,6 +29,7 @@ DEFAULT_REASONING_EFFORTS = {
     "anthropic": {"low": "medium", "mid": "high", "high": "max"},
     "openai": {"low": "low", "mid": "medium", "high": "xhigh"},
     "gemini": {"low": "low", "mid": "medium", "high": "high"},
+    "talisman": {"low": "none", "mid": "none", "high": "none"},
 }
 LIFECYCLE_STATES = {"draft", "enabled", "deprecated", "disabled"}
 DATA_SENSITIVITIES = {
@@ -45,6 +46,7 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
         "anthropic": "enabled",
         "openai": "enabled",
         "gemini": "enabled",
+        "talisman": "draft",
     },
     "model_lifecycle": {},
     "denied_rules": [],
@@ -241,7 +243,7 @@ def set_gateway_policy_setting(policy: dict[str, Any]) -> dict[str, Any]:
 def _normalize_llm_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return normalized
 
 
@@ -318,7 +320,7 @@ def _reasoning_key(provider: str, tier: str) -> str:
 def _normalize_reasoning_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return normalized
 
 

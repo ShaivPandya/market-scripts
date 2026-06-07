@@ -47,9 +47,13 @@ from llm_utils import (
     PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
     PROVIDER_OPENAI,
+    PROVIDER_TALISMAN,
     api_key_env,
+    base_url_env,
     default_reasoning_effort,
     get_api_key,
+    get_base_url,
+    is_provider_configured,
     model_for_tier,
     reasoning_effort_options,
     require_api_key,
@@ -65,7 +69,7 @@ from portfolio.policy_matrix import (
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
-Provider = Literal["anthropic", "openai", "gemini"]
+Provider = Literal["anthropic", "openai", "gemini", "talisman"]
 ProviderMode = Literal["single", "custom"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 PreferenceLevel = Literal["less", "balanced", "more"]
@@ -80,7 +84,7 @@ DataSensitivity = Literal[
 ]
 CustomInstructionText = Annotated[str, Field(max_length=2000)]
 AGENT_RESPONSE_PREFERENCES_KEY = "agent.response_preferences"
-SETTINGS_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI)
+SETTINGS_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI, PROVIDER_TALISMAN)
 
 
 class ReasoningEffortSettings(BaseModel):
@@ -105,7 +109,7 @@ class GatewayDeniedRule(BaseModel):
     def _validate_provider(cls, value: str) -> str:
         normalized = str(value or "*").strip().lower()
         if normalized != "*" and normalized not in ALLOWED_LLM_PROVIDERS:
-            raise ValueError("provider must be '*', 'anthropic', 'openai', or 'gemini'")
+            raise ValueError("provider must be '*', 'anthropic', 'openai', 'gemini', or 'talisman'")
         return normalized
 
     @field_validator("model")
@@ -175,16 +179,22 @@ def _provider_label(provider: str) -> str:
         PROVIDER_ANTHROPIC: "Claude",
         PROVIDER_OPENAI: "OpenAI",
         PROVIDER_GEMINI: "Gemini",
+        PROVIDER_TALISMAN: "Talisman",
     }.get(provider, provider.title())
 
 
 def _provider_status(provider: str) -> dict:
-    return {
+    status = {
         "provider": provider,
         "label": _provider_label(provider),
-        "configured": get_api_key(provider) is not None,
+        "configured": is_provider_configured(provider),
         "api_key_env": api_key_env(provider),
     }
+    base_env = base_url_env(provider)
+    if base_env:
+        status["base_url_env"] = base_env
+        status["base_url_configured"] = get_base_url(provider) is not None
+    return status
 
 
 def _models_for_provider(provider: str) -> dict:
@@ -278,44 +288,27 @@ def _settings_response() -> dict:
     provider = _provider_from_settings(rows)
     provider_mode = _provider_mode_from_settings(rows)
     provider_by_tier = _provider_by_tier_from_settings(rows, provider, provider_mode)
-    models_by_provider = {
-        PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
-        PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
-        PROVIDER_GEMINI: _models_for_provider(PROVIDER_GEMINI),
-    }
+    models_by_provider = {provider_name: _models_for_provider(provider_name) for provider_name in SETTINGS_PROVIDERS}
     models = {tier: models_by_provider[provider_by_tier[tier]][tier] for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)}
     gateway_policy = get_gateway_policy_setting(rows)
     return {
         "provider": provider,
         "provider_mode": provider_mode,
         "provider_by_tier": provider_by_tier,
-        "available_providers": [_provider_status(provider) for provider in SETTINGS_PROVIDERS],
+        "available_providers": [_provider_status(provider_name) for provider_name in SETTINGS_PROVIDERS],
         "models": models,
         "models_by_provider": models_by_provider,
         "reasoning_efforts": {
-            PROVIDER_ANTHROPIC: {
+            provider_name: {
                 tier: _reasoning_effort_from_settings(
-                    rows, PROVIDER_ANTHROPIC, tier, models_by_provider[PROVIDER_ANTHROPIC][tier]
+                    rows, provider_name, tier, models_by_provider[provider_name][tier]
                 )
                 for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
-            },
-            PROVIDER_OPENAI: {
-                tier: _reasoning_effort_from_settings(
-                    rows, PROVIDER_OPENAI, tier, models_by_provider[PROVIDER_OPENAI][tier]
-                )
-                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
-            },
-            PROVIDER_GEMINI: {
-                tier: _reasoning_effort_from_settings(
-                    rows, PROVIDER_GEMINI, tier, models_by_provider[PROVIDER_GEMINI][tier]
-                )
-                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
-            },
+            }
+            for provider_name in SETTINGS_PROVIDERS
         },
         "reasoning_options": {
-            PROVIDER_ANTHROPIC: _reasoning_options_for_provider(PROVIDER_ANTHROPIC),
-            PROVIDER_OPENAI: _reasoning_options_for_provider(PROVIDER_OPENAI),
-            PROVIDER_GEMINI: _reasoning_options_for_provider(PROVIDER_GEMINI),
+            provider_name: _reasoning_options_for_provider(provider_name) for provider_name in SETTINGS_PROVIDERS
         },
         "gateway_policy": gateway_policy,
     }

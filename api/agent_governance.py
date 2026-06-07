@@ -27,7 +27,7 @@ DEFAULT_ACCOUNT_SCOPE = "default-account"
 DEFAULT_PORTFOLIO_SCOPE = "default-portfolio"
 REDACTION_POLICY = "agent_dlp_v1"
 EGRESS_POLICY_VERSION = "agent_provider_egress_v1"
-SUPPORTED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+SUPPORTED_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "talisman"}
 _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 
 
@@ -443,7 +443,7 @@ def _model_gateway_decision(
             lifecycle_state=lifecycle_state,
             local_only_required=local_only_required,
         )
-    if local_only_required:
+    if local_only_required and provider_l != "talisman":
         return ModelGatewayDecision(
             decision="blocked",
             reason="local_only_required",
@@ -473,7 +473,9 @@ def _model_gateway_decision(
             local_only_required=local_only_required,
         )
 
-    if resolved_sensitivity in _PRIVATE_SENSITIVITIES:
+    if provider_l == "talisman":
+        provider_egress = "first_party_allowed"
+    elif resolved_sensitivity in _PRIVATE_SENSITIVITIES:
         provider_egress = "external_allowed_raw_private"
     else:
         provider_egress = "external_allowed"

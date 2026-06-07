@@ -87,6 +87,7 @@ from llm_utils import (
     PROVIDER_ANTHROPIC,
     PROVIDER_GEMINI,
     PROVIDER_OPENAI,
+    PROVIDER_TALISMAN,
     api_key_env,
     apply_reasoning_config,
     call_llm_json,
@@ -100,6 +101,12 @@ from llm_utils import (
 )
 from ontology.action_registry import get_tool_exposure
 from ontology.policy import Actor, actor_to_dict, agent_actor
+from talisman_openai_compat import (
+    chat_finish_reason,
+    extract_chat_tool_calls,
+    openai_function_tools,
+    stream_chat_completions_events,
+)
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
@@ -2126,7 +2133,7 @@ def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
                     "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
                 }
             )
-        elif provider == PROVIDER_OPENAI:
+        elif provider in {PROVIDER_OPENAI, PROVIDER_TALISMAN}:
             tools.append(
                 {
                     "type": "function",
@@ -2212,6 +2219,20 @@ def _model_stream_kwargs(
         kwargs["config"] = config
         return kwargs
 
+    if provider == PROVIDER_TALISMAN:
+        resolved_model = resolve_model(MODEL_MID, PROVIDER_TALISMAN)
+        kwargs = {
+            "model": resolved_model,
+            "max_tokens": max_tokens,
+            "system": instructions,
+            "messages": conversation,
+        }
+        if tool_defs:
+            kwargs["tools"] = openai_function_tools(tool_defs)
+        if force_tool_use and tool_defs:
+            kwargs["tool_choice"] = "required"
+        return kwargs
+
     resolved_model = resolve_model(MODEL_MID, provider)
     kwargs = {
         "model": resolved_model,
@@ -2250,6 +2271,8 @@ def _initial_conversation(provider: str, messages: list[ChatMessage]) -> list[di
         return [{"role": m.role, "content": m.content} for m in messages]
     if provider == PROVIDER_GEMINI:
         return [_gemini_text_content(m.role, m.content) for m in messages]
+    if provider == PROVIDER_TALISMAN:
+        return [{"role": m.role, "content": m.content} for m in messages]
     return [{"role": m.role, "content": [{"type": _openai_text_type(m.role), "text": m.content}]} for m in messages]
 
 
@@ -2292,6 +2315,8 @@ def _user_prompt_for_provider(provider: str, prompt: str) -> list[dict]:
         return [{"role": "user", "content": prompt}]
     if provider == PROVIDER_GEMINI:
         return _gemini_user_prompt(prompt)
+    if provider == PROVIDER_TALISMAN:
+        return [{"role": "user", "content": prompt}]
     return _openai_user_prompt(prompt)
 
 
@@ -2379,6 +2404,15 @@ def _stream_llm_response(
         yield from emit_final_text_if_missing(final_response)
         return final_response
 
+    if provider == PROVIDER_TALISMAN:
+        final_message = yield from stream_chat_completions_events(
+            client=client,
+            stream_kwargs=stream_kwargs,
+            text_parts=text_parts,
+        )
+        yield from emit_final_text_if_missing(final_message)
+        return final_message
+
     emitted_call_ids: set[str] = set()
     with client.responses.stream(**stream_kwargs) as stream:
         for event in stream:
@@ -2438,6 +2472,8 @@ def _response_stop_reason(provider: str, message: object | None) -> str:
         return ""
     if provider == PROVIDER_ANTHROPIC:
         return str(_obj_value(message, "stop_reason") or "")
+    if provider == PROVIDER_TALISMAN:
+        return chat_finish_reason(message)
     if provider == PROVIDER_GEMINI:
         reasons = []
         for candidate in _obj_list(message, "candidates"):
@@ -2455,7 +2491,7 @@ def _response_stop_reason(provider: str, message: object | None) -> str:
 
 def _hit_output_token_limit(provider: str, message: object | None) -> bool:
     reason = _response_stop_reason(provider, message).strip().lower()
-    return reason in {"max_tokens", "max_output_tokens"} or "max_token" in reason
+    return reason in {"max_tokens", "max_output_tokens", "length"} or "max_token" in reason
 
 
 def _append_output_continuation_request(
@@ -2473,6 +2509,10 @@ def _append_output_continuation_request(
     elif provider == PROVIDER_GEMINI:
         conversation.append({"role": "model", "parts": assistant_content})
         conversation.append(_gemini_text_content("user", prompt))
+    elif provider == PROVIDER_TALISMAN:
+        if assistant_content and isinstance(assistant_content[0], dict):
+            conversation.append(assistant_content[0])
+        conversation.append({"role": "user", "content": prompt})
     else:
         conversation.extend(assistant_content)
         conversation.extend(_openai_user_prompt(prompt))
@@ -2940,6 +2980,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             conversation = raw_conversation
         elif provider == PROVIDER_GEMINI:
             conversation = _gemini_conversation_from_context(raw_conversation)
+        elif provider == PROVIDER_TALISMAN:
+            conversation = raw_conversation
         else:
             conversation = _openai_conversation_from_context(raw_conversation)
 
@@ -4042,6 +4084,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 elif provider == PROVIDER_GEMINI:
                     assistant_content = _serialize_gemini_response_parts(final_message)
                     deferred_calls = _extract_gemini_tool_calls(assistant_content)
+                elif provider == PROVIDER_TALISMAN:
+                    assistant_content = [final_message] if isinstance(final_message, dict) else [final_message]
+                    deferred_calls = extract_chat_tool_calls(final_message)
                 else:
                     assistant_content = _serialize_output_items(final_message)
                     deferred_calls = _extract_openai_tool_calls(assistant_content)
@@ -4229,6 +4274,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                                         "response": {"result": result_str},
                                     }
                                 }
+                            elif provider == PROVIDER_TALISMAN:
+                                result_block = {
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": result_str,
+                                }
                             else:
                                 result_block = {
                                     "type": "function_call_output",
@@ -4243,6 +4294,10 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     elif provider == PROVIDER_GEMINI:
                         conversation.append({"role": "model", "parts": assistant_content})
                         conversation.append({"role": "tool", "parts": tool_results})
+                    elif provider == PROVIDER_TALISMAN:
+                        if assistant_content and isinstance(assistant_content[0], dict):
+                            conversation.append(assistant_content[0])
+                        conversation.extend(tool_results)
                     else:
                         conversation.extend(assistant_content)
                         conversation.extend(tool_results)
