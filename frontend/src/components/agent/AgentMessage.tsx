@@ -4,6 +4,7 @@ import type { ToolCall, EgressRecord, AgentMessage as AgentMessageType } from "@
 import { Loader2, CheckCircle2, AlertCircle, Ban, Clock, GitPullRequest, RotateCw, ShieldAlert } from "lucide-react"
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 import { TraceTriggerButton } from "@/components/shared/TraceTriggerButton"
+import { AgentFeedbackControls } from "./AgentFeedbackControls"
 
 const MARKDOWN_COMPONENTS: Components = {
   table({ children, ...props }) {
@@ -263,9 +264,11 @@ function EgressChip({ group }: { group: EgressRecordGroup }) {
 
 export function AgentMessage({
   message,
+  sessionId,
   onOpenTrace,
 }: {
   message: AgentMessageType
+  sessionId?: string | null
   onOpenTrace?: (message: AgentMessageType) => void
 }) {
   if (message.role === "user") {
@@ -336,6 +339,10 @@ export function AgentMessage({
         {/* Streaming cursor */}
         {message.isStreaming && (
           <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle rounded-sm" />
+        )}
+
+        {!message.isStreaming && (
+          <AgentFeedbackControls message={message} sessionId={sessionId ?? null} />
         )}
       </div>
     </div>

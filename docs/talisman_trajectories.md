@@ -1,6 +1,6 @@
 # Talisman Agent Trajectories
 
-`TL-87` introduces a backend-only trajectory contract for complete Stan agent turns. The record is the source of truth for future training-data curation, replay, and production-learning analysis, but it does not add reviewer UI or feedback workflows.
+`TL-87` introduces the trajectory contract for complete Stan agent turns. `TL-88` adds explicit human feedback and labeling workflows on top of that contract without changing the SSE client protocol.
 
 ## Storage Contract
 
@@ -55,3 +55,45 @@ Backfilled rows should record their source in `source_provenance`, include expli
 Trajectory capture is best-effort and non-blocking inside `api/routers/agent.py`. Insert failures are logged as `agent_trajectory_capture_failed` and do not change the user-visible stream.
 
 The current implementation does not change ADR-006 model egress assumptions. Model prompts still follow the existing gateway policy; trajectory export is a separate training-data boundary enforced after the turn completes.
+
+## Human Feedback (`TL-88`)
+
+Human-reviewed labels live in `agent_response_feedback`, created by `migrations/versions/20260607_0002_agent_response_feedback.py`. Local and test runs initialize the same contract in `api/agent_response_feedback.py`.
+
+Each label stores:
+
+- `feedback_id`, `trajectory_id`, `session_id`, `client_turn_id`, and immutable `response_version`.
+- Reviewer actor, reviewed timestamp, decision (`approve`, `reject`, `correct`), optional corrected response, failure tags, and notes.
+- `training_eligible` only when the reviewer explicitly opts in.
+- `signal_source = human_reviewed`, distinct from inferred behavioral signals.
+
+### API
+
+Authenticated routes under `/api/agent/feedback`:
+
+- `POST /api/agent/feedback` — create or update one label for the current reviewer and response version.
+- `GET /api/agent/feedback` — list labels, fetch labels for one turn, or return the unlabeled review queue.
+- `GET /api/agent/feedback/export` — export eligible human-reviewed labels for preference dataset builders.
+
+Lookup accepts either `trajectory_id` or `session_id` + `client_turn_id`. Feedback is idempotent per `(trajectory_id, reviewer_actor_id, response_version)`.
+
+### Promotion Rules
+
+- New trajectories still default to `training_eligible=false`.
+- `approve` plus explicit `eligible_for_training=true` can promote the parent trajectory through `promote_trajectory_for_training()`.
+- `reject` and `correct` labels can be exportable for preference datasets, but they never auto-promote trajectories.
+- Promotion clears `missing_training_consent`, refreshes the sanitized payload, and leaves all other export guards in place.
+
+### Deletion And Export
+
+`tombstone_trajectory()` cascades to feedback rows for the same trajectory. Tombstoned feedback is excluded from `export_human_reviewed_feedback()`.
+
+Training exports remain conservative:
+
+- Trajectory export still uses `export_sanitized_trajectories()`.
+- Human-reviewed labels export separately through `export_human_reviewed_feedback()`.
+- Only labels with `training_eligible=true` and `signal_source=human_reviewed` are returned.
+
+### UI Disclosure
+
+Completed Stan responses expose approve, reject, and correct actions in the agent chat UI. The interface explains that feedback is stored with the trajectory and model version and may be used for evaluation review or optional governed training datasets.

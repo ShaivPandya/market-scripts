@@ -43,6 +43,7 @@ from api.agent_governance import (
 from api.agent_models import (
     AgentChatJobRequest,
     AgentChatRequest,
+    AgentResponseFeedbackRequest,
     AgentResponsePreferences,
     ChatMessage,
     ScreenContextModel,
@@ -2880,6 +2881,182 @@ def _attach_tool_provenance_context(
             "call_id": call_id,
             "source": source,
         }
+
+
+# ---------------------------------------------------------------------------
+# Agent response feedback
+# ---------------------------------------------------------------------------
+
+
+def _resolve_feedback_trajectory(req: AgentResponseFeedbackRequest) -> dict[str, Any]:
+    from api.agent_trajectories import get_trajectory, get_trajectory_by_session_turn
+
+    if req.trajectory_id:
+        trajectory = get_trajectory(req.trajectory_id)
+    else:
+        trajectory = get_trajectory_by_session_turn(
+            session_id=str(req.session_id),
+            client_turn_id=str(req.client_turn_id),
+        )
+    if not trajectory:
+        raise HTTPException(status_code=404, detail="Trajectory not found for this response")
+    if trajectory.get("tombstoned_at"):
+        raise HTTPException(status_code=410, detail="Trajectory has been deleted")
+    if trajectory.get("final_disposition") not in {"succeeded", "blocked"}:
+        raise HTTPException(status_code=400, detail="Feedback is only allowed for completed responses")
+    return trajectory
+
+
+def _submit_agent_response_feedback(req: AgentResponseFeedbackRequest, actor: Actor) -> dict[str, Any]:
+    from api.agent_response_feedback import (
+        FeedbackStoreError,
+        feedback_id_for,
+        response_version_for_trajectory,
+        upsert_feedback,
+    )
+    from api.agent_trajectories import promote_trajectory_for_training
+    from api.audit import emit_audit_event
+
+    trajectory = _resolve_feedback_trajectory(req)
+    trajectory_id = str(trajectory["trajectory_id"])
+    response_version = response_version_for_trajectory(trajectory)
+    reviewer_actor_id = str(actor.actor_id or "unknown")
+    reviewed_at = datetime.now(UTC).isoformat()
+
+    training_eligible = bool(req.eligible_for_training)
+    if req.decision != "approve" and training_eligible:
+        # Reject/correct labels can enter preference datasets, but never auto-promote trajectories.
+        pass
+    elif req.decision == "approve" and not training_eligible:
+        training_eligible = False
+
+    feedback_payload = {
+        "feedback_id": feedback_id_for(
+            trajectory_id=trajectory_id,
+            reviewer_actor_id=reviewer_actor_id,
+            response_version=response_version,
+        ),
+        "trajectory_id": trajectory_id,
+        "session_id": trajectory.get("session_id"),
+        "client_turn_id": trajectory.get("client_turn_id"),
+        "response_version": response_version,
+        "decision": req.decision,
+        "reviewer_actor_id": reviewer_actor_id,
+        "reviewed_at": reviewed_at,
+        "model": trajectory.get("model"),
+        "provider": trajectory.get("provider"),
+        "corrected_response": req.corrected_response,
+        "failure_tags": list(req.failure_tags),
+        "notes": req.notes,
+        "training_eligible": training_eligible,
+        "provenance": {
+            "submitted_via": "agent_feedback_api",
+            "eligible_for_training_requested": req.eligible_for_training,
+        },
+    }
+
+    try:
+        stored = upsert_feedback(feedback_payload)
+    except FeedbackStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    promoted_trajectory = None
+    if req.decision == "approve" and req.eligible_for_training:
+        promoted_trajectory = promote_trajectory_for_training(
+            trajectory_id,
+            reviewer_actor_id=reviewer_actor_id,
+            promotion_reason="human_feedback_approve",
+        )
+
+    emit_audit_event(
+        "agent_response_feedback_upsert",
+        "agent_learning",
+        "applied",
+        actor=actor,
+        object_refs=[
+            {"type": "agent_trajectory", "id": trajectory_id},
+            {"type": "agent_response_feedback", "id": stored["feedback_id"]},
+        ],
+        metadata={
+            "decision": req.decision,
+            "training_eligible": training_eligible,
+            "failure_tags": list(req.failure_tags),
+            "response_version": response_version,
+            "trajectory_promoted": promoted_trajectory is not None,
+        },
+    )
+
+    return {
+        "feedback": {
+            "feedback_id": stored["feedback_id"],
+            "trajectory_id": stored["trajectory_id"],
+            "session_id": stored.get("session_id"),
+            "client_turn_id": stored.get("client_turn_id"),
+            "response_version": stored.get("response_version"),
+            "decision": stored.get("decision"),
+            "reviewer_actor_id": stored.get("reviewer_actor_id"),
+            "reviewed_at": stored.get("reviewed_at"),
+            "failure_tags": stored.get("failure_tags") or [],
+            "notes": stored.get("notes"),
+            "training_eligible": stored.get("training_eligible"),
+            "human_reviewed": True,
+            "signal_source": stored.get("signal_source"),
+        },
+        "trajectory_promoted": promoted_trajectory is not None,
+        "disclosure": (
+            "Human-reviewed feedback is stored with this trajectory and model version. "
+            "It may be used for evaluation review and, only when you opt in, governed training datasets."
+        ),
+    }
+
+
+@router.post("/agent/feedback")
+def submit_agent_response_feedback(req: AgentResponseFeedbackRequest, actor: ActorDep):
+    """Record approve, reject, or correct feedback for one completed agent response."""
+
+    return _submit_agent_response_feedback(req, actor)
+
+
+@router.get("/agent/feedback")
+def list_agent_response_feedback(
+    actor: ActorDep,
+    trajectory_id: str | None = None,
+    session_id: str | None = None,
+    client_turn_id: str | None = None,
+    queue_only: bool = False,
+    limit: int = Query(50, ge=1, le=250),
+):
+    from api.agent_response_feedback import list_feedback, list_feedback_for_trajectory, list_review_queue
+
+    if queue_only:
+        return {"queue": list_review_queue(limit=limit)}
+
+    if trajectory_id:
+        rows = list_feedback_for_trajectory(trajectory_id)
+        return {"feedback": rows}
+
+    if session_id and client_turn_id:
+        trajectory = _resolve_feedback_trajectory(
+            AgentResponseFeedbackRequest(
+                session_id=session_id,
+                client_turn_id=client_turn_id,
+                decision="approve",
+            )
+        )
+        rows = list_feedback_for_trajectory(str(trajectory["trajectory_id"]))
+        return {"feedback": rows, "trajectory_id": trajectory["trajectory_id"]}
+
+    return {"feedback": list_feedback(limit=limit)}
+
+
+@router.get("/agent/feedback/export")
+def export_agent_response_feedback(actor: ActorDep, limit: int = Query(1000, ge=1, le=5000)):
+    from api.agent_response_feedback import export_human_reviewed_feedback
+
+    return {
+        "labels": export_human_reviewed_feedback(limit=limit),
+        "signal_source": "human_reviewed",
+    }
 
 
 # ---------------------------------------------------------------------------

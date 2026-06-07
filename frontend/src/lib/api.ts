@@ -1104,6 +1104,64 @@ export interface AgentCapabilitiesResponse {
 export const fetchAgentCapabilities = () =>
   client.get("/agent/capabilities").then(r => r.data as AgentCapabilitiesResponse)
 
+export type AgentFeedbackDecision = "approve" | "reject" | "correct"
+export type AgentFeedbackFailureTag =
+  | "routing"
+  | "tools"
+  | "source_quality"
+  | "synthesis"
+  | "calibration"
+  | "policy_boundary"
+
+export interface AgentResponseFeedbackRecord {
+  feedback_id: string
+  trajectory_id: string
+  session_id?: string | null
+  client_turn_id?: string | null
+  response_version?: string
+  decision: AgentFeedbackDecision
+  reviewer_actor_id?: string
+  reviewed_at?: string
+  failure_tags?: AgentFeedbackFailureTag[]
+  notes?: string | null
+  training_eligible?: boolean
+  human_reviewed?: boolean
+  signal_source?: string
+}
+
+export interface SubmitAgentResponseFeedbackRequest {
+  trajectory_id?: string
+  session_id?: string
+  client_turn_id?: string
+  decision: AgentFeedbackDecision
+  corrected_response?: string
+  failure_tags?: AgentFeedbackFailureTag[]
+  notes?: string
+  eligible_for_training?: boolean
+}
+
+export interface SubmitAgentResponseFeedbackResponse {
+  feedback: AgentResponseFeedbackRecord
+  trajectory_promoted: boolean
+  disclosure: string
+}
+
+export const submitAgentResponseFeedback = (body: SubmitAgentResponseFeedbackRequest) =>
+  client
+    .post("/agent/feedback", body)
+    .then(r => r.data as SubmitAgentResponseFeedbackResponse)
+
+export const fetchAgentResponseFeedback = (params: {
+  trajectory_id?: string
+  session_id?: string
+  client_turn_id?: string
+  queue_only?: boolean
+  limit?: number
+}) =>
+  client
+    .get("/agent/feedback", { params })
+    .then(r => r.data as { feedback?: AgentResponseFeedbackRecord[]; queue?: Record<string, unknown>[]; trajectory_id?: string })
+
 // ─── GET endpoints ───────────────────────────────────────────────────────────
 
 export const fetchPortfolio = (timeframe: string) =>

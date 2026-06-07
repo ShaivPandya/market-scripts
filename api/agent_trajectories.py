@@ -491,6 +491,11 @@ def get_trajectory(trajectory_id: str) -> dict[str, Any] | None:
         return _row_to_dict(row) if row else None
 
 
+def get_trajectory_by_session_turn(*, session_id: str, client_turn_id: str) -> dict[str, Any] | None:
+    trajectory_id = trajectory_id_for(session_id=session_id, client_turn_id=client_turn_id)
+    return get_trajectory(trajectory_id)
+
+
 def list_trajectories(*, limit: int = 100, training_eligible_only: bool = False) -> list[dict[str, Any]]:
     clauses = ["tombstoned_at IS NULL"]
     if training_eligible_only:
@@ -520,6 +525,93 @@ def list_trajectories(*, limit: int = 100, training_eligible_only: bool = False)
         return [_row_to_dict(row) for row in rows]
 
 
+def promote_trajectory_for_training(
+    trajectory_id: str,
+    *,
+    reviewer_actor_id: str,
+    promotion_reason: str = "human_review_approved",
+) -> dict[str, Any] | None:
+    """Promote one reviewed trajectory to exportable training eligibility."""
+
+    row = get_trajectory(trajectory_id)
+    if not row or row.get("tombstoned_at"):
+        return None
+
+    raw_payload = dict(row.get("raw_payload") or {})
+    raw_payload["consent_state"] = "granted"
+    raw_payload["training_eligible"] = True
+    raw_payload["exclusion_reasons"] = [
+        reason
+        for reason in list(raw_payload.get("exclusion_reasons") or row.get("exclusion_reasons") or [])
+        if reason != "missing_training_consent"
+    ]
+    source_provenance = dict(row.get("source_provenance") or {})
+    source_provenance.update(
+        {
+            "promoted_by": reviewer_actor_id,
+            "promoted_at": _now(),
+            "promotion_reason": promotion_reason,
+        }
+    )
+    raw_payload["source_provenance"] = source_provenance
+
+    record = build_trajectory({**raw_payload, "trajectory_id": trajectory_id})
+    sanitized, manifest = sanitize_trajectory(record)
+    if use_postgres_state():
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE agent_trajectories
+                SET consent_state = %s,
+                    training_eligible = %s,
+                    exclusion_reasons_json = %s::jsonb,
+                    source_provenance_json = %s::jsonb,
+                    sanitized_payload_json = %s::jsonb,
+                    redaction_manifest_json = %s::jsonb
+                WHERE trajectory_id = %s AND tombstoned_at IS NULL
+                """,
+                (
+                    record.consent_state,
+                    record.training_eligible,
+                    _json_dump(record.exclusion_reasons),
+                    _json_dump(record.source_provenance),
+                    _json_dump(sanitized),
+                    _json_dump(manifest),
+                    trajectory_id,
+                ),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return None
+    else:
+        with _sqlite_connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE agent_trajectories
+                SET consent_state = ?,
+                    training_eligible = ?,
+                    exclusion_reasons_json = ?,
+                    source_provenance_json = ?,
+                    sanitized_payload_json = ?,
+                    redaction_manifest_json = ?
+                WHERE trajectory_id = ? AND tombstoned_at IS NULL
+                """,
+                (
+                    record.consent_state,
+                    int(record.training_eligible),
+                    _json_dump(record.exclusion_reasons),
+                    _json_dump(record.source_provenance),
+                    _json_dump(sanitized),
+                    _json_dump(manifest),
+                    trajectory_id,
+                ),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return None
+    return get_trajectory(trajectory_id)
+
+
 def tombstone_trajectory(trajectory_id: str, *, reason: str = "deletion_requested") -> bool:
     """Remove a trajectory from training eligibility while preserving audit lineage."""
 
@@ -543,34 +635,44 @@ def tombstone_trajectory(trajectory_id: str, *, reason: str = "deletion_requeste
                 (tombstoned_at, reason, trajectory_id),
             )
             conn.commit()
-            return bool(cur.rowcount)
-    with _sqlite_connect() as conn:
-        row = conn.execute(
-            "SELECT sanitized_payload_json FROM agent_trajectories WHERE trajectory_id = ? AND tombstoned_at IS NULL",
-            (trajectory_id,),
-        ).fetchone()
-        if not row:
-            return False
-        sanitized = _json_load(row["sanitized_payload_json"], {})
-        if isinstance(sanitized, dict):
-            sanitized["training_eligible"] = False
-            reasons = list(sanitized.get("exclusion_reasons") or [])
-            if "deletion_requested" not in reasons:
-                reasons.append("deletion_requested")
-            sanitized["exclusion_reasons"] = reasons
-        cur = conn.execute(
-            """
-            UPDATE agent_trajectories
-            SET tombstoned_at = ?,
-                deletion_reason = ?,
-                training_eligible = 0,
-                sanitized_payload_json = ?
-            WHERE trajectory_id = ? AND tombstoned_at IS NULL
-            """,
-            (tombstoned_at, reason, _json_dump(sanitized), trajectory_id),
-        )
-        conn.commit()
-        return bool(cur.rowcount)
+            updated = bool(cur.rowcount)
+    else:
+        with _sqlite_connect() as conn:
+            row = conn.execute(
+                "SELECT sanitized_payload_json FROM agent_trajectories WHERE trajectory_id = ? AND tombstoned_at IS NULL",
+                (trajectory_id,),
+            ).fetchone()
+            if not row:
+                return False
+            sanitized = _json_load(row["sanitized_payload_json"], {})
+            if isinstance(sanitized, dict):
+                sanitized["training_eligible"] = False
+                reasons = list(sanitized.get("exclusion_reasons") or [])
+                if "deletion_requested" not in reasons:
+                    reasons.append("deletion_requested")
+                sanitized["exclusion_reasons"] = reasons
+            cur = conn.execute(
+                """
+                UPDATE agent_trajectories
+                SET tombstoned_at = ?,
+                    deletion_reason = ?,
+                    training_eligible = 0,
+                    sanitized_payload_json = ?
+                WHERE trajectory_id = ? AND tombstoned_at IS NULL
+                """,
+                (tombstoned_at, reason, _json_dump(sanitized), trajectory_id),
+            )
+            conn.commit()
+            updated = bool(cur.rowcount)
+
+    if updated:
+        try:
+            from api.agent_response_feedback import tombstone_feedback_for_trajectory
+
+            tombstone_feedback_for_trajectory(trajectory_id, reason=reason)
+        except Exception:
+            logger.exception("agent_feedback_tombstone_failed trajectory_id=%s", trajectory_id)
+    return updated
 
 
 def export_sanitized_trajectories(*, limit: int = 1000) -> list[dict[str, Any]]:

@@ -146,6 +146,20 @@ def test_migration_contract_contains_training_boundaries():
     assert "dataset_split_group" in migration
 
 
+def test_live_capture_defaults_to_ineligible_without_consent():
+    from api.agent_trajectories import insert_trajectory
+
+    trajectory = _sample_payload(consent_state="not_requested", training_eligible=False)
+    trajectory_id = insert_trajectory(trajectory)
+    from api.agent_trajectories import get_trajectory
+
+    stored = get_trajectory(trajectory_id)
+    assert stored is not None
+    assert stored["training_eligible"] is False
+    assert stored["consent_state"] == "not_requested"
+    assert "missing_training_consent" in stored["exclusion_reasons"]
+
+
 def test_casual_agent_turn_captures_trajectory_without_sse_contract_change(auth_client):
     from api.agent_trajectories import list_trajectories
 

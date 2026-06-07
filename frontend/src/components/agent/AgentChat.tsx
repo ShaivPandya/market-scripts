@@ -476,6 +476,7 @@ export function AgentChat({
                 <>
                   <AgentMessageStream
                     messages={messages}
+                    sessionId={sessionId}
                     isStreaming={isStreaming}
                     error={error}
                     onPrompt={handleQuickPrompt}
