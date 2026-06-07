@@ -151,9 +151,27 @@ Adjust thresholds in the manifest only after an intentional benchmark policy cha
 
 After a manual release check, attach `release_report.json` to the candidate registry workflow documented in `docs/talisman_agent_model_training.md`. Registry promotion requires `release_gate.passed=true`.
 
+## Managed endpoint validation (TL-95)
+
+After the governed inference service is provisioned, point benchmark candidate env vars at the private managed endpoint and record capacity evidence:
+
+```bash
+export TALISMAN_BENCH_CANDIDATE_BASE_URL="${TALISMAN_BASE_URL}"
+export TALISMAN_BENCH_CANDIDATE_API_KEY="${TALISMAN_API_KEY}"
+export TALISMAN_BENCH_CANDIDATE_MODEL="${TALISMAN_MODEL_MID}"
+
+python -m decision_quality.talisman_bench \
+  --manifest docs/talisman_bench/manifest.json \
+  --combination-id qwen-managed-gpu \
+  --smoke-only
+```
+
+Store the resulting `release_report.json` with P50/P95 latency, throughput, and cost evidence before production rollout (`TL-92`). See `docs/talisman_inference_service.md`.
+
 ## Out of scope
 
 - Production `talisman` provider integration (`TL-86`)
+- Governed inference service provisioning (`TL-95`)
 - Shadow/canary rollout controls (`TL-92`)
 
 ## Documentation impact

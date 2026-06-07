@@ -1,0 +1,45 @@
+{
+  "displayName": "Talisman inference service health",
+  "documentation": {
+    "content": "Alerts for the governed first-party inference service. Monitor startup refusals, 5xx/error spikes, and generation latency saturation on the private GPU Cloud Run service.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "component": "inference",
+    "program": "tl-84"
+  },
+  "conditions": [
+    {
+      "displayName": "Inference startup refused",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/inference_startup_refused_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "60s",
+        "aggregations": [{"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Inference request errors",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/inference_request_error_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Inference P95 generation latency high",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/inference_generation_latency_seconds\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 30,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_PERCENTILE_95"}]
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true
+}

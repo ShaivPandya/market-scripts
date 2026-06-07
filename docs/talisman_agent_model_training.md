@@ -119,6 +119,21 @@ vllm serve Qwen/Qwen2.5-7B-Instruct \
 
 Point TalismanBench candidate env vars at the served endpoint before registration.
 
+## Governed inference deployment (TL-95)
+
+After promotion, build a deployment manifest and provision the private managed endpoint:
+
+```bash
+python -m decision_quality.agent_inference_deployment build-manifest \
+  --candidate-id <candidate_id> \
+  --environment nonprod \
+  --combination-id qwen-managed-gpu
+
+CANDIDATE_ID=<candidate_id> ./infra/gcp/deploy-inference-service.sh
+```
+
+The deploy script refuses disabled or unapproved candidates and verifies immutable `artifact_digest` before serving. See `docs/talisman_inference_service.md`.
+
 ## Registry
 
 Committed registry path: `data/agent_model_candidates/registry.json`
@@ -146,4 +161,5 @@ Each candidate publishes `model_card.json` with:
 - Release gate: `docs/talisman_bench/README.md`
 - Base model/host ADR: `docs/adr/010-open-weight-base-model-and-inference-host.md`
 - Trainer/registry ADR: `docs/adr/011-agent-model-training-registry.md`
+- Inference service runbook: `docs/talisman_inference_service.md`
 - Cross-cutting architecture audit: `TL-97`

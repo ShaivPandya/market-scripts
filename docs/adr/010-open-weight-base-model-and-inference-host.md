@@ -67,7 +67,7 @@ Chat/tool coverage uses benchmark-only agent mode (`TALISMAN_BENCH_AGENT_MODE=1`
 
 - Open-weight tool-calling behavior may diverge from frontier baselines on chat corpora until SFT/LoRA candidates exist.
 - Strict JSON-schema mode may fail on weaker candidates; smoke runs must record these failures explicitly.
-- Local vLLM performance is not representative of managed production capacity without TL-95 provisioning evidence.
+- Local vLLM performance is not representative of managed production capacity without TL-95 provisioning evidence. Non-production managed-host provisioning, deployment manifests, and capacity validation are owned by `TL-95` (`docs/talisman_inference_service.md`).
 - Provisional selection must be revalidated after every major base-model generation change.
 
 ## References

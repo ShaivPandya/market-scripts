@@ -1,0 +1,32 @@
+# Governed Talisman first-party inference service (TL-95).
+# Build separately from the API image; requires GPU runtime.
+#
+# Example:
+#   docker build -f infra/gcp/Dockerfile.inference \
+#     -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/inference:latest .
+
+FROM vllm/vllm-openai:latest
+
+WORKDIR /app
+
+# Copy only the governance modules required at startup.
+COPY decision_quality/agent_model_training.py decision_quality/agent_model_training.py
+COPY decision_quality/agent_inference_deployment.py decision_quality/agent_inference_deployment.py
+COPY decision_quality/inference_readiness.py decision_quality/inference_readiness.py
+COPY docs/talisman_bench/candidate_matrix.json docs/talisman_bench/candidate_matrix.json
+COPY data/agent_model_candidates/registry.json data/agent_model_candidates/registry.json
+
+ENV PYTHONPATH=/app \
+    INFERENCE_HOST=0.0.0.0 \
+    INFERENCE_PORT=8080 \
+    INFERENCE_ALLOW_SERVE=1
+
+# Deployment manifest and registry paths are mounted or injected at runtime.
+ENV TALISMAN_DEPLOYMENT_MANIFEST=/runtime/deployment_manifest.json \
+    TALISMAN_REGISTRY_PATH=/runtime/registry.json
+
+EXPOSE 8080
+
+ENTRYPOINT ["python", "-m", "decision_quality.inference_readiness", "serve", \
+  "--deployment-manifest", "/runtime/deployment_manifest.json", \
+  "--registry", "/runtime/registry.json"]

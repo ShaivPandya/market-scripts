@@ -28,6 +28,9 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
 - `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23:00 UTC, market-snapshot-refresh weekday 23:15 UTC, macro-snapshot-refresh weekday 23:30 UTC, workspace-source-refresh weekday 23:45 UTC, and continuous-optimizer weekday 10:15 America/New_York) and delete optional/deprecated jobs unless explicitly enabled. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
 - `setup-governance-monitoring.sh` — idempotently creates/updates governance audit/provenance log-based metrics and the alert policy in `monitoring-governance-alerts.json`.
+- `Dockerfile.inference` — governed vLLM inference image with registry/digest startup checks.
+- `deploy-inference-service.sh` — provisions the private GPU Cloud Run inference service for an approved registry candidate (`TL-95`).
+- `setup-inference-monitoring.sh` — log-based metrics and alert policy for the inference service (`monitoring-inference-alerts.json`).
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
 
 First-time setup:

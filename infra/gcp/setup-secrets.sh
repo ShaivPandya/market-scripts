@@ -223,6 +223,28 @@ else
 fi
 
 ###############################################################################
+# 4b. First-party Talisman inference endpoint (TL-95)
+###############################################################################
+log "Talisman inference secrets"
+if ! secret_exists TALISMAN_API_KEY; then
+  random_token | create_if_missing TALISMAN_API_KEY
+else
+  echo "  TALISMAN_API_KEY: exists, leaving alone"
+fi
+
+if ! secret_exists TALISMAN_BASE_URL; then
+  v="$(prompt_optional 'TALISMAN_BASE_URL (https://<inference-host>/v1; leave blank until inference is deployed)')"
+  if [[ -n "${v}" ]]; then
+    printf '%s' "${v}" | create_if_missing TALISMAN_BASE_URL
+  else
+    echo "  TALISMAN_BASE_URL: skipped (remove from API_SECRETS/WORKER_SECRETS in config.sh until added)"
+  fi
+  unset v
+else
+  echo "  TALISMAN_BASE_URL: exists, leaving alone"
+fi
+
+###############################################################################
 # 5. AUTH_SMOKE_PASSWORD + AUTH_SMOKE_PASSWORD_HASH (SHA-34)
 ###############################################################################
 log "Smoke auth secrets"
@@ -249,11 +271,11 @@ fi
 ###############################################################################
 API_ALLOWED=(
   DATABASE_URL_API AUTH_PASSWORD_HASH AUTH_SMOKE_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
-  SCHEDULER_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
+  SCHEDULER_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY TALISMAN_BASE_URL TALISMAN_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY SENTRY_DSN
 )
 WORKER_ALLOWED=(
-  DATABASE_URL_WORKER ANTHROPIC_API_KEY GEMINI_API_KEY FRED_API_KEY
+  DATABASE_URL_WORKER ANTHROPIC_API_KEY GEMINI_API_KEY TALISMAN_BASE_URL TALISMAN_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY SENTRY_DSN
 )
 MIGRATOR_ALLOWED=( DATABASE_URL_MIGRATION )
