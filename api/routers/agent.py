@@ -2914,7 +2914,7 @@ def _submit_agent_response_feedback(req: AgentResponseFeedbackRequest, actor: Ac
         response_version_for_trajectory,
         upsert_feedback,
     )
-    from api.agent_trajectories import promote_trajectory_for_training
+    from api.agent_trajectories import grant_trajectory_preference_export_consent, promote_trajectory_for_training
     from api.audit import emit_audit_event
 
     trajectory = _resolve_feedback_trajectory(req)
@@ -2924,10 +2924,7 @@ def _submit_agent_response_feedback(req: AgentResponseFeedbackRequest, actor: Ac
     reviewed_at = datetime.now(UTC).isoformat()
 
     training_eligible = bool(req.eligible_for_training)
-    if req.decision != "approve" and training_eligible:
-        # Reject/correct labels can enter preference datasets, but never auto-promote trajectories.
-        pass
-    elif req.decision == "approve" and not training_eligible:
+    if req.decision == "approve" and not training_eligible:
         training_eligible = False
 
     feedback_payload = {
@@ -2966,6 +2963,12 @@ def _submit_agent_response_feedback(req: AgentResponseFeedbackRequest, actor: Ac
             trajectory_id,
             reviewer_actor_id=reviewer_actor_id,
             promotion_reason="human_feedback_approve",
+        )
+    elif req.decision in {"reject", "correct"} and req.eligible_for_training:
+        grant_trajectory_preference_export_consent(
+            trajectory_id,
+            reviewer_actor_id=reviewer_actor_id,
+            consent_reason=f"human_feedback_{req.decision}",
         )
 
     emit_audit_event(

@@ -1,4 +1,4 @@
-# Optional dependencies for local SFT/LoRA training (TL-91).
+# Optional dependencies for local SFT/LoRA (TL-91) and preference/DPO (TL-93) training.
 # Not required for API runtime or CI smoke tests.
 #
 # Install:

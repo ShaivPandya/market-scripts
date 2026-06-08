@@ -1,6 +1,6 @@
 # Talisman Agent Model Training And Registry
 
-`TL-91` trains the first Talisman-owned generative agent candidates from governed SFT datasets and registers them with reproducible evidence, model cards, and promotion gates.
+`TL-91` trains the first Talisman-owned generative agent candidates from governed SFT datasets and registers them with reproducible evidence, model cards, and promotion gates. `TL-93` adds preference-optimization training from governed `preference.jsonl` pairs on top of an approved SFT parent candidate.
 
 ## Inputs
 
@@ -14,6 +14,8 @@
 
 Trainer configs are versioned JSON objects validated by `decision_quality/agent_model_training.py`.
 
+### SFT config (`training_method=sft`)
+
 Required fields:
 
 - `base_model_id` and optional `base_model_revision`
@@ -23,6 +25,14 @@ Required fields:
 - `training` hyperparameters (`epochs`, batch sizes, `learning_rate`, `max_seq_length`, `seed`)
 - `trainer_backend`: `smoke` for CI and pipeline validation; `trl` or `peft` for operator-run GPU training
 - optional `serve` metadata (`served_model_name`, `combination_id`)
+
+### Preference config (`training_method=preference`)
+
+Additional required fields:
+
+- `parent_candidate_id`: approved SFT parent in `data/agent_model_candidates/registry.json`
+- `preference_algorithm`: `smoke` for CI; `dpo` for operator-run TRL training
+- dataset manifest with `dpo_trainable_count >= 1`
 
 Initialize a default config:
 
@@ -42,6 +52,21 @@ python -m decision_quality.agent_model_training validate-config \
 ## Smoke training (CI-safe)
 
 Smoke training produces deterministic artifact directories without GPU execution. Use a pinned `--run-version` to reproduce candidate ids and artifact digests.
+
+Preference smoke training uses the same CLI with a preference config:
+
+```bash
+python -m decision_quality.agent_model_training init-config \
+  --dataset-manifest outputs/agent_training_datasets/<version>/manifest.json \
+  --training-method preference \
+  --parent-candidate-id <approved_sft_candidate_id> \
+  --output configs/agent_preference_smoke.json
+
+python -m decision_quality.agent_model_training smoke-train \
+  --config configs/agent_preference_smoke.json \
+  --run-version pinned_pref_smoke_v1 \
+  --parent-bench-report outputs/talisman_bench/<parent_timestamp>/release_report.json
+```
 
 ```bash
 python -m decision_quality.agent_model_training smoke-train \
@@ -92,12 +117,13 @@ Promotion refuses candidates when:
 - model card is missing required fields
 - artifact digest no longer matches immutable manifest
 - TalismanBench `release_gate.passed` is false
+- preference candidates lack SFT-parent bench evidence or regress vs the parent on deterministic cases
 
 Deprecating or disabling the active approved candidate clears the registry alias without deleting artifacts.
 
 ## Operator-run GPU training
 
-Real SFT/LoRA training uses optional dependencies from `requirements-training.txt` and remains operator-run outside normal API installs.
+Real SFT/LoRA and preference/DPO training use optional dependencies from `requirements-training.txt` and remain operator-run outside normal API installs.
 
 Suggested workflow:
 
@@ -161,5 +187,6 @@ Each candidate publishes `model_card.json` with:
 - Release gate: `docs/talisman_bench/README.md`
 - Base model/host ADR: `docs/adr/010-open-weight-base-model-and-inference-host.md`
 - Trainer/registry ADR: `docs/adr/011-agent-model-training-registry.md`
+- Preference optimization ADR: `docs/adr/012-preference-optimization-training.md`
 - Inference service runbook: `docs/talisman_inference_service.md`
 - Cross-cutting architecture audit: `TL-97`

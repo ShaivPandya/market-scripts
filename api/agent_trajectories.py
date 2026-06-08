@@ -525,6 +525,80 @@ def list_trajectories(*, limit: int = 100, training_eligible_only: bool = False)
         return [_row_to_dict(row) for row in rows]
 
 
+def grant_trajectory_preference_export_consent(
+    trajectory_id: str,
+    *,
+    reviewer_actor_id: str,
+    consent_reason: str = "human_feedback_preference",
+) -> dict[str, Any] | None:
+    """Grant preference-dataset export consent without SFT promotion."""
+
+    row = get_trajectory(trajectory_id)
+    if not row or row.get("tombstoned_at"):
+        return None
+
+    raw_payload = dict(row.get("raw_payload") or {})
+    raw_payload["consent_state"] = "granted"
+    source_provenance = dict(row.get("source_provenance") or {})
+    source_provenance.update(
+        {
+            "preference_export_consent": True,
+            "preference_export_by": reviewer_actor_id,
+            "preference_export_at": _now(),
+            "preference_export_reason": consent_reason,
+        }
+    )
+    raw_payload["source_provenance"] = source_provenance
+
+    record = build_trajectory({**raw_payload, "trajectory_id": trajectory_id})
+    sanitized, manifest = sanitize_trajectory(record)
+    if use_postgres_state():
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE agent_trajectories
+                SET consent_state = %s,
+                    source_provenance_json = %s::jsonb,
+                    sanitized_payload_json = %s::jsonb,
+                    redaction_manifest_json = %s::jsonb
+                WHERE trajectory_id = %s AND tombstoned_at IS NULL
+                """,
+                (
+                    record.consent_state,
+                    _json_dump(record.source_provenance),
+                    _json_dump(sanitized),
+                    _json_dump(manifest),
+                    trajectory_id,
+                ),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return None
+    else:
+        with _sqlite_connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE agent_trajectories
+                SET consent_state = ?,
+                    source_provenance_json = ?,
+                    sanitized_payload_json = ?,
+                    redaction_manifest_json = ?
+                WHERE trajectory_id = ? AND tombstoned_at IS NULL
+                """,
+                (
+                    record.consent_state,
+                    _json_dump(record.source_provenance),
+                    _json_dump(sanitized),
+                    _json_dump(manifest),
+                    trajectory_id,
+                ),
+            )
+            conn.commit()
+            if not cur.rowcount:
+                return None
+    return get_trajectory(trajectory_id)
+
+
 def promote_trajectory_for_training(
     trajectory_id: str,
     *,
@@ -685,13 +759,22 @@ def export_sanitized_trajectories(*, limit: int = 1000) -> list[dict[str, Any]]:
     return exported
 
 
-def _exportable_payload(row: dict[str, Any]) -> dict[str, Any]:
+def _has_preference_export_consent(row: dict[str, Any]) -> bool:
+    if row.get("consent_state") != "granted":
+        return False
+    if row.get("training_eligible"):
+        return True
+    source_provenance = row.get("source_provenance")
+    if isinstance(source_provenance, dict) and source_provenance.get("preference_export_consent"):
+        return True
+    return False
+
+
+def _validated_sanitized_payload(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("schema_version") != TRAJECTORY_SCHEMA_VERSION:
         raise TrajectoryExportError(f"Unsupported trajectory schema version for {row.get('trajectory_id')}")
     if row.get("tombstoned_at"):
         raise TrajectoryExportError(f"Tombstoned trajectory cannot be exported: {row.get('trajectory_id')}")
-    if not row.get("training_eligible"):
-        raise TrajectoryExportError(f"Ineligible trajectory cannot be exported: {row.get('trajectory_id')}")
     manifest = row.get("redaction_manifest")
     if not isinstance(manifest, dict) or manifest.get("policy") != TRAJECTORY_REDACTION_POLICY:
         raise TrajectoryExportError(f"Missing redaction manifest for {row.get('trajectory_id')}")
@@ -706,6 +789,18 @@ def _exportable_payload(row: dict[str, Any]) -> dict[str, Any]:
     if not payload.get("messages") or not payload.get("steps"):
         raise TrajectoryExportError(f"Incomplete trajectory cannot be exported: {row.get('trajectory_id')}")
     return payload
+
+
+def _exportable_payload(row: dict[str, Any]) -> dict[str, Any]:
+    if not row.get("training_eligible"):
+        raise TrajectoryExportError(f"Ineligible trajectory cannot be exported: {row.get('trajectory_id')}")
+    return _validated_sanitized_payload(row)
+
+
+def _exportable_preference_payload(row: dict[str, Any]) -> dict[str, Any]:
+    if not _has_preference_export_consent(row):
+        raise TrajectoryExportError(f"Trajectory lacks preference export consent: {row.get('trajectory_id')}")
+    return _validated_sanitized_payload(row)
 
 
 def reset_agent_trajectory_store_for_tests() -> None:

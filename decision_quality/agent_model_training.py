@@ -1,4 +1,4 @@
-"""Reproducible SFT/LoRA training and candidate-model registry for Talisman agent models."""
+"""Reproducible SFT/LoRA and preference-optimization training for Talisman agent models."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -23,9 +24,12 @@ CONFIG_SCHEMA_VERSION = 1
 CANDIDATE_MANIFEST_VERSION = 1
 MODEL_CARD_VERSION = 1
 TRAINER_VERSION = "agent_model_training_v1"
+PREFERENCE_TRAINER_VERSION = "agent_preference_training_v1"
 
 LifecycleState = Literal["candidate", "approved", "deprecated", "disabled"]
 TrainerBackend = Literal["smoke", "trl", "peft"]
+TrainingMethod = Literal["sft", "preference"]
+PreferenceAlgorithm = Literal["smoke", "dpo"]
 
 REQUIRED_MODEL_CARD_KEYS = (
     "model_card_version",
@@ -83,6 +87,7 @@ class ServeMetadata(BaseModel):
 class TrainerConfig(BaseModel):
     schema_version: int = CONFIG_SCHEMA_VERSION
     trainer_version: str = TRAINER_VERSION
+    training_method: TrainingMethod = "sft"
     base_model_id: str
     base_model_revision: str | None = None
     dataset_manifest_path: str
@@ -90,6 +95,8 @@ class TrainerConfig(BaseModel):
     lora: LoraConfig = Field(default_factory=LoraConfig)
     training: TrainingHyperparameters = Field(default_factory=TrainingHyperparameters)
     trainer_backend: TrainerBackend = "smoke"
+    preference_algorithm: PreferenceAlgorithm = "smoke"
+    parent_candidate_id: str | None = None
     code_revision: str | None = None
     serve: ServeMetadata = Field(default_factory=ServeMetadata)
 
@@ -107,6 +114,8 @@ class CandidateManifest(BaseModel):
     artifact_digest: str
     base_model_id: str
     base_model_revision: str | None = None
+    training_method: TrainingMethod = "sft"
+    parent_candidate_id: str | None = None
     dataset_manifest: dict[str, Any]
     trainer_config_hash: str
     config_path: str
@@ -114,6 +123,7 @@ class CandidateManifest(BaseModel):
     model_card_path: str
     metrics: dict[str, Any] = Field(default_factory=dict)
     bench_report_path: str | None = None
+    parent_bench_report_path: str | None = None
     lifecycle_state: LifecycleState = "candidate"
     created_at: str
     trainer_version: str = TRAINER_VERSION
@@ -192,7 +202,27 @@ def load_trainer_config(path: Path) -> TrainerConfig:
     return TrainerConfig.model_validate(_read_json(path))
 
 
-def validate_trainer_config(config: TrainerConfig) -> list[str]:
+def _load_parent_candidate(
+    parent_candidate_id: str,
+    *,
+    registry_path: Path = DEFAULT_REGISTRY_PATH,
+) -> dict[str, Any]:
+    registry = load_registry(registry_path)
+    entry = (registry.get("candidates") or {}).get(parent_candidate_id)
+    if not entry:
+        raise AgentModelTrainingError(f"Unknown parent_candidate_id: {parent_candidate_id}")
+    if entry.get("lifecycle_state") != "approved":
+        raise AgentModelTrainingError(
+            f"parent_candidate_id {parent_candidate_id} must be approved before preference training"
+        )
+    return entry
+
+
+def validate_trainer_config(
+    config: TrainerConfig,
+    *,
+    registry_path: Path = DEFAULT_REGISTRY_PATH,
+) -> list[str]:
     errors: list[str] = []
     dataset_path = _resolve_path(config.dataset_manifest_path)
     if not dataset_path.exists():
@@ -202,8 +232,27 @@ def validate_trainer_config(config: TrainerConfig) -> list[str]:
     dataset_manifest = _read_json(dataset_path)
     if not dataset_manifest.get("leakage_check_passed", False):
         errors.append("dataset manifest leakage_check_passed must be true")
-    if int(dataset_manifest.get("sft_count") or 0) < 1:
-        errors.append("dataset manifest must include at least one SFT example")
+
+    if config.training_method == "sft":
+        if int(dataset_manifest.get("sft_count") or 0) < 1:
+            errors.append("dataset manifest must include at least one SFT example")
+        return errors
+
+    if config.training_method != "preference":
+        errors.append(f"Unsupported training_method: {config.training_method}")
+        return errors
+
+    if not config.parent_candidate_id:
+        errors.append("parent_candidate_id is required for preference training")
+    else:
+        try:
+            _load_parent_candidate(config.parent_candidate_id, registry_path=registry_path)
+        except AgentModelTrainingError as exc:
+            errors.append(str(exc))
+
+    dpo_trainable_count = int(dataset_manifest.get("dpo_trainable_count") or 0)
+    if dpo_trainable_count < 1:
+        errors.append("dataset manifest must include at least one DPO-trainable preference example")
 
     return errors
 
@@ -228,11 +277,16 @@ def build_model_card(
     dataset_manifest: dict[str, Any],
     metrics: dict[str, Any],
     bench_report: dict[str, Any] | None = None,
+    parent_bench_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     limitations = [
         "Smoke-trained candidates are for pipeline validation only.",
         "Production routing requires TalismanBench release evidence and approved registry promotion.",
     ]
+    if config.training_method == "preference":
+        limitations.append(
+            "Preference-trained candidates must improve targeted dimensions without new hard-blocker regressions."
+        )
     known_failures: list[str] = []
     if bench_report:
         blockers = [
@@ -243,6 +297,12 @@ def build_model_card(
         if blockers:
             known_failures.extend(str(item) for item in blockers)
 
+    parent_comparison = None
+    if bench_report and parent_bench_report:
+        from decision_quality.eval_corpus import compare_reports
+
+        parent_comparison = compare_reports(parent_bench_report, bench_report)
+
     return {
         "model_card_version": MODEL_CARD_VERSION,
         "candidate_id": candidate_id,
@@ -250,12 +310,18 @@ def build_model_card(
         "base_model_revision": config.base_model_revision,
         "trainer_version": config.trainer_version,
         "trainer_backend": config.trainer_backend,
+        "training_method": config.training_method,
+        "preference_algorithm": config.preference_algorithm if config.training_method == "preference" else None,
+        "parent_candidate_id": config.parent_candidate_id,
         "dataset_lineage": {
             "version": dataset_manifest.get("version"),
             "transformation_version": dataset_manifest.get("transformation_version"),
             "content_hashes": dataset_manifest.get("content_hashes"),
             "sft_count": dataset_manifest.get("sft_count"),
             "preference_count": dataset_manifest.get("preference_count"),
+            "dpo_trainable_count": dataset_manifest.get("dpo_trainable_count"),
+            "preference_reward_source_counts": dataset_manifest.get("preference_reward_source_counts"),
+            "dpo_trainable_reward_source_counts": dataset_manifest.get("dpo_trainable_reward_source_counts"),
             "leakage_check_passed": dataset_manifest.get("leakage_check_passed"),
         },
         "intended_task_classes": ["agent_turn", "routing", "tool_use", "structured_output"],
@@ -271,6 +337,7 @@ def build_model_card(
             if bench_report
             else None
         ),
+        "parent_bench_comparison": parent_comparison,
         "serve": config.serve.model_dump(mode="json"),
         "created_at": _now_iso(),
     }
@@ -278,6 +345,13 @@ def build_model_card(
 
 def validate_model_card(card: dict[str, Any]) -> list[str]:
     return [f"model card missing required key: {key}" for key in REQUIRED_MODEL_CARD_KEYS if key not in card]
+
+
+def _dataset_path_from_manifest(dataset_manifest: dict[str, Any], *, key: str, fallback_name: str) -> Path:
+    dataset_dir = _resolve_path(str(dataset_manifest.get("manifest_path") or "")).parent
+    raw_path = dataset_manifest.get(key) or dataset_dir / fallback_name
+    path = Path(str(raw_path))
+    return path if path.is_absolute() else _resolve_path(str(path))
 
 
 def _smoke_train_rows(dataset_manifest: dict[str, Any], *, sft_path: Path) -> list[dict[str, Any]]:
@@ -288,32 +362,59 @@ def _smoke_train_rows(dataset_manifest: dict[str, Any], *, sft_path: Path) -> li
     return train_rows or rows
 
 
+def _smoke_preference_rows(dataset_manifest: dict[str, Any], *, preference_path: Path) -> list[dict[str, Any]]:
+    from decision_quality.agent_training_datasets import filter_dpo_trainable_preference_rows
+
+    if not preference_path.exists():
+        raise AgentModelTrainingError(f"Preference dataset missing: {preference_path}")
+    rows = [json.loads(line) for line in preference_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    trainable_rows, _incomplete = filter_dpo_trainable_preference_rows(rows)
+    train_rows = [row for row in trainable_rows if str(row.get("split") or "") in {"train", "validation"}]
+    return train_rows or trainable_rows
+
+
 def smoke_train(
     config: TrainerConfig,
     *,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     bench_report_path: Path | None = None,
+    parent_bench_report_path: Path | None = None,
     run_version: str | None = None,
+    registry_path: Path = DEFAULT_REGISTRY_PATH,
 ) -> dict[str, Any]:
     """Produce a deterministic smoke artifact directory without GPU training."""
-    errors = validate_trainer_config(config)
+    errors = validate_trainer_config(config, registry_path=registry_path)
     if errors:
         raise AgentModelTrainingError("; ".join(errors))
 
     dataset_path = _resolve_path(config.dataset_manifest_path)
     dataset_manifest = load_dataset_manifest(dataset_path)
-    sft_path = Path(str(dataset_manifest.get("sft_path") or dataset_path.parent / "sft.jsonl"))
-    if not sft_path.is_absolute():
-        sft_path = _resolve_path(str(sft_path))
+    if config.training_method == "preference":
+        preference_path = _dataset_path_from_manifest(
+            dataset_manifest,
+            key="preference_path",
+            fallback_name="preference.jsonl",
+        )
+        train_rows = _smoke_preference_rows(dataset_manifest, preference_path=preference_path)
+        parent_entry = _load_parent_candidate(str(config.parent_candidate_id), registry_path=registry_path)
+    else:
+        sft_path = _dataset_path_from_manifest(dataset_manifest, key="sft_path", fallback_name="sft.jsonl")
+        train_rows = _smoke_train_rows(dataset_manifest, sft_path=sft_path)
+        parent_entry = None
 
-    train_rows = _smoke_train_rows(dataset_manifest, sft_path=sft_path)
+    reward_source_counts = dict(Counter(str(row.get("signal_source") or "unknown") for row in train_rows))
     metrics = {
         "backend": "smoke",
+        "training_method": config.training_method,
+        "preference_algorithm": config.preference_algorithm if config.training_method == "preference" else None,
         "train_rows": len(train_rows),
+        "reward_source_counts": reward_source_counts,
         "loss": 0.0,
         "eval_loss": 0.0,
         "seed": config.training.seed,
         "trainer_config_hash": trainer_config_hash(config),
+        "parent_candidate_id": config.parent_candidate_id,
+        "parent_artifact_path": parent_entry.get("artifact_path") if parent_entry else None,
     }
 
     version = run_version or _now_tag()
@@ -333,6 +434,9 @@ def smoke_train(
         "chat_template": config.chat_template,
         "trainer_backend": config.trainer_backend,
         "trainer_version": config.trainer_version,
+        "training_method": config.training_method,
+        "preference_algorithm": config.preference_algorithm,
+        "parent_candidate_id": config.parent_candidate_id,
         "dataset_version": dataset_manifest.get("version"),
         "dataset_content_hashes": dataset_manifest.get("content_hashes"),
         "code_revision": config.code_revision or _git_revision(),
@@ -341,12 +445,17 @@ def smoke_train(
     _write_json(artifact_dir / "metrics.json", metrics)
 
     bench_report = _read_json(bench_report_path) if bench_report_path and bench_report_path.exists() else None
+    parent_bench_report = (
+        _read_json(parent_bench_report_path) if parent_bench_report_path and parent_bench_report_path.exists() else None
+    )
     candidate_id = _stable_hash(
         {
             "trainer_config_hash": metrics["trainer_config_hash"],
             "dataset_hashes": dataset_manifest.get("content_hashes"),
-            "trainer_version": TRAINER_VERSION,
+            "trainer_version": config.trainer_version,
             "trainer_backend": config.trainer_backend,
+            "training_method": config.training_method,
+            "parent_candidate_id": config.parent_candidate_id,
         },
         length=16,
     )
@@ -356,6 +465,7 @@ def smoke_train(
         dataset_manifest=dataset_manifest,
         metrics=metrics,
         bench_report=bench_report,
+        parent_bench_report=parent_bench_report,
     )
     model_card["created_at"] = created_at
     _write_json(artifact_dir / "model_card.json", model_card)
@@ -386,6 +496,7 @@ def register_candidate(
     artifact_dir: Path,
     config_path: Path,
     bench_report_path: Path | None = None,
+    parent_bench_report_path: Path | None = None,
     registry_path: Path = DEFAULT_REGISTRY_PATH,
 ) -> dict[str, Any]:
     """Register an immutable candidate manifest from a trained artifact directory."""
@@ -421,12 +532,17 @@ def register_candidate(
         artifact_digest=artifact_digest,
         base_model_id=config.base_model_id,
         base_model_revision=config.base_model_revision,
+        training_method=config.training_method,
+        parent_candidate_id=config.parent_candidate_id,
         dataset_manifest={
             "path": _repo_relative_path(dataset_path),
             "version": dataset_manifest.get("version"),
             "content_hashes": dataset_manifest.get("content_hashes"),
             "leakage_check_passed": dataset_manifest.get("leakage_check_passed"),
             "transformation_version": dataset_manifest.get("transformation_version"),
+            "preference_count": dataset_manifest.get("preference_count"),
+            "dpo_trainable_count": dataset_manifest.get("dpo_trainable_count"),
+            "preference_reward_source_counts": dataset_manifest.get("preference_reward_source_counts"),
         },
         trainer_config_hash=trainer_config_hash(config),
         config_path=_repo_relative_path(config_path),
@@ -434,8 +550,10 @@ def register_candidate(
         model_card_path=_repo_relative_path(model_card_path),
         metrics=metrics,
         bench_report_path=_repo_relative_path(bench_report_path) if bench_report_path else None,
+        parent_bench_report_path=(_repo_relative_path(parent_bench_report_path) if parent_bench_report_path else None),
         lifecycle_state="candidate",
         created_at=_now_iso(),
+        trainer_version=config.trainer_version,
     )
 
     manifest_path = artifact_dir / "candidate_manifest.json"
@@ -450,9 +568,12 @@ def register_candidate(
         "artifact_digest": artifact_digest,
         "lifecycle_state": "candidate",
         "base_model_id": config.base_model_id,
+        "training_method": config.training_method,
+        "parent_candidate_id": config.parent_candidate_id,
         "dataset_version": dataset_manifest.get("version"),
         "created_at": manifest.created_at,
         "bench_report_path": manifest.bench_report_path,
+        "parent_bench_report_path": manifest.parent_bench_report_path,
     }
     registry["candidates"] = candidates
     registry["updated_at"] = _now_iso()
@@ -494,6 +615,7 @@ def validate_promotion_evidence(
     manifest: dict[str, Any],
     *,
     bench_report_path: Path | None = None,
+    parent_bench_report_path: Path | None = None,
 ) -> list[str]:
     errors: list[str] = []
     for key in PROMOTION_REQUIRED_MANIFEST_KEYS:
@@ -536,6 +658,23 @@ def validate_promotion_evidence(
                 if blockers or thresholds
                 else "release_gate.passed is false"
             )
+
+    training_method = str(manifest.get("training_method") or "sft")
+    if training_method == "preference":
+        if not manifest.get("parent_candidate_id"):
+            errors.append("preference candidate missing parent_candidate_id")
+        resolved_parent_bench = parent_bench_report_path
+        if resolved_parent_bench is None and manifest.get("parent_bench_report_path"):
+            resolved_parent_bench = _resolve_path(str(manifest["parent_bench_report_path"]))
+        if resolved_parent_bench is None or not resolved_parent_bench.exists():
+            errors.append("SFT parent TalismanBench report is required for preference promotion")
+        elif resolved_bench and resolved_bench.exists():
+            from decision_quality.eval_corpus import compare_reports
+
+            comparison = compare_reports(_read_json(resolved_parent_bench), _read_json(resolved_bench))
+            if comparison.get("summary", {}).get("regression_detected"):
+                new_failures = comparison["summary"].get("new_deterministic_failures") or []
+                errors.append("Preference candidate regressed vs SFT parent: " + ", ".join(new_failures))
     return errors
 
 
@@ -544,6 +683,7 @@ def promote_candidate(
     *,
     registry_path: Path = DEFAULT_REGISTRY_PATH,
     bench_report_path: Path | None = None,
+    parent_bench_report_path: Path | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     registry = load_registry(registry_path)
@@ -557,7 +697,11 @@ def promote_candidate(
     if manifest.get("candidate_id") != candidate_id:
         raise AgentModelTrainingError("candidate manifest id does not match registry entry")
 
-    errors = validate_promotion_evidence(manifest, bench_report_path=bench_report_path)
+    errors = validate_promotion_evidence(
+        manifest,
+        bench_report_path=bench_report_path,
+        parent_bench_report_path=parent_bench_report_path,
+    )
     if errors and not force:
         raise AgentModelTrainingError("; ".join(errors))
 
@@ -633,6 +777,8 @@ def build_default_trainer_config(
     dataset_manifest_path: Path,
     base_model_id: str = "Qwen/Qwen2.5-7B-Instruct",
     combination_id: str = "qwen-local-vllm",
+    training_method: TrainingMethod = "sft",
+    parent_candidate_id: str | None = None,
 ) -> TrainerConfig:
     combination: dict[str, Any] | None = None
     if DEFAULT_CANDIDATE_MATRIX.exists():
@@ -646,12 +792,17 @@ def build_default_trainer_config(
     if combination:
         served_model_name = str(combination.get("served_model_name") or "")
 
+    trainer_version = PREFERENCE_TRAINER_VERSION if training_method == "preference" else TRAINER_VERSION
     return TrainerConfig(
         base_model_id=base_model_id,
         base_model_revision=str((combination or {}).get("model_revision") or "") or None,
         dataset_manifest_path=_repo_relative_path(dataset_manifest_path),
         chat_template="qwen2.5",
         trainer_backend="smoke",
+        training_method=training_method,
+        preference_algorithm="smoke" if training_method == "preference" else "smoke",
+        parent_candidate_id=parent_candidate_id,
+        trainer_version=trainer_version,
         code_revision=_git_revision(),
         serve=ServeMetadata(
             served_model_name=served_model_name,
@@ -671,17 +822,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     smoke_parser.add_argument("--config", type=Path, required=True)
     smoke_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     smoke_parser.add_argument("--bench-report", type=Path, default=None)
+    smoke_parser.add_argument("--parent-bench-report", type=Path, default=None)
     smoke_parser.add_argument("--run-version", type=str, default=None)
+    smoke_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
 
     register_parser = subparsers.add_parser("register-candidate", help="Register a trained artifact")
     register_parser.add_argument("--artifact-dir", type=Path, required=True)
     register_parser.add_argument("--config", type=Path, required=True)
     register_parser.add_argument("--bench-report", type=Path, default=None)
+    register_parser.add_argument("--parent-bench-report", type=Path, default=None)
     register_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
 
     promote_parser = subparsers.add_parser("promote", help="Promote a candidate to approved")
     promote_parser.add_argument("--candidate-id", required=True)
     promote_parser.add_argument("--bench-report", type=Path, default=None)
+    promote_parser.add_argument("--parent-bench-report", type=Path, default=None)
     promote_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
     promote_parser.add_argument("--force", action="store_true")
 
@@ -698,6 +853,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     init_parser.add_argument("--output", type=Path, required=True)
     init_parser.add_argument("--base-model-id", default="Qwen/Qwen2.5-7B-Instruct")
     init_parser.add_argument("--combination-id", default="qwen-local-vllm")
+    init_parser.add_argument("--training-method", choices=["sft", "preference"], default="sft")
+    init_parser.add_argument("--parent-candidate-id", default=None)
 
     return parser.parse_args(argv)
 
@@ -718,7 +875,9 @@ def main(argv: list[str] | None = None) -> int:
                 config,
                 output_dir=args.output_dir,
                 bench_report_path=args.bench_report,
+                parent_bench_report_path=args.parent_bench_report,
                 run_version=args.run_version,
+                registry_path=args.registry,
             )
             print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
             return 0
@@ -728,6 +887,7 @@ def main(argv: list[str] | None = None) -> int:
                 artifact_dir=args.artifact_dir,
                 config_path=args.config,
                 bench_report_path=args.bench_report,
+                parent_bench_report_path=args.parent_bench_report,
                 registry_path=args.registry,
             )
             print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
@@ -738,6 +898,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.candidate_id,
                 registry_path=args.registry,
                 bench_report_path=args.bench_report,
+                parent_bench_report_path=args.parent_bench_report,
                 force=args.force,
             )
             print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
@@ -758,6 +919,8 @@ def main(argv: list[str] | None = None) -> int:
                 dataset_manifest_path=args.dataset_manifest,
                 base_model_id=args.base_model_id,
                 combination_id=args.combination_id,
+                training_method=args.training_method,
+                parent_candidate_id=args.parent_candidate_id,
             )
             _write_json(args.output, config.model_dump(mode="json"))
             print(json.dumps({"config_path": str(args.output)}, indent=2))

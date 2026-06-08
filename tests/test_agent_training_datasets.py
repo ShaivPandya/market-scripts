@@ -74,7 +74,11 @@ def test_build_training_dataset_joins_approve_feedback_to_trajectory():
         }
     )
 
-    bundle = build_training_dataset(include_eval_fixtures=False, include_seeds=False)
+    bundle = build_training_dataset(
+        include_eval_fixtures=False,
+        include_seeds=False,
+        include_preference_seeds=False,
+    )
     assert len(bundle["sft_rows"]) == 1
     assert bundle["sft_rows"][0]["source_type"] == "trajectory"
     assert bundle["sft_rows"][0]["signal_source"] == "human_reviewed"
@@ -120,7 +124,11 @@ def test_build_training_dataset_creates_preference_rows_for_reject_and_correct()
         }
     )
 
-    bundle = build_training_dataset(include_eval_fixtures=False, include_seeds=False)
+    bundle = build_training_dataset(
+        include_eval_fixtures=False,
+        include_seeds=False,
+        include_preference_seeds=False,
+    )
     assert len(bundle["preference_rows"]) == 2
     decisions = {row["decision"] for row in bundle["preference_rows"]}
     assert decisions == {"reject", "correct"}
@@ -197,6 +205,134 @@ def test_write_training_dataset_reproduces_manifest_hashes(tmp_path):
 def test_admin_export_requires_admin(client):
     response = client.post("/api/admin/agent/training-datasets/export?dry_run=true")
     assert response.status_code == 401
+
+
+def test_preference_seed_rows_load_with_reward_source_counts(tmp_path):
+    from decision_quality.agent_training_datasets import build_training_dataset
+
+    seeds_dir = tmp_path / "preference_seeds"
+    seeds_dir.mkdir()
+    seed_row = {
+        "example_id": "pref:synthetic:seed-one",
+        "source_type": "synthetic",
+        "source_id": "seed-one",
+        "signal_source": "synthetic",
+        "review_status": "released",
+        "messages": [{"role": "user", "content": "Review NVDA"}],
+        "chosen": "Constructive with risk framing.",
+        "rejected": "Guaranteed winner.",
+        "split_group": "pref:synthetic:seed-one",
+        "split": "train",
+    }
+    (seeds_dir / "seed.jsonl").write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+
+    bundle = build_training_dataset(
+        include_eval_fixtures=False,
+        include_seeds=False,
+        include_preference_seeds=True,
+        preference_seeds_dir=seeds_dir,
+    )
+    assert len(bundle["preference_rows"]) == 1
+    assert bundle["manifest"]["dpo_trainable_count"] == 1
+    assert bundle["manifest"]["preference_reward_source_counts"]["synthetic"] == 1
+
+
+def test_reject_feedback_exports_without_sft_promotion(tmp_path, monkeypatch):
+    from api.agent_response_feedback import response_version_for_trajectory, upsert_feedback
+    from api.agent_trajectories import get_trajectory, grant_trajectory_preference_export_consent, insert_trajectory
+    from decision_quality.agent_training_datasets import build_training_dataset
+
+    trajectory_id = insert_trajectory(
+        {
+            "session_id": "sess-pref-only",
+            "client_turn_id": "turn-pref-only",
+            "final_disposition": "succeeded",
+            "provider": "talisman",
+            "model": "talisman-test",
+            "messages": [
+                {"role": "user", "content": "Review NVDA"},
+                {"role": "assistant", "content": "NVDA looks weak."},
+            ],
+            "steps": [
+                {
+                    "step_id": "step-0",
+                    "index": 0,
+                    "kind": "final",
+                    "name": "assistant_response",
+                    "status": "ok",
+                    "payload": {},
+                }
+            ],
+            "consent_state": "granted",
+            "training_eligible": False,
+        }
+    )
+    grant_trajectory_preference_export_consent(trajectory_id, reviewer_actor_id="reviewer-pref")
+    trajectory = get_trajectory(trajectory_id)
+    assert trajectory["training_eligible"] is False
+
+    response_version = response_version_for_trajectory(trajectory)
+    upsert_feedback(
+        {
+            "feedback_id": "fb-pref-only",
+            "trajectory_id": trajectory_id,
+            "session_id": trajectory["session_id"],
+            "client_turn_id": trajectory["client_turn_id"],
+            "response_version": response_version,
+            "decision": "reject",
+            "reviewer_actor_id": "reviewer-pref",
+            "reviewed_at": "2026-06-07T12:00:00+00:00",
+            "training_eligible": True,
+            "failure_tags": ["synthesis"],
+        }
+    )
+
+    bundle = build_training_dataset(include_eval_fixtures=False, include_seeds=False, include_preference_seeds=False)
+    assert len(bundle["preference_rows"]) == 1
+    assert bundle["preference_rows"][0]["chosen"] is None
+    assert bundle["manifest"]["dpo_trainable_count"] == 0
+    assert bundle["manifest"]["dpo_incomplete_count"] == 1
+
+
+def test_conflicting_preference_labels_are_excluded():
+    from api.agent_response_feedback import response_version_for_trajectory, upsert_feedback
+    from decision_quality.agent_training_datasets import build_training_dataset
+
+    trajectory = _sample_trajectory(client_turn_id="turn-conflict")
+    response_version = response_version_for_trajectory(trajectory)
+    for decision, feedback_id in (("reject", "fb-reject"), ("correct", "fb-correct")):
+        upsert_feedback(
+            {
+                "feedback_id": feedback_id,
+                "trajectory_id": trajectory["trajectory_id"],
+                "session_id": trajectory["session_id"],
+                "client_turn_id": trajectory["client_turn_id"],
+                "response_version": response_version,
+                "decision": decision,
+                "reviewer_actor_id": f"reviewer-{feedback_id}",
+                "reviewed_at": "2026-06-07T12:00:00+00:00",
+                "training_eligible": True,
+                "corrected_response": "Better answer." if decision == "correct" else None,
+                "failure_tags": ["synthesis"],
+            }
+        )
+
+    bundle = build_training_dataset(include_eval_fixtures=False, include_seeds=False, include_preference_seeds=False)
+    assert bundle["preference_rows"] == []
+    reasons = {item["reason"] for item in bundle["manifest"]["exclusions"]}
+    assert "conflicting_preference_labels" in reasons
+
+
+def test_filter_dpo_trainable_preference_rows():
+    from decision_quality.agent_training_datasets import filter_dpo_trainable_preference_rows
+
+    rows = [
+        {"chosen": "good", "rejected": "bad"},
+        {"chosen": None, "rejected": "bad"},
+    ]
+    trainable, incomplete = filter_dpo_trainable_preference_rows(rows)
+    assert len(trainable) == 1
+    assert len(incomplete) == 1
 
 
 def test_admin_export_returns_manifest(auth_client, monkeypatch):

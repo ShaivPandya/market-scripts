@@ -7,7 +7,8 @@
 | Source | Eligibility | Output |
 | --- | --- | --- |
 | Sanitized trajectories + approved human feedback | Trajectory promoted for training; feedback `training_eligible=true`; response version matches | SFT example |
-| Sanitized trajectories + reject/correct feedback | Same guards as above; never reads raw trajectory payloads | Preference example |
+| Sanitized trajectories + reject/correct feedback | Preference export consent or SFT promotion; never reads raw trajectory payloads | Preference example |
+| Preference seeds under `docs/agent_training_datasets/seeds/preference/` | Must declare `signal_source` of `synthetic` or `judge_assisted`; requires `chosen` and `rejected` | Preference example |
 | Eval fixtures in `review` status | Explicitly training-designated; never includes approved TalismanBench release-gate cases | SFT example |
 | Seed JSONL under `docs/agent_training_datasets/seeds/` | Must declare `source_type` of `synthetic` or `teacher` | SFT example |
 
@@ -30,6 +31,16 @@ Every exported example includes:
 
 Teacher-generated examples are visibly marked through `signal_source=teacher` and never count as human-approved labels.
 
+### Preference example fields
+
+- `decision`: `reject` or `correct`
+- `chosen`: required for `correct`; `null` for reject-only evidence
+- `rejected`: assistant content from the trajectory
+- `failure_tags`: reviewer failure categories
+- `signal_source`: `human_reviewed`, `synthetic`, or `judge_assisted`
+
+Reject-only rows remain in `preference.jsonl` for audit and review, but only complete chosen/rejected pairs count toward `dpo_trainable_count`.
+
 ## CLI Export
 
 ```bash
@@ -49,7 +60,7 @@ outputs/agent_training_datasets/<version>/
   manifest.json
 ```
 
-The manifest records source counts, exclusion reason codes, split statistics, release-gate exclusion counts, leakage results, and content hashes. Rebuilding with the same source snapshot, configuration, and `--export-version` reproduces manifest hashes.
+The manifest records source counts, `preference_reward_source_counts`, `dpo_trainable_count`, `dpo_incomplete_count`, exclusion reason codes, split statistics, release-gate exclusion counts, leakage results, and content hashes. Rebuilding with the same source snapshot, configuration, and `--export-version` reproduces manifest hashes.
 
 ## Admin Export API
 
@@ -85,18 +96,19 @@ Release-gate contamination is a hard export failure. Other ineligible rows are r
 Human feedback promotion remains owned by `TL-88`:
 
 - `approve` + explicit training opt-in promotes trajectories
-- `reject` and `correct` can export preference labels without auto-promoting trajectories
+- `reject` and `correct` can export preference labels with preference-only export consent, without SFT promotion
+- conflicting reject/correct labels for the same trajectory response are excluded with `conflicting_preference_labels`
 
 Synthetic and teacher seed rows may carry `review_status` of `pending`, `released`, or `rejected`. Only released rows should be included in downstream training jobs unless an operator explicitly overrides that policy in a future release workflow.
 
 ## Downstream Training
 
-Governed exports feed the SFT/LoRA trainer and candidate registry owned by `TL-91`:
+Governed exports feed the SFT/LoRA trainer and candidate registry owned by `TL-91`, and preference optimization owned by `TL-93`:
 
 - Trainer/registry CLI: `decision_quality/agent_model_training.py`
 - Operating docs: `docs/talisman_agent_model_training.md`
 
-Training jobs must reference the exported `manifest.json` path and refuse datasets with `leakage_check_passed=false`.
+Training jobs must reference the exported `manifest.json` path and refuse datasets with `leakage_check_passed=false`. Preference training additionally requires `dpo_trainable_count >= 1`.
 
 ## Related Docs
 

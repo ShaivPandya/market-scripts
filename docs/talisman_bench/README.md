@@ -84,6 +84,25 @@ The selection protocol compares open-weight candidates against the frontier base
 
 When TalismanBench evaluates a candidate against the chat corpus, it enables benchmark-only agent mode (`TALISMAN_BENCH_AGENT_MODE=1`). This routes agent streaming through the OpenAI-compatible candidate endpoint without changing production provider settings.
 
+## Preference candidate evaluation (TL-93)
+
+Preference-trained candidates should be evaluated against both:
+
+1. the frontier baseline (existing release check)
+2. the approved SFT parent candidate bench report
+
+Attach both reports when registering or promoting a preference candidate:
+
+```bash
+python -m decision_quality.agent_model_training register-candidate \
+  --artifact-dir outputs/agent_model_training/<pref_run_version> \
+  --config configs/agent_preference_smoke.json \
+  --bench-report outputs/talisman_bench/<candidate_timestamp>/release_report.json \
+  --parent-bench-report outputs/talisman_bench/<parent_timestamp>/release_report.json
+```
+
+Promotion refuses preference candidates that introduce new deterministic failures relative to the SFT parent report. Model cards store the parent comparison summary and reward-source counts for ablation review.
+
 ## Manual release check (LLM-backed)
 
 Manual release checks compare one external baseline against one OpenAI-compatible candidate. They require provider API credentials for the baseline and a reachable candidate endpoint.

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "agent_training_datasets"
 DEFAULT_BENCH_MANIFEST = ROOT / "docs" / "talisman_bench" / "manifest.json"
 DEFAULT_SEEDS_DIR = ROOT / "docs" / "agent_training_datasets" / "seeds"
+DEFAULT_PREFERENCE_SEEDS_DIR = ROOT / "docs" / "agent_training_datasets" / "seeds" / "preference"
 
 SFT_SCHEMA_VERSION = 1
 PREFERENCE_SCHEMA_VERSION = 1
@@ -30,7 +31,7 @@ TRANSFORMATION_VERSION = "agent_training_datasets_v1"
 
 SourceType = Literal["trajectory", "eval_fixture", "synthetic", "teacher"]
 ReviewStatus = Literal["released", "pending", "rejected"]
-SignalSource = Literal["human_reviewed", "eval_fixture", "synthetic", "teacher"]
+SignalSource = Literal["human_reviewed", "eval_fixture", "synthetic", "teacher", "judge_assisted"]
 
 EXCLUSION_REASONS = frozenset(
     {
@@ -48,6 +49,8 @@ EXCLUSION_REASONS = frozenset(
         "missing_target_output",
         "missing_preference_pair",
         "invalid_seed_row",
+        "conflicting_preference_labels",
+        "low_confidence_preference",
     }
 )
 
@@ -329,6 +332,79 @@ def eval_fixture_to_sft_row(
     return payload
 
 
+def seed_row_to_preference_row(row: dict[str, Any]) -> dict[str, Any]:
+    source_type = str(row.get("source_type") or "")
+    signal_source = str(row.get("signal_source") or source_type)
+    if signal_source not in {"synthetic", "judge_assisted", "teacher"}:
+        raise AgentTrainingDatasetError(f"Unsupported preference seed signal_source: {signal_source}")
+    messages = row.get("messages")
+    chosen = row.get("chosen")
+    rejected = row.get("rejected")
+    if not isinstance(messages, list) or not chosen or not rejected:
+        raise AgentTrainingDatasetError("Preference seed row requires messages, chosen, and rejected")
+    source_id = str(row.get("source_id") or row.get("example_id") or _stable_hash(row, length=16))
+    split_group = str(row.get("split_group") or f"preference:{source_id}")
+    split = str(row.get("split") or assign_split(split_group))
+    review_status = str(row.get("review_status") or "released")
+    if review_status != "released":
+        raise AgentTrainingDatasetError("Preference seed rows must be released for export")
+    payload = {
+        "example_id": str(row.get("example_id") or f"pref:{signal_source}:{source_id}"),
+        "source_type": source_type if source_type in {"synthetic", "teacher"} else "synthetic",
+        "source_id": source_id,
+        "trajectory_id": str(row.get("trajectory_id") or ""),
+        "feedback_id": str(row.get("feedback_id") or ""),
+        "response_version": str(row.get("response_version") or ""),
+        "decision": "correct",
+        "messages": messages,
+        "steps": list(row.get("steps") or []),
+        "chosen": str(chosen),
+        "rejected": str(rejected),
+        "split_group": split_group,
+        "split": split,
+        "review_status": review_status,
+        "provenance": dict(row.get("provenance") or {}),
+        "redaction_manifest": dict(row.get("redaction_manifest") or {"policy": f"{signal_source}_preference_seed_v1"}),
+        "sensitivity": str(row.get("sensitivity") or "synthetic"),
+        "signal_source": signal_source,
+        "failure_tags": list(row.get("failure_tags") or []),
+    }
+    payload["content_hash"] = _stable_hash(
+        {
+            "messages": payload["messages"],
+            "chosen": payload["chosen"],
+            "rejected": payload["rejected"],
+            "source_id": payload["source_id"],
+        }
+    )
+    return payload
+
+
+def is_dpo_trainable_preference_row(row: dict[str, Any]) -> bool:
+    """Return True when a preference row has a complete chosen/rejected pair for DPO."""
+
+    return bool(str(row.get("chosen") or "").strip()) and bool(str(row.get("rejected") or "").strip())
+
+
+def filter_dpo_trainable_preference_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split preference rows into DPO-trainable pairs and incomplete reject-only rows."""
+
+    trainable: list[dict[str, Any]] = []
+    incomplete: list[dict[str, Any]] = []
+    for row in rows:
+        if is_dpo_trainable_preference_row(row):
+            trainable.append(row)
+        else:
+            incomplete.append(row)
+    return trainable, incomplete
+
+
+def preference_reward_source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(str(row.get("signal_source") or "unknown") for row in rows))
+
+
 def seed_row_to_sft_row(row: dict[str, Any]) -> dict[str, Any]:
     source_type = str(row.get("source_type") or "")
     if source_type not in {"synthetic", "teacher"}:
@@ -408,6 +484,46 @@ def _load_eval_fixture_rows(
     return rows
 
 
+def _load_preference_seed_rows(*, seeds_dir: Path, exclusions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not seeds_dir.exists():
+        return rows
+    for path in sorted(seeds_dir.glob("*.jsonl")):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                rows.append(seed_row_to_preference_row(row))
+            except (json.JSONDecodeError, AgentTrainingDatasetError, ValidationError) as exc:
+                _record_exclusion(
+                    exclusions,
+                    reason="invalid_seed_row",
+                    source_id=f"{path.name}:{line_no}",
+                    detail=str(exc),
+                )
+    return rows
+
+
+def _detect_preference_conflicts(feedback_rows: list[dict[str, Any]]) -> set[str]:
+    """Return trajectory ids with conflicting human-reviewed preference decisions."""
+
+    grouped: dict[tuple[str, str], set[str]] = {}
+    for label in feedback_rows:
+        if label.get("signal_source") != HUMAN_REVIEWED_SIGNAL:
+            continue
+        if not label.get("training_eligible"):
+            continue
+        decision = str(label.get("decision") or "")
+        if decision not in {"reject", "correct"}:
+            continue
+        trajectory_id = str(label.get("trajectory_id") or "")
+        response_version = str(label.get("response_version") or "")
+        key = (trajectory_id, response_version)
+        grouped.setdefault(key, set()).add(decision)
+    return {trajectory_id for (trajectory_id, _version), decisions in grouped.items() if len(decisions) > 1}
+
+
 def _load_seed_rows(*, seeds_dir: Path, exclusions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not seeds_dir.exists():
@@ -429,28 +545,59 @@ def _load_seed_rows(*, seeds_dir: Path, exclusions: list[dict[str, Any]]) -> lis
     return rows
 
 
-def _trajectory_lookup_rows(limit: int) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    from api.agent_trajectories import _exportable_payload, list_trajectories
+def _trajectory_payload_index(
+    row: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **payload,
+        "dataset_split_group": row.get("dataset_split_group") or payload.get("dataset_split_group"),
+        "redaction_manifest": row.get("redaction_manifest") or {},
+        "sensitivity": row.get("sensitivity") or payload.get("sensitivity"),
+    }
 
-    metadata_rows = list_trajectories(limit=limit, training_eligible_only=True)
-    metadata_by_id = {str(row.get("trajectory_id") or ""): row for row in metadata_rows}
-    exported: list[dict[str, Any]] = []
-    for row in metadata_rows:
-        try:
-            exported.append(_exportable_payload(row))
-        except TrajectoryExportError:
+
+def _trajectory_lookup_rows(
+    feedback_rows: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    from api.agent_trajectories import (
+        _exportable_payload,
+        _exportable_preference_payload,
+        get_trajectory,
+        list_trajectories,
+    )
+
+    metadata_by_id: dict[str, dict[str, Any]] = {}
+    sft_index: dict[str, dict[str, Any]] = {}
+    preference_index: dict[str, dict[str, Any]] = {}
+
+    trajectory_ids = {str(label.get("trajectory_id") or "") for label in feedback_rows if label.get("trajectory_id")}
+    for row in list_trajectories(limit=limit, training_eligible_only=True):
+        trajectory_id = str(row.get("trajectory_id") or "")
+        metadata_by_id[trajectory_id] = row
+        trajectory_ids.add(trajectory_id)
+
+    for trajectory_id in sorted(trajectory_ids):
+        row = metadata_by_id.get(trajectory_id) or get_trajectory(trajectory_id)
+        if not row or row.get("tombstoned_at"):
             continue
-    indexed: dict[str, dict[str, Any]] = {}
-    for payload in exported:
-        trajectory_id = str(payload.get("trajectory_id") or "")
-        metadata = metadata_by_id.get(trajectory_id, {})
-        indexed[trajectory_id] = {
-            **payload,
-            "dataset_split_group": metadata.get("dataset_split_group") or payload.get("dataset_split_group"),
-            "redaction_manifest": metadata.get("redaction_manifest") or {},
-            "sensitivity": metadata.get("sensitivity") or payload.get("sensitivity"),
-        }
-    return metadata_by_id, indexed
+        metadata_by_id[trajectory_id] = row
+        try:
+            sft_index[trajectory_id] = _trajectory_payload_index(row, payload=_exportable_payload(row))
+        except TrajectoryExportError:
+            pass
+        try:
+            preference_index[trajectory_id] = _trajectory_payload_index(
+                row,
+                payload=_exportable_preference_payload(row),
+            )
+        except TrajectoryExportError:
+            pass
+
+    return metadata_by_id, sft_index, preference_index
 
 
 def build_training_dataset(
@@ -458,7 +605,9 @@ def build_training_dataset(
     limit: int = 5000,
     include_eval_fixtures: bool = True,
     include_seeds: bool = True,
+    include_preference_seeds: bool = True,
     seeds_dir: Path = DEFAULT_SEEDS_DIR,
+    preference_seeds_dir: Path = DEFAULT_PREFERENCE_SEEDS_DIR,
     manifest_path: Path = DEFAULT_BENCH_MANIFEST,
     export_version: str | None = None,
 ) -> dict[str, Any]:
@@ -472,7 +621,8 @@ def build_training_dataset(
     from api.agent_response_feedback import export_human_reviewed_feedback
 
     feedback_rows = export_human_reviewed_feedback(limit=limit)
-    metadata_by_id, trajectory_index = _trajectory_lookup_rows(limit=limit)
+    conflicting_trajectory_ids = _detect_preference_conflicts(feedback_rows)
+    metadata_by_id, sft_index, preference_index = _trajectory_lookup_rows(feedback_rows, limit=limit)
 
     sft_rows: list[dict[str, Any]] = []
     preference_rows: list[dict[str, Any]] = []
@@ -482,7 +632,17 @@ def build_training_dataset(
             _record_exclusion(exclusions, reason="unreviewed", source_id=str(label.get("feedback_id") or ""))
             continue
         trajectory_id = str(label.get("trajectory_id") or "")
-        trajectory = trajectory_index.get(trajectory_id)
+        decision = str(label.get("decision") or "")
+        if decision in {"reject", "correct"} and trajectory_id in conflicting_trajectory_ids:
+            _record_exclusion(
+                exclusions,
+                reason="conflicting_preference_labels",
+                source_id=trajectory_id,
+                detail=str(label.get("feedback_id") or ""),
+            )
+            continue
+        trajectory_lookup = sft_index if decision == "approve" else preference_index
+        trajectory = trajectory_lookup.get(trajectory_id)
         if trajectory is None:
             _record_exclusion(exclusions, reason="missing_trajectory", source_id=trajectory_id)
             continue
@@ -512,7 +672,6 @@ def build_training_dataset(
             _record_exclusion(exclusions, reason="ineligible_trajectory", source_id=trajectory_id)
             continue
 
-        decision = str(label.get("decision") or "")
         try:
             if decision == "approve":
                 sft_rows.append(
@@ -548,9 +707,12 @@ def build_training_dataset(
 
     if include_seeds:
         sft_rows.extend(_load_seed_rows(seeds_dir=seeds_dir, exclusions=exclusions))
+    if include_preference_seeds:
+        preference_rows.extend(_load_preference_seed_rows(seeds_dir=preference_seeds_dir, exclusions=exclusions))
 
     sft_rows = _dedupe_rows(sft_rows, exclusions)
     preference_rows = _dedupe_rows(preference_rows, exclusions)
+    dpo_trainable_rows, dpo_incomplete_rows = filter_dpo_trainable_preference_rows(preference_rows)
 
     combined_rows = sft_rows + preference_rows
     leakage_violations = check_split_leakage(combined_rows)
@@ -571,6 +733,10 @@ def build_training_dataset(
         "transformation_version": TRANSFORMATION_VERSION,
         "sft_count": len(sft_rows),
         "preference_count": len(preference_rows),
+        "dpo_trainable_count": len(dpo_trainable_rows),
+        "dpo_incomplete_count": len(dpo_incomplete_rows),
+        "preference_reward_source_counts": preference_reward_source_counts(preference_rows),
+        "dpo_trainable_reward_source_counts": preference_reward_source_counts(dpo_trainable_rows),
         "exclusion_count": len(exclusions),
         "exclusion_counts": dict(Counter(item["reason"] for item in exclusions)),
         "exclusions": exclusions,
@@ -679,7 +845,9 @@ def export_training_dataset(
     limit: int = 5000,
     include_eval_fixtures: bool = True,
     include_seeds: bool = True,
+    include_preference_seeds: bool = True,
     seeds_dir: Path = DEFAULT_SEEDS_DIR,
+    preference_seeds_dir: Path = DEFAULT_PREFERENCE_SEEDS_DIR,
     manifest_path: Path = DEFAULT_BENCH_MANIFEST,
     export_version: str | None = None,
     dry_run: bool = False,
@@ -688,7 +856,9 @@ def export_training_dataset(
         limit=limit,
         include_eval_fixtures=include_eval_fixtures,
         include_seeds=include_seeds,
+        include_preference_seeds=include_preference_seeds,
         seeds_dir=seeds_dir,
+        preference_seeds_dir=preference_seeds_dir,
         manifest_path=manifest_path,
         export_version=export_version,
     )
@@ -708,6 +878,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     export_parser.add_argument("--dry-run", action="store_true")
     export_parser.add_argument("--no-eval-fixtures", action="store_true")
     export_parser.add_argument("--no-seeds", action="store_true")
+    export_parser.add_argument("--no-preference-seeds", action="store_true")
+    export_parser.add_argument("--preference-seeds-dir", type=Path, default=DEFAULT_PREFERENCE_SEEDS_DIR)
     return parser.parse_args(argv)
 
 
@@ -720,7 +892,9 @@ def main(argv: list[str] | None = None) -> int:
         limit=args.limit,
         include_eval_fixtures=not args.no_eval_fixtures,
         include_seeds=not args.no_seeds,
+        include_preference_seeds=not args.no_preference_seeds,
         seeds_dir=args.seeds_dir,
+        preference_seeds_dir=args.preference_seeds_dir,
         manifest_path=args.manifest_path,
         export_version=args.export_version,
         dry_run=args.dry_run,

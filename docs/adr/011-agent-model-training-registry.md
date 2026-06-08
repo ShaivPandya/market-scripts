@@ -45,4 +45,5 @@ Key properties:
 - [talisman_training_datasets.md](../talisman_training_datasets.md)
 - [talisman_bench/README.md](../talisman_bench/README.md)
 - [ADR-010](010-open-weight-base-model-and-inference-host.md)
-- Linear `TL-84`, `TL-89`, `TL-90`, `TL-91`, `TL-92`, `TL-97`
+- [ADR-012](012-preference-optimization-training.md)
+- Linear `TL-84`, `TL-89`, `TL-90`, `TL-91`, `TL-92`, `TL-93`, `TL-97`
