@@ -307,6 +307,76 @@ interface GroupState {
   tickers: string[]
 }
 
+interface UnderlyingCluster {
+  key: string
+  ticker: string
+  legs: EditorRow[]
+  conviction: number
+  groupName: string | null
+  direction: PortfolioPosition["direction"]
+  gross: number
+  net: number
+}
+
+function underlyingClusterKey(row: EditorRow) {
+  const ticker = displayTicker(row) || normalizedSymbol(row.ticker)
+  return ticker || row._id
+}
+
+function clusterConviction(legs: EditorRow[]) {
+  if (legs.length === 0) return 3
+  return Math.max(...legs.map(leg => leg.conviction ?? 3))
+}
+
+function clusterGroupName(legs: EditorRow[]) {
+  for (const leg of legs) {
+    const name = normalizeGroupName(leg.group_name)
+    if (name) return name
+  }
+  return null
+}
+
+function inferClusterDirection(legs: EditorRow[]): PortfolioPosition["direction"] {
+  const securityLeg = legs.find(leg => rowInstrumentType(leg) !== "option")
+  if (securityLeg) {
+    return exposureDirection(securityLeg) ?? securityLeg.direction
+  }
+  const net = legs.reduce((sum, leg) => sum + netNotional(leg), 0)
+  if (Math.abs(net) < 1e-6) return legs[0]?.direction ?? "long"
+  return net >= 0 ? "long" : "short"
+}
+
+function buildUnderlyingClusters(rows: EditorRow[]): UnderlyingCluster[] {
+  const map = new Map<string, EditorRow[]>()
+  const order: string[] = []
+  for (const row of rows) {
+    const key = underlyingClusterKey(row)
+    if (!map.has(key)) {
+      map.set(key, [])
+      order.push(key)
+    }
+    map.get(key)?.push(row)
+  }
+  return order.map(key => {
+    const legs = map.get(key) ?? []
+    const ticker = displayTicker(legs[0]) || legs[0]?.ticker || "New position"
+    return {
+      key,
+      ticker,
+      legs,
+      conviction: clusterConviction(legs),
+      groupName: clusterGroupName(legs),
+      direction: inferClusterDirection(legs),
+      gross: legs.reduce((sum, leg) => sum + grossNotional(leg), 0),
+      net: legs.reduce((sum, leg) => sum + netNotional(leg), 0),
+    }
+  })
+}
+
+function clusterHasGroup(cluster: UnderlyingCluster, groupKeyValue: string) {
+  return cluster.legs.some(leg => groupKey(leg.group_name) === groupKeyValue)
+}
+
 function positionGroupState(rows: EditorRow[]) {
   const groups = new Map<string, GroupState>()
   const errors: string[] = []
@@ -593,6 +663,7 @@ function ExposureBar({ summary }: { summary: BookSummary }) {
 /* Grid templates: positions carry a conviction column; hedges do not. */
 const GRID_POSITION = "14px minmax(190px,1fr) 116px 168px 188px 38px"
 const GRID_HEDGE = "14px minmax(190px,1fr) 116px 168px 38px"
+const GRID_UNDERLYING = "14px minmax(170px,1fr) 100px 120px 150px minmax(130px,1fr) 38px"
 
 interface RowCallbacks {
   onUpdate: (id: string, patch: Partial<AnyRow>) => void
@@ -607,23 +678,27 @@ interface EditorRowViewProps extends RowCallbacks {
   groups?: GroupState[]
   onConviction?: (id: string, c: number) => void
   onAssignGroup?: (id: string, name: string | null) => void
+  suppressMetadata?: boolean
+  hideSummary?: boolean
 }
 
-function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemove, onConviction, onAssignGroup }: EditorRowViewProps) {
-  const [open, setOpen] = useState(false)
+function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemove, onConviction, onAssignGroup, suppressMetadata, hideSummary }: EditorRowViewProps) {
+  const [open, setOpen] = useState(Boolean(hideSummary))
   const type = rowInstrumentType(row)
   const isOption = type === "option"
   const expo = exposureDirection(row) ?? row.direction
   const gross = grossNotional(row)
   const pct = bookSize > 0 ? gross / bookSize : 0
   const subtext = valuationSummary(row)
-  const grid = isHedge ? GRID_HEDGE : GRID_POSITION
+  const grid = isHedge || suppressMetadata ? GRID_HEDGE : GRID_POSITION
   const editorRow = row as EditorRow
+  const showMetadata = !isHedge && !suppressMetadata
 
   const toggle = () => setOpen(o => !o)
 
   return (
     <div style={{ borderTop: "1px solid hsl(var(--separator))", background: open ? "hsl(var(--background-card-muted) / 0.5)" : "transparent" }}>
+      {!hideSummary ? (
       <div
         role="button"
         tabIndex={0}
@@ -668,7 +743,7 @@ function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemo
         </div>
 
         {/* Conviction — positions only, editable in-row */}
-        {!isHedge ? (
+        {showMetadata ? (
           <div style={{ display: "flex", justifyContent: "center" }} onClick={e => e.stopPropagation()}>
             <ConvictionChips value={editorRow.conviction} onChange={c => onConviction?.(row._id, c)} />
           </div>
@@ -689,9 +764,10 @@ function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemo
           <Trash2 size={15} />
         </button>
       </div>
+      ) : null}
 
       {open ? (
-        <div style={{ padding: "6px 18px 20px 42px", display: "grid", gap: 16 }}>
+        <div style={{ padding: hideSummary ? "6px 18px 20px 18px" : "6px 18px 20px 42px", display: "grid", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
             <div>
               <div className="label-text" style={{ marginBottom: 8 }}>Direction</div>
@@ -709,7 +785,7 @@ function EditorRowView({ row, bookSize, isHedge, spine, groups, onUpdate, onRemo
                 </div>
               )}
             </div>
-            {!isHedge ? (
+            {showMetadata ? (
               <label style={{ display: "block" }}>
                 <span className="theme-field-label">Group</span>
                 <select
@@ -922,9 +998,132 @@ function InstrumentDetailFields({ row, onUpdate }: { row: AnyRow; onUpdate: (id:
   )
 }
 
+interface UnderlyingBandProps {
+  cluster: UnderlyingCluster
+  bookSize: number
+  spine?: string | null
+  groups: GroupState[]
+  rowCallbacks: RowCallbacks
+  onConviction: (ids: string[], conviction: number) => void
+  onAssignGroup: (ids: string[], name: string | null) => void
+}
+
+function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConviction, onAssignGroup }: UnderlyingBandProps) {
+  const [open, setOpen] = useState(cluster.legs.length > 1)
+  const legIds = cluster.legs.map(leg => leg._id)
+  const pct = bookSize > 0 ? cluster.gross / bookSize : 0
+  const hasOptions = cluster.legs.some(leg => rowInstrumentType(leg) === "option")
+  const hasSecurity = cluster.legs.some(leg => rowInstrumentType(leg) !== "option")
+  const primaryType = hasOptions && hasSecurity ? "option" : hasOptions ? "option" : rowInstrumentType(cluster.legs[0])
+  const primaryAsset = cluster.legs[0]?.asset ?? "equity"
+  const subtext = cluster.legs.length === 1 ? valuationSummary(cluster.legs[0]) : `${cluster.legs.length} legs · expand to edit`
+
+  return (
+    <div style={{ borderTop: "1px solid hsl(var(--separator))", background: open ? "hsl(var(--background-card-muted) / 0.35)" : "transparent" }}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        onKeyDown={e => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            setOpen(value => !value)
+          }
+        }}
+        style={{ display: "grid", gridTemplateColumns: GRID_UNDERLYING, alignItems: "center", gap: 8, padding: "6px 12px", minHeight: 54, cursor: cluster.legs.length > 1 ? "pointer" : "default" }}
+      >
+        <div style={{ alignSelf: "stretch", borderRadius: 999, background: spine || "transparent", width: 4 }} />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+            {cluster.legs.length > 1 ? (
+              <span className="theme-icon-button" style={{ width: 22, height: 22, flex: "0 0 auto" }} aria-hidden="true">
+                <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
+              </span>
+            ) : (
+              <span style={{ width: 22, flex: "0 0 auto" }} />
+            )}
+            <span className="mono-text" style={{ fontWeight: 700, fontSize: "0.95rem", flex: "0 0 auto" }}>{cluster.ticker || "—"}</span>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", minWidth: 0 }}>
+              <InstrumentBadge type={primaryType} />
+              <AssetBadge asset={primaryAsset} />
+              {cluster.legs.length > 1 ? (
+                <span className="theme-badge theme-badge-neutral">{cluster.legs.length} legs</span>
+              ) : null}
+            </div>
+          </div>
+          {subtext ? (
+            <div className="text-subtle" style={{ fontSize: "0.74rem", paddingLeft: 29, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{subtext}</div>
+          ) : null}
+        </div>
+
+        <div><DirectionTag direction={cluster.direction} /></div>
+
+        <div style={{ display: "flex", justifyContent: "center" }} onClick={e => e.stopPropagation()}>
+          <ConvictionChips value={cluster.conviction} onChange={c => onConviction(legIds, c)} />
+        </div>
+
+        <div style={{ textAlign: "right" }}>
+          <div className="mono-text" style={{ fontSize: "0.92rem", fontWeight: 700, color: cluster.net < 0 ? "hsl(var(--negative))" : "hsl(var(--foreground))" }}>
+            {cluster.net < 0 ? "−" : ""}{fmtUSD0(cluster.gross)}
+          </div>
+          <div className="text-subtle" style={{ fontSize: "0.72rem" }}>{fmtPct(pct)} of book</div>
+        </div>
+
+        <label style={{ display: "block", minWidth: 0 }} onClick={e => e.stopPropagation()}>
+          <span className="sr-only">Group</span>
+          <select
+            className="theme-input w-full text-sm"
+            value={cluster.groupName ?? ""}
+            onChange={e => onAssignGroup(legIds, e.target.value || null)}
+          >
+            <option value="">— Ungrouped —</option>
+            {groups.map(group => (
+              <option key={group.key} value={group.name}>{group.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <div />
+      </div>
+
+      {cluster.legs.length === 1 ? (
+        <EditorRowView
+          row={cluster.legs[0]}
+          bookSize={bookSize}
+          isHedge={false}
+          spine={spine}
+          groups={groups}
+          onUpdate={rowCallbacks.onUpdate}
+          onRemove={rowCallbacks.onRemove}
+          suppressMetadata
+          hideSummary
+        />
+      ) : open ? (
+        <div style={{ background: "hsl(var(--background-card) / 0.45)" }}>
+          {cluster.legs.map(leg => (
+            <EditorRowView
+              key={leg._id}
+              row={leg}
+              bookSize={bookSize}
+              isHedge={false}
+              spine={spine}
+              groups={groups}
+              onUpdate={rowCallbacks.onUpdate}
+              onRemove={rowCallbacks.onRemove}
+              suppressMetadata
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 interface GroupBandProps {
   group: GroupState
-  members: EditorRow[]
+  clusters: UnderlyingCluster[]
   bookSize: number
   onRename: (key: string, name: string) => void
   onConvictionAll: (name: string, c: number) => void
@@ -932,12 +1131,13 @@ interface GroupBandProps {
   onDisband: (key: string) => void
   rowCallbacks: RowCallbacks
   groups: GroupState[]
-  onRowConviction: (id: string, c: number) => void
-  onAssignGroup: (id: string, name: string | null) => void
+  onClusterConviction: (ids: string[], c: number) => void
+  onAssignClusterGroup: (ids: string[], name: string | null) => void
 }
 
-function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddToGroup, onDisband, rowCallbacks, groups, onRowConviction, onAssignGroup }: GroupBandProps) {
+function GroupBand({ group, clusters, bookSize, onRename, onConvictionAll, onAddToGroup, onDisband, rowCallbacks, groups, onClusterConviction, onAssignClusterGroup }: GroupBandProps) {
   const [draftName, setDraftName] = useState(group.name)
+  const members = clusters.flatMap(cluster => cluster.legs)
   if (members.length === 0) return null
   const col = groupColor(group.key)
   const gross = members.reduce((s, m) => s + grossNotional(m), 0)
@@ -1025,18 +1225,16 @@ function GroupBand({ group, members, bookSize, onRename, onConvictionAll, onAddT
       </div>
 
       <div style={{ background: "hsl(var(--background-card) / 0.6)" }}>
-        {members.map(m => (
-          <EditorRowView
-            key={m._id}
-            row={m}
+        {clusters.map(cluster => (
+          <UnderlyingBand
+            key={cluster.key}
+            cluster={cluster}
             bookSize={bookSize}
-            isHedge={false}
             spine={col}
             groups={groups}
-            onUpdate={rowCallbacks.onUpdate}
-            onRemove={rowCallbacks.onRemove}
-            onConviction={onRowConviction}
-            onAssignGroup={onAssignGroup}
+            rowCallbacks={rowCallbacks}
+            onConviction={onClusterConviction}
+            onAssignGroup={onAssignClusterGroup}
           />
         ))}
       </div>
@@ -1176,10 +1374,6 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
     setHedgeRows(prev => prev.filter(r => r._id !== id))
   }
 
-  function setPositionConviction(id: string, conviction: number) {
-    setPositionRows(prev => prev.map(r => (r._id === id ? { ...r, conviction } : r)))
-  }
-
   function addPositionRow() {
     setPositionRows(prev => [...prev, newRow()])
   }
@@ -1221,20 +1415,30 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
     setPositionRows(prev => prev.map(row => (groupKey(row.group_name) === key ? { ...row, group_name: null, group_conviction: null } : row)))
   }
 
-  function assignGroup(id: string, name: string | null) {
+  function setClusterConviction(ids: string[], conviction: number) {
+    const idSet = new Set(ids)
+    setPositionRows(prev => prev.map(r => (idSet.has(r._id) ? { ...r, conviction } : r)))
+  }
+
+  function assignClusterGroup(ids: string[], name: string | null) {
     setPositionRows(prev => {
       const normalized = normalizeGroupName(name)
+      const idSet = new Set(ids)
       if (!normalized) {
-        return prev.map(row => (row._id === id ? { ...row, group_name: null, group_conviction: null } : row))
+        return prev.map(row => (idSet.has(row._id) ? { ...row, group_name: null, group_conviction: null } : row))
       }
       const key = groupKey(normalized)
-      const existing = prev.find(row => row._id !== id && groupKey(row.group_name) === key)
-      const target = prev.find(row => row._id === id)
-      const conviction = normalizeGroupConviction(existing?.group_conviction)
-        ?? normalizeGroupConviction(target?.group_conviction)
-        ?? target?.conviction
+      const existing = prev.find(row => !idSet.has(row._id) && groupKey(row.group_name) === key)
+      const targetLegs = prev.filter(row => idSet.has(row._id))
+      const groupConviction = normalizeGroupConviction(existing?.group_conviction)
+        ?? normalizeGroupConviction(targetLegs[0]?.group_conviction)
+        ?? clusterConviction(targetLegs)
         ?? 3
-      return prev.map(row => (row._id === id ? { ...row, group_name: normalized, group_conviction: conviction } : row))
+      return prev.map(row => (
+        idSet.has(row._id)
+          ? { ...row, group_name: normalized, group_conviction: groupConviction }
+          : row
+      ))
     })
   }
 
@@ -1380,7 +1584,8 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
   const activeRows: AnyRow[] = tab === "Positions" ? positionRows : hedgeRows
   const summary = summarize(activeRows, bookSizeNum)
   const orderedGroups = Array.from(currentGroupState.groups.values())
-  const ungroupedPositions = positionRows.filter(r => !groupKey(r.group_name))
+  const underlyingClusters = buildUnderlyingClusters(positionRows)
+  const ungroupedClusters = underlyingClusters.filter(cluster => !clusterGroupName(cluster.legs))
 
   if (isLoading) {
     return <p className="text-sm text-muted py-4">Loading portfolio and hedge positions...</p>
@@ -1570,7 +1775,7 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
                 <GroupBand
                   key={group.key}
                   group={group}
-                  members={positionRows.filter(r => groupKey(r.group_name) === group.key)}
+                  clusters={underlyingClusters.filter(cluster => clusterHasGroup(cluster, group.key))}
                   bookSize={bookSizeNum}
                   onRename={renameGroup}
                   onConvictionAll={setGroupConviction}
@@ -1578,15 +1783,15 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
                   onDisband={disbandGroup}
                   rowCallbacks={positionRowCallbacks}
                   groups={orderedGroups}
-                  onRowConviction={setPositionConviction}
-                  onAssignGroup={assignGroup}
+                  onClusterConviction={setClusterConviction}
+                  onAssignClusterGroup={assignClusterGroup}
                 />
               ))}
 
               <SectionCard
                 title="Ungrouped positions"
                 icon={<span>◇</span>}
-                count={ungroupedPositions.length}
+                count={ungroupedClusters.length}
                 footer={(
                   <>
                     <button type="button" className="theme-button-base theme-button-ghost" style={{ minHeight: 38 }} onClick={addPositionRow}>
@@ -1598,18 +1803,16 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
                   </>
                 )}
               >
-                {ungroupedPositions.map(row => (
-                  <EditorRowView
-                    key={row._id}
-                    row={row}
+                {ungroupedClusters.map(cluster => (
+                  <UnderlyingBand
+                    key={cluster.key}
+                    cluster={cluster}
                     bookSize={bookSizeNum}
-                    isHedge={false}
                     spine={null}
                     groups={orderedGroups}
-                    onUpdate={updatePositionRow}
-                    onRemove={removePositionRow}
-                    onConviction={setPositionConviction}
-                    onAssignGroup={assignGroup}
+                    rowCallbacks={positionRowCallbacks}
+                    onConviction={setClusterConviction}
+                    onAssignGroup={assignClusterGroup}
                   />
                 ))}
               </SectionCard>

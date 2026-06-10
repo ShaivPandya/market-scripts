@@ -8,11 +8,13 @@ from typing import Any
 
 from portfolio.instruments import (
     build_option_contract_symbol,
+    display_ticker,
     normalize_option_type,
     normalize_portfolio_instrument_row,
     parse_occ_symbol,
     position_row_id,
 )
+from portfolio.position_groups import normalize_group_name
 
 SUPPORTED_ASSET_CATEGORIES = {"STK", "OPT"}
 PRESERVED_METADATA_FIELDS = ("conviction", "contrarian", "group_name", "group_conviction")
@@ -195,6 +197,41 @@ def parse_ibkr_flex_open_positions_xml(payload: bytes | str) -> list[dict[str, A
     return rows
 
 
+def _leg_conviction(row: dict[str, Any]) -> int:
+    value = row.get("conviction")
+    if value is None:
+        return DEFAULT_CONVICTION
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CONVICTION
+    return max(1, min(5, parsed))
+
+
+def _representative_metadata_leg(current: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """Prefer a leg carrying a group, then highest conviction."""
+    current_grouped = bool(normalize_group_name(current.get("group_name")))
+    candidate_grouped = bool(normalize_group_name(candidate.get("group_name")))
+    if candidate_grouped and not current_grouped:
+        return candidate
+    if current_grouped and not candidate_grouped:
+        return current
+    return candidate if _leg_conviction(candidate) > _leg_conviction(current) else current
+
+
+def _index_existing_by_underlying(existing_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_underlying: dict[str, dict[str, Any]] = {}
+    for row in existing_rows:
+        if str(row.get("role") or "position").lower() == "hedge":
+            continue
+        key = display_ticker(row)
+        if not key:
+            continue
+        existing = by_underlying.get(key)
+        by_underlying[key] = _representative_metadata_leg(existing, row) if existing else row
+    return by_underlying
+
+
 def merge_preserved_portfolio_metadata(
     imported_rows: list[dict[str, Any]],
     existing_rows: list[dict[str, Any]],
@@ -207,11 +244,16 @@ def merge_preserved_portfolio_metadata(
         key = position_row_id(row)
         if key:
             existing_by_id[key] = row
+    existing_by_underlying = _index_existing_by_underlying(existing_rows)
 
     merged: list[dict[str, Any]] = []
     for row in imported_rows:
         out = dict(row)
         existing = existing_by_id.get(position_row_id(out))
+        if existing is None:
+            underlying_key = display_ticker(out)
+            if underlying_key:
+                existing = existing_by_underlying.get(underlying_key)
         if existing:
             for field in PRESERVED_METADATA_FIELDS:
                 if field in existing and existing.get(field) is not None:
