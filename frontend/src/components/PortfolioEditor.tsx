@@ -1009,7 +1009,7 @@ interface UnderlyingBandProps {
 }
 
 function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConviction, onAssignGroup }: UnderlyingBandProps) {
-  const [open, setOpen] = useState(cluster.legs.length > 1)
+  const [open, setOpen] = useState(false)
   const legIds = cluster.legs.map(leg => leg._id)
   const pct = bookSize > 0 ? cluster.gross / bookSize : 0
   const hasOptions = cluster.legs.some(leg => rowInstrumentType(leg) === "option")
@@ -1031,19 +1031,15 @@ function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConv
             setOpen(value => !value)
           }
         }}
-        style={{ display: "grid", gridTemplateColumns: GRID_UNDERLYING, alignItems: "center", gap: 8, padding: "6px 12px", minHeight: 54, cursor: cluster.legs.length > 1 ? "pointer" : "default" }}
+        style={{ display: "grid", gridTemplateColumns: GRID_UNDERLYING, alignItems: "center", gap: 8, padding: "6px 12px", minHeight: 54, cursor: "pointer" }}
       >
         <div style={{ alignSelf: "stretch", borderRadius: 999, background: spine || "transparent", width: 4 }} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-            {cluster.legs.length > 1 ? (
-              <span className="theme-icon-button" style={{ width: 22, height: 22, flex: "0 0 auto" }} aria-hidden="true">
-                <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
-              </span>
-            ) : (
-              <span style={{ width: 22, flex: "0 0 auto" }} />
-            )}
+            <span className="theme-icon-button" style={{ width: 22, height: 22, flex: "0 0 auto" }} aria-hidden="true">
+              <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
+            </span>
             <span className="mono-text" style={{ fontWeight: 700, fontSize: "0.95rem", flex: "0 0 auto" }}>{cluster.ticker || "—"}</span>
             <div style={{ display: "flex", gap: 5, alignItems: "center", minWidth: 0 }}>
               <InstrumentBadge type={primaryType} />
@@ -1088,19 +1084,7 @@ function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConv
         <div />
       </div>
 
-      {cluster.legs.length === 1 ? (
-        <EditorRowView
-          row={cluster.legs[0]}
-          bookSize={bookSize}
-          isHedge={false}
-          spine={spine}
-          groups={groups}
-          onUpdate={rowCallbacks.onUpdate}
-          onRemove={rowCallbacks.onRemove}
-          suppressMetadata
-          hideSummary
-        />
-      ) : open ? (
+      {open ? (
         <div style={{ background: "hsl(var(--background-card) / 0.45)" }}>
           {cluster.legs.map(leg => (
             <EditorRowView
@@ -1113,6 +1097,7 @@ function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConv
               onUpdate={rowCallbacks.onUpdate}
               onRemove={rowCallbacks.onRemove}
               suppressMetadata
+              hideSummary={cluster.legs.length === 1}
             />
           ))}
         </div>
