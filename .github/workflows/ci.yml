@@ -66,6 +66,7 @@ jobs:
             tests/test_opportunity_candidate_model.py \
             tests/test_opportunity_candidate_eval_runner.py \
             tests/test_talisman_bench.py \
+            tests/test_agent_replay_environments.py \
             tests/test_opportunity_scout.py \
             tests/test_opportunity_scout_integration.py \
             tests/test_opportunity_scout_workspace.py \
