@@ -87,9 +87,7 @@ def validate_position_groups(rows: Sequence[Mapping[str, Any]]) -> None:
                 f"({existing['conviction']} and {conviction})."
             )
         if existing["direction"] and direction and existing["direction"] != direction:
-            raise ValueError(
-                f"Group '{existing['name']}' cannot mix {existing['direction']} and {direction} positions."
-            )
+            existing["direction"] = "mixed"
         if not existing["direction"] and direction:
             existing["direction"] = direction
         existing["members"].append(ticker)
@@ -122,7 +120,7 @@ def canonicalize_position_group_rows(rows: Sequence[Mapping[str, Any]]) -> list[
                 f"Group '{group['name']}' has inconsistent group convictions ({group['conviction']} and {conviction})."
             )
         if group["direction"] and direction and group["direction"] != direction:
-            raise ValueError(f"Group '{group['name']}' cannot mix {group['direction']} and {direction} positions.")
+            group["direction"] = "mixed"
         if not group["direction"] and direction:
             group["direction"] = direction
         group["members"].append(ticker)
@@ -154,4 +152,8 @@ def group_summaries(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         )
         if ticker:
             group["members"].append(ticker)
+        if group["direction"] and direction and group["direction"] != direction:
+            group["direction"] = "mixed"
+        elif not group["direction"] and direction:
+            group["direction"] = direction
     return sorted(groups.values(), key=lambda item: str(item["group_name"]).casefold())

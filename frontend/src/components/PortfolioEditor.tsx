@@ -302,7 +302,7 @@ interface GroupState {
   key: string
   name: string
   conviction: number
-  direction: PortfolioPosition["direction"]
+  direction: PortfolioPosition["direction"] | "mixed"
   ids: string[]
   tickers: string[]
 }
@@ -412,7 +412,7 @@ function positionGroupState(rows: EditorRow[]) {
       errors.push(`Group ${existing.name} has inconsistent convictions.`)
     }
     if (existing.direction !== direction) {
-      errors.push(`Group ${existing.name} cannot mix ${existing.direction} and ${direction} exposure.`)
+      existing.direction = "mixed"
     }
   }
   return { groups, errors: Array.from(new Set(errors)) }
