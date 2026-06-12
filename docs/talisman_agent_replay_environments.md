@@ -101,5 +101,5 @@ See `docs/talisman_offline_policy_experiments.md` and `docs/adr/014-offline-agen
 
 ## References
 
-- Linear `TL-84`, `TL-87`, `TL-89`, `TL-90`, `TL-91`, `TL-94`, `TL-68`, `TL-92`, `TL-97`
+- [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) — program architecture guide (`TL-97`)
 - Implementation: `decision_quality/agent_replay_environments.py`

@@ -196,4 +196,4 @@ Store the resulting `release_report.json` with P50/P95 latency, throughput, and 
 
 ## Documentation impact
 
-This issue adds TalismanBench operating docs, the candidate matrix, and ADR-010 for the initial open-weight model/host selection. SFT/LoRA training and candidate registry are owned by `TL-91` (`docs/talisman_agent_model_training.md`). Cross-cutting architecture guidance and the final documentation audit remain owned by `TL-97`.
+This issue adds TalismanBench operating docs, the candidate matrix, and ADR-010 for the initial open-weight model/host selection. SFT/LoRA training and candidate registry are owned by `TL-91` (`docs/talisman_agent_model_training.md`). Program architecture guidance and the final documentation audit are owned by `TL-97` (`docs/talisman_owned_agent_model_program.md`).

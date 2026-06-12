@@ -122,4 +122,4 @@ Do not add TL-68 report rows to `sft.jsonl` or `preference.jsonl` unless a futur
 - TalismanBench held-out rules: `docs/talisman_bench/README.md`
 - Agent model training/registry: `docs/talisman_agent_model_training.md`
 - Offline policy reports: `docs/talisman_offline_policy_experiments.md`
-- Cross-cutting architecture audit: `TL-97`
+- Program architecture guide: [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) (`TL-97`)

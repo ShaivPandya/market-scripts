@@ -1,6 +1,6 @@
 # ADR-011: Agent Model Training And Candidate Registry
 
-**Status:** Proposed
+**Status:** Accepted — implements `TL-91`
 **Owner:** Shaiv Pandya
 **Date:** 2026-06-07
 **Revisit trigger:** Trainer backend changes, new base-model generation, or promotion gate policy updates that alter reproducibility or release evidence requirements.
@@ -47,3 +47,4 @@ Key properties:
 - [ADR-010](010-open-weight-base-model-and-inference-host.md)
 - [ADR-012](012-preference-optimization-training.md)
 - Linear `TL-84`, `TL-89`, `TL-90`, `TL-91`, `TL-92`, `TL-93`, `TL-97`
+- [Program architecture guide](../talisman_owned_agent_model_program.md)

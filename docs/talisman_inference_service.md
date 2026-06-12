@@ -188,7 +188,7 @@ python -m decision_quality.agent_model_training disable --candidate-id <candidat
 | `docs/talisman_bench/README.md` | Managed endpoint validation protocol |
 | `infra/gcp/README.md` | Inference deploy and monitoring scripts |
 | `.env.example` | Production `TALISMAN_*` references |
-| `TL-97` | Cross-cutting architecture guide input |
+| `TL-97` | [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) — canonical program guide |
 
 ## Related docs
 

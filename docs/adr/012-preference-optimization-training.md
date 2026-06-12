@@ -1,6 +1,6 @@
 # ADR-012: Preference Optimization Training From Reviewed Response Pairs
 
-**Status:** Proposed
+**Status:** Accepted — implements `TL-93`
 **Owner:** Shaiv Pandya
 **Date:** 2026-06-08
 **Revisit trigger:** Preference algorithm changes, new reward-source categories, or promotion evidence requirements that alter parent-lineage or ablation reporting.
@@ -45,3 +45,4 @@ Key properties:
 - [talisman_training_datasets.md](../talisman_training_datasets.md)
 - [ADR-011](011-agent-model-training-registry.md)
 - Linear `TL-84`, `TL-89`, `TL-90`, `TL-91`, `TL-93`, `TL-97`
+- [Program architecture guide](../talisman_owned_agent_model_program.md)

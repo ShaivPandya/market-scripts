@@ -39,6 +39,7 @@ Deterministic policy gates in `api/agent_governance.py` remain authoritative for
 ## References
 
 - `docs/talisman_owned_model_rollout.md`
+- `docs/talisman_owned_agent_model_program.md`
 - `api/owned_model_rollout.py`
 - `docs/talisman_inference_service.md`
 - `docs/talisman_bench/README.md`

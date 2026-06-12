@@ -118,3 +118,4 @@ pytest tests/test_owned_model_rollout.py tests/test_agent_owned_model_rollout.py
 - `docs/talisman_agent_replay_environments.md`
 - `docs/talisman_training_datasets.md`
 - `docs/talisman_owned_model_rollout.md`
+- `docs/talisman_owned_agent_model_program.md`

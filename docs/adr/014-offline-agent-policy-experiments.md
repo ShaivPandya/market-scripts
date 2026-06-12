@@ -1,6 +1,6 @@
 # ADR-014: Offline Agent-Policy Experiments
 
-**Status:** Proposed
+**Status:** Accepted — implements `TL-68`
 **Owner:** Shaiv Pandya
 **Date:** 2026-06-12
 **Revisit trigger:** Any proposal to run a learned process policy in production shadow/canary mode, add sequence-level offline RL, or use new reward sources beyond process/eval/human-reviewed signals.
@@ -51,3 +51,4 @@ The first implementation:
 - `decision_quality/eval_corpus.py`
 - `docs/talisman_offline_policy_experiments.md`
 - Linear `TL-68`, `TL-84`, `TL-92`, `TL-94`, `TL-97`
+- [Program architecture guide](../talisman_owned_agent_model_program.md)

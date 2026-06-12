@@ -100,3 +100,21 @@ Training exports remain conservative:
 ### UI Disclosure
 
 Completed Stan responses expose approve, reject, and correct actions in the agent chat UI. The interface explains that feedback is stored with the trajectory and model version and may be used for evaluation review or optional governed training datasets.
+
+## Owned-model rollout telemetry (`TL-92`)
+
+When owned-model shadow or canary routing is active, agent trajectories may include `raw_payload.owned_model_rollout` metadata:
+
+- rollout phase (`shadow`, `canary`, or baseline-only)
+- `candidate_id`, provider, and model alias
+- explicit `fallback_reason` when the owned model was not used
+- canary selection and confidence signals
+
+Release-ops drift alerts and rollout burn-in gates aggregate from this field. See [talisman_owned_model_rollout.md](talisman_owned_model_rollout.md) and [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md).
+
+## Related docs
+
+- Program architecture guide: [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) (`TL-97`)
+- Training datasets: [talisman_training_datasets.md](talisman_training_datasets.md)
+- Agent model training: [talisman_agent_model_training.md](talisman_agent_model_training.md)
+- Replay environments: [talisman_agent_replay_environments.md](talisman_agent_replay_environments.md)

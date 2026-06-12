@@ -214,4 +214,4 @@ Each candidate publishes `model_card.json` with:
 - Preference optimization ADR: `docs/adr/012-preference-optimization-training.md`
 - Inference service runbook: `docs/talisman_inference_service.md`
 - Release operations: `docs/talisman_model_release_operations.md`
-- Cross-cutting architecture audit: `TL-97`
+- Program architecture guide: [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) (`TL-97`)

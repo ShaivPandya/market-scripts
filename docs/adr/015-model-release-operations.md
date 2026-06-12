@@ -44,3 +44,4 @@ The owned-model program already has governed dataset export (`TL-90`), training/
 - [ADR-011](011-agent-model-training-registry.md)
 - [ADR-013](013-owned-model-rollout-controls.md)
 - Linear `TL-84`, `TL-89`, `TL-91`, `TL-92`, `TL-95`, `TL-96`, `TL-97`
+- [Program architecture guide](../talisman_owned_agent_model_program.md)

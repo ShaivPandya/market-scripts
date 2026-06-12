@@ -71,7 +71,7 @@ curl -X POST "$API_URL/api/admin/jobs/enqueue-agent-model-release-refresh" \
   -H "X-Scheduler-Secret: $SCHEDULER_SECRET"
 ```
 
-Enable weekly scheduler wiring with `SCHEDULE_AGENT_MODEL_RELEASE_REFRESH=1` in `infra/gcp/setup-scheduler.sh`.
+Enable weekly scheduler wiring with `SCHEDULE_AGENT_MODEL_RELEASE_REFRESH=1` in `infra/gcp/setup-scheduler.sh`. The job is **disabled by default** (`:-0`).
 
 ## Human approval and release records
 
@@ -137,10 +137,11 @@ The command:
 
 Artifact directories, model cards, bench reports, and release records remain addressable for audit.
 
-## Disabled and deprecated behavior
+## Disabled, deprecated, and candidate behavior
 
 | State | Routing | Audit retention |
 | --- | --- | --- |
+| `candidate` | Not routed; trained artifact with manifest | Full |
 | `approved` | Eligible when referenced by rollout policy | Full |
 | `deprecated` | Not routed; superseded | Full |
 | `disabled` | Blocked from promotion, deploy, and rollout | Full |
@@ -166,4 +167,4 @@ Failure-path checks:
 - Rollout controls: [talisman_owned_model_rollout.md](talisman_owned_model_rollout.md)
 - Inference service: [talisman_inference_service.md](talisman_inference_service.md)
 - ADR: [adr/015-model-release-operations.md](adr/015-model-release-operations.md)
-- Cross-cutting architecture guide input: `TL-97`
+- Program architecture guide: [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) (`TL-97`)

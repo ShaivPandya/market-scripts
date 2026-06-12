@@ -107,8 +107,17 @@ Rollback drill:
 
 ## Fallback taxonomy
 
-Every fallback is recorded with a stable reason:
+Every fallback is recorded with a stable reason from `api/owned_model_rollout.py`:
 
+- `rollout_disabled`
+- `kill_switch_active`
+- `force_baseline_active`
+- `task_class_not_eligible`
+- `candidate_not_approved`
+- `candidate_lifecycle_disabled`
+- `candidate_unavailable`
+- `provider_lifecycle_disabled`
+- `model_lifecycle_disabled`
 - `confidence_below_threshold`
 - `unsupported_capability`
 - `endpoint_failure`
@@ -117,11 +126,7 @@ Every fallback is recorded with a stable reason:
 - `schema_failure`
 - `policy_denied`
 - `gate_failure`
-- `provider_lifecycle_disabled`
-- `model_lifecycle_disabled`
-- `candidate_not_approved`
-- `kill_switch_active`
-- `force_baseline_active`
+- `canary_not_selected`
 
 ## Reporting surfaces
 
@@ -188,3 +193,10 @@ Failure-path checks to exercise manually or in staging:
 - schema/gate failure → `schema_failure` or `gate_failure`
 - lifecycle disablement → `provider_lifecycle_disabled` / `model_lifecycle_disabled`
 - kill switch → immediate baseline-only traffic
+
+## Related docs
+
+- Program architecture guide: [talisman_owned_agent_model_program.md](talisman_owned_agent_model_program.md) (`TL-97`)
+- Release operations: [talisman_model_release_operations.md](talisman_model_release_operations.md) (`TL-96`)
+- Inference service: [talisman_inference_service.md](talisman_inference_service.md) (`TL-95`)
+- Training/registry: [talisman_agent_model_training.md](talisman_agent_model_training.md) (`TL-91`)

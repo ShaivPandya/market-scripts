@@ -1,6 +1,6 @@
 # ADR-010: Initial Open-Weight Base Model and Inference Host
 
-**Status:** Proposed
+**Status:** Accepted — implements `TL-85`, `TL-86`, and `TL-95`
 **Owner:** Shaiv Pandya
 **Date:** 2026-06-07
 **Revisit trigger:** A newer open-weight generation beats the smoke suite on tool-calling and structured-output gates; latency P95 on chat corpus regresses more than 15%; license or data-handling constraints change; or managed-host cost exceeds the documented ceiling.
@@ -78,3 +78,4 @@ Chat/tool coverage uses benchmark-only agent mode (`TALISMAN_BENCH_AGENT_MODE=1`
 - [bench_openai_client.py](../../decision_quality/bench_openai_client.py)
 - [talisman_bench.py](../../decision_quality/talisman_bench.py)
 - Linear `TL-84`, `TL-85`, `TL-86`, `TL-89`, `TL-95`, `TL-97`
+- [Program architecture guide](../talisman_owned_agent_model_program.md)
