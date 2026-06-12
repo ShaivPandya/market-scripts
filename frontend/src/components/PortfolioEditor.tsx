@@ -373,6 +373,10 @@ function buildUnderlyingClusters(rows: EditorRow[]): UnderlyingCluster[] {
   })
 }
 
+function clusterRenderKey(cluster: UnderlyingCluster) {
+  return cluster.legs.map(leg => leg._id).join(":") || cluster.key
+}
+
 function clusterHasGroup(cluster: UnderlyingCluster, groupKeyValue: string) {
   return cluster.legs.some(leg => groupKey(leg.group_name) === groupKeyValue)
 }
@@ -1224,7 +1228,7 @@ function GroupBand({ group, clusters, bookSize, onRename, onConvictionAll, onAdd
       <div style={{ background: "hsl(var(--background-card) / 0.6)" }}>
         {clusters.map(cluster => (
           <UnderlyingBand
-            key={cluster.key}
+            key={clusterRenderKey(cluster)}
             cluster={cluster}
             bookSize={bookSize}
             spine={col}
@@ -1802,7 +1806,7 @@ export function PortfolioEditorPanel({ onCancel }: PortfolioEditorPanelProps = {
               >
                 {ungroupedClusters.map(cluster => (
                   <UnderlyingBand
-                    key={cluster.key}
+                    key={clusterRenderKey(cluster)}
                     cluster={cluster}
                     bookSize={bookSizeNum}
                     spine={null}
