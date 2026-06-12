@@ -27,6 +27,7 @@ from ontology.schemas.identity import (
     classification_id,
     company_financial_profile_id,
     computed_snapshot_ref_id,
+    conviction_history_entry_id,
     course_of_action_comparison_id,
     course_of_action_dissent_id,
     course_of_action_id,
@@ -861,6 +862,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return opportunity_candidate_id(props.get("candidate_id") or props.get("idempotency_key") or key)
     if object_type == "IdeaEvaluation":
         return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
+    if object_type == "ConvictionHistoryEntry":
+        if key.startswith("conviction_history_entry:"):
+            return key
+        return conviction_history_entry_id(props.get("entry_id") or key)
     if object_type == "IdeaComparisonRun":
         return idea_comparison_run_id(props.get("comparison_run_id") or props.get("run_id") or props.get("id") or key)
     if object_type == "IdeaComparisonRanking":
