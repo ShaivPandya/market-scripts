@@ -130,6 +130,8 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     }
     assert payload["gateway_policy"]["private_egress_mode"] == "allow_with_warning"
     assert payload["gateway_policy"]["provider_lifecycle"]["talisman"] == "draft"
+    assert payload["gateway_policy"]["owned_model_rollout"]["enabled"] is False
+    assert payload["gateway_policy"]["owned_model_rollout"]["candidate_provider"] == "talisman"
     assert "local" not in payload["gateway_policy"]["provider_lifecycle"]
     assert "local_provider" not in payload
     assert "sk-ant-test" not in response.text

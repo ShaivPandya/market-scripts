@@ -410,6 +410,188 @@ def _done_payload(base: dict[str, Any], timings: dict[str, Any], turn_started: f
     return out
 
 
+def _owned_rollout_done_payload(
+    *,
+    rollout_decision: Any,
+    rollout_telemetry: Any,
+    timings: dict[str, Any],
+) -> dict[str, Any]:
+    from api.owned_model_rollout import rollout_reporting_summary
+
+    return {
+        "owned_model_rollout": {
+            "applied": rollout_decision.to_meta(),
+            "telemetry": rollout_telemetry.to_meta(),
+            "reporting": rollout_reporting_summary(
+                rollout_decision=rollout_decision,
+                rollout_meta=rollout_telemetry.to_meta(),
+                timings=timings,
+            ),
+        }
+    }
+
+
+def _resolve_owned_model_rollout(
+    *,
+    route_decision: RouteDecision,
+    baseline_provider: str,
+    session_id: str,
+    client_turn_id: str | None,
+    path: str,
+    confidence: float,
+) -> tuple[Any, Any]:
+    from api.owned_model_rollout import classify_task_class, resolve_rollout_decision
+
+    task_class = classify_task_class(route_decision=route_decision, path=path)
+    return resolve_rollout_decision(
+        task_class=task_class,
+        baseline_provider=baseline_provider,
+        session_id=session_id,
+        client_turn_id=client_turn_id,
+        confidence=confidence,
+    )
+
+
+def _conversation_for_provider(provider: str, raw_conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if provider == PROVIDER_ANTHROPIC:
+        return raw_conversation
+    if provider == PROVIDER_GEMINI:
+        return _gemini_conversation_from_context(raw_conversation)
+    if provider == PROVIDER_TALISMAN:
+        return raw_conversation
+    return _openai_conversation_from_context(raw_conversation)
+
+
+def _apply_owned_model_rollout_provider(
+    *,
+    rollout_decision: Any,
+    baseline_provider: str,
+    api_key: str,
+    raw_conversation: list[dict[str, Any]],
+) -> tuple[str, str, Any, list[dict[str, Any]]]:
+    provider = rollout_decision.applied_provider if rollout_decision.mode == "canary" else baseline_provider
+    resolved_api_key = require_api_key(provider) if provider != baseline_provider else api_key
+    client = _get_provider_client(provider, resolved_api_key)
+    conversation = _conversation_for_provider(provider, raw_conversation)
+    return provider, resolved_api_key, client, conversation
+
+
+def _owned_model_shadow_prompt_from_conversation(
+    provider: str,
+    conversation: list[dict[str, Any]],
+) -> str:
+    if not conversation:
+        return ""
+    last = conversation[-1]
+    if isinstance(last, dict):
+        content = last.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("input_text")
+                    if text:
+                        parts.append(str(text))
+            return "\n".join(parts)
+    return ""
+
+
+def _run_owned_model_shadow_synthesis(
+    *,
+    rollout_decision: Any,
+    rollout_telemetry: Any,
+    instructions: str,
+    prompt_text: str,
+    reasoning_effort: str,
+    baseline_result: dict[str, Any],
+    max_tokens: int,
+) -> None:
+    from api.owned_model_rollout import finalize_shadow_comparison
+
+    if rollout_decision.mode != "shadow" or not prompt_text.strip():
+        return
+    started = time.perf_counter()
+    candidate_result: dict[str, Any]
+    try:
+        from llm_utils import call_llm_text
+
+        candidate_model = rollout_decision.candidate_model or resolve_model(
+            MODEL_MID, rollout_decision.candidate_provider
+        )
+        text, _citations, response = call_llm_text(
+            prompt=prompt_text,
+            model=candidate_model,
+            api_key=require_api_key(rollout_decision.candidate_provider),
+            max_tokens=max_tokens,
+            system=instructions,
+            provider=rollout_decision.candidate_provider,
+            reasoning_effort=reasoning_effort,
+        )
+        candidate_result = {
+            "provider": rollout_decision.candidate_provider,
+            "model": candidate_model,
+            "output_text": text,
+            "tool_names": [],
+            "latency_ms": _elapsed_ms(started),
+            "usage": getattr(response, "usage", {}) if response is not None else {},
+            "status": "ok",
+        }
+    except Exception as exc:
+        candidate_result = {
+            "provider": rollout_decision.candidate_provider,
+            "model": rollout_decision.candidate_model,
+            "output_text": "",
+            "tool_names": [],
+            "latency_ms": _elapsed_ms(started),
+            "usage": {},
+            "status": "error",
+            "error": str(exc) or exc.__class__.__name__,
+        }
+    finalize_shadow_comparison(
+        rollout_telemetry,
+        baseline=baseline_result,
+        candidate=candidate_result,
+    )
+
+
+def _owned_model_canary_should_fallback(
+    *,
+    rollout_decision: Any,
+    call_provider: str,
+) -> bool:
+    return (
+        rollout_decision.mode == "canary"
+        and rollout_decision.canary_selected
+        and rollout_decision.fallback_reason is None
+        and call_provider == rollout_decision.candidate_provider
+    )
+
+
+def _owned_model_apply_fallback(
+    *,
+    rollout_decision: Any,
+    rollout_telemetry: Any,
+    fallback_reason: str,
+    baseline_provider: str,
+    api_key: str,
+    raw_conversation: list[dict[str, Any]],
+) -> tuple[Any, str, str, Any, list[dict[str, Any]]]:
+    from api.owned_model_rollout import apply_canary_fallback
+
+    updated_decision = apply_canary_fallback(
+        rollout_decision,
+        rollout_telemetry,
+        fallback_reason=fallback_reason,
+    )
+    provider = baseline_provider
+    resolved_api_key = api_key
+    client = _get_provider_client(provider, resolved_api_key)
+    conversation = _conversation_for_provider(provider, raw_conversation)
+    return updated_decision, provider, resolved_api_key, client, conversation
+
+
 def _record_agent_trajectory(
     *,
     req: AgentChatRequest,
@@ -3333,14 +3515,30 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             workflow_name=workflow_name,
             workflow_ticker=workflow_ticker,
         )
-        if provider == PROVIDER_ANTHROPIC:
-            conversation = raw_conversation
-        elif provider == PROVIDER_GEMINI:
-            conversation = _gemini_conversation_from_context(raw_conversation)
-        elif provider == PROVIDER_TALISMAN:
-            conversation = raw_conversation
-        else:
-            conversation = _openai_conversation_from_context(raw_conversation)
+        baseline_provider = provider
+        baseline_api_key = api_key
+        rollout_decision, rollout_telemetry = _resolve_owned_model_rollout(
+            route_decision=route_decision,
+            baseline_provider=baseline_provider,
+            session_id=session_id,
+            client_turn_id=req.client_turn_id,
+            path="agent_chat",
+            confidence=route_decision.confidence,
+        )
+        provider, api_key, client, conversation = _apply_owned_model_rollout_provider(
+            rollout_decision=rollout_decision,
+            baseline_provider=baseline_provider,
+            api_key=api_key,
+            raw_conversation=raw_conversation,
+        )
+        yield _sse(
+            "owned_model_rollout",
+            _owned_rollout_done_payload(
+                rollout_decision=rollout_decision,
+                rollout_telemetry=rollout_telemetry,
+                timings=timings,
+            )["owned_model_rollout"],
+        )
 
         if not workflow_name and _is_simple_portfolio_summary(req.message):
             call_info = {
@@ -4523,6 +4721,30 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         break
                     except ModelGatewayDenied as exc:
                         yield _sse("egress_recorded", exc.manifest)
+                        if _owned_model_canary_should_fallback(
+                            rollout_decision=rollout_decision,
+                            call_provider=provider,
+                        ):
+                            from api.owned_model_rollout import map_exception_to_fallback_reason
+
+                            rollout_decision, provider, api_key, client, conversation = _owned_model_apply_fallback(
+                                rollout_decision=rollout_decision,
+                                rollout_telemetry=rollout_telemetry,
+                                fallback_reason=map_exception_to_fallback_reason(exc),
+                                baseline_provider=baseline_provider,
+                                api_key=baseline_api_key,
+                                raw_conversation=raw_conversation,
+                            )
+                            stream_kwargs = _model_stream_kwargs(
+                                provider=provider,
+                                instructions=instructions,
+                                conversation=conversation,
+                                max_tokens=LLM_CHAT_MAX_TOKENS,
+                                tool_defs=round_tool_defs,
+                                force_tool_use=round_force_tool_use,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            continue
                         yield _sse("blocked", _blocked_model_egress_payload(exc))
                         raise
                     except Exception as retry_exc:
@@ -4541,6 +4763,30 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             status="failed",
                             error=str(retry_exc) or retry_exc.__class__.__name__,
                         )
+                        if _owned_model_canary_should_fallback(
+                            rollout_decision=rollout_decision,
+                            call_provider=provider,
+                        ):
+                            from api.owned_model_rollout import map_exception_to_fallback_reason
+
+                            rollout_decision, provider, api_key, client, conversation = _owned_model_apply_fallback(
+                                rollout_decision=rollout_decision,
+                                rollout_telemetry=rollout_telemetry,
+                                fallback_reason=map_exception_to_fallback_reason(retry_exc),
+                                baseline_provider=baseline_provider,
+                                api_key=baseline_api_key,
+                                raw_conversation=raw_conversation,
+                            )
+                            stream_kwargs = _model_stream_kwargs(
+                                provider=provider,
+                                instructions=instructions,
+                                conversation=conversation,
+                                max_tokens=LLM_CHAT_MAX_TOKENS,
+                                tool_defs=round_tool_defs,
+                                force_tool_use=round_force_tool_use,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            continue
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
                             time.sleep(RETRY_BASE_DELAY * (2**attempt))
                             continue
@@ -4788,6 +5034,23 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     logger.warning("Agent chat model returned empty text; using deterministic empty-response fallback")
                     full_text = EMPTY_AGENT_RESPONSE_TEXT
                     yield _sse("delta", {"text": full_text})
+                _run_owned_model_shadow_synthesis(
+                    rollout_decision=rollout_decision,
+                    rollout_telemetry=rollout_telemetry,
+                    instructions=instructions,
+                    prompt_text=_owned_model_shadow_prompt_from_conversation(provider, conversation),
+                    reasoning_effort=reasoning_effort,
+                    baseline_result={
+                        "provider": provider,
+                        "model": stream_kwargs.get("model"),
+                        "output_text": full_text,
+                        "tool_names": [call.get("name") for call in normal_tool_payloads if call.get("name")],
+                        "latency_ms": _elapsed_ms(turn_started),
+                        "usage": usage,
+                        "status": "ok",
+                    },
+                    max_tokens=LLM_CHAT_MAX_TOKENS,
+                )
                 _agent_turn_persist_delta(req, session_id, full_text)
                 turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
@@ -4816,7 +5079,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     route_meta=route_meta,
                     tool_calls=normal_tool_payloads,
                     provenance_event_id=agent_turn_event_id,
-                    raw_payload={"path": "agent_chat", "tool_calls": normal_tool_payloads},
+                    raw_payload={
+                        "path": "agent_chat",
+                        "tool_calls": normal_tool_payloads,
+                        "owned_model_rollout": rollout_telemetry.to_meta(),
+                    },
                 )
                 yield _sse(
                     "done",
@@ -4828,6 +5095,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                                 "applied": route_decision.to_meta(),
                                 "telemetry": route_meta,
                             },
+                            **_owned_rollout_done_payload(
+                                rollout_decision=rollout_decision,
+                                rollout_telemetry=rollout_telemetry,
+                                timings=timings,
+                            ),
                         },
                         timings,
                         turn_started,

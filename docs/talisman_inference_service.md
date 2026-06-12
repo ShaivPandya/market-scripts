@@ -117,7 +117,7 @@ TALISMAN_TIMEOUT_S=120
 
 GCP deploys bind `TALISMAN_BASE_URL` and `TALISMAN_API_KEY` from Secret Manager through `API_SECRETS` and `WORKER_SECRETS` in `infra/gcp/config.example.sh`.
 
-Production routing, shadow mode, canary allocation, and frontier fallback remain owned by `TL-92`. Keep `LLM_PROVIDER` on the frontier baseline until rollout controls are enabled.
+Production routing, shadow mode, canary allocation, and frontier fallback are implemented by `TL-92`. See `docs/talisman_owned_model_rollout.md`. Keep `LLM_PROVIDER` on the frontier baseline until rollout controls are enabled and shadow burn-in completes.
 
 ## Contract smoke
 

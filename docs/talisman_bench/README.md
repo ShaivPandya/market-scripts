@@ -191,7 +191,7 @@ Store the resulting `release_report.json` with P50/P95 latency, throughput, and 
 
 - Production `talisman` provider integration (`TL-86`)
 - Governed inference service provisioning (`TL-95`)
-- Shadow/canary rollout controls (`TL-92`)
+- Shadow/canary rollout controls — see `docs/talisman_owned_model_rollout.md` (`TL-92`)
 - Replayable agent environments and process rewards (`TL-94`) — see `docs/talisman_agent_replay_environments.md`
 
 ## Documentation impact

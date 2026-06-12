@@ -121,11 +121,34 @@ class GatewayDeniedRule(BaseModel):
         return normalized
 
 
+class OwnedModelRolloutSettings(BaseModel):
+    enabled: bool = False
+    shadow_enabled: bool = True
+    canary_enabled: bool = False
+    canary_percent: float = Field(default=0.0, ge=0.0, le=100.0)
+    min_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
+    approved_task_classes: list[str] = Field(
+        default_factory=lambda: [
+            "agent_turn",
+            "synthesis",
+            "routing",
+            "routing_tool_use",
+            "tool_use",
+            "structured_output",
+        ]
+    )
+    approved_candidate_id: str | None = None
+    approved_model_ids: list[str] = Field(default_factory=list)
+    candidate_provider: Literal["talisman"] = "talisman"
+    rule_version: str = "owned_model_rollout_v1"
+
+
 class GatewayPolicySettings(BaseModel):
     private_egress_mode: Literal["allow_with_warning"] = "allow_with_warning"
     provider_lifecycle: dict[Provider, LifecycleState]
     model_lifecycle: dict[str, LifecycleState] = Field(default_factory=dict)
     denied_rules: list[GatewayDeniedRule] = Field(default_factory=list)
+    owned_model_rollout: OwnedModelRolloutSettings | None = None
 
     @field_validator("model_lifecycle")
     @classmethod

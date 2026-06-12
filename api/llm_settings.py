@@ -50,6 +50,25 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
     },
     "model_lifecycle": {},
     "denied_rules": [],
+    "owned_model_rollout": {
+        "enabled": False,
+        "shadow_enabled": True,
+        "canary_enabled": False,
+        "canary_percent": 0,
+        "min_confidence": 0.70,
+        "approved_task_classes": [
+            "agent_turn",
+            "synthesis",
+            "routing",
+            "routing_tool_use",
+            "tool_use",
+            "structured_output",
+        ],
+        "approved_candidate_id": None,
+        "approved_model_ids": [],
+        "candidate_provider": "talisman",
+        "rule_version": "owned_model_rollout_v1",
+    },
 }
 DEFAULT_PROVIDER_MODE = "single"
 
@@ -219,6 +238,10 @@ def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
             raise ValueError("Gateway denied rule contains an unsupported data_sensitivity")
         denied_rules.append({"provider": provider, "model": model, "data_sensitivity": sensitivity})
     policy["denied_rules"] = denied_rules
+
+    from api.owned_model_rollout import normalize_owned_model_rollout
+
+    policy["owned_model_rollout"] = normalize_owned_model_rollout(raw.get("owned_model_rollout"))
     return policy
 
 
