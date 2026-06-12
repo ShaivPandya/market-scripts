@@ -85,12 +85,19 @@ Replay execution:
 
 Production shadow/canary routing remains owned by `TL-92`. Offline RL experiments remain owned by `TL-68` and require this environment layer plus stable rollout gates.
 
+## Offline Policy Experiments (`TL-68`)
+
+`TL-68` consumes replay reward categories as validation evidence for process rewards, but it does not treat replay-only trajectories as production logged bandit rows. Contextual-bandit comparisons require logged action and propensity metadata, currently starting from intent-router training rows in `api/intent_router_training_store.py`.
+
+See `docs/talisman_offline_policy_experiments.md` and `docs/adr/014-offline-agent-policy-experiments.md` for the offline-only report contract.
+
 ## Related Docs
 
 - [talisman_trajectories.md](talisman_trajectories.md) — trajectory step vocabulary
 - [talisman_bench/README.md](talisman_bench/README.md) — release gate and benchmark inventory
 - [decision_quality_chat_evals/README.md](decision_quality_chat_evals/README.md) — mock tool replay cases
 - [talisman_agent_model_training.md](talisman_agent_model_training.md) — candidate registry and training lifecycle
+- [talisman_offline_policy_experiments.md](talisman_offline_policy_experiments.md) — contextual-bandit reports for agent-process choices
 
 ## References
 

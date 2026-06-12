@@ -134,6 +134,12 @@ There is no dedicated rollout dashboard in this slice. Use:
 
 Aggregate offline from trajectory exports or log pipelines when building operator dashboards.
 
+## Offline Policy Experiments (`TL-68`)
+
+`TL-68` can use rollout telemetry and gate patterns as evidence, but it does not change owned-model rollout behavior. Offline contextual-bandit reports live in `decision_quality/agent_policy_experiments.py` and currently start from intent-router logged choices, not provider-level canary routing.
+
+Do not enable canary allocation, change gateway policy, or route user-visible traffic based on a TL-68 experiment report without a later explicit approval issue. Source, policy, approval, and DecisionQuality gates remain non-overridable for both rollout and offline policy experiments.
+
 ## Graduation thresholds
 
 Production graduation requires the thresholds defined by `TL-84` and `TL-89`:
@@ -158,6 +164,7 @@ python -m decision_quality.talisman_bench \
 ```bash
 pytest tests/test_owned_model_rollout.py tests/test_agent_owned_model_rollout.py -q
 pytest tests/test_llm_settings.py tests/test_agent_governance.py -q
+pytest tests/test_agent_policy_experiments.py -q
 ```
 
 Failure-path checks to exercise manually or in staging:

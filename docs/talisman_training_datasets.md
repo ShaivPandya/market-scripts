@@ -110,9 +110,16 @@ Governed exports feed the SFT/LoRA trainer and candidate registry owned by `TL-9
 
 Training jobs must reference the exported `manifest.json` path and refuse datasets with `leakage_check_passed=false`. Preference training additionally requires `dpo_trainable_count >= 1`.
 
+## Offline Policy Experiments (`TL-68`)
+
+Offline contextual-bandit reports are separate from SFT and preference training datasets. `decision_quality/agent_policy_experiments.py` reads logged agent-process choices and propensities, beginning with intent-router training rows, and emits evidence reports rather than model-training examples.
+
+Do not add TL-68 report rows to `sft.jsonl` or `preference.jsonl` unless a future issue explicitly defines a governed conversion path. Reward construction for TL-68 may reference human review and bounded process/outcome labels, but direct P&L-only rewards and future-leaking fields remain invalid.
+
 ## Related Docs
 
 - Trajectory contract: `docs/talisman_trajectories.md`
 - TalismanBench held-out rules: `docs/talisman_bench/README.md`
 - Agent model training/registry: `docs/talisman_agent_model_training.md`
+- Offline policy reports: `docs/talisman_offline_policy_experiments.md`
 - Cross-cutting architecture audit: `TL-97`
