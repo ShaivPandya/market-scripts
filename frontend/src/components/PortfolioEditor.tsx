@@ -1081,7 +1081,19 @@ function UnderlyingBand({ cluster, bookSize, spine, groups, rowCallbacks, onConv
           </select>
         </label>
 
-        <div />
+        <button
+          type="button"
+          className="theme-icon-button"
+          style={{ width: 32, height: 32 }}
+          onClick={e => {
+            e.stopPropagation()
+            for (const id of legIds) rowCallbacks.onRemove(id)
+          }}
+          aria-label={cluster.legs.length === 1 ? "Remove position" : "Remove all legs"}
+          title={cluster.legs.length === 1 ? "Remove" : "Remove all legs"}
+        >
+          <Trash2 size={15} />
+        </button>
       </div>
 
       {open ? (
