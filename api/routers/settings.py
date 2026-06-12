@@ -420,7 +420,12 @@ def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
     normalized_gateway_policy: dict | None = None
     if body.gateway_policy is not None:
         try:
-            normalized_gateway_policy = normalize_gateway_policy(body.gateway_policy.model_dump())
+            incoming_gateway_policy = body.gateway_policy.model_dump()
+            if incoming_gateway_policy.get("owned_model_rollout") is None:
+                existing_rollout = (before.get("gateway_policy") or {}).get("owned_model_rollout")
+                if isinstance(existing_rollout, dict):
+                    incoming_gateway_policy["owned_model_rollout"] = existing_rollout
+            normalized_gateway_policy = normalize_gateway_policy(incoming_gateway_policy)
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         gateway_policy_changed = normalized_gateway_policy != before.get("gateway_policy")

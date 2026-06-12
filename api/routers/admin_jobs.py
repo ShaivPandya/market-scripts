@@ -184,6 +184,17 @@ def enqueue_continuous_optimizer(_sub: str = Depends(require_scheduler_or_job_ad
     return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-agent-model-release-refresh")
+def enqueue_agent_model_release_refresh(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "agent_model_release_refresh",
+        {"source": "scheduler"},
+        cache_key="maintenance:agent_model_release_refresh:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
+
+
 @router.get("/admin/jobs/{job_id}")
 def get_admin_job(job_id: str, _sub: str = Depends(require_job_admin)):
     try:

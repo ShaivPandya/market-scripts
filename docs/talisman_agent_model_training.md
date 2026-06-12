@@ -121,6 +121,30 @@ Promotion refuses candidates when:
 
 Deprecating or disabling the active approved candidate clears the registry alias without deleting artifacts.
 
+## Release operations (TL-96)
+
+After bench evidence exists, use the release operations CLI to dry-run promotion/rollout readiness, record human approvals, and retire superseded candidates:
+
+```bash
+python -m decision_quality.agent_model_release_ops dry-run \
+  --registry data/agent_model_candidates/registry.json \
+  --candidate-id <candidate_id>
+
+python -m decision_quality.agent_model_release_ops record-decision \
+  --candidate-id <candidate_id> \
+  --decision-type rollout_approved \
+  --approver operator@example.com \
+  --approval-note "Approved after TalismanBench and shadow burn-in." \
+  --bench-report outputs/talisman_bench/<timestamp>/release_report.json
+
+python -m decision_quality.agent_model_release_ops retire \
+  --candidate-id <candidate_id> \
+  --approver operator@example.com \
+  --retirement-note "Retire after rollback; preserve artifacts for audit."
+```
+
+See `docs/talisman_model_release_operations.md` for refresh triggers, monitoring, rollback drills, and scheduled dry-run jobs.
+
 ## Operator-run GPU training
 
 Real SFT/LoRA and preference/DPO training use optional dependencies from `requirements-training.txt` and remain operator-run outside normal API installs.
@@ -189,4 +213,5 @@ Each candidate publishes `model_card.json` with:
 - Trainer/registry ADR: `docs/adr/011-agent-model-training-registry.md`
 - Preference optimization ADR: `docs/adr/012-preference-optimization-training.md`
 - Inference service runbook: `docs/talisman_inference_service.md`
+- Release operations: `docs/talisman_model_release_operations.md`
 - Cross-cutting architecture audit: `TL-97`

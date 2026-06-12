@@ -109,3 +109,16 @@ def drain_governance_outbox(_payload: dict[str, Any] | None = None) -> dict[str,
         "metrics": {"pending": 0, "failed": 0, "dead_letter": 0},
         "lineage_state": "ontology",
     }
+
+
+def run_agent_model_release_refresh(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from decision_quality.agent_model_release_ops import run_scheduled_refresh_dry_run
+
+    result = run_scheduled_refresh_dry_run(payload)
+    logger.info(
+        "agent_model_release_refresh report_id=%s drift_alerts=%s blocking_issues=%s",
+        result.get("report_id"),
+        result.get("drift_alert_count"),
+        result.get("blocking_issue_count"),
+    )
+    return result

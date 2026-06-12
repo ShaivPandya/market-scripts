@@ -140,6 +140,18 @@ Aggregate offline from trajectory exports or log pipelines when building operato
 
 Do not enable canary allocation, change gateway policy, or route user-visible traffic based on a TL-68 experiment report without a later explicit approval issue. Source, policy, approval, and DecisionQuality gates remain non-overridable for both rollout and offline policy experiments.
 
+## Release operations integration (TL-96)
+
+Before increasing canary allocation or promoting a new registry candidate:
+
+1. Run `python -m decision_quality.agent_model_release_ops dry-run --candidate-id <candidate_id>`.
+2. Record a human `rollout_approved` decision with approver, bench report, and rollback target.
+3. Review drift alerts from trajectory fallback summaries and feedback failure clusters.
+
+Rollback and retirement decisions should also be recorded through `record-decision` or `retire` so lineage from production failure → feedback → dataset → candidate → bench → rollout remains auditable. See `docs/talisman_model_release_operations.md`.
+
+Partial gateway settings updates must preserve an existing `owned_model_rollout` block when rollout fields are omitted.
+
 ## Graduation thresholds
 
 Production graduation requires the thresholds defined by `TL-84` and `TL-89`:
@@ -165,6 +177,7 @@ python -m decision_quality.talisman_bench \
 pytest tests/test_owned_model_rollout.py tests/test_agent_owned_model_rollout.py -q
 pytest tests/test_llm_settings.py tests/test_agent_governance.py -q
 pytest tests/test_agent_policy_experiments.py -q
+pytest tests/test_agent_model_release_ops.py -q
 ```
 
 Failure-path checks to exercise manually or in staging:

@@ -431,6 +431,43 @@ def test_put_llm_settings_gateway_policy_persists_with_audit(temp_llm_settings, 
     assert temp_llm_settings.get_gateway_policy_setting()["denied_rules"] == policy["denied_rules"]
 
 
+def test_put_llm_settings_preserves_owned_model_rollout_when_omitted(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    policy = temp_llm_settings.default_gateway_policy()
+    policy["owned_model_rollout"]["enabled"] = True
+    policy["owned_model_rollout"]["approved_candidate_id"] = "candidate-abc"
+    policy["owned_model_rollout"]["canary_percent"] = 5
+    policy["provider_lifecycle"]["talisman"] = "enabled"
+
+    seed = auth_client.put(
+        "/api/settings/llm",
+        json={"provider": "anthropic", "gateway_policy": policy, "gateway_note": "Enable owned-model rollout."},
+    )
+    assert seed.status_code == 200
+
+    partial_policy = {
+        "private_egress_mode": "allow_with_warning",
+        "provider_lifecycle": policy["provider_lifecycle"],
+        "model_lifecycle": policy["model_lifecycle"],
+        "denied_rules": policy["denied_rules"],
+    }
+    response = auth_client.put(
+        "/api/settings/llm",
+        json={
+            "provider": "anthropic",
+            "gateway_policy": partial_policy,
+            "gateway_note": "Update lifecycle only.",
+        },
+    )
+
+    assert response.status_code == 200
+    rollout = response.json()["gateway_policy"]["owned_model_rollout"]
+    assert rollout["enabled"] is True
+    assert rollout["approved_candidate_id"] == "candidate-abc"
+    assert rollout["canary_percent"] == 5
+
+
 def test_put_llm_settings_rejects_invalid_gateway_policy(temp_llm_settings, auth_client, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")

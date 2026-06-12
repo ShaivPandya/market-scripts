@@ -56,6 +56,14 @@ def test_idea_comparison_evaluation_job_registered_with_progress():
     assert spec.supports_progress is True
 
 
+def test_agent_model_release_refresh_job_registered():
+    from api.job_registry import get_job_spec
+
+    spec = get_job_spec("agent_model_release_refresh")
+    assert spec.compute_func == "api.maintenance_jobs.run_agent_model_release_refresh"
+    assert spec.request_model is None
+
+
 def test_p0_async_job_completed_ttl_policy_defaults():
     from api.job_registry import completed_ttl_for_request, get_job_spec
     from api.routers.ontology import OntologyQueryJobRequest
