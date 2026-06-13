@@ -289,13 +289,13 @@ def case_required_oc_dimensions(case_data: dict[str, Any]) -> list[str]:
     return []
 
 
-def filter_cases(
-    cases: list[_CaseLike],
+def filter_cases[CaseT: _CaseLike](
+    cases: list[CaseT],
     *,
     corpus_tags: set[str] | None = None,
     failure_type: str | None = None,
     tool_pack: str | None = None,
-) -> list[_CaseLike]:
+) -> list[CaseT]:
     filtered = cases
     if corpus_tags:
         filtered = [case for case in filtered if corpus_tags.intersection(case_corpus_tags(case.data))]

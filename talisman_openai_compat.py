@@ -238,7 +238,8 @@ def extract_chat_tool_calls(message: Any) -> list[dict[str, Any]]:
     for call in serialized.get("tool_calls") or []:
         if not isinstance(call, dict):
             continue
-        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        raw_function = call.get("function")
+        function: dict[str, Any] = raw_function if isinstance(raw_function, dict) else {}
         name = function.get("name")
         call_id = call.get("id")
         raw_args = function.get("arguments", {})
@@ -279,11 +280,10 @@ def stream_chat_completions_events(
     messages = conversation_to_chat_messages(
         conversation, system=instructions if isinstance(instructions, str) else None
     )
-    tools = openai_function_tools(
-        list(stream_kwargs.get("tools") or []) if isinstance(stream_kwargs.get("tools"), list) else None
-    )
+    raw_tools = stream_kwargs.get("tools")
+    tools = openai_function_tools(raw_tools if isinstance(raw_tools, list) else None)
     tool_choice = stream_kwargs.get("tool_choice")
-    max_tokens = int(stream_kwargs.get("max_output_tokens") or stream_kwargs.get("max_tokens") or 4096)
+    max_tokens = int(str(stream_kwargs.get("max_output_tokens") or stream_kwargs.get("max_tokens") or 4096))
     model = str(stream_kwargs.get("model") or "")
 
     kwargs: dict[str, Any] = {

@@ -182,8 +182,10 @@ def _extract_rollout_meta(trajectory: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(direct, dict):
             return direct
         nested = container.get("raw_payload")
-        if isinstance(nested, dict) and isinstance(nested.get("owned_model_rollout"), dict):
-            return nested["owned_model_rollout"]
+        if isinstance(nested, dict):
+            rollout_meta = nested.get("owned_model_rollout")
+            if isinstance(rollout_meta, dict):
+                return rollout_meta
     return None
 
 
@@ -396,11 +398,13 @@ def build_drift_alerts(
             )
         )
 
-    by_task_class = rollout_monitoring.get("by_task_class") or {}
+    raw_by_task_class = rollout_monitoring.get("by_task_class")
+    by_task_class: dict[str, Any] = raw_by_task_class if isinstance(raw_by_task_class, dict) else {}
     for task_class, count in by_task_class.items():
-        fallback_reasons = rollout_monitoring.get("by_fallback_reason") or {}
+        raw_fallback_reasons = rollout_monitoring.get("by_fallback_reason")
+        fallback_reasons: dict[str, Any] = raw_fallback_reasons if isinstance(raw_fallback_reasons, dict) else {}
         if count >= gate_failure_threshold() and fallback_reasons:
-            dominant_reason = max(fallback_reasons, key=fallback_reasons.get)
+            dominant_reason = max(fallback_reasons, key=lambda reason: fallback_reasons[reason])
             alerts.append(
                 DriftAlert(
                     alert_id=f"task_class_fallback:{task_class}",

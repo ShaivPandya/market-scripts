@@ -208,8 +208,9 @@ def _load_parent_candidate(
     registry_path: Path = DEFAULT_REGISTRY_PATH,
 ) -> dict[str, Any]:
     registry = load_registry(registry_path)
-    entry = (registry.get("candidates") or {}).get(parent_candidate_id)
-    if not entry:
+    candidates = registry.get("candidates")
+    entry = candidates.get(parent_candidate_id) if isinstance(candidates, dict) else None
+    if not isinstance(entry, dict):
         raise AgentModelTrainingError(f"Unknown parent_candidate_id: {parent_candidate_id}")
     if entry.get("lifecycle_state") != "approved":
         raise AgentModelTrainingError(

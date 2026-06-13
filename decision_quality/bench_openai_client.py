@@ -259,7 +259,10 @@ def _responses_to_chat_messages(conversation: list[dict[str, Any]]) -> list[dict
 
 def _openai_tools_from_stream_kwargs(stream_kwargs: dict[str, object]) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
-    for tool in stream_kwargs.get("tools") or []:
+    raw_tools = stream_kwargs.get("tools")
+    if not isinstance(raw_tools, list):
+        return tools
+    for tool in raw_tools:
         if not isinstance(tool, dict):
             continue
         if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
@@ -303,10 +306,12 @@ def stream_bench_openai_compatible(
     tools = _openai_tools_from_stream_kwargs(stream_kwargs)
     tool_choice = stream_kwargs.get("tool_choice")
     max_tokens = int(
-        stream_kwargs.get("max_output_tokens")
-        or stream_kwargs.get("max_tokens")
-        or stream_kwargs.get("max_output_tokens", 4096)
-        or 4096
+        str(
+            stream_kwargs.get("max_output_tokens")
+            or stream_kwargs.get("max_tokens")
+            or stream_kwargs.get("max_output_tokens", 4096)
+            or 4096
+        )
     )
 
     kwargs: dict[str, Any] = {

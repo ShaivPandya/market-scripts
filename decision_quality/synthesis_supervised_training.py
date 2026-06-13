@@ -174,18 +174,18 @@ def export_training_dataset(
     status_set = set(statuses)
 
     if include_structured:
-        for case in load_structured_cases(statuses=status_set):
-            row = structured_case_to_row(case)
+        for structured_case in load_structured_cases(statuses=status_set):
+            row = structured_case_to_row(structured_case)
             if row:
                 rows.append(row)
 
     if include_chat:
-        for case in load_chat_cases(statuses=status_set):
-            if not case.data.get("routing_expectations", {}).get("run_opportunity_preflight") and not case.data.get(
-                "expected_stance"
-            ):
+        for chat_case in load_chat_cases(statuses=status_set):
+            if not chat_case.data.get("routing_expectations", {}).get(
+                "run_opportunity_preflight"
+            ) and not chat_case.data.get("expected_stance"):
                 continue
-            row = chat_case_to_row(case)
+            row = chat_case_to_row(chat_case)
             if row:
                 rows.append(row)
 

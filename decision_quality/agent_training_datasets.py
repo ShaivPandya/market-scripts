@@ -453,6 +453,7 @@ def _load_eval_fixture_rows(
     rows: list[dict[str, Any]] = []
     status_set = set(statuses)
     for config in corpus_configs(manifest, root=ROOT):
+        cases: list[Any]
         if config.runner == "structured":
             cases = load_structured_cases(statuses=status_set, cases_dir=config.cases_dir)
         elif config.runner == "chat":
@@ -581,18 +582,22 @@ def _trajectory_lookup_rows(
         trajectory_ids.add(trajectory_id)
 
     for trajectory_id in sorted(trajectory_ids):
-        row = metadata_by_id.get(trajectory_id) or get_trajectory(trajectory_id)
-        if not row or row.get("tombstoned_at"):
+        trajectory_row = metadata_by_id.get(trajectory_id)
+        if trajectory_row is None:
+            trajectory_row = get_trajectory(trajectory_id)
+        if not trajectory_row or trajectory_row.get("tombstoned_at"):
             continue
-        metadata_by_id[trajectory_id] = row
+        metadata_by_id[trajectory_id] = trajectory_row
         try:
-            sft_index[trajectory_id] = _trajectory_payload_index(row, payload=_exportable_payload(row))
+            sft_index[trajectory_id] = _trajectory_payload_index(
+                trajectory_row, payload=_exportable_payload(trajectory_row)
+            )
         except TrajectoryExportError:
             pass
         try:
             preference_index[trajectory_id] = _trajectory_payload_index(
-                row,
-                payload=_exportable_preference_payload(row),
+                trajectory_row,
+                payload=_exportable_preference_payload(trajectory_row),
             )
         except TrajectoryExportError:
             pass
@@ -796,7 +801,8 @@ def _release_gate_contamination(
 ) -> list[str]:
     violations: list[str] = []
     for row in rows:
-        provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
+        raw_provenance = row.get("provenance")
+        provenance: dict[str, Any] = raw_provenance if isinstance(raw_provenance, dict) else {}
         case_id = str(provenance.get("case_id") or row.get("source_id") or "")
         if case_id in blocked_case_ids:
             violations.append(f"case_id:{case_id}")

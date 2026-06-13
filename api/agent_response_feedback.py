@@ -177,9 +177,10 @@ def feedback_id_for(*, trajectory_id: str, reviewer_actor_id: str, response_vers
 def response_version_for_trajectory(trajectory: dict[str, Any]) -> str:
     """Immutable response identity from model metadata and assistant content."""
 
-    payload = trajectory.get("sanitized_payload")
-    if not isinstance(payload, dict):
-        payload = trajectory.get("raw_payload") if isinstance(trajectory.get("raw_payload"), dict) else {}
+    raw_payload = trajectory.get("sanitized_payload")
+    if not isinstance(raw_payload, dict):
+        raw_payload = trajectory.get("raw_payload")
+    payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
     messages = list(payload.get("messages") or [])
     assistant_content = ""
     for message in reversed(messages):

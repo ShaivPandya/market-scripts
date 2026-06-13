@@ -1121,6 +1121,10 @@ async function handleApiRoute(route: Route, state: ApiMockState) {
     return sse(route, liveAgentChatSseBody())
   }
 
+  if (method === "GET" && path === "/api/agent/feedback") {
+    return json(route, { feedback: [], trajectory_id: "trajectory:smoke-agent-response" })
+  }
+
   if (method === "POST" && path === "/api/agent/chat/async") {
     return json(route, {
       job_id: "agent-smoke-job",

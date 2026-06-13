@@ -438,7 +438,7 @@ def _normalize_judge_result(value: Any) -> dict[str, Any]:
         normalized_scores[dimension] = max(0, min(5, score))
     total_raw = value.get("total")
     try:
-        total = float(total_raw)
+        total = float(str(total_raw))
     except (TypeError, ValueError):
         total = float(sum(normalized_scores.values()))
     fatal_raw = value.get("fatal_issues")

@@ -284,6 +284,7 @@ def _load_cases_for_corpus(
     smoke_case_ids: set[str] | None = None,
     holdout_case_ids: set[str] | None = None,
 ) -> list[Any]:
+    cases: list[Any]
     if config.runner == "structured":
         cases = load_structured_cases(statuses=statuses, cases_dir=config.cases_dir)
     elif config.runner == "chat":
@@ -889,10 +890,10 @@ def _candidate_model_target(
         combination_id=str(combination.get("id")) if combination else None,
         host_id=str(combination.get("host_id")) if combination else None,
         model_id=str(combination.get("model_id")) if combination else None,
-        cost_per_1k_input_tokens_usd=float(combination.get("cost_per_1k_input_tokens_usd"))
+        cost_per_1k_input_tokens_usd=float(str(combination.get("cost_per_1k_input_tokens_usd")))
         if combination and combination.get("cost_per_1k_input_tokens_usd") is not None
         else None,
-        cost_per_1k_output_tokens_usd=float(combination.get("cost_per_1k_output_tokens_usd"))
+        cost_per_1k_output_tokens_usd=float(str(combination.get("cost_per_1k_output_tokens_usd")))
         if combination and combination.get("cost_per_1k_output_tokens_usd") is not None
         else None,
     )
