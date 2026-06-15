@@ -134,6 +134,7 @@ export const STATIC_ECONOMIC_EXPOSURE: Record<string, { underlying: string; fact
   METU: { underlying: "META", factor: 2 },
   METD: { underlying: "META", factor: -1 },
   NVDU: { underlying: "NVDA", factor: 2 },
+  NVDL: { underlying: "NVDA", factor: 2 },
   NVDD: { underlying: "NVDA", factor: -1 },
   AMZU: { underlying: "AMZN", factor: 2 },
   AMZD: { underlying: "AMZN", factor: -1 },

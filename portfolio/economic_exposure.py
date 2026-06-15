@@ -21,6 +21,7 @@ STATIC_ECONOMIC_EXPOSURE: dict[str, tuple[str, float]] = {
     "METU": ("META", 2.0),
     "METD": ("META", -1.0),
     "NVDU": ("NVDA", 2.0),
+    "NVDL": ("NVDA", 2.0),
     "NVDD": ("NVDA", -1.0),
     "AMZU": ("AMZN", 2.0),
     "AMZD": ("AMZN", -1.0),

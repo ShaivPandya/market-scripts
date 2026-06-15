@@ -99,6 +99,77 @@ def test_merge_preserved_portfolio_metadata():
     assert mu["group_conviction"] == 4
 
 
+def test_merge_preserved_metadata_falls_back_to_underlying_for_rolled_option():
+    imported = [
+        {
+            "ticker": "NVDA",
+            "underlying_ticker": "NVDA",
+            "instrument_type": "option",
+            "option_contract_symbol": "NVDA270319C00215000",
+            "price_symbol": "NVDA270319C00215000",
+            "direction": "long",
+            "shares": 23,
+            "conviction": 3,
+            "contrarian": False,
+            "group_name": None,
+            "group_conviction": None,
+        }
+    ]
+    existing = [
+        {
+            "ticker": "NVDA",
+            "underlying_ticker": "NVDA",
+            "instrument_type": "option",
+            "option_contract_symbol": "NVDA270319P00195000",
+            "price_symbol": "NVDA270319P00195000",
+            "direction": "short",
+            "shares": 2,
+            "conviction": 5,
+            "contrarian": True,
+            "group_name": "AI Basket",
+            "group_conviction": 4,
+            "role": "position",
+        }
+    ]
+    merged = merge_preserved_portfolio_metadata(imported, existing)
+    nvda = merged[0]
+    assert nvda["option_contract_symbol"] == "NVDA270319C00215000"
+    assert nvda["conviction"] == 5
+    assert nvda["contrarian"] is True
+    assert nvda["group_name"] == "AI Basket"
+    assert nvda["group_conviction"] == 4
+
+
+def test_merge_preserved_metadata_defaults_for_new_underlying():
+    imported = [
+        {
+            "ticker": "AAPL",
+            "instrument_type": "security",
+            "direction": "long",
+            "shares": 100,
+            "position_id": "AAPL",
+        }
+    ]
+    existing = [
+        {
+            "ticker": "NVDA",
+            "instrument_type": "security",
+            "direction": "long",
+            "shares": 10,
+            "conviction": 5,
+            "group_name": "AI Basket",
+            "group_conviction": 4,
+            "role": "position",
+        }
+    ]
+    merged = merge_preserved_portfolio_metadata(imported, existing)
+    aapl = merged[0]
+    assert aapl["conviction"] == 3
+    assert aapl["contrarian"] is False
+    assert aapl["group_name"] is None
+    assert aapl["group_conviction"] is None
+
+
 def test_parse_rejects_empty_xml():
     with pytest.raises(ValueError, match="empty"):
         parse_ibkr_flex_open_positions_xml("")

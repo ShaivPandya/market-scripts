@@ -975,7 +975,7 @@ function ActionQueueCard({
   const tabs: [QueueTab, string][] = [["all", "All"], ["approvals", "Approvals"], ["alerts", "Alerts"]]
 
   return (
-    <section className="theme-surface flex min-h-0 flex-col overflow-hidden rounded-xl">
+    <section className="theme-surface flex min-h-0 max-h-[min(42rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl">
       <div className="border-b border-app p-4">
         <div className="mb-3 flex items-center gap-2">
           <Bell size={16} className="text-blue-500" />

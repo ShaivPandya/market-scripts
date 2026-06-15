@@ -417,6 +417,34 @@ def test_position_update_apply_accepts_reviewed_valuation_fields():
     assert "position:APO" in repo.objects
 
 
+def test_position_conviction_update_writes_canonical_history_entry_uid():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    initial = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "PII", "asset": "equity", "direction": "long", "shares": 10, "conviction": 3}]},
+        context,
+        reason="initial conviction",
+    )
+    service.resolve_approval(initial["id"], "approved", "apply", context)
+
+    update = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "PII", "asset": "equity", "direction": "long", "shares": 10, "conviction": 1}]},
+        context,
+        reason="lower conviction",
+    )
+    applied = service.resolve_approval(update["id"], "approved", "apply", context)
+
+    history_uids = [uid for uid, row in repo.objects.items() if row["object_type"] == "ConvictionHistoryEntry"]
+    assert applied["application_status"] == "applied"
+    assert len(history_uids) == 1
+    assert history_uids[0].startswith("conviction_history_entry:")
+    assert not any(uid.startswith("convictionhistoryentry:") for uid in repo.objects)
+
+
 def test_meta_shares_and_multiple_option_contracts_coexist():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
