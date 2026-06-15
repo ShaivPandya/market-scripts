@@ -31,7 +31,7 @@ test.describe("mobile responsive surfaces", () => {
     await page.getByRole("button", { name: "Open navigation" }).click()
 
     const nav = page.getByRole("navigation", { name: "Primary navigation" })
-    await expect(nav.getByText("Command Portfolio")).toBeVisible()
+    await expect(nav.getByText("Core", { exact: true })).toBeVisible()
     await dismissFloatingAlerts(page)
     await nav.getByRole("link", { name: "Workspace" }).click()
 
