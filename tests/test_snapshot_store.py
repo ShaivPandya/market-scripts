@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 from api import snapshot_store as store
@@ -52,3 +53,42 @@ def test_snapshot_failure_preserves_last_payload(monkeypatch, tmp_path):
     assert response["value"] == "old"
     assert response["_meta"]["snapshot"]["refresh_status"] == "error"
     assert response["_meta"]["snapshot"]["error"] == "vendor timeout"
+
+
+def test_postgres_snapshot_listing_reads_current_temporal_versions_directly(monkeypatch):
+    sql_calls: list[str] = []
+
+    class _Result:
+        def fetchall(self):
+            return [
+                {
+                    "snapshot_key": "unit:current",
+                    "payload_json": {"value": "fresh"},
+                    "as_of": "2026-06-15",
+                    "load_time": "2026-06-15T21:00:00+00:00",
+                    "status": "ok",
+                    "error": None,
+                    "version": 1,
+                    "artifact_uri": None,
+                }
+            ]
+
+    class _Conn:
+        def execute(self, sql: str):
+            sql_calls.append(sql)
+            return _Result()
+
+    class _Repo:
+        @contextmanager
+        def _connect(self):
+            yield _Conn()
+
+    monkeypatch.setattr(store, "use_postgres_state", lambda: True)
+    monkeypatch.setattr(store, "TemporalOntologyRepository", _Repo)
+
+    records = store.list_snapshot_records()
+
+    assert records[0].as_of_date == "2026-06-15"
+    assert "computed_snapshot_versions" in sql_calls[0]
+    assert "DISTINCT ON (snapshot_key)" in sql_calls[0]
+    assert "ontology_current_computed_snapshot_read_model" not in sql_calls[0]

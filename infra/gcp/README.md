@@ -26,7 +26,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-backend.sh` — build via Cloud Build at the current short git SHA, run Alembic migrations, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`. Routine deploys skip IAM, Scheduler, and monitoring reconciliation by default; use `FULL_SYNC=1` after infrastructure/config changes.
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
 - `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
-- `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23:00 UTC, market-snapshot-refresh weekday 23:15 UTC, macro-snapshot-refresh weekday 23:30 UTC, workspace-source-refresh weekday 23:45 UTC, and continuous-optimizer weekday 10:15 America/New_York) and delete optional/deprecated jobs unless explicitly enabled. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo. Optional owned-model release refresh (`agent-model-release-refresh`, Monday 06:00 UTC) is **disabled by default**; enable with `SCHEDULE_AGENT_MODEL_RELEASE_REFRESH=1`. See [docs/talisman_model_release_operations.md](../docs/talisman_model_release_operations.md).
+- `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23:00 UTC, market-snapshot-refresh weekday 16:20 America/New_York, macro-snapshot-refresh weekday 16:25 America/New_York, workspace-source-refresh weekday 16:30 America/New_York, and continuous-optimizer weekday 10:15 America/New_York) and delete optional/deprecated jobs unless explicitly enabled. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo. Optional owned-model release refresh (`agent-model-release-refresh`, Monday 06:00 UTC) is **disabled by default**; enable with `SCHEDULE_AGENT_MODEL_RELEASE_REFRESH=1`. See [docs/talisman_model_release_operations.md](../docs/talisman_model_release_operations.md).
 - `setup-governance-monitoring.sh` — idempotently creates/updates governance audit/provenance log-based metrics and the alert policy in `monitoring-governance-alerts.json`.
 - `Dockerfile.inference` — governed vLLM inference image with registry/digest startup checks.
 - `deploy-inference-service.sh` — provisions the private GPU Cloud Run inference service for an approved registry candidate (`TL-95`).
@@ -107,9 +107,9 @@ Required services:
 - Cloud Scheduler jobs:
   - hourly: `POST /api/admin/jobs/enqueue-async-job-sweep`
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`
-  - weekdays at 23:15 UTC: `POST /api/admin/jobs/enqueue-market-snapshot-refresh`
-  - weekdays at 23:30 UTC: `POST /api/admin/jobs/enqueue-macro-snapshot-refresh`
-  - weekdays at 23:45 UTC: `POST /api/admin/jobs/enqueue-workspace-source-refresh`
+  - weekdays at 16:20 America/New_York: `POST /api/admin/jobs/enqueue-market-snapshot-refresh`
+  - weekdays at 16:25 America/New_York: `POST /api/admin/jobs/enqueue-macro-snapshot-refresh`
+  - weekdays at 16:30 America/New_York: `POST /api/admin/jobs/enqueue-workspace-source-refresh`
   - weekdays at 10:15 America/New_York: `POST /api/admin/jobs/enqueue-continuous-optimizer`
 
 Cloud Run worker pools run a fixed number of instances, not min/max autoscaling.

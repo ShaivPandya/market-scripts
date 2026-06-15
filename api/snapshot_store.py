@@ -218,28 +218,18 @@ def list_snapshot_records() -> list[SnapshotRecord]:
     if use_postgres_state():
         repo = TemporalOntologyRepository()
         with repo._connect() as conn:
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT *
-                    FROM ontology_current_computed_snapshot_read_model
-                    ORDER BY snapshot_key
-                    """
-                ).fetchall()
-            except Exception:
-                rollback = getattr(conn, "rollback", None)
-                if callable(rollback):
-                    rollback()
-                rows = conn.execute(
-                    """
-                    SELECT *
-                    FROM computed_snapshot_versions
-                    WHERE tx_to IS NULL
-                      AND valid_from <= clock_timestamp()
-                      AND (valid_to IS NULL OR valid_to > clock_timestamp())
-                    ORDER BY snapshot_key, load_time DESC
-                    """
-                ).fetchall()
+            # Snapshot writes do not refresh the ontology materialized read
+            # models, so freshness checks must read the temporal table directly.
+            rows = conn.execute(
+                """
+                SELECT DISTINCT ON (snapshot_key) *
+                FROM computed_snapshot_versions
+                WHERE tx_to IS NULL
+                  AND valid_from <= clock_timestamp()
+                  AND (valid_to IS NULL OR valid_to > clock_timestamp())
+                ORDER BY snapshot_key, load_time DESC, tx_from DESC
+                """
+            ).fetchall()
         return [record for record in (_row_to_record(row) for row in rows) if record is not None]
 
     with _sqlite_connect() as conn:
