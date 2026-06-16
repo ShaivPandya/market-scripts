@@ -140,7 +140,7 @@ passlib==1.7.4
 pathspec==1.0.4
 patsy==1.0.1
 pdf2markdown==0.3.0
-pdfminer.six==20251230
+pdfminer.six==20260107
 pdfplumber==0.11.9
 peewee==3.18.2
 pexpect==4.9.0
