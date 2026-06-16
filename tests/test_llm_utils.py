@@ -55,7 +55,7 @@ def test_required_key_validation(monkeypatch):
         raise AssertionError("missing Gemini key should fail")
 
     monkeypatch.setenv("LLM_PROVIDER", "local")
-    with pytest.raises(ValueError, match="anthropic.*openai.*gemini"):
+    with pytest.raises(ValueError, match="anthropic.*openai.*gemini.*talisman"):
         llm_utils.require_api_key()
 
 

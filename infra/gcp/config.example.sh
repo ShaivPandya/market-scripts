@@ -37,6 +37,16 @@ export ONTOLOGY_WORKER_POOL="talisman-ontology-worker"
 export ONTOLOGY_WORKER_INSTANCES="0"   # disabled by default; ontology runs through Cloud Run Jobs
 export ONTOLOGY_WORKER_CPU="1"
 export ONTOLOGY_WORKER_MEMORY="512Mi"
+export INFERENCE_SERVICE="talisman-inference-nonprod"
+export INFERENCE_IMAGE_NAME="inference"
+export INFERENCE_GPU_TYPE="nvidia-l4"
+export INFERENCE_GPU_COUNT="1"
+export INFERENCE_CPU="4"
+export INFERENCE_MEMORY="16Gi"
+export INFERENCE_MIN_INSTANCES="0"
+export INFERENCE_MAX_INSTANCES="1"
+export INFERENCE_COMBINATION_ID="qwen-managed-gpu"
+export INFERENCE_ENVIRONMENT="nonprod"
 export MIGRATION_JOB="talisman-migrate"
 export TOP50_REFRESH_JOB="talisman-top50-refresh"
 
@@ -57,6 +67,8 @@ export API_SECRETS=(
   "ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
   "OPENAI_API_KEY=OPENAI_API_KEY:latest"
   "GEMINI_API_KEY=GEMINI_API_KEY:latest"
+  "TALISMAN_BASE_URL=TALISMAN_BASE_URL:latest"
+  "TALISMAN_API_KEY=TALISMAN_API_KEY:latest"
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
   "EIA_API_KEY=EIA_API_KEY:latest"
@@ -68,10 +80,17 @@ export WORKER_SECRETS=(
   "ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
   "OPENAI_API_KEY=OPENAI_API_KEY:latest"
   "GEMINI_API_KEY=GEMINI_API_KEY:latest"
+  "TALISMAN_BASE_URL=TALISMAN_BASE_URL:latest"
+  "TALISMAN_API_KEY=TALISMAN_API_KEY:latest"
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
   "EIA_API_KEY=EIA_API_KEY:latest"
   "SENTRY_DSN=SENTRY_DSN:latest"
+)
+
+# Optional governed inference service secrets (private GPU Cloud Run).
+export INFERENCE_SECRETS=(
+  "TALISMAN_API_KEY=TALISMAN_API_KEY:latest"
 )
 
 # Migration job runs with the migrator user only — no LLM/data-vendor secrets.

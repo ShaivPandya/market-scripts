@@ -6,6 +6,7 @@ import type { RefObject } from "react"
 
 interface AgentMessageStreamProps {
   messages: AgentMessageType[]
+  sessionId?: string | null
   isStreaming: boolean
   error: string | null
   onPrompt: (prompt: string) => void
@@ -16,6 +17,7 @@ interface AgentMessageStreamProps {
 
 export function AgentMessageStream({
   messages,
+  sessionId,
   isStreaming,
   error,
   onPrompt,
@@ -52,7 +54,7 @@ export function AgentMessageStream({
       ) : (
         <div className="mx-auto flex w-full max-w-[54rem] flex-col">
           {messages.map(message => (
-            <AgentMessage key={message.id} message={message} onOpenTrace={onOpenTrace} />
+            <AgentMessage key={message.id} message={message} sessionId={sessionId} onOpenTrace={onOpenTrace} />
           ))}
           {error && (
             <div

@@ -1,0 +1,106 @@
+{
+  "manifest_version": 1,
+  "benchmark_version": "1.0.0",
+  "name": "TalismanBench",
+  "description": "Held-out release gate for owned Talisman agent model candidates against frontier-provider baselines.",
+  "corpora": [
+    {
+      "id": "structured_dq",
+      "runner": "structured",
+      "cases_dir": "docs/decision_quality_evals/cases",
+      "baseline_path": "docs/decision_quality_evals/baselines/approved_corpus_baseline.json",
+      "dimensions": [
+        "structured_output",
+        "gate_compliance",
+        "calibration",
+        "synthesis_quality"
+      ],
+      "fail_under_deterministic": 80.0,
+      "fail_under_judge": 14.0,
+      "judge_default": false
+    },
+    {
+      "id": "chat_behavior",
+      "runner": "chat",
+      "cases_dir": "docs/decision_quality_chat_evals/cases",
+      "baseline_path": "docs/decision_quality_chat_evals/baselines/approved_corpus_baseline.json",
+      "dimensions": [
+        "routing",
+        "tool_selection",
+        "tool_arguments",
+        "source_quality",
+        "policy_boundaries",
+        "synthesis_quality",
+        "latency"
+      ],
+      "fail_under_deterministic": 100.0,
+      "judge_default": false
+    },
+    {
+      "id": "opportunity_candidate",
+      "runner": "opportunity_candidate",
+      "cases_dir": "docs/opportunity_candidate_evals/cases",
+      "baseline_path": "docs/opportunity_candidate_evals/baselines/approved_corpus_baseline.json",
+      "dimensions": [
+        "structured_output",
+        "triage_discipline",
+        "scout_skeptic_sizer"
+      ],
+      "fail_under_deterministic": 80.0,
+      "fail_under_judge": 14.0,
+      "judge_default": false
+    }
+  ],
+  "split_policy": {
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "training_splits": ["train", "validation"],
+    "held_out_splits": ["holdout"]
+  },
+  "hard_blockers": [
+    "manifest_invalid",
+    "inventory_leakage",
+    "structural_gate_failure",
+    "missing_baseline_inventory",
+    "deterministic_failure",
+    "baseline_regression"
+  ],
+  "scored_metrics": [
+    "deterministic_pass_rate",
+    "judge_total_mean",
+    "latency_p95_ms",
+    "token_use_total",
+    "estimated_cost_usd"
+  ],
+  "graduation_thresholds": {
+    "min_deterministic_pass_rate": 0.95,
+    "max_new_deterministic_failures": 0,
+    "min_judge_total_mean": 14.0,
+    "max_latency_p95_regression_pct": 0.15,
+    "max_cost_regression_pct": 0.2
+  },
+  "baseline_regression": {
+    "allow_new_failures": 0,
+    "allow_judge_regression": 0.5
+  },
+  "baseline_model": {
+    "provider": "openai",
+    "tier": "mid"
+  },
+  "candidate_model": {
+    "protocol": "openai_compatible",
+    "base_url_env": "TALISMAN_BENCH_CANDIDATE_BASE_URL",
+    "api_key_env": "TALISMAN_BENCH_CANDIDATE_API_KEY",
+    "model_env": "TALISMAN_BENCH_CANDIDATE_MODEL"
+  },
+  "candidate_matrix_path": "docs/talisman_bench/candidate_matrix.json",
+  "selection_protocol": {
+    "smoke_case_count": 3,
+    "full_case_count": 43,
+    "latency_tolerance_pct": 0.15,
+    "cost_tolerance_pct": 0.2,
+    "repeat_run_tolerance_pct": 0.05,
+    "temperature": 0.0,
+    "max_tokens": 4096
+  }
+}

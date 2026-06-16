@@ -20,7 +20,7 @@ LLM_PROVIDER_MODE_KEY = "llm.provider_mode"
 LLM_PROVIDER_BY_TIER_KEY = "llm.provider_by_tier"
 LLM_REASONING_EFFORT_PREFIX = "llm.reasoning_effort"
 LLM_GATEWAY_POLICY_KEY = "llm.gateway_policy"
-ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini"}
+ALLOWED_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "talisman"}
 ALLOWED_LLM_PROVIDER_MODES = {"single", "custom"}
 LEGACY_LLM_PROVIDERS = {"local"}
 MODEL_TIERS = {"low", "mid", "high"}
@@ -29,6 +29,7 @@ DEFAULT_REASONING_EFFORTS = {
     "anthropic": {"low": "medium", "mid": "high", "high": "max"},
     "openai": {"low": "low", "mid": "medium", "high": "xhigh"},
     "gemini": {"low": "low", "mid": "medium", "high": "high"},
+    "talisman": {"low": "none", "mid": "none", "high": "none"},
 }
 LIFECYCLE_STATES = {"draft", "enabled", "deprecated", "disabled"}
 DATA_SENSITIVITIES = {
@@ -45,9 +46,29 @@ DEFAULT_GATEWAY_POLICY: dict[str, Any] = {
         "anthropic": "enabled",
         "openai": "enabled",
         "gemini": "enabled",
+        "talisman": "draft",
     },
     "model_lifecycle": {},
     "denied_rules": [],
+    "owned_model_rollout": {
+        "enabled": False,
+        "shadow_enabled": True,
+        "canary_enabled": False,
+        "canary_percent": 0,
+        "min_confidence": 0.70,
+        "approved_task_classes": [
+            "agent_turn",
+            "synthesis",
+            "routing",
+            "routing_tool_use",
+            "tool_use",
+            "structured_output",
+        ],
+        "approved_candidate_id": None,
+        "approved_model_ids": [],
+        "candidate_provider": "talisman",
+        "rule_version": "owned_model_rollout_v1",
+    },
 }
 DEFAULT_PROVIDER_MODE = "single"
 
@@ -217,6 +238,10 @@ def normalize_gateway_policy(value: dict[str, Any] | None) -> dict[str, Any]:
             raise ValueError("Gateway denied rule contains an unsupported data_sensitivity")
         denied_rules.append({"provider": provider, "model": model, "data_sensitivity": sensitivity})
     policy["denied_rules"] = denied_rules
+
+    from api.owned_model_rollout import normalize_owned_model_rollout
+
+    policy["owned_model_rollout"] = normalize_owned_model_rollout(raw.get("owned_model_rollout"))
     return policy
 
 
@@ -241,7 +266,7 @@ def set_gateway_policy_setting(policy: dict[str, Any]) -> dict[str, Any]:
 def _normalize_llm_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return normalized
 
 
@@ -318,7 +343,7 @@ def _reasoning_key(provider: str, tier: str) -> str:
 def _normalize_reasoning_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized not in ALLOWED_LLM_PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return normalized
 
 

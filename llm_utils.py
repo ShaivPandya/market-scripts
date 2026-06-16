@@ -41,7 +41,8 @@ def strip_assistant_citation_tokens(text: str) -> str:
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
-PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI}
+PROVIDER_TALISMAN = "talisman"
+PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI, PROVIDER_TALISMAN}
 
 MODEL_LOW = "low"
 MODEL_MID = "mid"
@@ -100,6 +101,11 @@ DEFAULT_REASONING_EFFORT_BY_PROVIDER_TIER = {
         MODEL_MID: REASONING_MEDIUM,
         MODEL_HIGH: REASONING_HIGH,
     },
+    PROVIDER_TALISMAN: {
+        MODEL_LOW: REASONING_NONE,
+        MODEL_MID: REASONING_NONE,
+        MODEL_HIGH: REASONING_NONE,
+    },
 }
 
 ANTHROPIC_DEFAULT_MODELS = {
@@ -117,10 +123,16 @@ GEMINI_DEFAULT_MODELS = {
     MODEL_MID: "gemini-3.1-pro-preview-customtools",
     MODEL_HIGH: "gemini-3.1-pro-preview-customtools",
 }
+TALISMAN_DEFAULT_MODELS = {
+    MODEL_LOW: "talisman-low",
+    MODEL_MID: "talisman-mid",
+    MODEL_HIGH: "talisman-high",
+}
 DEFAULT_MODELS_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: ANTHROPIC_DEFAULT_MODELS,
     PROVIDER_OPENAI: OPENAI_DEFAULT_MODELS,
     PROVIDER_GEMINI: GEMINI_DEFAULT_MODELS,
+    PROVIDER_TALISMAN: TALISMAN_DEFAULT_MODELS,
 }
 
 # Compatibility aliases for older call sites. These now represent tiers.
@@ -155,11 +167,20 @@ _MODEL_ENV_BY_PROVIDER = {
         MODEL_MID: "GEMINI_MODEL_MID",
         MODEL_HIGH: "GEMINI_MODEL_HIGH",
     },
+    PROVIDER_TALISMAN: {
+        MODEL_LOW: "TALISMAN_MODEL_LOW",
+        MODEL_MID: "TALISMAN_MODEL_MID",
+        MODEL_HIGH: "TALISMAN_MODEL_HIGH",
+    },
+}
+_BASE_URL_ENV_BY_PROVIDER = {
+    PROVIDER_TALISMAN: "TALISMAN_BASE_URL",
 }
 _API_KEY_ENV_BY_PROVIDER = {
     PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
     PROVIDER_OPENAI: "OPENAI_API_KEY",
     PROVIDER_GEMINI: "GEMINI_API_KEY",
+    PROVIDER_TALISMAN: "TALISMAN_API_KEY",
 }
 _CLIENT_CACHE: dict[tuple[str, str | None], Any] = {}
 _CLIENT_FACTORY_CACHE: dict[str, Any] = {}
@@ -208,7 +229,7 @@ def _stored_provider_by_tier(fallback_provider: str) -> dict[str, str] | None:
 def selected_provider() -> str:
     provider = (_stored_provider() or os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return provider
 
 
@@ -221,8 +242,31 @@ def selected_provider_for_tier(tier: str) -> str:
     provider_by_tier = _stored_provider_by_tier(fallback_provider) or {}
     provider = str(provider_by_tier.get(normalized_tier) or fallback_provider).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return provider
+
+
+def base_url_env(provider: str | None = None) -> str | None:
+    resolved_provider = _normalize_provider(provider) if provider is not None else None
+    if resolved_provider is None:
+        return None
+    return _BASE_URL_ENV_BY_PROVIDER.get(resolved_provider)
+
+
+def get_base_url(provider: str | None = None) -> str | None:
+    resolved_provider = selected_provider() if provider is None else _normalize_provider(provider)
+    env_name = _BASE_URL_ENV_BY_PROVIDER.get(resolved_provider)
+    if not env_name:
+        return None
+    value = (os.environ.get(env_name) or "").strip().rstrip("/")
+    return value or None
+
+
+def is_provider_configured(provider: str | None = None) -> bool:
+    resolved_provider = selected_provider() if provider is None else _normalize_provider(provider)
+    if resolved_provider == PROVIDER_TALISMAN:
+        return get_base_url(resolved_provider) is not None
+    return get_api_key(resolved_provider) is not None
 
 
 def selected_providers() -> set[str]:
@@ -251,29 +295,41 @@ def get_api_key(provider: str | None = None) -> str | None:
 
 def has_llm_api_key(provider: str | None = None) -> bool:
     if provider is None:
-        return all(get_api_key(selected_provider) is not None for selected_provider in selected_providers())
-    resolved_provider = _normalize_provider(provider)
-    return get_api_key(resolved_provider) is not None
+        return all(is_provider_configured(selected_provider) for selected_provider in selected_providers())
+    return is_provider_configured(provider)
 
 
 def require_api_key(provider: str | None = None) -> str:
     if provider is None:
         selected = sorted(selected_providers())
-        missing = [selected_provider for selected_provider in selected if get_api_key(selected_provider) is None]
+        missing = [selected_provider for selected_provider in selected if not is_provider_configured(selected_provider)]
         if missing:
-            envs = ", ".join(api_key_env(selected_provider) for selected_provider in missing)
+            envs = ", ".join(_provider_config_env_label(selected_provider) for selected_provider in missing)
             raise RuntimeError(f"{envs} is required for the configured LLM providers")
         for provider_name in selected:
-            _validate_api_key_shape(provider_name, get_api_key(provider_name) or "")
+            if provider_name != PROVIDER_TALISMAN:
+                _validate_api_key_shape(provider_name, get_api_key(provider_name) or "")
         resolved_provider = selected_provider()
+        if resolved_provider == PROVIDER_TALISMAN:
+            return get_api_key(resolved_provider) or "talisman-placeholder"
         return get_api_key(resolved_provider) or get_api_key(selected[0]) or ""
 
     resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_TALISMAN:
+        if not get_base_url(resolved_provider):
+            raise RuntimeError("TALISMAN_BASE_URL is required for LLM_PROVIDER=talisman")
+        return get_api_key(resolved_provider) or "talisman-placeholder"
     api_key = get_api_key(resolved_provider)
     if not api_key:
         raise RuntimeError(f"{api_key_env(resolved_provider)} is required for LLM_PROVIDER={resolved_provider}")
     _validate_api_key_shape(resolved_provider, api_key)
     return api_key
+
+
+def _provider_config_env_label(provider: str) -> str:
+    if provider == PROVIDER_TALISMAN:
+        return "TALISMAN_BASE_URL"
+    return api_key_env(provider)
 
 
 def _validate_api_key_shape(provider: str, api_key: str) -> None:
@@ -316,6 +372,8 @@ def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
 
 def reasoning_effort_options(provider: str, model: str | None = None) -> list[str]:
     resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_TALISMAN:
+        return [REASONING_NONE]
     if resolved_provider == PROVIDER_OPENAI:
         return list(OPENAI_REASONING_EFFORTS)
     if resolved_provider == PROVIDER_GEMINI:
@@ -370,6 +428,10 @@ def extract_text(response: Any) -> str:
     gemini_text = _obj_get(response, "text")
     if isinstance(gemini_text, str) and gemini_text.strip():
         return gemini_text.strip()
+
+    content_value = _obj_get(response, "content")
+    if isinstance(content_value, str) and content_value.strip():
+        return content_value.strip()
 
     parts: list[str] = []
 
@@ -595,6 +657,22 @@ def call_llm_text(
             json_schema=json_schema,
             json_schema_name=json_schema_name,
         )
+    elif resolved_provider == PROVIDER_TALISMAN:
+        if web_search_enabled:
+            raise RuntimeError("The talisman provider does not support managed web search in llm_utils")
+        from talisman_openai_compat import call_chat_completions_text
+
+        client = get_llm_client(PROVIDER_TALISMAN, api_key=api_key)
+        text, _citations, response = call_chat_completions_text(
+            client=client,
+            model=resolved_model,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            json_schema=json_schema,
+            json_schema_name=json_schema_name,
+        )
+        return text, [], response
     else:
         response = _call_gemini_generate_content(
             contents=[_gemini_content("user", [{"text": prompt}])],
@@ -1181,8 +1259,9 @@ def apply_reasoning_config(
     if effort is None:
         return
 
-    if resolved_provider == PROVIDER_OPENAI:
-        kwargs["reasoning"] = {"effort": effort}
+    if resolved_provider in {PROVIDER_OPENAI, PROVIDER_TALISMAN}:
+        if resolved_provider == PROVIDER_OPENAI:
+            kwargs["reasoning"] = {"effort": effort}
         return
 
     if resolved_provider == PROVIDER_GEMINI:
@@ -1211,7 +1290,7 @@ def apply_reasoning_config(
 def _normalize_provider(provider: str | None) -> str:
     resolved = selected_provider() if provider is None else provider.strip().lower()
     if resolved not in PROVIDERS:
-        raise ValueError("LLM provider must be 'anthropic', 'openai', or 'gemini'")
+        raise ValueError("LLM provider must be 'anthropic', 'openai', 'gemini', or 'talisman'")
     return resolved
 
 
@@ -1341,6 +1420,19 @@ def _extract_json_object(text: str) -> str:
     return cleaned
 
 
+def _talisman_client_factory(*, api_key: str | None = None) -> Any:
+    from talisman_openai_compat import openai_compatible_client, talisman_timeout_s_from_env
+
+    base_url = get_base_url(PROVIDER_TALISMAN)
+    if not base_url:
+        raise RuntimeError("TALISMAN_BASE_URL is required for the talisman provider")
+    return openai_compatible_client(
+        base_url=base_url,
+        api_key=api_key or get_api_key(PROVIDER_TALISMAN) or "talisman-placeholder",
+        timeout_s=talisman_timeout_s_from_env(),
+    )
+
+
 def _client_factory(provider: str) -> Any:
     if provider == PROVIDER_ANTHROPIC:
         import anthropic
@@ -1348,6 +1440,8 @@ def _client_factory(provider: str) -> Any:
         return anthropic.Anthropic
     if provider == PROVIDER_GEMINI:
         return importlib.import_module("google.genai").Client
+    if provider == PROVIDER_TALISMAN:
+        return _talisman_client_factory
     from openai import OpenAI
 
     return OpenAI

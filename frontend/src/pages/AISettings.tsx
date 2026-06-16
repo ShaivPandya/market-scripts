@@ -53,12 +53,18 @@ const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEff
     mid: "medium",
     high: "high",
   },
+  talisman: {
+    low: "none",
+    mid: "none",
+    high: "none",
+  },
 }
 
 const PROVIDER_FALLBACK_LABELS: Record<LLMProvider, string> = {
   anthropic: "Claude",
   openai: "OpenAI",
   gemini: "Gemini",
+  talisman: "Talisman",
 }
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "claude-haiku-4-5": "Claude Haiku 4.5",

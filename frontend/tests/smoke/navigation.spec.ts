@@ -4,18 +4,17 @@ function primaryNav(page: import("@playwright/test").Page) {
   return page.getByRole("navigation", { name: "Primary navigation" })
 }
 
-test("shows workflow-first sidebar sections on desktop", async ({ page }) => {
+test("shows grouped sidebar sections on desktop", async ({ page }) => {
   await authenticate(page)
   await page.goto("/")
 
   const nav = primaryNav(page)
-  await expect(nav.getByText("Command Portfolio")).toBeVisible()
-  await expect(nav.getByText("Review Decisions")).toBeVisible()
-  await expect(nav.getByText("Pressure-Test Positions")).toBeVisible()
-  await expect(nav.getByText("Scout Opportunities")).toBeVisible()
-  await expect(nav.getByText("Monitor Risks")).toBeVisible()
-  await expect(nav.getByText("Inspect Data & Provenance")).toBeVisible()
-  await expect(nav.getByText("Administer")).toBeVisible()
+  await expect(nav.getByText("Core", { exact: true })).toBeVisible()
+  await expect(nav.getByText("Labs", { exact: true })).toBeVisible()
+  await expect(nav.getByText("Monitors", { exact: true })).toBeVisible()
+  await expect(nav.getByText("Macro", { exact: true })).toBeVisible()
+  await expect(nav.getByText("Assets", { exact: true })).toBeVisible()
+  await expect(nav.getByText("Settings", { exact: true })).toBeVisible()
 })
 
 test("navigates via workflow sidebar links on desktop", async ({ page }) => {
@@ -41,14 +40,14 @@ test("navigates via workflow sidebar links on desktop", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Liquidity Dashboard" })).toBeVisible()
 })
 
-test("navigates via command palette workflow search", async ({ page }) => {
+test("navigates via command palette page search", async ({ page }) => {
   await authenticate(page)
   await page.goto("/")
 
-  await page.getByRole("button", { name: "Search workflows" }).click()
-  await expect(page.getByPlaceholder("Search workflows")).toBeVisible()
+  await page.getByRole("button", { name: "Search pages" }).click()
+  await expect(page.getByPlaceholder("Search pages")).toBeVisible()
 
-  await page.getByPlaceholder("Search workflows").fill("Workspace")
+  await page.getByPlaceholder("Search pages").fill("Workspace")
   await page.getByRole("option", { name: /Workspace/ }).click()
 
   await expect(page).toHaveURL(/\/workspace$/)

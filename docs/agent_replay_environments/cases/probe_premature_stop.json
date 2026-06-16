@@ -1,0 +1,32 @@
+{
+  "environment_schema_version": 1,
+  "id": "probe_premature_stop",
+  "backend": "chat_eval",
+  "probe_type": "premature_stop",
+  "status": "approved",
+  "as_of_date": "2026-06-12",
+  "user_message": "Here is my UBER thesis? What do you think?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/uber",
+    "ticker": "UBER"
+  },
+  "mock_tools": {
+    "get_dossier": {"ticker": "UBER", "summary": "Mobility dossier."},
+    "get_thesis": {"ticker": "UBER", "content": "UBER AV platform thesis."},
+    "run_chart": {"ticker": "UBER", "technical_read": "Uptrend."}
+  },
+  "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "required_points": [
+    {
+      "label": "substantive review",
+      "any_terms": ["thesis", "risk", "catalyst", "mispricing", "evidence"]
+    }
+  ],
+  "required_decision_quality_dimensions": [
+    "simple_thesis",
+    "mispricing",
+    "catalyst_or_reason_now"
+  ],
+  "corpus_tags": ["agent_env_probe"]
+}

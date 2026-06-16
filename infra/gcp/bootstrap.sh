@@ -150,7 +150,8 @@ cat <<EOF
 
   - Cloud Scheduler jobs:  ./infra/gcp/setup-scheduler.sh
       async-job-sweep (hourly), top50-refresh (weekday 23z),
-      market-snapshot-refresh (weekday 23:15z), optional cache-warm.
+      market-snapshot-refresh (weekday 16:20 America/New_York),
+      workspace-source-refresh (weekday 16:30 America/New_York), optional cache-warm.
 
   - If you already have an existing Cloud SQL instance that pre-dates the
     hardening flags, apply them in place:

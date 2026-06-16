@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -184,6 +184,17 @@ def enqueue_continuous_optimizer(_sub: str = Depends(require_scheduler_or_job_ad
     return enqueue_response(row, "/api/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-agent-model-release-refresh")
+def enqueue_agent_model_release_refresh(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "agent_model_release_refresh",
+        {"source": "scheduler"},
+        cache_key="maintenance:agent_model_release_refresh:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/admin/jobs/{job_id}")
+
+
 @router.get("/admin/jobs/{job_id}")
 def get_admin_job(job_id: str, _sub: str = Depends(require_job_admin)):
     try:
@@ -293,3 +304,58 @@ def deploy_smoke(_sub: str = Depends(require_job_admin)):
         return JSONResponse(body, status_code=503)
 
     return body
+
+
+@router.post("/admin/agent/training-datasets/export")
+def export_governed_agent_training_datasets(
+    request: Request,
+    access_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    limit: int = Query(5000, ge=1, le=5000),
+    dry_run: bool = Query(False),
+    include_eval_fixtures: bool = Query(True),
+    include_seeds: bool = Query(True),
+):
+    """Export governed SFT and preference datasets for agent training."""
+    from api.audit import emit_audit_event
+    from decision_quality.agent_training_datasets import AgentTrainingDatasetError, export_training_dataset
+
+    actor = require_actor(request, access_token)
+    _require_admin_roles(actor)
+    try:
+        manifest = export_training_dataset(
+            limit=limit,
+            include_eval_fixtures=include_eval_fixtures,
+            include_seeds=include_seeds,
+            dry_run=dry_run,
+        )
+    except AgentTrainingDatasetError as exc:
+        emit_audit_event(
+            "agent_training_dataset_export",
+            "agent_learning",
+            "failed",
+            actor=actor,
+            metadata={"limit": limit, "dry_run": dry_run, "error": str(exc)},
+        )
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    emit_audit_event(
+        "agent_training_dataset_export",
+        "agent_learning",
+        "applied",
+        actor=actor,
+        object_refs=[{"type": "agent_training_dataset", "id": str(manifest.get("version") or "")}],
+        after_summary={
+            "version": manifest.get("version"),
+            "sft_count": manifest.get("sft_count"),
+            "preference_count": manifest.get("preference_count"),
+            "exclusion_count": manifest.get("exclusion_count"),
+            "leakage_check_passed": manifest.get("leakage_check_passed"),
+            "dry_run": dry_run,
+        },
+        metadata={
+            "split_counts": manifest.get("split_counts"),
+            "source_counts": manifest.get("source_counts"),
+            "content_hashes": manifest.get("content_hashes"),
+        },
+    )
+    return {"manifest": manifest}

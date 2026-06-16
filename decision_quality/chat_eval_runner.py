@@ -494,7 +494,7 @@ def _routing_expectation_checks(
         except (TypeError, ValueError):
             threshold = 0.0
         try:
-            confidence = float(applied.get("confidence"))
+            confidence = float(str(applied.get("confidence")))
         except (TypeError, ValueError):
             confidence = 0.0
         checks.append(
@@ -631,16 +631,16 @@ def _tool_quality_expectation_checks(
         "expected_source_health_status",
         "expected_critical_data_quality",
     ):
-        expected = expectations.get(field)
-        if expected is None:
+        expected_status = expectations.get(field)
+        if expected_status is None:
             continue
         key = field.removeprefix("expected_")
-        actual = str(tool_quality.get(key) or "")
+        actual_status = str(tool_quality.get(key) or "")
         checks.append(
             _check(
                 f"tool_quality_{key}",
-                actual == str(expected),
-                f"expected={expected!r}, actual={actual!r}",
+                actual_status == str(expected_status),
+                f"expected={expected_status!r}, actual={actual_status!r}",
             )
         )
 
@@ -807,11 +807,14 @@ def _scout_skeptic_sizer_expectation_checks(
     if not isinstance(gate_meta, dict):
         return
 
+    raw_sizer_meta = gate_meta.get("sizer")
+    sizer_meta: dict[str, Any] = raw_sizer_meta if isinstance(raw_sizer_meta, dict) else {}
     for pass_name in ("scout", "skeptic", "sizer"):
         expected = expectations.get(f"{pass_name}_pass")
         if expected is None:
             continue
-        pass_meta = gate_meta.get(pass_name) if isinstance(gate_meta.get(pass_name), dict) else {}
+        raw_pass_meta = gate_meta.get(pass_name)
+        pass_meta: dict[str, Any] = raw_pass_meta if isinstance(raw_pass_meta, dict) else {}
         actual = str(pass_meta.get("status") or "").lower() == "pass"
         checks.append(
             _check(
@@ -823,7 +826,7 @@ def _scout_skeptic_sizer_expectation_checks(
 
     expected_final_action = expectations.get("expected_final_action")
     if expected_final_action is not None:
-        actual_final = str(gate_meta.get("final_action_type") or gate_meta.get("sizer", {}).get("final_action") or "")
+        actual_final = str(gate_meta.get("final_action_type") or sizer_meta.get("final_action") or "")
         checks.append(
             _check(
                 "scout_skeptic_sizer_final_action",
@@ -843,9 +846,8 @@ def _scout_skeptic_sizer_expectation_checks(
 
     max_bps = expectations.get("max_sizing_delta_bps")
     if max_bps is not None:
-        sizer_meta = gate_meta.get("sizer") if isinstance(gate_meta.get("sizer"), dict) else {}
         try:
-            actual_bps = int(sizer_meta.get("max_sizing_delta_bps"))
+            actual_bps = int(str(sizer_meta.get("max_sizing_delta_bps")))
             checks.append(
                 _check(
                     "scout_skeptic_sizer_max_bps",
@@ -969,12 +971,12 @@ def _normalize_judge(value: Any, *, min_score: float) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {"scores": {}, "total": 0.0, "fatal_issues": ["judge returned non-JSON"], "notes": "", "passed": False}
     try:
-        total = float(value.get("total"))
+        total = float(str(value.get("total")))
     except (TypeError, ValueError):
         total = 0.0
     fatal = value.get("fatal_issues")
     fatal_issues = [str(item) for item in fatal] if isinstance(fatal, list) else []
-    judge = {
+    judge: dict[str, Any] = {
         "scores": value.get("scores") if isinstance(value.get("scores"), dict) else {},
         "total": max(0.0, min(20.0, total)),
         "fatal_issues": fatal_issues,

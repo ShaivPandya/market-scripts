@@ -127,8 +127,21 @@ def test_workspace_source_refresh_scheduler_is_enabled_by_default() -> None:
 
     assert "delete_scheduler_job_if_present workspace-source-refresh" not in script
     assert (
-        'upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-45 23 * * 1-5}" '
-        "/api/admin/jobs/enqueue-workspace-source-refresh"
+        'upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-30 16 * * 1-5}" '
+        '/api/admin/jobs/enqueue-workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_TIME_ZONE:-America/New_York}"'
+    ) in script
+
+
+def test_snapshot_refresh_schedulers_follow_after_close_freshness_cutoff() -> None:
+    script = (ROOT / "infra/gcp/setup-scheduler.sh").read_text()
+
+    assert (
+        'upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-20 16 * * 1-5}" '
+        '/api/admin/jobs/enqueue-market-snapshot-refresh "${MARKET_SNAPSHOT_TIME_ZONE:-America/New_York}"'
+    ) in script
+    assert (
+        'upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-25 16 * * 1-5}" '
+        '/api/admin/jobs/enqueue-macro-snapshot-refresh "${MACRO_SNAPSHOT_TIME_ZONE:-America/New_York}"'
     ) in script
 
 

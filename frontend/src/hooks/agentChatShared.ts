@@ -1,5 +1,5 @@
 import type { ScreenContext } from "@/contexts/ScreenContext"
-import type { AgentResponsePreferences } from "@/lib/api"
+import type { AgentResponseFeedbackRecord, AgentResponsePreferences } from "@/lib/api"
 
 import type { AgentTraceSnapshot } from "@/lib/decisionTrace"
 
@@ -33,6 +33,7 @@ export interface AgentMessage {
   statusText?: string
   egressRecords?: EgressRecord[]
   traceSnapshot?: AgentTraceSnapshot | null
+  feedback?: AgentResponseFeedbackRecord | null
 }
 
 export interface ActiveAgentJob {

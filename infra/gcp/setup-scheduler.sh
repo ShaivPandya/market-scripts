@@ -5,10 +5,11 @@
 # Jobs:
 #   enqueue-async-job-sweep   0 * * * *     POST  /api/admin/jobs/enqueue-async-job-sweep
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
-#   market-snapshot-refresh   15 23 * * 1-5 POST  /api/admin/jobs/enqueue-market-snapshot-refresh
-#   macro-snapshot-refresh    30 23 * * 1-5 POST  /api/admin/jobs/enqueue-macro-snapshot-refresh
-#   workspace-source-refresh  45 23 * * 1-5 POST  /api/admin/jobs/enqueue-workspace-source-refresh
+#   market-snapshot-refresh   20 16 * * 1-5 POST  /api/admin/jobs/enqueue-market-snapshot-refresh
+#   macro-snapshot-refresh    25 16 * * 1-5 POST  /api/admin/jobs/enqueue-macro-snapshot-refresh
+#   workspace-source-refresh  30 16 * * 1-5 POST  /api/admin/jobs/enqueue-workspace-source-refresh
 #   continuous-optimizer      15 10 * * 1-5 POST /api/admin/jobs/enqueue-continuous-optimizer
+#   agent-model-release-refresh 0 6 * * 1 POST /api/admin/jobs/enqueue-agent-model-release-refresh
 #
 # Optional:
 #   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/admin/jobs/enqueue-watch-trigger-monitor
@@ -149,10 +150,16 @@ upsert_run_job_trigger() {
 
 upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/admin/jobs/enqueue-async-job-sweep
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
-upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/admin/jobs/enqueue-market-snapshot-refresh
-upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-30 23 * * 1-5}" /api/admin/jobs/enqueue-macro-snapshot-refresh
-upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-45 23 * * 1-5}" /api/admin/jobs/enqueue-workspace-source-refresh
+upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-20 16 * * 1-5}" /api/admin/jobs/enqueue-market-snapshot-refresh "${MARKET_SNAPSHOT_TIME_ZONE:-America/New_York}"
+upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-25 16 * * 1-5}" /api/admin/jobs/enqueue-macro-snapshot-refresh "${MACRO_SNAPSHOT_TIME_ZONE:-America/New_York}"
+upsert_api_job workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_SCHEDULE:-30 16 * * 1-5}" /api/admin/jobs/enqueue-workspace-source-refresh "${WORKSPACE_SOURCE_REFRESH_TIME_ZONE:-America/New_York}"
 upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
+
+if is_truthy "${SCHEDULE_AGENT_MODEL_RELEASE_REFRESH:-0}"; then
+  upsert_api_job agent-model-release-refresh "${AGENT_MODEL_RELEASE_REFRESH_SCHEDULE:-0 6 * * 1}" /api/admin/jobs/enqueue-agent-model-release-refresh
+else
+  delete_scheduler_job_if_present agent-model-release-refresh
+fi
 
 if is_truthy "${SCHEDULE_WATCH_TRIGGER_MONITOR:-0}"; then
   upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/admin/jobs/enqueue-watch-trigger-monitor

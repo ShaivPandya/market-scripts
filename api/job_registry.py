@@ -369,6 +369,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Continuous optimizer failed",
     ),
+    "agent_model_release_refresh": JobSpec(
+        job_type="agent_model_release_refresh",
+        request_model=None,
+        compute_func="api.maintenance_jobs.run_agent_model_release_refresh",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_AGENT_MODEL_RELEASE_REFRESH_SECONDS", 10 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Agent model release refresh dry-run failed",
+    ),
 }
 
 

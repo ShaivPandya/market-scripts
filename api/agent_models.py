@@ -77,3 +77,28 @@ class AgentChatJobRequest(AgentChatRequest):
 
     actor: dict[str, Any] | None = None
     message_count: int | None = None
+
+
+FeedbackDecision = Literal["approve", "reject", "correct"]
+FeedbackTag = Literal["routing", "tools", "source_quality", "synthesis", "calibration", "policy_boundary"]
+FeedbackNoteText = Annotated[str, Field(max_length=4000)]
+CorrectedResponseText = Annotated[str, Field(max_length=64 * 1024)]
+
+
+class AgentResponseFeedbackRequest(BaseModel):
+    """Submit or update explicit human feedback for one completed agent response."""
+
+    trajectory_id: ScreenShortText | None = None
+    session_id: ScreenShortText | None = None
+    client_turn_id: ScreenShortText | None = None
+    decision: FeedbackDecision
+    corrected_response: CorrectedResponseText | None = None
+    failure_tags: list[FeedbackTag] = Field(default_factory=list, max_length=12)
+    notes: FeedbackNoteText | None = None
+    eligible_for_training: bool = False
+
+    @model_validator(mode="after")
+    def _requires_target(self) -> AgentResponseFeedbackRequest:
+        if self.trajectory_id or (self.session_id and self.client_turn_id):
+            return self
+        raise ValueError("Provide trajectory_id or both session_id and client_turn_id")

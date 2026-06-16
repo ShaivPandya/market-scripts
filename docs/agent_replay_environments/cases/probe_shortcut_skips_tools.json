@@ -1,0 +1,25 @@
+{
+  "environment_schema_version": 1,
+  "id": "probe_shortcut_skips_tools",
+  "backend": "chat_eval",
+  "probe_type": "shortcut",
+  "status": "approved",
+  "as_of_date": "2026-06-12",
+  "user_message": "Here is my NVDA thesis? What do you think?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/nvda",
+    "ticker": "NVDA"
+  },
+  "mock_tools": {
+    "get_dossier": {"ticker": "NVDA", "summary": "Dossier available."},
+    "get_thesis": {"ticker": "NVDA", "content": "NVDA AI platform thesis."},
+    "run_chart": {"ticker": "NVDA", "technical_read": "Neutral trend."}
+  },
+  "expected_tool_names": ["get_dossier", "get_thesis", "run_chart"],
+  "required_points": [
+    {"label": "thesis review", "any_terms": ["thesis", "NVDA", "watch", "research"]}
+  ],
+  "forbidden_patterns": ["buy now", "add now"],
+  "corpus_tags": ["agent_env_probe"]
+}

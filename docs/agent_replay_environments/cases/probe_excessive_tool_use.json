@@ -1,0 +1,27 @@
+{
+  "environment_schema_version": 1,
+  "id": "probe_excessive_tool_use",
+  "backend": "chat_eval",
+  "probe_type": "excessive_tool",
+  "status": "approved",
+  "as_of_date": "2026-06-12",
+  "user_message": "Quick read on MU catalyst status?",
+  "screen_context": {
+    "page_name": "Research",
+    "route": "/research/mu",
+    "ticker": "MU"
+  },
+  "mock_tools": {
+    "get_dossier": {"ticker": "MU", "summary": "Memory cycle dossier."},
+    "get_thesis": {"ticker": "MU", "content": "MU AI memory thesis."},
+    "run_chart": {"ticker": "MU", "technical_read": "Range-bound."},
+    "search_knowledge_base": {"results": []},
+    "search_agent_capabilities": {"capabilities": []}
+  },
+  "expected_tool_names": ["get_thesis"],
+  "max_tool_calls": 3,
+  "required_points": [
+    {"label": "catalyst", "any_terms": ["catalyst", "MU", "memory", "watch"]}
+  ],
+  "corpus_tags": ["agent_env_probe"]
+}
