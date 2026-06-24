@@ -237,6 +237,25 @@ const BACKBONE_FACTS = [
   "Cloud SQL stores structured portfolio and workflow state.",
   "Cloud Storage preserves generated documents and artifacts.",
   "Cloud Scheduler refreshes market snapshots and maintenance jobs.",
+  "A private GPU inference service serves the first-party agent model.",
+]
+
+const MODEL_PILLARS: { icon: LucideIcon; title: string; body: string }[] = [
+  {
+    icon: GitBranch,
+    title: "A closed learning loop",
+    body: "Production turns and human-reviewed feedback flow into governed, redacted datasets, then into supervised and preference training — every candidate registered with full data lineage.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "A benchmark release gate",
+    body: "TalismanBench scores each candidate against the frontier baseline before it can ship. Deterministic policy and quality gates are hard blockers, and promotion needs human approval.",
+  },
+  {
+    icon: Cpu,
+    title: "Governed first-party serving",
+    body: "Approved models serve from a private GPU inference service behind shadow and canary rollout, with frontier providers as the automatic, always-recorded fallback.",
+  },
 ]
 
 /* ──────────────────────────── agent data ─────────────────────────────────── */
@@ -404,13 +423,65 @@ const SAFETY: { icon: LucideIcon; title: string; body: string }[] = [
   },
   {
     icon: ShieldCheck,
-    title: "Model egress with audit",
-    body: "Context sent to external models is governed with warnings and an audit trail, so you always know what left the boundary.",
+    title: "Governed model egress",
+    body: "Context sent to external models is governed with warnings and an audit trail — and the first-party model keeps prompts and trajectories off third-party training paths.",
   },
   {
     icon: ClipboardCheck,
     title: "Durable async turns",
     body: "Long agent runs execute on warm worker pools, so chat stays responsive while deeper analysis completes.",
+  },
+]
+
+const MODEL_STAGES: LoopStep[] = [
+  {
+    num: "01",
+    icon: MessageSquare,
+    title: "Capture",
+    detail:
+      "Every completed Stan turn is recorded as a sanitized trajectory. You rate replies — approve, reject, or correct — and that human signal is stored alongside the model version.",
+  },
+  {
+    num: "02",
+    icon: Database,
+    title: "Curate",
+    detail:
+      "Reviewed turns you opt in become governed training datasets. Secrets are stripped, payloads are redacted, and TalismanBench release cases are held out so the gate stays honest.",
+  },
+  {
+    num: "03",
+    icon: Cpu,
+    title: "Train",
+    detail:
+      "Supervised fine-tuning and preference tuning on an open-weight base produce a candidate, registered with a model card, metrics, and full dataset lineage.",
+  },
+  {
+    num: "04",
+    icon: ShieldCheck,
+    title: "Gate & approve",
+    detail:
+      "TalismanBench scores the candidate against the frontier baseline. Deterministic policy and quality gates are hard blockers — and a human signs off before anything ships.",
+    gate: true,
+  },
+  {
+    num: "05",
+    icon: Route,
+    title: "Serve & fall back",
+    detail:
+      "Approved candidates serve from a private inference endpoint behind shadow then canary rollout — with frontier providers as the automatic fallback for any failure or low-confidence turn.",
+  },
+]
+
+const OWNED_MODEL_NOTES: { icon: LucideIcon; title: string; body: string }[] = [
+  {
+    icon: Shield,
+    title: "Same guardrails, any brain",
+    body: "Swapping the model underneath never changes the rules. Policy, source-quality, approval, and decision-quality gates stay authoritative no matter what generates the words.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Frontier fallback, always on",
+    body: "If the owned model is disabled, unsure, times out, or returns malformed output, the turn falls back to a frontier provider — and the reason is recorded on the trajectory.",
   },
 ]
 
@@ -428,7 +499,7 @@ const PROOF_POINTS: { icon: LucideIcon; t: string; d: string }[] = [
   {
     icon: Bot,
     t: "Stan, your co-pilot",
-    d: "An agent that proposes — and never trades without you.",
+    d: "On a model Talisman trains and owns — proposes, never trades without you.",
   },
 ]
 
@@ -605,25 +676,25 @@ function SystemDiagram() {
   )
 }
 
-/* ──────────────────────────── architecture: research loop ────────────────── */
+/* ──────────────────────────── shared loop stepper ────────────────────────── */
 
-function ResearchLoop() {
+function LoopStepper({ steps }: { steps: LoopStep[] }) {
   const [active, setActive] = useState(0)
   const [auto, setAuto] = useState(true)
 
   useEffect(() => {
     if (!auto) return
-    const t = setTimeout(() => setActive(a => (a + 1) % LOOP_STEPS.length), 2600)
+    const t = setTimeout(() => setActive(a => (a + 1) % steps.length), 2600)
     return () => clearTimeout(t)
-  }, [auto, active])
+  }, [auto, active, steps.length])
 
-  const step = LOOP_STEPS[active]
+  const step = steps[active]
   const StepIcon = step.icon
 
   return (
     <div>
       <div className="landing-stepper">
-        {LOOP_STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const Icon = s.icon
           return (
             <button
@@ -712,7 +783,7 @@ function ArchitectureShowcase() {
             decision — pausing at a human gate before anything becomes official.
           </p>
         </div>
-        <ResearchLoop />
+        <LoopStepper steps={LOOP_STEPS} />
       </div>
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
@@ -753,6 +824,32 @@ function ArchitectureShowcase() {
             const Icon = p.icon
             return (
               <div className="landing-info-card" key={p.title}>
+                <IconChip icon={Icon} />
+                <div>
+                  <div className="landing-card-title">{p.title}</div>
+                  <p className="landing-body-sm text-pretty mt-1.5">{p.body}</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-5 max-w-[46rem]">
+          <Eyebrow accent>Model program</Eyebrow>
+          <h3 className="landing-subsection-title mt-2">A system that improves itself</h3>
+          <p className="landing-body text-pretty mt-2.5">
+            Talisman doesn't just run on someone else's model. It captures how the desk actually
+            works and turns that into a first-party model — trained, gated, and rolled out under
+            the same governance as every other decision.
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {MODEL_PILLARS.map(p => {
+            const Icon = p.icon
+            return (
+              <div className="landing-info-card flex-col gap-3.5" key={p.title}>
                 <IconChip icon={Icon} />
                 <div>
                   <div className="landing-card-title">{p.title}</div>
@@ -1074,7 +1171,8 @@ function AgentShowcase() {
         Stan isn't a generic chatbot or a trading bot. He's an investment research agent embedded
         in Talisman: he reads live portfolio and market data, pressure-tests ideas, runs governed
         workflows, and proposes changes — but never executes trades or mutates your book without
-        approval.
+        approval. He can run on a model Talisman trains and owns, with frontier providers as the
+        automatic fallback.
       </SectionHead>
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -1106,6 +1204,33 @@ function AgentShowcase() {
           </p>
         </div>
         <StanDemo />
+      </div>
+
+      <div>
+        <div className="mb-5 max-w-[46rem]">
+          <Eyebrow accent>Owned model</Eyebrow>
+          <h3 className="landing-subsection-title mt-2">Stan runs on a model we own</h3>
+          <p className="landing-body text-pretty mt-2.5">
+            Talisman trains its own first-party agent model from the desk's real work, then serves
+            it behind the same guardrails — with frontier providers always ready as a fallback.
+            Your feedback is what makes the next Stan sharper.
+          </p>
+        </div>
+        <LoopStepper steps={MODEL_STAGES} />
+        <div className="grid gap-3 md:grid-cols-2 mt-4">
+          {OWNED_MODEL_NOTES.map(p => {
+            const Icon = p.icon
+            return (
+              <div className="landing-info-card" key={p.title}>
+                <IconChip icon={Icon} />
+                <div>
+                  <div className="landing-card-title">{p.title}</div>
+                  <p className="landing-body-sm text-pretty mt-1.5">{p.body}</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       <div className="grid items-start gap-6 lg:grid-cols-2">
